@@ -24,6 +24,7 @@ pub mod forms;
 pub mod luau;
 pub mod markdown;
 pub mod prism_ui;
+pub mod prss;
 pub mod registry;
 pub mod syntax;
 pub mod visual;

@@ -54,6 +54,7 @@ prism-core = { path = "../prism-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+indexmap = { workspace = true }
 # Pivot 2026-05-04: layout engine is Taffy, not Clay (see the pivot
 # note at the top of `docs/dev/clay-migration-plan.md`). Pure Rust,
 # no FFI, already used by `prism-builder` for the editor's grid

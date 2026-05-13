@@ -40,7 +40,14 @@ use crate::watch::{WatchBatch, WatchLoop};
 /// `docs/dev/dioxus-inspiration.md`) will eventually intercept this
 /// extension to swap the parsed skeleton into the running
 /// `Surface` without cargo running.
-pub const DEFAULT_EXTENSIONS: &[&str] = &["rs", "prism-ui"];
+///
+/// `prss` is the `.prss` stylesheet extension — see
+/// `docs/dev/prss-reference.md` §8. The fingerprint substrate
+/// (`prism_ui_build::PrssFingerprintCache`) classifies each save
+/// into a literal-only fast path or a structural respawn so a
+/// theme tweak doesn't pay the cargo round-trip while a class
+/// reshape does.
+pub const DEFAULT_EXTENSIONS: &[&str] = &["rs", "prism-ui", "prss"];
 
 /// Short interval the blocking watcher task uses when polling each
 /// underlying [`WatchLoop`]. Kept deliberately small so shutdown
@@ -545,6 +552,16 @@ mod tests {
     fn default_extensions_include_rs_and_prism_ui_for_shell_hot_reload() {
         assert!(DEFAULT_EXTENSIONS.contains(&"rs"));
         assert!(DEFAULT_EXTENSIONS.contains(&"prism-ui"));
+    }
+
+    /// PRSS hot-reload — `.prss` joins the default extension filter
+    /// so editing a stylesheet triggers the respawn loop. Pairs with
+    /// the fingerprint cache in `prism-ui-build::PrssFingerprintCache`
+    /// so a theme tweak picks up via the literal-only fast path
+    /// (`prss-reference.md` §8).
+    #[test]
+    fn default_extensions_include_prss_for_stylesheet_hot_reload() {
+        assert!(DEFAULT_EXTENSIONS.contains(&"prss"));
     }
 
     #[test]

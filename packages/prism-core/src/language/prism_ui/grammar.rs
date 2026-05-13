@@ -356,10 +356,19 @@ impl<'s> Parser<'s> {
             // / `on:click.stop` parses cleanly; the dot becomes a
             // dash at the `data-on-<key>` lowering step so the
             // hit-test cache reads it uniformly.
+            // **Sugar (`@event`)** — `@` is allowed as a first
+            // character (and incidentally anywhere) so `@click`
+            // parses as a single attribute name. The classifier
+            // routes `@<event>` to the `On` namespace.
             let name_raw = self
                 .scanner
                 .scan_while(|c| {
-                    c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':' || c == '.'
+                    c.is_ascii_alphanumeric()
+                        || c == '_'
+                        || c == '-'
+                        || c == ':'
+                        || c == '.'
+                        || c == '@'
                 })
                 .to_string();
             if name_raw.is_empty() {

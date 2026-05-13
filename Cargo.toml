@@ -88,6 +88,12 @@ cosmic-text = { version = "0.12" }
 slotmap = "1"
 indexmap = { version = "2", features = ["serde"] }
 imbl = "3"
+
+# TOML parser for the PRSS stylesheet language (the "CSS" of the
+# Prism stack — see `docs/dev/prss-reference.md`). Used by
+# `prism-core::language::prss` to parse `.prss` files into the
+# `StyleSheet` IR consumed by `prism-ui-runtime` at lowering time.
+toml = { version = "0.8", default-features = false, features = ["parse"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 regex = "1"

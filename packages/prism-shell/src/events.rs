@@ -85,12 +85,26 @@ pub fn dispatch_event(
                     .as_ref()
                     .map(|h| route_on_click(inner, h))
                     .unwrap_or(false);
+            // Wave 14.3 — `bind:value="<node-id>.<key>"` on an
+            // `<input>` lowers to a `data-bind-value` semantic attr.
+            // When the click lands on a hit carrying that attr (and
+            // no chrome route already claimed it), start a field-focus
+            // session against the bound source. The existing
+            // `FieldFocusService` then routes subsequent text / key
+            // events into `set_node_prop` so typing in the input
+            // writes back to the doc-node prop.
+            let bound = !routed
+                && hit
+                    .as_ref()
+                    .map(|h| route_bind_input_focus(inner, h))
+                    .unwrap_or(false);
             // Wave 3.4: any primary click outside the context menu
             // dismisses it. Sits before the canvas-node-select route
             // so clicking on a node behind the menu re-selects rather
             // than leaving a stale overlay.
             let dismissed = !routed
                 && !acted
+                && !bound
                 && hit
                     .as_ref()
                     .map(|h| route_context_menu_dismiss(inner, h))
@@ -103,6 +117,7 @@ pub fn dispatch_event(
             // under it rather than re-selecting it.
             let palette_armed = !routed
                 && !acted
+                && !bound
                 && !dismissed
                 && hit
                     .as_ref()
@@ -116,6 +131,7 @@ pub fn dispatch_event(
             // this — `routed` short-circuits the chain.
             let selected = !routed
                 && !acted
+                && !bound
                 && !dismissed
                 && !palette_armed
                 && hit
@@ -126,7 +142,14 @@ pub fn dispatch_event(
             // Skipped when a palette drag claimed the press so the
             // canvas doesn't also try to grab the same down event.
             let captured = !palette_armed && inner.borrow_mut().state.canvas.pointer_down(*x, *y);
-            blurred || routed || acted || dismissed || palette_armed || selected || captured
+            blurred
+                || routed
+                || acted
+                || bound
+                || dismissed
+                || palette_armed
+                || selected
+                || captured
         }
         Event::PointerMove { x, y } => {
             // B4: a property-row number-scrub session intercepts
@@ -753,65 +776,189 @@ fn step_number_on_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool 
 /// (see `prism_builder::signal::parse_action`) but the executor is
 /// a no-op pending their owning subsystems — the parse step is
 /// what keeps `.prism-ui` source author-clean today.
+///
+/// **Wave 14.3 — event modifiers.** Every `data-on-click*` attr on
+/// the hit is dispatched in attribute order; the modifier suffix
+/// (`-once`, `-stop`, `-prevent`) is parsed from the attr key and
+/// applied around the action:
+///
+/// * **`.once`** — the `(hit-id, attr-key)` pair is recorded in
+///   [`AppState::once_fired`]; subsequent dispatches no-op until the
+///   set is cleared (selection change, document reload).
+/// * **`.stop` / `.prevent`** — the router returns `true` after the
+///   handler runs regardless of whether the action did work, so the
+///   rest of the pointer-down chain (canvas selection, palette drag,
+///   gizmo capture) is suppressed. In a retained-mode tree there is
+///   no parent-bubbling to halt; "propagation" here means the
+///   pointer-down fallback chain.
 fn route_on_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
     use prism_builder::signal::{parse_action, ParsedAction};
 
-    let Some(raw) = attr_value(hit, "data-on-click") else {
+    // Gather every `data-on-click*` candidate up front. Each entry is
+    // (attr-key, raw action body, parsed modifier set). Multiple
+    // candidates on one element are unusual but legal — `on:click=`
+    // and `on:click.once=` coexist as distinct attrs and both fire.
+    let candidates: Vec<(String, String, EventModifiers)> = hit
+        .attrs
+        .iter()
+        .filter_map(|(k, v)| {
+            let suffix = k.strip_prefix("data-on-click")?;
+            let mods = EventModifiers::parse(suffix.trim_start_matches('-'));
+            Some((k.clone(), v.clone(), mods))
+        })
+        .collect();
+    if candidates.is_empty() {
         return false;
-    };
-    let Some(action) = parse_action(raw) else {
-        return false;
-    };
+    }
+
     let mut guard = inner.borrow_mut();
     let g = &mut *guard;
     let viewport = g.viewport;
     let registry = g.registry.as_component_registry();
     let modifier_registry: &prism_builder::ModifierRegistry = g.modifier_registry.as_ref();
-    // Split-borrow: `services` reads the command table while `ctx`
-    // borrows every mutable shell resource. Re-borrowing each field
-    // through `g` keeps the borrow checker happy — the same pattern
-    // the keyboard / wheel fan-out uses upstream.
     let services = &g.services;
-    let mut ctx = crate::services::MutCtx {
-        state: &mut g.state,
-        viewport,
-        undo: &mut g.undo,
-        vfs: g.vfs.as_mut(),
-        luau: g.luau.as_mut(),
-        clipboard: &mut g.clipboard,
-        registry: Some(registry),
-        modifier_registry: Some(modifier_registry),
-    };
-    match action {
-        ParsedAction::Emit { signal } => {
-            // `fire_signal` returns the count of connections fired —
-            // when zero, nothing observable changed, so the
-            // pointer-down chain falls through to canvas / drag
-            // handlers exactly as if no `on:click` had been authored.
-            crate::services::signals::fire_signal(
-                &mut ctx,
-                hit.id.as_str(),
-                signal.as_str(),
-                &serde_json::Value::Null,
-                0,
-            ) > 0
+
+    let mut any_fired = false;
+    let mut consume = false;
+    for (attr_key, raw, mods) in candidates {
+        // `.once` gate: skip if this exact handler already fired
+        // against this hit-id in a prior dispatch.
+        if mods.once {
+            let key = (hit.id.clone(), attr_key.clone());
+            if g.state.once_fired.contains(&key) {
+                // Still respect `.stop`/`.prevent` so a `.once.stop`
+                // handler keeps blocking the fallback chain even
+                // after firing once.
+                if mods.stop || mods.prevent {
+                    consume = true;
+                }
+                continue;
+            }
         }
-        ParsedAction::Command { id } => services.commands().run(id.as_str(), &mut ctx),
-        // Parsed but no shipped handler yet — see `parse_action`
-        // docstring. Returning `false` lets the rest of the
-        // pointer-down chain (canvas selection / drag capture) still
-        // run, matching the "no handler authored" case.
-        ParsedAction::Navigate { .. }
-        | ParsedAction::SetProperty { .. }
-        | ParsedAction::Toggle { .. }
-        | ParsedAction::Play { .. }
-        | ParsedAction::Luau { .. }
-        // `bind` declares an ongoing reactive relationship, not a
-        // per-click action — Phase 4 of `docs/dev/dioxus-inspiration.md`.
-        // The Effect-installation seam lands later; the inline-action
-        // executor treats `bind` as a no-op here.
-        | ParsedAction::Bind { .. }
-        | ParsedAction::Unsupported { .. } => false,
+        let Some(action) = parse_action(&raw) else {
+            continue;
+        };
+        let fired = {
+            let mut ctx = crate::services::MutCtx {
+                state: &mut g.state,
+                viewport,
+                undo: &mut g.undo,
+                vfs: g.vfs.as_mut(),
+                luau: g.luau.as_mut(),
+                clipboard: &mut g.clipboard,
+                registry: Some(registry),
+                modifier_registry: Some(modifier_registry),
+            };
+            match action {
+                ParsedAction::Emit { signal } => {
+                    crate::services::signals::fire_signal(
+                        &mut ctx,
+                        hit.id.as_str(),
+                        signal.as_str(),
+                        &serde_json::Value::Null,
+                        0,
+                    ) > 0
+                }
+                ParsedAction::Command { id } => services.commands().run(id.as_str(), &mut ctx),
+                ParsedAction::Navigate { .. }
+                | ParsedAction::SetProperty { .. }
+                | ParsedAction::Toggle { .. }
+                | ParsedAction::Play { .. }
+                | ParsedAction::Luau { .. }
+                | ParsedAction::Bind { .. }
+                | ParsedAction::Unsupported { .. } => false,
+            }
+        };
+        if mods.once && fired {
+            g.state
+                .once_fired
+                .insert((hit.id.clone(), attr_key.clone()));
+        }
+        any_fired = any_fired || fired;
+        if mods.stop || mods.prevent {
+            consume = true;
+        }
+    }
+    any_fired || consume
+}
+
+/// **Wave 14.3** — `bind:value="<node-id>.<key>"` on an `<input>`
+/// lowers to a `data-bind-value` semantic attr on the input's hit.
+/// When the click lands on a hit carrying that attr (and the chrome
+/// roles haven't already claimed the press), parse the source path
+/// and start a field-focus session against the bound doc node. The
+/// existing [`crate::services::field_focus`] service then routes the
+/// next `Event::Text` / `Event::Key` keystrokes into
+/// [`crate::state::AppState::set_node_prop`] so typing in the input
+/// writes back to the underlying prop. Returns `true` when a focus
+/// session actually started.
+///
+/// Source grammar accepted today is `"<node-id>.<key>"` — the same
+/// shape `prism_builder::DocumentBindings::install_for` recognises
+/// for `ActionKind::Bind` connections. Other shapes (`$selection.name`
+/// selector refs, literals) round-trip in the data attr but don't
+/// start a focus session — the host can plug additional resolvers
+/// without rewiring this seam.
+fn route_bind_input_focus(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(source) = attr_value(hit, "data-bind-value") else {
+        return false;
+    };
+    let Some((node, key)) = source.split_once('.') else {
+        return false;
+    };
+    let node = node.trim();
+    let key = key.trim();
+    if node.is_empty() || key.is_empty() || node.starts_with('$') {
+        return false;
+    }
+    // Validate the source node lives in the canvas document before
+    // starting focus. Without the check, a typo in the bind path
+    // would leave a stuck focus session pointing at nothing.
+    let node = node.to_string();
+    let key = key.to_string();
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let exists = g
+        .state
+        .canvas
+        .document
+        .root
+        .as_ref()
+        .and_then(|r| r.find(&node))
+        .is_some();
+    if !exists {
+        return false;
+    }
+    g.state.begin_field_focus(&node, &key, "text")
+}
+
+/// Parsed event-modifier suffix attached to a `data-on-<event>` attr
+/// key. Authors write `on:click.once.stop="cmd save"` — the lowering
+/// pass joins the dotted suffix with dashes (`data-on-click-once-stop`)
+/// so this struct just splits the suffix on `-` and matches each
+/// segment against the supported set. Unknown segments are dropped.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct EventModifiers {
+    once: bool,
+    stop: bool,
+    prevent: bool,
+}
+
+impl EventModifiers {
+    fn parse(suffix: &str) -> Self {
+        let mut m = Self::default();
+        if suffix.is_empty() {
+            return m;
+        }
+        for part in suffix.split('-') {
+            match part {
+                "once" => m.once = true,
+                "stop" => m.stop = true,
+                "prevent" => m.prevent = true,
+                _ => {}
+            }
+        }
+        m
     }
 }
 
@@ -2045,6 +2192,281 @@ mod tests {
             Some(&Value::Bool(false)),
             "emit cascade ran the connection's SetProperty action"
         );
+    }
+
+    /// Wave 14.3 — modifier suffix parser splits a dash-joined chain
+    /// into a typed bool set. Order doesn't matter; unknown segments
+    /// drop silently.
+    #[test]
+    fn event_modifier_parser_recognises_known_segments() {
+        assert_eq!(EventModifiers::parse(""), EventModifiers::default());
+        assert_eq!(
+            EventModifiers::parse("once"),
+            EventModifiers {
+                once: true,
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            EventModifiers::parse("once-stop-prevent"),
+            EventModifiers {
+                once: true,
+                stop: true,
+                prevent: true,
+            }
+        );
+        assert_eq!(
+            EventModifiers::parse("stop-once"),
+            EventModifiers {
+                once: true,
+                stop: true,
+                ..Default::default()
+            },
+            "modifier segments are commutative",
+        );
+        assert_eq!(
+            EventModifiers::parse("once-bogus"),
+            EventModifiers {
+                once: true,
+                ..Default::default()
+            },
+            "unknown segments are dropped without affecting recognised ones",
+        );
+    }
+
+    /// `.once` fires the handler the first time, then no-ops on every
+    /// subsequent click against the same hit-id + attr-key pair. We
+    /// observe through the `signals.fire-mounted` command — its
+    /// per-frame redraw signal is the proxy for "did the handler run?"
+    #[test]
+    fn pointer_down_on_data_on_click_once_fires_only_first_time() {
+        use prism_ui_runtime::event::PointerButton;
+
+        let shell = Shell::new().expect("boot");
+        let hit = || HitRect {
+            id: "demo-once".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 80.0,
+                height: 24.0,
+            },
+            attrs: vec![(
+                "data-on-click-once".into(),
+                "cmd signals.fire-mounted".into(),
+            )],
+        };
+        let press = || Event::PointerDown {
+            x: 10.0,
+            y: 10.0,
+            button: PointerButton::Primary,
+        };
+        let dirty_first = dispatch_event(&shell.inner, &press(), Some(hit()));
+        assert!(
+            dirty_first,
+            "first dispatch should fire the once-gated command"
+        );
+        // Once-fired registry should now contain the (hit-id, attr-key).
+        assert!(shell
+            .inner
+            .borrow()
+            .state
+            .once_fired
+            .contains(&("demo-once".to_string(), "data-on-click-once".to_string())));
+        let dirty_second = dispatch_event(&shell.inner, &press(), Some(hit()));
+        assert!(
+            !dirty_second,
+            "second dispatch must be a no-op — `.once` removes the handler"
+        );
+    }
+
+    /// `.stop` returns `true` from `route_on_click` regardless of
+    /// whether any connection fired — the rest of the pointer-down
+    /// fallback chain (canvas selection, palette drag) is suppressed.
+    /// We prove this by clicking a `data-on-click-stop` attr whose
+    /// action emits a signal nobody subscribed to: without `.stop`
+    /// that would fall through to the canvas. With `.stop`, the
+    /// router consumes the press and reports dirty.
+    #[test]
+    fn pointer_down_on_data_on_click_stop_consumes_even_without_fire() {
+        use prism_ui_runtime::event::PointerButton;
+
+        let shell = Shell::new().expect("boot");
+        let hit = HitRect {
+            id: "demo-stop".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 80.0,
+                height: 24.0,
+            },
+            attrs: vec![(
+                "data-on-click-stop".into(),
+                // No connection wired — `fire_signal` returns 0.
+                "emit nobody-listens".into(),
+            )],
+        };
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 10.0,
+                y: 10.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(
+            dirty,
+            "`.stop` consumes the press so the router reports redraw"
+        );
+    }
+
+    /// Bare `on:click` (no modifier) preserves the legacy semantics:
+    /// when the action fires no observable mutation, the router
+    /// returns `false` so the rest of the pointer-down chain runs.
+    /// Pair with the `.stop` test above to prove the modifier is the
+    /// thing that flipped the consume bit.
+    #[test]
+    fn pointer_down_on_bare_data_on_click_with_no_subscriber_falls_through() {
+        use prism_ui_runtime::event::PointerButton;
+
+        let shell = Shell::new().expect("boot");
+        let hit = HitRect {
+            id: "demo-bare".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 80.0,
+                height: 24.0,
+            },
+            attrs: vec![("data-on-click".into(), "emit nobody-listens".into())],
+        };
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 10.0,
+                y: 10.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        // Falls through to canvas pointer_down — which on an empty
+        // doc + no selection is itself a no-op, so `dirty` stays
+        // false. The contract under test is `route_on_click` returning
+        // false; observing dirty is the visible witness.
+        assert!(
+            !dirty,
+            "bare on:click without a connection nor canvas hit must not consume"
+        );
+    }
+
+    /// Wave 14.3 — clicking an `<input>` whose `bind:value`
+    /// resolves to `<node-id>.<key>` opens a field-focus session
+    /// against that doc node. The subsequent `Event::Text` then
+    /// flows through `FieldFocusService` and writes back to the
+    /// node's prop via `set_node_prop`.
+    #[test]
+    fn pointer_down_on_input_with_bind_value_opens_field_focus() {
+        use prism_builder::Node;
+        use prism_ui_runtime::event::PointerButton;
+        use serde_json::{json, Value};
+
+        let shell = Shell::new().expect("boot");
+        {
+            let mut guard = shell.inner.borrow_mut();
+            let root = guard
+                .state
+                .canvas
+                .document
+                .root
+                .as_mut()
+                .expect("canvas root");
+            root.children.push(Node {
+                id: "form-email".into(),
+                component: prism_builder::ComponentId::from("container"),
+                props: json!({ "value": "" }),
+                children: vec![],
+                layout_mode: Default::default(),
+                transform: Default::default(),
+                modifiers: vec![],
+                style: Default::default(),
+            });
+        }
+        let hit = HitRect {
+            id: "email-input".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height: 24.0,
+            },
+            attrs: vec![("data-bind-value".into(), "form-email.value".into())],
+        };
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 10.0,
+                y: 10.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty, "bind:value click should request a redraw");
+        let focus = shell
+            .inner
+            .borrow()
+            .state
+            .field_focus
+            .clone()
+            .expect("field focus session active");
+        assert_eq!(focus.target_id, "form-email");
+        assert_eq!(focus.key, "value");
+        assert_eq!(focus.kind, "text");
+
+        // Now simulate a keystroke landing on the focused input.
+        let dirty = dispatch_event(&shell.inner, &Event::Text { text: "hi".into() }, None);
+        assert!(dirty, "typed text writes back through field-focus");
+        let val = shell
+            .inner
+            .borrow()
+            .state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find("form-email"))
+            .and_then(|n| n.props.get("value").cloned())
+            .unwrap_or(Value::Null);
+        assert_eq!(val, Value::String("hi".into()));
+    }
+
+    /// Clicking an input whose bind path points at a non-existent
+    /// node is a clean no-op — the router falls through to the
+    /// canvas chain instead of getting wedged on a phantom focus.
+    #[test]
+    fn pointer_down_on_input_with_bogus_bind_path_falls_through() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        let hit = HitRect {
+            id: "input-x".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height: 24.0,
+            },
+            attrs: vec![("data-bind-value".into(), "missing-node.value".into())],
+        };
+        dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 10.0,
+                y: 10.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(shell.inner.borrow().state.field_focus.is_none());
     }
 
     #[test]

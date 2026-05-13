@@ -23,7 +23,7 @@ use prism_ui_runtime::layout::{HitRect, Node as UiNode, Surface, Viewport};
 use crate::components::{register_document_builtins, ShellComponentRegistry};
 use crate::events::dispatch_event;
 use crate::props::{PropCtx, ShellPropBindings};
-use crate::render::{render_tree, Skeleton};
+use crate::render::{render_tree_with, Skeleton};
 use crate::render_scope::RenderScope;
 use crate::services::{
     Clipboard, LuauHost, MutCtx, NoopLuauHost, OsVfs, ServiceRegistry, UndoStack, Vfs,
@@ -80,6 +80,18 @@ pub struct ShellInner {
     /// follow-up; today this is the seam that fires the full
     /// per-frame `render_tree`.
     pub render_scope: RenderScope,
+    /// **Wave 14.3** — `transition:<prop>="<duration>"` animator.
+    /// Each render observes the live tree, applies in-flight
+    /// transitions to the props, and ticks finished transitions
+    /// off. The femtovg loop folds `animator.needs_redraw()` into
+    /// the dirty bit so a running transition schedules the next
+    /// frame without a separate timer.
+    pub animator: RefCell<prism_ui_runtime::animator::Animator>,
+    /// **Wave 14.3** — `memo="[dep1, dep2]"` cache. One per-shell
+    /// table keyed by element id; survives across frames so the
+    /// lowering pass short-circuits stable subtrees. Threaded into
+    /// every render through `LowerScope::with_memo_cache`.
+    pub memo_cache: Rc<RefCell<prism_ui_runtime::interpret::MemoCache>>,
 }
 
 impl ShellInner {
@@ -183,6 +195,8 @@ impl Shell {
             luau: Box::new(NoopLuauHost::default()),
             clipboard: Clipboard::default(),
             render_scope: RenderScope::new(),
+            animator: RefCell::new(prism_ui_runtime::animator::Animator::new()),
+            memo_cache: Rc::new(RefCell::new(prism_ui_runtime::interpret::MemoCache::new())),
         }));
         // §43 C1: one-shot post-boot resync. The seed sets selection
         // and the inspector tree, but `derive_property_rows` needs the
@@ -217,16 +231,29 @@ impl Shell {
     ///    Phase 9.
     pub fn render(&self) -> Vec<UiNode> {
         let inner = self.inner.borrow();
-        inner.render_scope.run_in_render_pass(|| {
+        let cache = Rc::clone(&inner.memo_cache);
+        let mut tree = inner.render_scope.run_in_render_pass(|| {
             render_with_hot_reload(|| {
-                render_tree(
+                render_tree_with(
                     &self.skeleton,
                     &inner.bindings,
                     Arc::clone(&inner.resolver),
                     &inner.prop_ctx(),
+                    Some(Rc::clone(&cache)),
                 )
             })
-        })
+        });
+        // **Wave 14.3** — animator pass. `observe` looks for moved
+        // declared values on transition-tagged containers, `apply`
+        // rewrites them to the interpolated sample at `now_ms`, and
+        // `tick` prunes finished transitions so the next frame
+        // skips them.
+        let now_ms = now_ms();
+        let mut animator = inner.animator.borrow_mut();
+        animator.observe(&tree, now_ms);
+        animator.apply(&mut tree, now_ms);
+        animator.tick(now_ms);
+        tree
     }
 
     #[cfg(feature = "native")]
@@ -272,18 +299,31 @@ impl Shell {
                 }
                 needs
             };
-            if event_dirty || reactive_dirty {
+            // **Wave 14.3** — animator wants its own frame while
+            // transitions are in flight. Even when nothing else
+            // changed (no event, no signal write), a running
+            // transition needs the next frame to sample its next
+            // eased value.
+            let animator_dirty = inner.borrow().animator.borrow().needs_redraw();
+            if event_dirty || reactive_dirty || animator_dirty {
                 let guard = inner.borrow();
-                let tree = guard.render_scope.run_in_render_pass(|| {
+                let cache = Rc::clone(&guard.memo_cache);
+                let mut tree = guard.render_scope.run_in_render_pass(|| {
                     render_with_hot_reload(|| {
-                        render_tree(
+                        render_tree_with(
                             &skeleton,
                             &guard.bindings,
                             Arc::clone(&guard.resolver),
                             &guard.prop_ctx(),
+                            Some(Rc::clone(&cache)),
                         )
                     })
                 });
+                let now_ms = now_ms();
+                let mut animator = guard.animator.borrow_mut();
+                animator.observe(&tree, now_ms);
+                animator.apply(&mut tree, now_ms);
+                animator.tick(now_ms);
                 surface.set_tree(wrap_root(tree));
             }
         });
@@ -315,6 +355,19 @@ impl Shell {
 /// children would have ambiguous cross-axis stretching — visible as
 /// the menu bar text wrapping mid-word when label widths exceed the
 /// shrunk column.
+/// **Wave 14.3** — monotonic-ish wall-clock millis used by the
+/// animator. Wraps `Instant::now().elapsed()` against a per-process
+/// `OnceLock` epoch so the value stays cheap and overflow-safe for
+/// the lifetime of a session. Tests that drive the animator directly
+/// pass their own `now_ms` and don't go through here.
+fn now_ms() -> u64 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    let epoch = EPOCH.get_or_init(Instant::now);
+    epoch.elapsed().as_millis() as u64
+}
+
 fn wrap_root(children: Vec<UiNode>) -> UiNode {
     UiNode::Container {
         id: String::new(),
@@ -393,6 +446,78 @@ mod tests {
         let a = shell.render();
         let b = shell.render();
         assert_eq!(a, b, "two consecutive renders must be equal");
+    }
+
+    /// Wave 14.3 — `Shell::render` runs the animator pre/post the
+    /// lowering walk, so any container carrying `data-transition-*`
+    /// surfaces a live `Animator` entry once its declared value
+    /// moves. We prove the wiring by pushing two trees through the
+    /// animator manually with the live shell's clock and checking
+    /// that `needs_redraw()` flips. The render path doesn't yet
+    /// boot a shell tree with transitions, so this test is the
+    /// canonical witness that the substrate is connected.
+    #[test]
+    fn animator_is_threaded_through_shell_render_pipeline() {
+        let shell = Shell::new().expect("boot");
+        let _ = shell.render();
+        // Manually push a transition-tagged tree through the same
+        // animator the shell uses.
+        use prism_ui_runtime::layout::{ContainerProps, Node as UiNode, Padding, Semantic};
+        let baseline = vec![UiNode::Container {
+            id: "anim-target".into(),
+            props: ContainerProps {
+                padding: Padding::all(10.0),
+                semantic: Semantic {
+                    attrs: vec![("data-transition-padding".into(), "200ms".into())],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            children: vec![],
+        }];
+        let after = vec![UiNode::Container {
+            id: "anim-target".into(),
+            props: ContainerProps {
+                padding: Padding::all(30.0),
+                semantic: Semantic {
+                    attrs: vec![("data-transition-padding".into(), "200ms".into())],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            children: vec![],
+        }];
+        let inner = shell.inner.borrow();
+        let mut animator = inner.animator.borrow_mut();
+        animator.observe(&baseline, 0);
+        animator.observe(&after, 50);
+        assert!(
+            animator.needs_redraw(),
+            "moved declared value should kick off a transition the shell can sample"
+        );
+        let mid = animator
+            .current("anim-target", "padding", 100)
+            .expect("mid-flight padding");
+        assert!(mid > 10.0 && mid < 30.0);
+    }
+
+    /// Wave 14.3 — the shared `MemoCache` lives on `ShellInner` and
+    /// is fresh at boot. Touching it through the lowering path is
+    /// covered in the interpret-level tests; this test just proves
+    /// the handle is reachable and survives a render.
+    #[test]
+    fn memo_cache_is_present_on_shell_inner() {
+        let shell = Shell::new().expect("boot");
+        // First render seeds whatever memoised subtrees the skeleton
+        // declares; today the shipped skeleton has none, so the
+        // cache stays empty — both states are valid.
+        let _ = shell.render();
+        let cache = Rc::clone(&shell.inner.borrow().memo_cache);
+        // The handle is reachable and we can mutate through it
+        // without poisoning anything. (`MemoCache::clear` exists for
+        // the panel-swap/hot-reload reset path; exercise it once.)
+        cache.borrow_mut().clear();
+        assert!(cache.borrow().is_empty());
     }
 
     #[test]

@@ -72,6 +72,22 @@ pub fn render_tree(
     resolver: Arc<dyn TagResolver>,
     ctx: &PropCtx,
 ) -> Vec<UiNode> {
+    render_tree_with(skeleton, bindings, resolver, ctx, None)
+}
+
+/// **Wave 14.3** — same as [`render_tree`] but threads a host-owned
+/// [`prism_ui_runtime::interpret::MemoCache`] through the lowering
+/// scope. Elements carrying both `memo="[…]"` and a resolvable
+/// `id="…"` skip re-lowering whenever their dep tuple matches the
+/// previously-cached one. Callers without a cache pass `None` and
+/// get the legacy behaviour.
+pub fn render_tree_with(
+    skeleton: &Skeleton,
+    bindings: &ShellPropBindings,
+    resolver: Arc<dyn TagResolver>,
+    ctx: &PropCtx,
+    memo_cache: Option<std::rc::Rc<std::cell::RefCell<prism_ui_runtime::interpret::MemoCache>>>,
+) -> Vec<UiNode> {
     let emissions = bindings.snapshot(ctx);
     let doc = fill_compositions(skeleton, &emissions);
     let host_children = harvest_host_children(&emissions);
@@ -83,7 +99,7 @@ pub fn render_tree(
     // `shell.component-palette`, `shell.properties-panel`, …) get
     // empty props and zero children. One snapshot, two consumers.
     let tag_emissions = harvest_tag_emissions(&emissions);
-    let scope = LowerScope::default()
+    let mut scope = LowerScope::default()
         .with_resolver(resolver)
         .with_host_children_by_tag(host_children)
         .with_tag_emissions(tag_emissions)
@@ -93,6 +109,9 @@ pub fn render_tree(
         // tokens are the workspace default; later waves swap for a
         // user-customised palette through a settings hook.
         .with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+    if let Some(cache) = memo_cache {
+        scope = scope.with_memo_cache(cache);
+    }
     lower_document_with_scope(&doc, &scope)
 }
 

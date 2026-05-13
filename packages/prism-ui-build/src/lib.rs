@@ -29,8 +29,16 @@ use std::path::Path;
 
 use prism_core::language::prism_ui::{parse, AttributeValue, Document, Element, Node, ParseError};
 
+pub mod prss_hash;
+pub mod prss_watch;
 pub mod template_hash;
 pub mod template_watch;
+pub use prss_hash::{
+    collect_prss_literal_slots, compare_prss_fingerprints, prss_full_hash, prss_structural_hash,
+    PrssFingerprint, PrssLiteralOwner, PrssLiteralPatch, PrssLiteralSlot, PrssPatchOutcome,
+    PrssTokenBucket,
+};
+pub use prss_watch::{PrssChange, PrssFingerprintCache};
 pub use template_hash::{
     collect_literal_slots, compare_fingerprints, full_hash, structural_hash, LiteralPatch,
     LiteralSlot, PatchOutcome, TemplateFingerprint,

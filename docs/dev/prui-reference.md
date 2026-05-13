@@ -12,6 +12,14 @@ in `packages/prism-core/src/language/prism_ui/`; lowering in
 the legacy `.prism-ui` extension; the `.prui` rename pass is a sibling
 follow-up. Everything else here is current.
 
+**Recently landed (2026-05-13):** `for-step` (`for="i in 0..100 step 10"`),
+`for-reverse` (`for="item in items reverse"`), `key="…"` reconciliation
+hint round-trip as `data-key`, §16 imperative-control discipline,
+numeric units (`14px` / `1rem` / `0.5em` / `50%`), CSS-shorthand
+padding (`padding="8 16"`, TRBL), `<fragment>` grouping element,
+`@event` ≡ `on:event` and `:prop` ≡ `bind:prop` shorthands, `class="…"`
+PRSS integration (see [PRSS reference](prss-reference.md)).
+
 **Related docs:** ADR-008 (decision to replace Slint with the DSL),
 `clay-migration-plan.md` (phase plan), `composable-builder-plan.md`
 (Waves 9 – 15 of grammar), `dioxus-inspiration.md` (reactive
@@ -99,6 +107,7 @@ other tag is dispatched through a host-registered `TagResolver`
 | `slot` | (passthrough) | Named-slot insertion point (§7.2). Falls back to the slot's own children when the caller didn't override. |
 | `host-children` | (passthrough) | Inject the caller's pre-lowered children at this seam (§7.1). |
 | `let` | (no-op) | Sibling-scoped binding declaration (§6.4). |
+| `fragment` | (passthrough) | Emit children verbatim with no wrapping container. Useful for multi-element `if=` / `for=` bodies; React `<>…</>` / Vue `<template>` / Svelte `<svelte:fragment>` equivalent. |
 
 **Everything else** — `<shell.icon-button>`, `<prism.text-input>`,
 `<my.card>` — is a *registered tag* routed through the host's
@@ -118,6 +127,7 @@ wrapper, keep its children" if no resolver claims it.
 | `tag` | string — HTML tag name on the `Semantic` carrier | `None` |
 | `role` | string — ARIA role | `None` |
 | `aria-label` | string — accessibility label | `None` |
+| `key` | string — reconciliation hint; lowers to `data-key` semantic attr (§6.2.1) | `None` |
 
 Anything else lowered through the `style:`, `on:`, `route:`, `data:`,
 `aria:`, `bind:`, `transition:`, `use:` namespaces; see §4.
@@ -166,6 +176,28 @@ primitives) — `<input>` itself is the bare retained widget.
 
 `id`, `width`, `height`. Nothing else.
 
+### 3.6 Numeric units
+
+Length-valued attributes (`gap`, `padding`, `radius`, `font-size`,
+`width`, `height`, `padding-left/right/top/bottom`, …) accept CSS
+unit suffixes. Single seam: every length-valued attribute parses
+through `parse_f32` / `parse_sizing` so author intent is uniform
+across the DSL.
+
+| Suffix | Meaning | Example |
+|---|---|---|
+| (none) | px (matches CSS bare-number rule) | `padding="16"` |
+| `px` | px | `padding="16px"` |
+| `rem` | `n × REM_PX` (16) | `font-size="0.875rem"` → 14 |
+| `em` | same as `rem` today | `padding="1em"` |
+| `%` | sizing only; lowers to `Sizing::Percent(n/100)` | `width="50%"` |
+| `grow` | sizing only; `Sizing::Grow` | `height="grow"` |
+| `fit` / `auto` | sizing only; `Sizing::Fit` | `width="fit"` |
+
+`em` resolves to the same constant as `rem` today — proper
+parent-font-size scope threading is a follow-up. The `tokens`
+binding (§8) is the idiomatic path for theme-driven sizes.
+
 ---
 
 ## 4. Attribute namespaces
@@ -177,8 +209,8 @@ being a known keyword). The classifier is
 | Namespace | Prefix / keyword | Lowers to | Example |
 |---|---|---|---|
 | **Bare** | (no prefix) | Container/text/image bare props (§3.1) | `gap="8"` |
-| **On** | `on:` | `data-on-<event>` semantic attr; routed by the shell event router | `on:click="cmd save"` |
-| **Bind** | `bind:` | `data-bind-<prop>` semantic attr; `DocumentBindings::install_for` installs the reactive `Effect` at document load | `bind:value="form.email"` |
+| **On** | `on:` *or* `@` shorthand | `data-on-<event>` semantic attr; routed by the shell event router | `on:click="cmd save"` / `@click="cmd save"` |
+| **Bind** | `bind:` *or* `:` shorthand | `data-bind-<prop>` semantic attr; `DocumentBindings::install_for` installs the reactive `Effect` at document load | `bind:value="form.email"` / `:value="form.email"` |
 | **ControlFlow** | `if` / `else-if` / `else` / `for` | Sibling expansion pass (§6) | `if="{count > 0}"` |
 | **Style** | `style:` | Style override into `ContainerProps` / `TextProps` (§4.3) | `style:background="#0060c0"` |
 | **Facet** | `fct:` | Reserved for `FacetDef` lowering; pass-through today | `fct:items="resource:posts"` |
@@ -219,10 +251,25 @@ pointer-down time and dispatches through
 | `bind <key> from <source>` | `bind value from form.email` | Two-way binding wiring. |
 | `luau { … }` | `luau { props:write('x', 1) }` | Inline Luau handler — the escape hatch. |
 
-**Event modifiers** (Wave 14.3, round-trip only today):
-`on:click.once`, `on:click.stop`, `on:click.prevent` parse and
-serialise as `data-on-click-once`, etc. Behaviour wiring is a
-future runtime hook.
+**Event modifiers** (Wave 14.3 — fully wired). `on:click.once`,
+`on:click.stop`, `on:click.prevent` lower to `data-on-click-once`,
+`data-on-click-stop`, `data-on-click-prevent` respectively (dotted
+suffix joined with dashes). At dispatch time:
+
+- **`.once`** — the shell records the `(hit-id, attr-key)` pair in
+  `AppState::once_fired` after the first dispatch; subsequent
+  clicks on the same handler are no-ops until the document
+  reloads.
+- **`.stop` / `.prevent`** — the router returns the consume bit
+  regardless of whether the action did observable work, so the
+  rest of the pointer-down chain (canvas selection, palette drag,
+  gizmo capture) is suppressed. In a retained-mode tree there is
+  no parent-bubbling to halt; "propagation" here means the
+  pointer-down fallback chain.
+
+Modifiers compose: `on:click.once.stop="emit save"` fires once and
+consumes the press. Order is irrelevant — the suffix parser splits
+on `-` and matches against the recognised set.
 
 ### 4.2 `bind:` — reactive bindings
 
@@ -243,7 +290,7 @@ not as data-attrs. Six recognised bare keys for containers
 |---|---|---|
 | `background` | `ContainerProps.background` | hex colour |
 | `radius` | `ContainerProps.radius` (uniform) | number (px) |
-| `padding` | `ContainerProps.padding` (uniform) | number (px) |
+| `padding` | `ContainerProps.padding` | CSS-shorthand: `"8"` (uniform), `"8 16"` (V/H), `"8 16 24"` (top/H/bottom), `"8 16 24 32"` (TRBL) |
 | `padding-left/right/top/bottom` | per-side padding | number (px) |
 | `gap` | `ContainerProps.gap` | number (px) |
 | `width`, `height` | `ContainerProps.width/height` | `grow` \| `fit` \| number |
@@ -307,10 +354,23 @@ is equivalent to authoring two `Modifier` entries on the node's
 ### 4.7 `transition:` — animations
 
 `transition:<prop>="<duration>"` lowers to
-`data-transition-<prop>`. The runtime `Effect`-driven animator
-that interpolates the prop over the duration lands when the
-animator does; for now data carries author intent and serialises
-on the SSR side as a CSS-equivalent semantic attr.
+`data-transition-<prop>`. The
+[`prism_ui_runtime::animator::Animator`] substrate consumes the
+attribute through a three-call lifecycle: `observe` pre-render to
+detect a moved declared value, `apply` mid-render to rewrite the
+prop to its interpolated sample, and `tick` post-render to prune
+finished transitions. Hosts that want animated transitions
+construct one `Animator`, share it across frames, and merge its
+`needs_redraw()` bit into the per-frame dirty signal.
+
+Recognised props today (all numeric on `ContainerProps`): `gap`,
+`padding` (uniform), `padding-left`/`-right`/`-top`/`-bottom`,
+`radius` (uniform), and `width`/`height` when sized `Fixed(n)`.
+Mixed-corner radii, percentage sizing, and color interpolation are
+follow-up extensions of the same substrate. Duration parses as
+`"200ms"` / `"1.5s"` / bare-integer-milliseconds; easing defaults
+to linear (`Easing::Linear`) with `EaseIn`, `EaseOut`, `EaseInOut`
+available through the imperative `start_with_easing` API.
 
 ---
 
@@ -447,9 +507,40 @@ Range endpoints are full expressions: `for="i in 0..items.length"`
 works. Reverse ranges (start > end) yield zero items, matching
 Rust's `Range` semantics.
 
+**Modifiers** apply after the source on a `for=` clause:
+
+| Modifier | Shape | Applies to | Effect |
+|---|---|---|---|
+| `step N` | `for="i in 0..100 step 10"` | Range only | Step by `N` between endpoints. `N >= 1`; zero or negative drops the element. Matches Python `range(0, 100, 10)`. |
+| `reverse` | `for="item in items reverse"` | Range, array, object | Flip the emitted order. |
+
+Both modifiers compose and accept either order:
+`for="i in 0..100 step 10 reverse"` and
+`for="i in 0..100 reverse step 10"` are equivalent. A repeated
+modifier (`reverse reverse`, `step 1 step 2`) rejects the whole
+clause so the missing output surfaces the typo.
+
 The loop body is the element itself, applied once per item with
 `item` (and optionally `idx` / `key`) bound in a fork of the
 parent scope.
+
+### 6.2.1 `key="…"` — reconciliation hint
+
+Round-trips to a `data-key` semantic attr. The runtime tree-diff
+that would consume the hint for stable cross-render identity is a
+future unblock; today the hint is preserved so SSR and any future
+incremental-diff substrate inherit author intent verbatim.
+
+```prui
+<shell.signal-connection-row
+    for="row in connections"
+    key="{row.id}"
+    props="{row}"/>
+```
+
+Empty-string values drop the attribute, matching the `data:` /
+`aria:` empty-string filter convention so a ternary that resolves
+to `""` omits the hint.
 
 ### 6.3 `let` — sibling-level constants
 
@@ -748,6 +839,29 @@ daemon-published value transparently routes through IPC; a prop
 bound to a federated topic routes through `FederatedSignal`. No
 DSL change.
 
+### 10.1 `class="…"` and PRSS
+
+A `class="..."` attribute (whitespace-separated class names) on a
+container opts that container into one or more **PRSS classes** —
+the stylesheet vocabulary documented in
+[`prss-reference.md`](prss-reference.md). When a stylesheet is
+installed on the active `LowerScope`, each class resolves through
+its `extends` chain, applies base properties, then layers state
+overrides — all through the same `apply_style_override` vocabulary
+inline `style:` uses.
+
+```prui
+<container class="btn">Cancel</container>
+<container class="btn-primary">Save</container>
+<container class="card row" gap="12"><!-- multiple classes --></container>
+<container class="btn-primary" style:background="#ff0000"><!-- inline wins --></container>
+```
+
+Application order: block defaults → classes (left to right) →
+inline `style:` → `style="{obj}"` spread. Without a stylesheet
+loaded, `class="…"` round-trips harmlessly (no styling change),
+so the same DSL works in headless / SSR / first-boot contexts.
+
 ---
 
 ## 11. Build pipeline
@@ -930,7 +1044,9 @@ Avoids a separate `chrome::hidden_overlay` helper.
 
 Three rough categories of authoring gap. Each is a known
 follow-up; tracked across the composable-builder plan's Wave
-tables.
+tables. (Imperative control — `while`, `break`, `continue`,
+`return` — is a fourth category, but a *deliberate* omission
+rather than a gap; see §16.)
 
 **Render-time imperative state.** Drag gestures with mid-drag
 state machines, hit-test-aware document hosts, retained-mode
@@ -939,12 +1055,26 @@ as runtime *primitives* (`prism.builder-host`, `prism.text-buffer`,
 `prism.canvas-paint`) rather than DSL grammar. The DSL composes
 against the primitive; the primitive owns the imperative body.
 
-**Runtime tag dispatch.** Computing a tag name from data
-(`<{panel.tag} .../>`) is not expressible — tags are static
-identifiers resolved against the registry at parse time. The
-work-around is a finite mapping table on the host
-(`PanelKind::tag_for`) + a routing tag (`shell.dock-panel`) that
-reads its `panel-id` prop and dispatches internally.
+**Runtime tag dispatch.** `<{panel.tag} .../>` is not directly
+expressible, but the equivalent shape lives at the resolver
+level: **`<dispatch component="{expr}" props="{obj}"/>`** resolves
+its `component` attribute through scope and dispatches against
+the live registry at render time. `properties-panel` already uses
+this to materialise per-row inspector editors whose component id
+lives in data.
+
+```prui
+<dispatch for="row, idx in rows"
+          id="props::row::{idx}"
+          component="{row.component}"
+          props="{row.props}"/>
+```
+
+The remaining limit: `<dispatch>` resolves through the host's
+`TagResolver` (i.e. only registered tags), so it cannot target a
+closed-set runtime primitive like `<container>` or `<text>` from
+a data-driven name. That's intentional — the closed set is the
+runtime's contract, not a registry.
 
 **Per-frame imperative bodies.** Anything that needs to compute
 during the render walk (selection bbox in viewport coordinates,
@@ -956,14 +1086,70 @@ Three smaller gaps tracked as deferred Wave rows:
 
 | Gap | Status |
 |---|---|
-| Reconciliation `key="…"` (stable diff across re-renders) | Deferred — no incremental tree-diff substrate |
-| `<teleport to="…"/>` (overlay routing from a deep child) | Deferred — overlays today author at root |
-| `v-memo` / memoised expressions | Deferred — inline expressions are already cheap |
-| Two-way `bind:value` on `<input>` | Deferred until `prism.text-input` body lands |
+| `<teleport to="…"/>` (overlay routing from a deep child) | ✅ Landed (Wave 14.3) — payload AST is collected by a document-level pre-scan and appended at the target id during lowering. Targets see the payload after their own children; binding resolution flows from the destination scope. |
+| `v-memo` / memoised expressions | ✅ Landed (Wave 14.3) — `memo="[dep1, dep2]"` on an element with a resolvable `id` caches the lowered subtree in a host-supplied [`MemoCache`]. Unchanged dep tuples skip re-lowering verbatim. The shell threads its own `ShellInner::memo_cache` into every `render_tree_with` call, so authored memos survive across frames. |
+| Two-way `bind:value` on `<input>` | ✅ Landed (Wave 14.3) — `bind:value="<node-id>.<key>"` lowers to a `data-bind-value` semantic attr; the shell click router consumes it to open a field-focus session, and the existing `FieldFocusService` routes subsequent `Event::Text` / `Event::Key` back to the source prop via `set_node_prop`. |
+| Event modifier behaviour (`.once`, `.stop`, `.prevent`) | ✅ Landed (Wave 14.3) — the shell click router parses the modifier suffix off `data-on-click[-mod]` attr keys, gates dispatch through an `AppState::once_fired` set for `.once`, and returns the consume bit unconditionally for `.stop` / `.prevent`. |
+| `transition:` animator | ✅ Landed (Wave 14.3) — `prism_ui_runtime::animator::Animator` substrate with `observe` / `apply` / `tick` lifecycle. Supports `gap`, `padding[-side]`, `radius`, fixed `width` / `height` interpolation with linear / cubic easing. Wired through `ShellInner::animator`: every `Shell::render` observes the live tree, applies in-flight transitions, and folds `animator.needs_redraw()` into the femtovg loop's dirty bit so the next frame ticks automatically. |
+
+(Reconciliation `key="…"` itself round-trips today as `data-key`;
+the *consumer* is the deferred half — a live tree-diff that uses
+the hint to preserve cross-render identity.)
 
 ---
 
-# Tier-1 / Tier-2 Rust files that genuinely need imperative bodies
+## 16. Imperative control — deliberately not in the grammar
+
+PRUI does **not** support `while`, `do-while`, `break`, `continue`,
+or `return`. These were skipped on purpose in Wave 15 of the
+composable-builder plan. The rationale:
+
+PRUI is a *bounded declarative tree-render DSL*. Each parse of the
+source produces a finite tree of nodes; the runtime walks the
+tree once per frame and exits. The classic imperative-control
+vocabulary doesn't map onto that shape:
+
+| Construct | Why it isn't in PRUI |
+|---|---|
+| `while (cond)` / `do-while` | A render walk has no halt condition — once the tree is walked, the frame is done. Use a bounded `for="i in 0..n"` whose `n` is a computed expression. |
+| `break` | PRUI's `for=` is a *comprehension over an iterable*, not an imperative loop with mid-flight escape. Filter the data before iterating. |
+| `continue` | Same shape as `break` — there is no per-iteration control flow to short-circuit. Wrap the body in `<container if="{predicate}">` to skip individual iterations. |
+| `return` | PRUI elements don't *return* values; they *emit* nodes. To drop an element conditionally, gate it with `if="…"` on the element itself. |
+
+**Modelling the same use cases declaratively:**
+
+| Imperative idiom | PRUI shape |
+|---|---|
+| "Stop iterating when we hit a separator." | `for="row in rows-before-separator"` — filter the array host-side, render against the filtered shape. |
+| "Skip rows where `row.hidden`." | `<container for="row in rows" if="{!row.hidden}">…</container>` — per-iteration `if=` filters the body. |
+| "Render at most N rows." | `for="row in rows.slice(0, N)"` — bound the source. (Today done host-side; slicing in the expression layer is a future addition.) |
+| "Bail out of a whole branch when `state.errored`." | `<container if="{!state.errored}">…</container>` around the branch. |
+| "Loop until some computed condition." | Restate the upper bound: `for="i in 0..(max-iterations)"` with the bound computed in scope or supplied by the host. |
+
+If a genuinely imperative body is required (early exit from a
+long computation, recursive descent with mutation, a state
+machine), the answer is a **Luau modifier** or a **Rust block**,
+not new DSL grammar. Both have full imperative vocabularies and
+compose into the DSL at the right seam:
+
+- **Luau modifier** — author `wrap` / `install_effects` bodies in
+  Luau (`use:my-modifier="…"` from the DSL). Full while / break /
+  return / recursive call vocabulary inside the script.
+- **Rust block** — implement `lower_ui` directly. The composable
+  inspector + DSL self-host path migrates everything that *can*
+  go to the DSL; what remains is exactly the set that needs
+  imperative bodies (§17 below).
+
+**Anti-pattern.** Don't try to fake imperative control with
+recursive `<dispatch component="{this-component}"/>` calls and an
+early-out `if=`. The render walk has no stack-frame model — every
+dispatch is a fresh node; "recursion depth" doesn't exist as a
+concept. If you find yourself reaching for it, the imperative body
+belongs in Luau or Rust.
+
+---
+
+## 17. Tier-1 / Tier-2 Rust files that genuinely need imperative bodies
 
 Per Wave 11.2 of `composable-builder-plan.md`, every visual-only
 chrome component has been migrated to `.prui` source. What remains
@@ -1080,7 +1266,7 @@ host-side flatten pass that emits a typed array of
 `{ kind, depth, pane-id, ratio }` rows the DSL can render with a
 flat `for=`.
 
-### 6. `dock_panel.rs` (~217 lines) — *Tier-2, dynamic tag gap*
+### 6. `dock_panel.rs` (~217 lines) — *Tier-2, ready when host pre-resolves*
 
 Hosts one dock panel: optional tab bar (dispatched via
 `ctx.lower_as("shell.dock-tab-bar", …)` if `tabs` is non-empty),
@@ -1089,18 +1275,28 @@ then a body that adopts the inner subtree as `host_children` or
 from `panel-id` via the Rust lookup `PanelKind::tag_for(id) ->
 &'static str`.
 
-**What the DSL can't express:** runtime tag dispatch. The DSL
-has static tag names — `<shell.dock-tab-bar/>`. There is no
-`<{tag} .../>` form that materialises a tag from a string-valued
-expression at parse time. The `panel-id → content-tag` lookup
-*must* live somewhere; today it's a flat Rust `match`.
+**What the DSL can't express today:** the `panel-id → content-tag`
+mapping itself. `PanelKind::tag_for` is a Rust function; PRUI has
+no way to call it. `<dispatch component="{expr}"/>` already exists
+at the resolver, so the dispatch *mechanic* is in place — the
+gap is plumbing the resolved tag into scope as a binding.
 
-**What unblocks it:** a `<dispatch tag="{expr}" props="{obj}"/>`
-element that resolves its tag from a binding at lower time and
-calls into the resolver with the resolved name. Trivial to add
-to `interpret::lower_element` once the design is locked. The
-remaining body of `dock_panel.rs` would then collapse to `.prui`
-with that dispatch plus a `<host-children/>` composition.
+**What unblocks it:** the host pre-resolves the content tag and
+binds it as a prop on the block. `dock-panel.prui` then becomes:
+
+```prui
+<container direction="column" data:role="dock-panel">
+  <shell.dock-tab-bar if="{tabs.length > 0}" tabs="{tabs}"/>
+  <container if="{has-host-children}"><host-children/></container>
+  <dispatch else-if="{content-component}"
+            component="{content-component}"
+            id="{id}::content"/>
+</container>
+```
+
+— roughly 15 lines of `.prui` replacing 217 lines of Rust. The
+host computes `content-component` from `panel-id` once and passes
+it through `props`.
 
 ### 7. `transform_editor.rs` (~354 lines) — *Tier-2, ready when drag-scrub lands*
 
@@ -1146,7 +1342,7 @@ authors:
 | `code_editor.rs` | 315 | 3 | Per-line/token highlight spans + cursor geometry |
 | `command_palette.rs` | 315 | 2 | `text_input_node` keystroke handling (waits on `prism.text-input` body) |
 | `nav_graph.rs` | 266 | 3 | Custom 2D paint of nodes + edges |
-| `dock_panel.rs` | 217 | 2 | Runtime tag dispatch (`<dispatch tag="{expr}"/>` would unblock) |
+| `dock_panel.rs` | 217 | 2 | Host needs to pre-resolve `panel-id → content-component` and bind it as a prop (mechanic via `<dispatch component="{expr}"/>` exists) |
 
 Tier-3 (3 files) is *structurally* imperative — the primitives that
 own the imperative body are already registered; the `.prui`

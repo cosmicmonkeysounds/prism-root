@@ -20,6 +20,7 @@
 //! HTML backend is a pure function and the only thing `prism-relay`
 //! needs to call.
 
+pub mod animator;
 pub mod backends;
 pub mod command;
 pub mod event;

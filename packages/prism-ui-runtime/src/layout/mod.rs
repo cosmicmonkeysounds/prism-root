@@ -609,24 +609,42 @@ fn walk_for_hits(
         width: layout.size.width,
         height: layout.size.height,
     };
-    if let Node::Container {
-        id,
-        props,
-        children,
-    } = source
-    {
-        if !id.is_empty() {
-            out.push(HitRect {
-                id: id.clone(),
-                bounds,
-                attrs: props.semantic.attrs.clone(),
-            });
+    match source {
+        Node::Container {
+            id,
+            props,
+            children,
+        } => {
+            if !id.is_empty() {
+                out.push(HitRect {
+                    id: id.clone(),
+                    bounds,
+                    attrs: props.semantic.attrs.clone(),
+                });
+            }
+            // Iterate Taffy children and source children in lockstep.
+            let taffy_children = taffy.children(taffy_id).unwrap_or_default();
+            for (taffy_child, source_child) in taffy_children.iter().zip(children.iter()) {
+                walk_for_hits(taffy, *taffy_child, source_child, bounds.x, bounds.y, out);
+            }
         }
-        // Iterate Taffy children and source children in lockstep.
-        let taffy_children = taffy.children(taffy_id).unwrap_or_default();
-        for (taffy_child, source_child) in taffy_children.iter().zip(children.iter()) {
-            walk_for_hits(taffy, *taffy_child, source_child, bounds.x, bounds.y, out);
+        // `Node::TextInput` participates in hit-testing so the shell
+        // event router can route input clicks (focus capture, the
+        // `bind:value` two-way edit session). Inputs carry the same
+        // `Semantic.attrs` shape containers do — `data-bind-value`,
+        // `data-role`, etc. round-trip uniformly.
+        Node::TextInput { id, semantic, .. } => {
+            if !id.is_empty() {
+                out.push(HitRect {
+                    id: id.clone(),
+                    bounds,
+                    attrs: semantic.attrs.clone(),
+                });
+            }
         }
+        // Text / Spacer / Image leaves still skip the cache — they
+        // don't carry interaction attrs today.
+        _ => {}
     }
 }
 

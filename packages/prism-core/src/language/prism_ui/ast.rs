@@ -118,6 +118,14 @@ pub enum AttributeNamespace {
     /// integration is a follow-up alongside the resolver-side
     /// modifier seam.
     Use,
+    /// `class:<name>="{cond}"` — Svelte-style reactive class toggle.
+    /// The local part is the class name; the value is a boolean
+    /// expression. When truthy, the named PRSS class is applied to
+    /// the container as if it were part of `class="..."`. No-op when
+    /// no stylesheet is loaded — same shape `class="..."` itself
+    /// degrades to. Distinct from [`Self::Identifier`], which
+    /// classifies bare `class="..."` (the static class list).
+    Class,
     /// `class` / `id` — CSS-style addressing for inspector + HTML.
     Identifier,
 }
@@ -172,7 +180,30 @@ impl AttributeNamespace {
     /// Returns `(namespace, local_string)` where `local_string` is the
     /// part after the `:` delimiter (or the whole name for bare /
     /// control-flow / identifier attributes).
+    ///
+    /// **Sugar prefixes** (Vue / Svelte / Solid conventions):
+    /// - `@event` ≡ `on:event` (Vue `@click`)
+    /// - `:prop` ≡ `bind:prop` (Vue `:value` — note: ambiguous with
+    ///   `style:` etc., so only matches a bare `:<local>` without
+    ///   another `:` segment).
+    ///
+    /// Both resolve to the canonical namespace at parse time so the
+    /// AST shape is identical and downstream consumers don't have
+    /// to learn the alias.
     pub fn classify(raw: &str) -> (AttributeNamespace, String) {
+        if let Some(rest) = raw.strip_prefix('@') {
+            // `@click` → On / "click". Match Vue exactly.
+            return (AttributeNamespace::On, rest.to_string());
+        }
+        if let Some(rest) = raw.strip_prefix(':') {
+            // `:value` → Bind / "value". Vue `:foo` shorthand. The
+            // body of `rest` must NOT contain another `:` to avoid
+            // accidentally matching pseudo-namespaces that future
+            // prefixes might use.
+            if !rest.contains(':') && !rest.is_empty() {
+                return (AttributeNamespace::Bind, rest.to_string());
+            }
+        }
         if let Some((prefix, rest)) = raw.split_once(':') {
             let ns = match prefix {
                 "on" => AttributeNamespace::On,
@@ -185,6 +216,7 @@ impl AttributeNamespace {
                 "route" => AttributeNamespace::Route,
                 "transition" => AttributeNamespace::Transition,
                 "use" => AttributeNamespace::Use,
+                "class" => AttributeNamespace::Class,
                 _ => return (AttributeNamespace::Bare, raw.to_string()),
             };
             return (ns, rest.to_string());
@@ -274,6 +306,20 @@ mod tests {
         let (ns, local) = AttributeNamespace::classify("weird:thing");
         assert_eq!(ns, AttributeNamespace::Bare);
         assert_eq!(local, "weird:thing");
+    }
+
+    #[test]
+    fn classify_class_toggle() {
+        let (ns, local) = AttributeNamespace::classify("class:active");
+        assert_eq!(ns, AttributeNamespace::Class);
+        assert_eq!(local, "active");
+    }
+
+    #[test]
+    fn classify_bare_class_stays_identifier() {
+        let (ns, local) = AttributeNamespace::classify("class");
+        assert_eq!(ns, AttributeNamespace::Identifier);
+        assert_eq!(local, "class");
     }
 
     #[test]

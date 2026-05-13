@@ -137,6 +137,13 @@ pub struct AppState {
     /// shape. The `Arc` keeps `AppState: Clone` cheap and shares the
     /// registry across reloads.
     pub modifier_registry: Option<std::sync::Arc<prism_builder::ModifierRegistry>>,
+    /// **Wave 14.3** — set of `(container_id, data-on-<event>-once attr key)`
+    /// pairs that have already fired. The router gates `.once` dispatch
+    /// through this set so a subsequent click on the same handler
+    /// no-ops. Lives on the shell rather than the runtime because
+    /// "did this fire already" is per-shell-session state, not
+    /// per-frame layout state.
+    pub once_fired: std::collections::HashSet<(String, String)>,
 }
 
 /// Text-input focus state. Lives on `AppState` rather than a service so

@@ -141,6 +141,75 @@ pub struct LowerScope {
     /// children. Empty map (`None`-equivalent default) on every path
     /// that doesn't go through `RegistryTagResolver`.
     host_children_by_slot: Arc<HashMap<String, Vec<Node>>>,
+    /// **PRSS** — installed stylesheet. When set, every container
+    /// with a `class="…"` attribute applies the named classes
+    /// (with `extends` flattened, base properties first then state
+    /// overrides) via the existing `apply_style_override` vocabulary
+    /// before the user's inline `style:` attributes layer on top.
+    /// `None` when no stylesheet is loaded (the headless / SSR /
+    /// pre-stylesheet path), in which case `class="…"` round-trips
+    /// as a no-op so authored DSL stays valid against either runtime
+    /// configuration. See `docs/dev/prss-reference.md`.
+    stylesheet: Option<Arc<prism_core::language::prss::StyleSheet>>,
+    /// **Wave 14.3** — `<teleport to="X">payload</teleport>` index.
+    /// Built once by [`lower_document_with_scope`] from a top-down
+    /// AST scan: every `<teleport>` element contributes its
+    /// (un-lowered) children to `teleports[to]`. During the main
+    /// lowering pass, a container or component with `id="X"` appends
+    /// those AST children after its own — lowered in the target's
+    /// scope so binding resolution flows from the destination, not
+    /// the source. Targets without a matching teleport see this map
+    /// as empty. `Arc` so scope clones stay cheap; the inner map is
+    /// installed wholesale through [`Self::with_teleports`] and
+    /// never mutated in place.
+    teleports: Arc<HashMap<String, Vec<AstNode>>>,
+    /// **Wave 14.3** — `memo="[dep1, dep2]"` cache. Optional shared
+    /// memoisation table keyed by element id. When installed via
+    /// [`Self::with_memo_cache`], any element carrying a literal
+    /// `memo="…"` attribute *and* a resolvable id skips re-lowering
+    /// whenever its dep tuple matches the cached one. `RefCell` so
+    /// the host can keep one cache across frames and still hand the
+    /// scope around by value.
+    memo_cache: Option<std::rc::Rc<std::cell::RefCell<MemoCache>>>,
+    /// **PRSS descendant selectors** — outermost-first list of
+    /// per-ancestor class lists. Pushed by `lower_element_body`
+    /// whenever a container/component carries a non-empty active
+    /// class set so descendant selectors (`btn icon`,
+    /// `.card .title`, …) can match against the ancestor chain at
+    /// apply time. `Arc` so scope clones stay cheap during
+    /// control-flow / slot expansion; the inner Vec is cloned only
+    /// when the chain extends.
+    class_chain: Arc<Vec<Vec<String>>>,
+}
+
+/// **Wave 14.3** — per-element memo cache keyed by `id`. Hosts that
+/// want stable v-memo semantics across renders construct one and
+/// thread it into [`LowerScope::with_memo_cache`]; the same handle
+/// can live for the lifetime of the surface (frames, panel swaps,
+/// hot reloads — anything short of a document replacement).
+#[derive(Debug, Default)]
+pub struct MemoCache {
+    entries: HashMap<String, (Vec<serde_json::Value>, Vec<Node>)>,
+}
+
+impl MemoCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Forget every cached entry — useful when the underlying tree
+    /// shape changes drastically (panel swap, hot reload).
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 impl std::fmt::Debug for LowerScope {
@@ -289,6 +358,42 @@ impl LowerScope {
         Arc::clone(&self.host_children_by_slot)
     }
 
+    /// **Wave 14.3** — install the teleport payload index. Built by
+    /// the document-level pre-scan in [`lower_document_with_scope`];
+    /// callers that compose AST trees directly (resolvers, tests)
+    /// can install one explicitly here.
+    pub fn with_teleports(mut self, teleports: Arc<HashMap<String, Vec<AstNode>>>) -> Self {
+        self.teleports = teleports;
+        self
+    }
+
+    /// **Wave 14.3** — borrow the AST payload routed to a given
+    /// target id, if any. Empty (`&[]`) when no `<teleport>` in the
+    /// document targeted this id.
+    pub fn teleport_payload_for(&self, target: &str) -> &[AstNode] {
+        self.teleports
+            .get(target)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// **Wave 14.3** — install the [`MemoCache`] handle. Elements
+    /// carrying both `memo="[dep1, dep2]"` and a resolvable `id`
+    /// will short-circuit re-lowering whenever the dep tuple matches
+    /// the previously-cached one. Without a cache installed,
+    /// `memo="…"` is a no-op (the data round-trip pattern from Wave
+    /// 9.4 — author intent is preserved without behaviour change).
+    pub fn with_memo_cache(mut self, cache: std::rc::Rc<std::cell::RefCell<MemoCache>>) -> Self {
+        self.memo_cache = Some(cache);
+        self
+    }
+
+    /// **Wave 14.3** — borrow the installed memo cache handle. Used
+    /// by the lowering pass to look up and store memoised subtrees.
+    pub fn memo_cache(&self) -> Option<&std::rc::Rc<std::cell::RefCell<MemoCache>>> {
+        self.memo_cache.as_ref()
+    }
+
     /// **Wave 14.1** — seed the design-token table as a `tokens`
     /// binding. Every migrated `.prism-ui` file authors visual
     /// constants today as hardcoded hex / px — `style:background="#161a22ff"`,
@@ -307,6 +412,90 @@ impl LowerScope {
         self.bindings
             .insert("tokens".to_string(), design_tokens_to_json(tokens));
         self
+    }
+
+    /// **PRSS** — install a stylesheet. Subsequent `class="…"`
+    /// attributes on lowered containers consult the sheet to
+    /// resolve named classes through `apply_style_override`
+    /// against the same vocabulary inline `style:` uses. Token
+    /// overrides on the sheet are merged over the currently-bound
+    /// `tokens` JSON so `{tokens.colors.<name>}` interpolations
+    /// resolve through the stylesheet's overrides as well.
+    pub fn with_stylesheet(mut self, sheet: Arc<prism_core::language::prss::StyleSheet>) -> Self {
+        // Merge stylesheet token overrides into the existing
+        // `tokens` binding (Wave 14.1 substrate). The PRUI doc
+        // promises a single `tokens` namespace; PRSS overrides any
+        // values already seeded by `with_design_tokens` per the
+        // application-order rule in `prss-reference.md` §4.6.
+        if let Some(tokens) = self.bindings.get_mut("tokens") {
+            merge_token_overrides(tokens, &sheet.tokens);
+        } else {
+            // No design tokens were seeded yet — start from the
+            // sheet's overrides alone.
+            let mut empty = serde_json::json!({
+                "colors": {}, "spacing": {}, "radius": {}, "typography": {}
+            });
+            merge_token_overrides(&mut empty, &sheet.tokens);
+            self.bindings.insert("tokens".to_string(), empty);
+        }
+        self.stylesheet = Some(sheet);
+        self
+    }
+
+    /// Borrow the installed stylesheet, if any. `apply_container_attributes`
+    /// uses this to walk a container's `class="…"` attribute.
+    pub fn stylesheet(&self) -> Option<&prism_core::language::prss::StyleSheet> {
+        self.stylesheet.as_deref()
+    }
+}
+
+/// Merge per-bucket token overrides from a PRSS [`TokenOverrides`]
+/// into the JSON `tokens` binding. Both shapes are
+/// `{ colors: {…}, spacing: {…}, radius: {…}, typography: {…} }` —
+/// per-bucket key-level merge, sheet keys win.
+fn merge_token_overrides(
+    tokens: &mut serde_json::Value,
+    overrides: &prism_core::language::prss::TokenOverrides,
+) {
+    let serde_json::Value::Object(map) = tokens else {
+        return;
+    };
+    merge_bucket(map, "colors", &overrides.colors, false);
+    merge_bucket(map, "spacing", &overrides.spacing, true);
+    merge_bucket(map, "radius", &overrides.radius, true);
+    merge_bucket(map, "typography", &overrides.typography, true);
+}
+
+fn merge_bucket(
+    tokens: &mut serde_json::Map<String, serde_json::Value>,
+    bucket: &str,
+    overrides: &indexmap::IndexMap<String, String>,
+    numeric: bool,
+) {
+    if overrides.is_empty() {
+        return;
+    }
+    let entry = tokens
+        .entry(bucket.to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let serde_json::Value::Object(target) = entry else {
+        return;
+    };
+    for (k, v) in overrides {
+        let value = if numeric {
+            // Stringified numeric → JSON number. Falls back to a
+            // String for `"1rem"` / `"50%"` / unrecognised shapes;
+            // the runtime's `parse_f32` consumes either through
+            // the unified string path.
+            v.parse::<f64>()
+                .ok()
+                .and_then(serde_json::Number::from_f64)
+                .map(serde_json::Value::Number)
+                .unwrap_or_else(|| serde_json::Value::String(v.clone()))
+        } else {
+            serde_json::Value::String(v.clone())
+        };
+        target.insert(k.clone(), value);
     }
 }
 
@@ -430,7 +619,64 @@ pub fn lower_document(document: &AstDocument) -> Vec<Node> {
 }
 
 pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> Vec<Node> {
-    lower_children(&document.nodes, scope)
+    // **Wave 14.3** — pre-scan the entire AST for `<teleport
+    // to="…">` elements before the main lowering walk starts. Each
+    // teleport's children are stashed by target id; later, when the
+    // main walk hits a container / component carrying `id="<target>"`,
+    // it appends those children to its own. The teleport element
+    // itself lowers to nothing at its source position.
+    let mut teleports: HashMap<String, Vec<AstNode>> = HashMap::new();
+    collect_teleports(&document.nodes, &mut teleports);
+    if teleports.is_empty() {
+        return lower_children(&document.nodes, scope);
+    }
+    let scope_with_teleports = scope.clone().with_teleports(Arc::new(teleports));
+    lower_children(&document.nodes, &scope_with_teleports)
+}
+
+/// **Wave 14.3** — recursive AST scan that collects every
+/// `<teleport to="X">` element's children into a `target → AST
+/// payload` map. Walks normal element children but stops at
+/// `<teleport>` so a payload that itself contains a `<teleport>` is
+/// kept verbatim (the inner teleport is re-discovered when the
+/// payload is appended at the outer target and lowered through the
+/// same `lower_document_with_scope` recursion — see the teleport
+/// handler in `lower_element`).
+fn collect_teleports(nodes: &[AstNode], out: &mut HashMap<String, Vec<AstNode>>) {
+    for node in nodes {
+        let AstNode::Element(el) = node else { continue };
+        if el.tag == "teleport" {
+            if let Some(target) = teleport_target(el) {
+                out.entry(target)
+                    .or_default()
+                    .extend(el.children.iter().cloned());
+            }
+            // Don't recurse into a teleport's children — they're the
+            // payload, not search targets for nested teleports.
+            continue;
+        }
+        collect_teleports(&el.children, out);
+    }
+}
+
+/// **Wave 14.3** — extract the literal `to="X"` attribute from a
+/// `<teleport>` element. Only literal-string targets are recognised
+/// today; expression-valued `to="{…}"` rounds-trip without routing
+/// (the pre-scan has no scope to evaluate against). Authors who need
+/// a dynamic destination wrap multiple `<teleport>` elements in an
+/// `if=` chain instead.
+fn teleport_target(el: &Element) -> Option<String> {
+    for attr in &el.attributes {
+        if matches!(attr.name.namespace, AttributeNamespace::Bare) && attr.name.local == "to" {
+            if let AttributeValue::String { value, .. } = &attr.value {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Lower an arbitrary AST sibling list with the given scope. Public
@@ -492,18 +738,123 @@ fn lower_node(node: &AstNode, scope: &LowerScope) -> Vec<Node> {
 }
 
 fn lower_element(el: &Element, scope: &LowerScope) -> Vec<Node> {
+    // **Wave 14.3** — `memo="[dep1, dep2]"` cache. When the host
+    // installed a [`MemoCache`] and this element carries both a
+    // `memo` attribute and a resolvable `id`, check the cache
+    // before lowering. A dep-tuple match returns the cached subtree
+    // verbatim; a mismatch (or cache miss) falls through to the
+    // normal lowering body and stores the result on the way out.
+    // Authors without an id, or running on a host that didn't
+    // install a cache, see `memo` round-trip as a no-op.
+    if let Some(cache_handle) = scope.memo_cache() {
+        if let Some((deps, id)) = extract_memo_and_id(el, scope) {
+            {
+                let cache = cache_handle.borrow();
+                if let Some((cached_deps, cached_nodes)) = cache.entries.get(&id) {
+                    if cached_deps == &deps {
+                        return cached_nodes.clone();
+                    }
+                }
+            }
+            let lowered = lower_element_body(el, scope);
+            cache_handle
+                .borrow_mut()
+                .entries
+                .insert(id, (deps, lowered.clone()));
+            return lowered;
+        }
+    }
+    lower_element_body(el, scope)
+}
+
+/// **Wave 14.3** — extract the memo dep tuple and the resolved id
+/// of an element in one pass. Returns `None` when *either* the
+/// element has no `memo=` attribute or its id resolves to an empty
+/// string — both are required for the cache to key cleanly.
+fn extract_memo_and_id(
+    el: &Element,
+    scope: &LowerScope,
+) -> Option<(Vec<serde_json::Value>, String)> {
+    let mut memo: Option<Vec<serde_json::Value>> = None;
+    let mut id: Option<String> = None;
+    for attr in &el.attributes {
+        match attr.name.namespace {
+            AttributeNamespace::Bare if attr.name.local == "memo" => {
+                let body = attribute_string(&attr.value).unwrap_or_default();
+                memo = Some(eval_memo_deps(&body, scope));
+            }
+            AttributeNamespace::Identifier if attr.name.local == "id" => {
+                id = resolved_attribute_string(&attr.value, scope).filter(|s| !s.is_empty());
+            }
+            _ => {}
+        }
+    }
+    Some((memo?, id?))
+}
+
+/// **Wave 14.3** — evaluate a `memo="[a, b]"` body to a list of
+/// JSON values. The leading `[` and trailing `]` are optional —
+/// `memo="a, b"` and `memo="[a, b]"` are equivalent. Each
+/// comma-separated expression goes through the same Pratt parser
+/// the `{a + b}` interpolation path uses, so `memo="count, mode"`
+/// reads bare bindings and `memo="state.kind, items.length"`
+/// resolves dotted paths.
+fn eval_memo_deps(body: &str, scope: &LowerScope) -> Vec<serde_json::Value> {
+    let body = body
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    body.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|expr| {
+            lookup_expression(expr, scope)
+                .cloned()
+                .or_else(|| evaluate_expression(expr, scope))
+                .unwrap_or(serde_json::Value::Null)
+        })
+        .collect()
+}
+
+/// The original `lower_element` body, factored out so the memo
+/// short-circuit at the top of `lower_element` can wrap it cleanly.
+/// Every author-visible lowering still flows through this function;
+/// the memo gate is purely a cache layer.
+fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
     match el.tag.as_str() {
         "container" | "component" => {
             let mut props = ContainerProps::default();
             let mut id = String::new();
             apply_container_attributes(el, scope, &mut props, &mut id);
-            let children = lower_children(&el.children, scope);
+            let mut children = lower_children(&el.children, scope);
+            // **Wave 14.3** — `<teleport to="X">payload</teleport>`
+            // routing. Any teleport in the document whose `to` matches
+            // this element's id appends its payload here, lowered in
+            // the target's scope. Payload binding resolution flows
+            // from the destination, not the source — overlay tags at
+            // the root naturally see the root scope. Authors who need
+            // source-scope bindings should compute the values into
+            // literal strings at the source.
+            if !id.is_empty() {
+                let payload = scope.teleport_payload_for(&id);
+                if !payload.is_empty() {
+                    children.extend(lower_children(payload, scope));
+                }
+            }
             vec![Node::Container {
                 id,
                 props,
                 children,
             }]
         }
+        // **Wave 14.3** — at its source position, a `<teleport>`
+        // emits nothing. Its children were collected by the
+        // document-level pre-scan and will land at the target site
+        // when the matching `id="…"` is lowered.
+        "teleport" => Vec::new(),
         "text" | "heading" => {
             let mut props = TextProps::default();
             let mut id = String::new();
@@ -552,6 +903,14 @@ fn lower_element(el: &Element, scope: &LowerScope) -> Vec<Node> {
         // Wave 13.1 — opt-in `name="X"` attribute pulls from the
         // pre-lowered named-slot map instead, so a DSL author can
         // pick either spelling.
+        // **Fragment** — `<fragment>…</fragment>` (also `<></>`-shape
+        // counterpart). React `<>…</>` / Vue `<template>` /
+        // Svelte `<svelte:fragment>` equivalent. Emits children
+        // verbatim with no wrapping container, useful for grouping
+        // a multi-element `if`/`else` branch or `for` body without
+        // imposing a flex parent. Drops `if=` / `for=` correctly
+        // because those are handled at the sibling expansion layer.
+        "fragment" => lower_children(&el.children, scope),
         "host-children" => {
             if let Some(name) = bare_attr_value(el, "name", scope) {
                 if let Some(injected) = scope.host_children_for_slot(&name) {
@@ -695,12 +1054,17 @@ fn expand_control_flow(
                 var,
                 index_var,
                 source,
+                step,
+                reverse,
             }) => {
                 // **Wave 15.2** — numeric range `0..n` / `0..=n` short-circuits the
                 // binding-lookup path before falling back to **Wave 15.3** object
                 // iteration on a JSON object (each LHS-pair element binds
                 // `(value, key)`) and the original array iteration.
-                let iter = resolve_for_iteration(&source, active);
+                // Post-Wave-15 modifiers: `step N` (range only) skips by `N`
+                // between emitted endpoints; `reverse` flips the final order
+                // of every iteration shape.
+                let iter = resolve_for_iteration(&source, step, reverse, active);
                 // **Wave 15.1** — empty iteration sets `chain_taken =
                 // Some(false)` so a subsequent `else` (Svelte's
                 // `{:each}{:else}` shape) runs as the empty-state fallback.
@@ -751,6 +1115,8 @@ fn expand_control_flow(
 ///    second-LHS binding receives the integer index.
 fn resolve_for_iteration(
     source: &str,
+    step: Option<i64>,
+    reverse: bool,
     scope: &LowerScope,
 ) -> Vec<(serde_json::Value, serde_json::Value)> {
     let trimmed = source.trim();
@@ -764,7 +1130,13 @@ fn resolve_for_iteration(
             if start > last {
                 return Vec::new();
             }
-            return (start..=last)
+            let stride = step.unwrap_or(1).max(1) as usize;
+            let mut values: Vec<i64> = (start..=last).step_by(stride).collect();
+            if reverse {
+                values.reverse();
+            }
+            return values
+                .into_iter()
                 .map(|n| (serde_json::Value::from(n), serde_json::Value::from(n)))
                 .collect();
         }
@@ -773,10 +1145,13 @@ fn resolve_for_iteration(
     // Resolve the source as an arbitrary expression so a dotted-path
     // (`item.children`) resolves through scope. Bare identifiers go
     // through `lookup_expression`'s cheap path first.
+    //
+    // Note: `step` is range-only; arrays and objects always emit every
+    // entry. `reverse` flips the final order for either shape.
     let resolved = lookup_expression(trimmed, scope)
         .cloned()
         .or_else(|| evaluate_expression(trimmed, scope));
-    match resolved {
+    let mut entries: Vec<(serde_json::Value, serde_json::Value)> = match resolved {
         Some(serde_json::Value::Object(map)) => map
             .into_iter()
             .map(|(k, v)| (serde_json::Value::String(k), v))
@@ -787,7 +1162,11 @@ fn resolve_for_iteration(
             .map(|(i, v)| (serde_json::Value::from(i as i64), v))
             .collect(),
         _ => Vec::new(),
+    };
+    if reverse {
+        entries.reverse();
     }
+    entries
 }
 
 /// Split `start..end` / `start..=end` into `(start, end, inclusive)`.
@@ -858,15 +1237,13 @@ fn control_flow_attr(el: &Element) -> Option<ControlFlow> {
             "else-if" => ControlFlow::ElseIf(body),
             "else" => ControlFlow::Else,
             "for" => parse_for_clause(&body)
-                .map(
-                    |(var, index_var, source, step, reverse)| ControlFlow::For {
-                        var,
-                        index_var,
-                        source,
-                        step,
-                        reverse,
-                    },
-                )
+                .map(|c| ControlFlow::For {
+                    var: c.var,
+                    index_var: c.index_var,
+                    source: c.source,
+                    step: c.step,
+                    reverse: c.reverse,
+                })
                 .unwrap_or_else(|| ControlFlow::If("false".into())),
             _ => return None,
         });
@@ -881,7 +1258,32 @@ fn control_flow_attr(el: &Element) -> Option<ControlFlow> {
 /// containers via `<dispatch for="row, idx in rows" id="props-{idx}"/>`.
 /// Whitespace tolerant; any other shape returns `None` and the caller
 /// treats the element as dropped (`if false`).
-fn parse_for_clause(body: &str) -> Option<(String, Option<String>, String)> {
+/// Parsed `for=` clause. Each field captures one part of the
+/// `var [, index_var] in source [step N] [reverse]` shape.
+struct ForClause {
+    var: String,
+    index_var: Option<String>,
+    source: String,
+    /// Iteration step. Range-only; `None` defaults to 1. Parser
+    /// guarantees `>= 1` when `Some`.
+    step: Option<i64>,
+    /// Reverse iteration order after collection.
+    reverse: bool,
+}
+
+/// `"post in posts"` → `ForClause { var: "post", index_var: None,
+/// source: "posts", step: None, reverse: false }`.
+/// `"post, idx in posts"` adds `index_var: Some("idx")`.
+/// `"i in 0..100 step 10"` adds `step: Some(10)`.
+/// `"item in items reverse"` adds `reverse: true`.
+/// `"i in 0..100 step 10 reverse"` adds both.
+///
+/// The source identifier or range is the first whitespace-delimited
+/// token after `in`; any trailing `step N` / `reverse` modifiers apply
+/// in either order. Step `<= 0`, duplicate modifiers, and trailing
+/// junk all return `None`, which the caller treats as `if false` (the
+/// element is dropped).
+fn parse_for_clause(body: &str) -> Option<ForClause> {
     let body = body
         .trim()
         .trim_start_matches('{')
@@ -892,8 +1294,8 @@ fn parse_for_clause(body: &str) -> Option<(String, Option<String>, String)> {
     // `in` keyword.
     let mut halves = body.splitn(2, " in ");
     let lhs = halves.next()?.trim();
-    let source = halves.next()?.trim().to_string();
-    if source.is_empty() {
+    let rhs = halves.next()?.trim();
+    if rhs.is_empty() {
         return None;
     }
     // LHS shapes: `var` or `var, idx`. Reject anything else.
@@ -909,13 +1311,43 @@ fn parse_for_clause(body: &str) -> Option<(String, Option<String>, String)> {
     if lhs_parts.next().is_some() {
         return None;
     }
-    // Original guard: reject trailing junk in the source.
-    let mut parts = source.split_whitespace();
-    let _ = parts.next();
-    if parts.next().is_some() {
-        return None;
+    // RHS shape: `<source> [step N] [reverse]` in either order. The
+    // source is one whitespace-delimited token; trailing modifiers
+    // are recognised in any order so authors can write
+    // `0..100 step 10 reverse` or `0..100 reverse step 10`. Anything
+    // unrecognised returns `None`.
+    let mut tokens = rhs.split_whitespace();
+    let source = tokens.next()?.to_string();
+    let mut step: Option<i64> = None;
+    let mut reverse = false;
+    while let Some(tok) = tokens.next() {
+        match tok {
+            "reverse" => {
+                if reverse {
+                    return None;
+                }
+                reverse = true;
+            }
+            "step" => {
+                if step.is_some() {
+                    return None;
+                }
+                let v = tokens.next()?.parse::<i64>().ok()?;
+                if v < 1 {
+                    return None;
+                }
+                step = Some(v);
+            }
+            _ => return None,
+        }
     }
-    Some((var, index_var, source))
+    Some(ForClause {
+        var,
+        index_var,
+        source,
+        step,
+        reverse,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,6 +1468,7 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
     let mut width = Sizing::default();
     let mut height = Sizing::default();
     let mut focused = false;
+    let mut semantic = Semantic::default();
     for attr in &el.attributes {
         let local = attr.name.local.as_str();
         let raw = resolved_attribute_string(&attr.value, scope);
@@ -1076,6 +1509,34 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
                     props.color = c;
                 }
             }
+            // `bind:value="<node-id>.<key>"` lowers to a
+            // `data-bind-value` semantic attr on the input. The shell
+            // event router consumes it at pointer-down time to start
+            // a field-focus session against the bound source. Same
+            // round-trip shape the container path uses for `bind:`.
+            AttributeNamespace::Bind => {
+                if let Some(v) = raw {
+                    semantic.attrs.push((format!("data-bind-{}", local), v));
+                }
+            }
+            // `aria:*` / `data:*` / `route:*` pass through to the
+            // semantic carrier so inputs participate in the same
+            // hit-test / SSR routing the containers do.
+            AttributeNamespace::Aria => {
+                if let Some(v) = raw.filter(|s| !s.is_empty()) {
+                    semantic.attrs.push((format!("aria-{}", local), v));
+                }
+            }
+            AttributeNamespace::Data => {
+                if let Some(v) = raw.filter(|s| !s.is_empty()) {
+                    semantic.attrs.push((format!("data-{}", local), v));
+                }
+            }
+            AttributeNamespace::Route => {
+                if let Some(v) = raw {
+                    semantic.attrs.push((format!("data-{}", local), v));
+                }
+            }
             _ => {}
         }
     }
@@ -1087,7 +1548,7 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
         width,
         height,
         radius: CornerRadius::default(),
-        semantic: Semantic::default(),
+        semantic,
         focused,
     }
 }
@@ -1098,6 +1559,21 @@ fn apply_container_attributes(
     props: &mut ContainerProps,
     id: &mut String,
 ) {
+    // **PRSS pre-pass.** Resolve any `class="…"` attribute *and* any
+    // `class:<name>="{cond}"` toggles before the per-attribute loop
+    // so user inline `style:` overrides always win on conflicts (the
+    // canonical specificity rule from `prss-reference.md` §4.6).
+    // The Svelte-style toggle layers truthy class names on top of the
+    // static `class="…"` list, in document order: a later
+    // `class:foo="{true}"` wins on conflicts the same way a literal
+    // `class="… foo"` would. No-op when no stylesheet is loaded
+    // (headless / SSR / first-boot path) — both forms round-trip as
+    // stale-but-harmless authored attrs in that case.
+    if let Some(sheet) = scope.stylesheet() {
+        for class_name in active_class_names(el, scope) {
+            apply_prss_class(sheet, &class_name, props, scope);
+        }
+    }
     for attr in &el.attributes {
         let local = attr.name.local.as_str();
         let raw = resolved_attribute_string(&attr.value, scope);
@@ -1114,8 +1590,13 @@ fn apply_container_attributes(
                     }
                 }
                 "padding" => {
-                    if let Some(v) = raw.as_deref().and_then(parse_f32) {
-                        props.padding = Padding::all(v);
+                    // CSS-shorthand: `padding="8"` (uniform),
+                    // `padding="8 16"`, `padding="8 16 24"`,
+                    // `padding="8 16 24 32"` (TRBL). Single seam with
+                    // the inline `style:padding` lowering path —
+                    // both call into `parse_padding_shorthand`.
+                    if let Some(p) = raw.as_deref().and_then(parse_padding_shorthand) {
+                        props.padding = p;
                     }
                 }
                 "padding-left" => set_padding_side(&mut props.padding, raw.as_deref(), Side::Left),
@@ -1160,6 +1641,22 @@ fn apply_container_attributes(
                 "aria-label" => {
                     if let Some(v) = raw {
                         props.semantic.aria_label = Some(v);
+                    }
+                }
+                // Reconciliation hint (Vue `:key`, React `key={}`,
+                // Svelte `(x.id)` keyed iteration). Round-trip as a
+                // `data-key` semantic attr so SSR and the future
+                // incremental-diff substrate inherit author intent
+                // verbatim. The runtime tree-diff that would actually
+                // consume this hint is the unblock; today it carries
+                // through identically to a hand-authored
+                // `data:key="…"`. Empty string drops cleanly so a
+                // ternary that resolves to `""` omits the attr.
+                "key" => {
+                    if let Some(v) = raw {
+                        if !v.is_empty() {
+                            props.semantic.attrs.push(("data-key".to_string(), v));
+                        }
                     }
                 }
                 _ => {}
@@ -1752,8 +2249,39 @@ pub fn stringify_value_for_template(value: &serde_json::Value) -> String {
     stringify_value(value)
 }
 
+/// Base pixel size used by `rem` and `em` unit suffixes. Matches
+/// the browser default for CSS root font size. The token-driven
+/// override (`{tokens.typography.font-size-md}`) is a follow-up
+/// — today the constant is uniform across every parse_f32 call
+/// site so the unit math stays predictable without scope threading.
+const REM_PX: f32 = 16.0;
+
+/// Parse a length-valued string. Accepts:
+///
+/// | Form | Resolves to | Notes |
+/// |---|---|---|
+/// | `"14"` | `14.0` | Bare number = px (matches CSS) |
+/// | `"14px"` | `14.0` | Explicit px |
+/// | `"1rem"` | `16.0` | `n * REM_PX` |
+/// | `"0.875rem"` | `14.0` | Decimal allowed |
+/// | `"1em"` | `16.0` | Same as `rem` today — no parent-font-size scope threading yet |
+///
+/// Trailing whitespace tolerated. Anything else returns `None` —
+/// caller drops the property silently (matching the existing
+/// "unknown style value drops cleanly" discipline).
 fn parse_f32(s: &str) -> Option<f32> {
-    s.trim().trim_end_matches("px").parse::<f32>().ok()
+    let s = s.trim();
+    // Order matters: `rem` ends in `em`, so check `rem` first.
+    if let Some(num) = s.strip_suffix("rem") {
+        return num.trim_end().parse::<f32>().ok().map(|n| n * REM_PX);
+    }
+    if let Some(num) = s.strip_suffix("em") {
+        return num.trim_end().parse::<f32>().ok().map(|n| n * REM_PX);
+    }
+    if let Some(num) = s.strip_suffix("px") {
+        return num.trim_end().parse::<f32>().ok();
+    }
+    s.parse::<f32>().ok()
 }
 
 /// Apply one `style:<key>[:<state>]="<value>"` override onto a
@@ -1772,6 +2300,115 @@ fn parse_f32(s: &str) -> Option<f32> {
 /// semantic attrs so author intent survives even when the runtime
 /// doesn't have first-class support for the override yet — same
 /// "data round-trips, behaviour follows" pattern Waves 9.2/9.4 use.
+/// **PRSS / class toggles** — collect the active class-name list for
+/// `el` against `scope`, in document order:
+///
+/// 1. Every name from a static `class="..."` attribute (multiple
+///    classes whitespace-separated).
+/// 2. Every `class:<name>="{cond}"` toggle whose value is truthy.
+///
+/// Toggles layer onto the static list so a later
+/// `class:foo="{true}"` wins on conflicts the same way a literal
+/// `class="… foo"` would. Boolean `class:foo` (no `=value`) reads as
+/// `true` so authors can write the bare attribute as a synonym for
+/// `class:foo="true"`. Result preserves source-order duplicates so
+/// `apply_prss_class`'s left-to-right specificity rule observes
+/// the same shape it would have without toggles.
+fn active_class_names(el: &Element, scope: &LowerScope) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for attr in &el.attributes {
+        match attr.name.namespace {
+            AttributeNamespace::Identifier if attr.name.local == "class" => {
+                if let Some(value) = resolved_attribute_string(&attr.value, scope) {
+                    for name in value.split_whitespace() {
+                        if !name.is_empty() {
+                            out.push(name.to_string());
+                        }
+                    }
+                }
+            }
+            AttributeNamespace::Class => {
+                if attr.name.local.is_empty() {
+                    continue;
+                }
+                if attr_value_is_truthy(&attr.value, scope) {
+                    out.push(attr.name.local.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Truthy evaluator for an `AttributeValue`. Mirrors the JS rule the
+/// `if=` namespace already uses — bare `class:foo` (Empty) reads as
+/// true, an Expression body flows through [`eval_truthy`], a
+/// String/Template resolves and is parsed against the canonical
+/// boolean spellings (`true` / `1` / non-empty arbitrary text → true;
+/// `false` / `0` / empty → false). Lets authors write either
+/// `class:active="{state.active}"` or `class:active` without
+/// special-casing Empty downstream.
+fn attr_value_is_truthy(value: &AttributeValue, scope: &LowerScope) -> bool {
+    match value {
+        // Boolean attribute (no `=` after the name) — the author's
+        // intent is "always on", same shape as HTML's `disabled`.
+        AttributeValue::Empty => true,
+        // Expression bodies route through the full Prism truthy rule
+        // so ternary / `&&` / dotted-path lookups read uniformly.
+        AttributeValue::Expression(expr) => eval_truthy(&expr.body, scope),
+        // String + Template values resolve to a string and then map
+        // through the canonical boolean spellings. Authors writing
+        // `class:foo="false"` get false; `class:foo="true"` true;
+        // anything else is truthy if non-empty.
+        AttributeValue::String { value, .. } => string_value_is_truthy(value),
+        AttributeValue::Template { .. } => resolved_attribute_string(value, scope)
+            .as_deref()
+            .map(string_value_is_truthy)
+            .unwrap_or(false),
+    }
+}
+
+fn string_value_is_truthy(s: &str) -> bool {
+    let trimmed = s.trim();
+    !matches!(trimmed, "" | "false" | "0")
+}
+
+/// **PRSS** — resolve and apply one class name (with its `extends`
+/// chain flattened parent-first) onto a [`ContainerProps`]. Property
+/// values are interpolated against the active scope so a class can
+/// reference `{tokens.colors.<name>}` and read through the same
+/// expression evaluator inline `style:` uses.
+///
+/// Application order inside this function:
+/// 1. Base properties from the flattened `extends` chain.
+/// 2. State overrides — each `(state, key, value)` applied through
+///    the existing `apply_style_override` state-suffix branch as
+///    `<key>:<state>`.
+///
+/// Unknown class names are no-ops (a parent `extends` chain that
+/// already surfaced a `missing-parent` diagnostic at parse time
+/// drops cleanly at apply time too).
+fn apply_prss_class(
+    sheet: &prism_core::language::prss::StyleSheet,
+    name: &str,
+    props: &mut ContainerProps,
+    scope: &LowerScope,
+) {
+    let Some(resolved) = sheet.resolve(name) else {
+        return;
+    };
+    for (key, value) in &resolved.properties {
+        let resolved_value = interpolate(value, scope);
+        apply_style_override(props, key, &resolved_value);
+    }
+    for (state, key, value) in &resolved.states {
+        let resolved_value = interpolate(value, scope);
+        let suffixed = format!("{}:{}", key, state);
+        apply_style_override(props, &suffixed, &resolved_value);
+    }
+}
+
 pub fn apply_style_override(props: &mut ContainerProps, local: &str, value: &str) {
     let (key, state) = split_state_suffix(local);
     match (key, state) {
@@ -1791,8 +2428,13 @@ pub fn apply_style_override(props: &mut ContainerProps, local: &str, value: &str
             }
         }
         ("padding", None) => {
-            if let Some(v) = parse_f32(value) {
-                props.padding = Padding::all(v);
+            // CSS-shorthand: `padding="8"` (uniform), `padding="8 16"`
+            // (vertical, horizontal), `padding="8 16 24"` (top, H,
+            // bottom), `padding="8 16 24 32"` (TRBL — CSS top/right/
+            // bottom/left order). Single-value path stays through
+            // `Padding::all` for back-compat.
+            if let Some(p) = parse_padding_shorthand(value) {
+                props.padding = p;
             }
         }
         ("padding-left", None) => set_padding_side(&mut props.padding, Some(value), Side::Left),
@@ -1860,12 +2502,30 @@ fn parse_direction(s: &str) -> Direction {
     }
 }
 
+/// Parse a sizing value for `width` / `height`. In addition to
+/// the length forms `parse_f32` accepts, this layer recognises:
+///
+/// | Form | Resolves to |
+/// |---|---|
+/// | `"grow"` | `Sizing::Grow` (`taffy::Dimension::Percent(1.0)`) |
+/// | `"fit"` / `"auto"` | `Sizing::Fit` (`taffy::Dimension::Auto`) |
+/// | `"50%"` | `Sizing::Percent(0.5)` (CSS-style; 0..1 clamped) |
+/// | `"14"` / `"14px"` / `"1rem"` | `Sizing::Fixed(<px>)` via `parse_f32` |
 fn parse_sizing(s: &str) -> Option<Sizing> {
     let s = s.trim();
     match s {
         "grow" => Some(Sizing::Grow),
-        "fit" => Some(Sizing::Fit),
-        _ => parse_f32(s).map(Sizing::Fixed),
+        "fit" | "auto" => Some(Sizing::Fit),
+        _ => {
+            if let Some(num) = s.strip_suffix('%') {
+                return num
+                    .trim_end()
+                    .parse::<f32>()
+                    .ok()
+                    .map(|n| Sizing::Percent(n / 100.0));
+            }
+            parse_f32(s).map(Sizing::Fixed)
+        }
     }
 }
 
@@ -1894,6 +2554,46 @@ fn parse_color(raw: &str) -> Option<Color> {
         _ => return None,
     };
     Some(Color { r, g, b, a })
+}
+
+/// Parse a CSS-shorthand padding value into a [`Padding`]. Accepts
+/// 1, 2, 3, or 4 whitespace-separated lengths matching the standard
+/// CSS shorthand order. Returns `None` if any token fails to parse;
+/// caller drops the property cleanly.
+///
+/// | Tokens | Shape |
+/// |---|---|
+/// | 1 | All sides uniform |
+/// | 2 | Vertical, horizontal |
+/// | 3 | Top, horizontal, bottom |
+/// | 4 | Top, right, bottom, left (CSS TRBL) |
+fn parse_padding_shorthand(value: &str) -> Option<Padding> {
+    let tokens: Vec<f32> = value
+        .split_whitespace()
+        .map(parse_f32)
+        .collect::<Option<Vec<f32>>>()?;
+    match tokens.len() {
+        1 => Some(Padding::all(tokens[0])),
+        2 => Some(Padding {
+            top: tokens[0],
+            right: tokens[1],
+            bottom: tokens[0],
+            left: tokens[1],
+        }),
+        3 => Some(Padding {
+            top: tokens[0],
+            right: tokens[1],
+            bottom: tokens[2],
+            left: tokens[1],
+        }),
+        4 => Some(Padding {
+            top: tokens[0],
+            right: tokens[1],
+            bottom: tokens[2],
+            left: tokens[3],
+        }),
+        _ => None,
+    }
 }
 
 enum Side {
@@ -2234,6 +2934,229 @@ mod tests {
         assert!(children.is_empty());
     }
 
+    // ---------- Teleport (Wave 14.3) ----------
+
+    /// `<teleport to="overlay-root">` moves its children to the
+    /// container with `id="overlay-root"`. At the source position
+    /// the teleport emits nothing.
+    #[test]
+    fn teleport_routes_children_to_target_id() {
+        let nodes = interpret(
+            r#"<container>
+                 <container id="overlay-root"/>
+                 <container>
+                   <teleport to="overlay-root">
+                     <text>routed</text>
+                   </teleport>
+                 </container>
+               </container>"#,
+        )
+        .unwrap();
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        // Two children: the overlay root + the sibling that hosted
+        // the teleport. The teleport itself emits nothing — its
+        // child container has zero children.
+        assert_eq!(children.len(), 2);
+        let Node::Container {
+            id: overlay_id,
+            children: overlay_children,
+            ..
+        } = &children[0]
+        else {
+            panic!("expected overlay-root container")
+        };
+        assert_eq!(overlay_id, "overlay-root");
+        assert_eq!(
+            overlay_children.len(),
+            1,
+            "teleport payload landed at the target"
+        );
+        let Node::Text { content, .. } = &overlay_children[0] else {
+            panic!("expected text payload")
+        };
+        assert_eq!(content, "routed");
+
+        // The teleport's source sibling has no children — its
+        // `<teleport>` body materialised at the target, not here.
+        let Node::Container {
+            children: source_children,
+            ..
+        } = &children[1]
+        else {
+            panic!("expected source-side container")
+        };
+        assert!(source_children.is_empty());
+    }
+
+    /// A teleport with no matching target id silently drops its
+    /// payload — matches Vue's behaviour.
+    #[test]
+    fn teleport_with_missing_target_drops_payload() {
+        let nodes = interpret(
+            r#"<container>
+                 <teleport to="nowhere"><text>lost</text></teleport>
+               </container>"#,
+        )
+        .unwrap();
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!(children.is_empty());
+    }
+
+    /// Multiple teleports targeting the same id stack their payloads
+    /// in source order.
+    #[test]
+    fn teleport_multiple_targets_stack_in_source_order() {
+        let nodes = interpret(
+            r#"<container>
+                 <container id="stack"/>
+                 <teleport to="stack"><text>first</text></teleport>
+                 <teleport to="stack"><text>second</text></teleport>
+               </container>"#,
+        )
+        .unwrap();
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        let Node::Container {
+            children: stack_children,
+            ..
+        } = &children[0]
+        else {
+            panic!("expected stack target")
+        };
+        let labels: Vec<&str> = stack_children
+            .iter()
+            .filter_map(|n| match n {
+                Node::Text { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(labels, vec!["first", "second"]);
+    }
+
+    // ---------- Memo (Wave 14.3) ----------
+
+    /// `memo="…"` is a no-op when no cache is installed — the
+    /// element lowers normally (proves the round-trip-through-cache
+    /// path doesn't depend on host wiring for default behaviour).
+    #[test]
+    fn memo_without_cache_lowers_element_normally() {
+        let (doc, _) = parse(r#"<container id="x" memo="count"><text>hi</text></container>"#);
+        let scope = LowerScope::default().with_binding("count", json!(1));
+        let nodes = lower_document_with_scope(&doc, &scope);
+        assert_eq!(nodes.len(), 1);
+        if let Node::Container { children, .. } = &nodes[0] {
+            assert_eq!(children.len(), 1);
+        } else {
+            panic!("expected container")
+        }
+    }
+
+    /// With a cache installed, the second lowering call with the
+    /// same dep tuple returns the cached subtree verbatim and does
+    /// **not** re-evaluate the element body — proven here by
+    /// flipping the underlying binding the *body* reads. The cached
+    /// subtree shows the old text because the memo gate keeps the
+    /// re-evaluation from happening.
+    #[test]
+    fn memo_with_cache_returns_cached_subtree_when_deps_unchanged() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let (doc, _) = parse(r#"<container id="x" memo="count"><text>{label}</text></container>"#);
+        let cache = Rc::new(RefCell::new(MemoCache::new()));
+
+        let first = lower_document_with_scope(
+            &doc,
+            &LowerScope::default()
+                .with_binding("count", json!(1))
+                .with_binding("label", json!("first"))
+                .with_memo_cache(Rc::clone(&cache)),
+        );
+        let Node::Container { children, .. } = &first[0] else {
+            panic!()
+        };
+        let Node::Text { content, .. } = &children[0] else {
+            panic!()
+        };
+        assert_eq!(content, "first");
+        assert_eq!(cache.borrow().len(), 1);
+
+        // Same dep, different label: memo gate should bypass the
+        // re-lower, so the rendered text stays "first".
+        let second = lower_document_with_scope(
+            &doc,
+            &LowerScope::default()
+                .with_binding("count", json!(1))
+                .with_binding("label", json!("second"))
+                .with_memo_cache(Rc::clone(&cache)),
+        );
+        let Node::Container { children, .. } = &second[0] else {
+            panic!()
+        };
+        let Node::Text { content, .. } = &children[0] else {
+            panic!()
+        };
+        assert_eq!(content, "first", "memo cache hit preserved old subtree");
+    }
+
+    /// When any dep moves, the cache invalidates and the body
+    /// re-evaluates against the fresh scope.
+    #[test]
+    fn memo_with_cache_re_evaluates_when_a_dep_changes() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let (doc, _) = parse(r#"<container id="x" memo="count"><text>{label}</text></container>"#);
+        let cache = Rc::new(RefCell::new(MemoCache::new()));
+
+        let _ = lower_document_with_scope(
+            &doc,
+            &LowerScope::default()
+                .with_binding("count", json!(1))
+                .with_binding("label", json!("first"))
+                .with_memo_cache(Rc::clone(&cache)),
+        );
+
+        let second = lower_document_with_scope(
+            &doc,
+            &LowerScope::default()
+                .with_binding("count", json!(2))
+                .with_binding("label", json!("second"))
+                .with_memo_cache(Rc::clone(&cache)),
+        );
+        let Node::Container { children, .. } = &second[0] else {
+            panic!()
+        };
+        let Node::Text { content, .. } = &children[0] else {
+            panic!()
+        };
+        assert_eq!(content, "second", "dep change invalidated the cache");
+    }
+
+    /// `memo=` without an id never enters the cache — there'd be
+    /// no stable key.
+    #[test]
+    fn memo_without_id_is_a_noop() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let (doc, _) = parse(r#"<container memo="count"><text>{label}</text></container>"#);
+        let cache = Rc::new(RefCell::new(MemoCache::new()));
+        let _ = lower_document_with_scope(
+            &doc,
+            &LowerScope::default()
+                .with_binding("count", json!(1))
+                .with_binding("label", json!("first"))
+                .with_memo_cache(Rc::clone(&cache)),
+        );
+        assert!(cache.borrow().is_empty());
+    }
+
     // ---------- TextInput ----------
 
     #[test]
@@ -2300,6 +3223,45 @@ mod tests {
     fn input_kind_string_is_stable() {
         let nodes = interpret(r#"<input value="x"/>"#).unwrap();
         assert_eq!(nodes[0].kind(), "text-input");
+    }
+
+    /// Wave 14.3 — `bind:value="<node-id>.<key>"` on `<input>` lowers
+    /// to a `data-bind-value` semantic attr on the input's node. The
+    /// shell event router reads it back at pointer-down time to open
+    /// a field-focus session against the bound source.
+    #[test]
+    fn input_bind_value_lowers_to_data_bind_value_attr() {
+        let nodes = interpret(r#"<input bind:value="form.email"/>"#).unwrap();
+        let Node::TextInput { semantic, .. } = &nodes[0] else {
+            panic!("expected TextInput")
+        };
+        assert!(
+            semantic
+                .attrs
+                .iter()
+                .any(|(k, v)| k == "data-bind-value" && v == "form.email"),
+            "bind:value should round-trip onto the input's semantic.attrs"
+        );
+    }
+
+    /// `aria:*` / `data:*` on inputs round-trip onto `semantic.attrs`
+    /// so SSR + hit-test routing work the same as they do on
+    /// containers.
+    #[test]
+    fn input_data_and_aria_namespaces_round_trip_on_semantic() {
+        let nodes =
+            interpret(r#"<input value="x" data:role="email-field" aria:label="Email"/>"#).unwrap();
+        let Node::TextInput { semantic, .. } = &nodes[0] else {
+            panic!("expected TextInput")
+        };
+        assert!(semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "email-field"));
+        assert!(semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "aria-label" && v == "Email"));
     }
 
     #[test]
@@ -3164,5 +4126,595 @@ mod tests {
             attrs.get("data-on-click-stop").map(String::as_str),
             Some("cmd noop")
         );
+    }
+
+    /// **Wave 15.4 (step)** — `for="i in 0..10 step 2"` iterates by
+    /// `2` between endpoints. Matches Python `range(0, 10, 2)` /
+    /// Rust `(0..10).step_by(2)` / SwiftUI `stride(from:to:by:)`.
+    #[test]
+    fn range_with_step_iterates_by_increment() {
+        let source = r#"<container id="r-{i}" for="i in 0..10 step 2"/>"#;
+        let nodes = interpret(source).unwrap();
+        let ids: Vec<String> = nodes
+            .iter()
+            .map(|n| match n {
+                crate::layout::Node::Container { id, .. } => id.clone(),
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(ids, vec!["r-0", "r-2", "r-4", "r-6", "r-8"]);
+    }
+
+    /// **Wave 15.4 (step)** — `step` composes with `..=` inclusive
+    /// ranges.
+    #[test]
+    fn inclusive_range_with_step_includes_upper_endpoint_when_aligned() {
+        let source = r#"<container id="r-{i}" for="i in 0..=10 step 5"/>"#;
+        let nodes = interpret(source).unwrap();
+        let ids: Vec<String> = nodes
+            .iter()
+            .map(|n| match n {
+                crate::layout::Node::Container { id, .. } => id.clone(),
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(ids, vec!["r-0", "r-5", "r-10"]);
+    }
+
+    /// **Wave 15.4 (step)** — step ≤ 0 rejects the whole `for=`
+    /// (treated as `if false`), so the element drops cleanly.
+    #[test]
+    fn range_with_zero_or_negative_step_drops_element() {
+        let zero = interpret(r#"<container id="r-{i}" for="i in 0..10 step 0"/>"#).unwrap();
+        assert!(zero.is_empty());
+        let neg = interpret(r#"<container id="r-{i}" for="i in 0..10 step -2"/>"#).unwrap();
+        assert!(neg.is_empty());
+    }
+
+    /// **Wave 15.4 (reverse)** — `for="i in 0..5 reverse"` iterates
+    /// `4, 3, 2, 1, 0`. The endpoint shape is identical to forward
+    /// iteration; only the emitted order flips.
+    #[test]
+    fn range_with_reverse_iterates_descending() {
+        let source = r#"<container id="r-{i}" for="i in 0..5 reverse"/>"#;
+        let nodes = interpret(source).unwrap();
+        let ids: Vec<String> = nodes
+            .iter()
+            .map(|n| match n {
+                crate::layout::Node::Container { id, .. } => id.clone(),
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(ids, vec!["r-4", "r-3", "r-2", "r-1", "r-0"]);
+    }
+
+    /// **Wave 15.4 (reverse)** — arrays reverse to last-first order.
+    #[test]
+    fn array_with_reverse_iterates_last_first() {
+        use serde_json::json;
+        let scope = LowerScope::default().with_binding("xs", json!(["a", "b", "c"]));
+        let nodes =
+            interpret_with_scope(r#"<text for="x in xs reverse">{x}</text>"#, &scope).unwrap();
+        let contents: Vec<String> = nodes
+            .iter()
+            .map(|n| match n {
+                crate::layout::Node::Text { content, .. } => content.clone(),
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(contents, vec!["c", "b", "a"]);
+    }
+
+    /// **Wave 15.4 (reverse)** — objects reverse insertion order too.
+    /// The `<text>` body's joined shape inherits the runtime's
+    /// space-between-runs convention from `collect_text_content`.
+    #[test]
+    fn object_with_reverse_iterates_last_entry_first() {
+        use serde_json::json;
+        let scope =
+            LowerScope::default().with_binding("o", json!({ "x": "1", "y": "2", "z": "3" }));
+        let nodes = interpret_with_scope(r#"<text for="v, k in o reverse">{k} {v}</text>"#, &scope)
+            .unwrap();
+        let contents: Vec<String> = nodes
+            .iter()
+            .map(|n| match n {
+                crate::layout::Node::Text { content, .. } => content.clone(),
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(contents, vec!["z 3", "y 2", "x 1"]);
+    }
+
+    /// **Wave 15.4 (step + reverse)** — modifiers compose. `step`
+    /// applies first (filters the range to every Nth element), then
+    /// `reverse` flips the filtered sequence.
+    #[test]
+    fn range_step_and_reverse_compose() {
+        let source = r#"<container id="r-{i}" for="i in 0..10 step 2 reverse"/>"#;
+        let nodes = interpret(source).unwrap();
+        let ids: Vec<String> = nodes
+            .iter()
+            .map(|n| match n {
+                crate::layout::Node::Container { id, .. } => id.clone(),
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(ids, vec!["r-8", "r-6", "r-4", "r-2", "r-0"]);
+    }
+
+    /// **Wave 15.4** — modifiers tolerate either order on the `for`
+    /// clause: `reverse step N` parses identically to `step N reverse`.
+    #[test]
+    fn for_modifiers_accept_either_order() {
+        let a = interpret(r#"<container id="r-{i}" for="i in 0..10 reverse step 2"/>"#).unwrap();
+        let b = interpret(r#"<container id="r-{i}" for="i in 0..10 step 2 reverse"/>"#).unwrap();
+        assert_eq!(a.len(), b.len());
+        for (na, nb) in a.iter().zip(b.iter()) {
+            match (na, nb) {
+                (
+                    crate::layout::Node::Container { id: ida, .. },
+                    crate::layout::Node::Container { id: idb, .. },
+                ) => assert_eq!(ida, idb),
+                _ => panic!(),
+            }
+        }
+    }
+
+    /// **Wave 15.4** — repeating a modifier is rejected (drops the
+    /// element) so an author who writes `reverse reverse` sees the
+    /// missing output and fixes the typo.
+    #[test]
+    fn for_modifier_duplicate_drops_element() {
+        let nodes = interpret(r#"<container for="i in 0..3 reverse reverse"/>"#).unwrap();
+        assert!(nodes.is_empty());
+        let nodes = interpret(r#"<container for="i in 0..3 step 1 step 2"/>"#).unwrap();
+        assert!(nodes.is_empty());
+    }
+
+    /// **Wave 15.5** — `key="X"` on a `<container>` lowers to a
+    /// `data-key="X"` semantic attr. Reconciliation hint round-trip;
+    /// the runtime tree-diff that would consume it is the unblock.
+    #[test]
+    fn key_attr_lowers_to_data_key_semantic_attr() {
+        let nodes = interpret(r#"<container id="row" key="row-42"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(attrs.get("data-key").map(String::as_str), Some("row-42"));
+    }
+
+    /// **Wave 15.5** — `key=""` drops cleanly so a ternary that
+    /// resolves to the empty string omits the attr (Wave 13 `data:` /
+    /// `aria:` empty-string filter pattern).
+    #[test]
+    fn key_attr_empty_string_drops_cleanly() {
+        let nodes = interpret(r#"<container id="row" key=""/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!(props.semantic.attrs.iter().all(|(k, _)| k != "data-key"));
+    }
+
+    /// **Numeric units** — `parse_f32` accepts CSS-style length
+    /// suffixes (`px`, `rem`, `em`). Bare numbers continue to mean
+    /// pixels (matches CSS bare-number-is-px convention).
+    #[test]
+    fn parse_f32_handles_px_rem_em_suffixes() {
+        assert_eq!(parse_f32("14"), Some(14.0));
+        assert_eq!(parse_f32("14px"), Some(14.0));
+        assert_eq!(parse_f32("1rem"), Some(16.0));
+        assert_eq!(parse_f32("0.5rem"), Some(8.0));
+        assert_eq!(parse_f32("0.875rem"), Some(14.0));
+        assert_eq!(parse_f32("1em"), Some(16.0));
+        // Trailing whitespace inside the value is tolerated so a
+        // ternary that produces `"14 px"` doesn't silently drop.
+        assert_eq!(parse_f32("14 px"), Some(14.0));
+    }
+
+    #[test]
+    fn parse_f32_rejects_unknown_suffixes() {
+        assert_eq!(parse_f32("14pt"), None);
+        assert_eq!(parse_f32("14vh"), None);
+        assert_eq!(parse_f32("nonsense"), None);
+    }
+
+    /// **Numeric units** — `parse_sizing` adds `%` and `auto` to
+    /// the vocabulary `parse_f32` accepts.
+    #[test]
+    fn parse_sizing_handles_percent_grow_fit_auto() {
+        use crate::layout::Sizing;
+        assert!(matches!(parse_sizing("grow"), Some(Sizing::Grow)));
+        assert!(matches!(parse_sizing("fit"), Some(Sizing::Fit)));
+        assert!(matches!(parse_sizing("auto"), Some(Sizing::Fit)));
+        let Some(Sizing::Percent(p)) = parse_sizing("50%") else {
+            panic!()
+        };
+        assert!((p - 0.5).abs() < f32::EPSILON);
+        let Some(Sizing::Percent(p)) = parse_sizing("100%") else {
+            panic!()
+        };
+        assert!((p - 1.0).abs() < f32::EPSILON);
+    }
+
+    /// **Numeric units (integration)** — `padding="1rem"` lowers
+    /// to 16px on a container. Same code path every other
+    /// length-valued attribute uses.
+    #[test]
+    fn padding_in_rem_resolves_to_pixels() {
+        let nodes = interpret(r#"<container padding="1rem"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!((props.padding.left - 16.0).abs() < f32::EPSILON);
+        assert!((props.padding.right - 16.0).abs() < f32::EPSILON);
+    }
+
+    /// **Numeric units (integration)** — `width="50%"` lowers to
+    /// `Sizing::Percent(0.5)`.
+    #[test]
+    fn width_50_percent_lowers_to_sizing_percent() {
+        use crate::layout::Sizing;
+        let nodes = interpret(r#"<container width="50%" height="100%"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let Sizing::Percent(w) = props.width else {
+            panic!("expected percent width, got {:?}", props.width)
+        };
+        let Sizing::Percent(h) = props.height else {
+            panic!("expected percent height, got {:?}", props.height)
+        };
+        assert!((w - 0.5).abs() < f32::EPSILON);
+        assert!((h - 1.0).abs() < f32::EPSILON);
+    }
+
+    /// **Numeric units (integration)** — `font-size="0.875rem"`
+    /// on a text element lowers to 14px (the typography token
+    /// shape PRSS exposes by default).
+    #[test]
+    fn font_size_in_rem_resolves_to_pixels() {
+        let nodes = interpret(r#"<text font-size="0.875rem">Hi</text>"#).unwrap();
+        let crate::layout::Node::Text { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!((props.font_size - 14.0).abs() < f32::EPSILON);
+    }
+
+    /// **Wave 15.5** — `key="{expr}"` interpolates through scope
+    /// so `for="row in rows"` + `key="{row.id}"` works.
+    #[test]
+    fn key_attr_interpolates_through_scope() {
+        use serde_json::json;
+        let scope =
+            LowerScope::default().with_binding("rows", json!([{"id": "alpha"}, {"id": "beta"}]));
+        let nodes = interpret_with_scope(
+            r#"<container for="row in rows" id="r-{row.id}" key="{row.id}"/>"#,
+            &scope,
+        )
+        .unwrap();
+        let keys: Vec<String> = nodes
+            .iter()
+            .filter_map(|n| match n {
+                crate::layout::Node::Container { props, .. } => props
+                    .semantic
+                    .attrs
+                    .iter()
+                    .find(|(k, _)| k == "data-key")
+                    .map(|(_, v)| v.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, vec!["alpha", "beta"]);
+    }
+
+    /// **PRSS integration** — a `class="…"` attribute on a
+    /// `<container>` resolves each named class through the
+    /// installed stylesheet and applies its properties via
+    /// `apply_style_override`.
+    #[test]
+    fn prss_class_applies_background_and_radius() {
+        use std::sync::Arc;
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.btn]
+            background = "#0060c0"
+            radius = 8
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(r#"<container class="btn"/>"#, &scope).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("class supplied background");
+        assert_eq!((bg.r, bg.g, bg.b, bg.a), (0x00, 0x60, 0xc0, 0xff));
+        assert!((props.radius.tl - 8.0).abs() < f32::EPSILON);
+    }
+
+    /// **PRSS integration** — `extends` flattens parent properties
+    /// first; child overrides win.
+    #[test]
+    fn prss_extends_inherits_then_overrides() {
+        use std::sync::Arc;
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.btn]
+            background = "#ffffff"
+            radius = 8
+            padding = 12
+
+            [class.btn-primary]
+            extends = "btn"
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(r#"<container class="btn-primary"/>"#, &scope).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("class supplied background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+        assert!((props.radius.tl - 8.0).abs() < f32::EPSILON);
+        assert!((props.padding.left - 12.0).abs() < f32::EPSILON);
+    }
+
+    /// **PRSS integration** — multiple classes apply left to
+    /// right; the rightmost wins on conflict.
+    #[test]
+    fn prss_multiple_classes_apply_left_to_right() {
+        use std::sync::Arc;
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.btn]
+            background = "#ffffff"
+
+            [class.accent]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(r#"<container class="btn accent"/>"#, &scope).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("class supplied background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    /// **PRSS integration** — inline `style:` always wins over
+    /// classes. Application-order rule from §4.6 of the PRSS
+    /// reference.
+    #[test]
+    fn prss_inline_style_overrides_class_property() {
+        use std::sync::Arc;
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.btn]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r##"<container class="btn" style:background="#ff0000"/>"##,
+            &scope,
+        )
+        .unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("inline wins");
+        assert_eq!((bg.r, bg.g, bg.b), (0xff, 0x00, 0x00));
+    }
+
+    /// **PRSS integration** — `[class.btn.hovered]` lands in
+    /// `ContainerProps.hover` through the existing state-suffix
+    /// pathway.
+    #[test]
+    fn prss_state_variant_lowers_into_hover_overrides() {
+        use std::sync::Arc;
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.btn]
+            background = "#ffffff"
+
+            [class.btn.hovered]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(r#"<container class="btn"/>"#, &scope).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let hover = props.hover.as_ref().expect("hover override installed");
+        let bg = hover.background.expect("hover background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    /// **PRSS integration** — token overrides merge into the
+    /// `tokens` binding so `{tokens.colors.X}` in PRUI resolves
+    /// through the override.
+    #[test]
+    fn prss_tokens_merge_into_tokens_binding() {
+        use std::sync::Arc;
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [tokens.colors]
+            accent = "#7c3aed"
+
+            [tokens.spacing]
+            md = 16
+            "##,
+        );
+        let scope = LowerScope::default()
+            .with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS)
+            .with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r##"<container padding="{tokens.spacing.md}" style:background="{tokens.colors.accent}"/>"##,
+            &scope,
+        )
+        .unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("token reads through");
+        assert_eq!((bg.r, bg.g, bg.b), (0x7c, 0x3a, 0xed));
+        assert!((props.padding.left - 16.0).abs() < f32::EPSILON);
+    }
+
+    /// **PRSS integration** — class property values may reference
+    /// tokens via `{expr}` interpolation. Same expression evaluator
+    /// inline `style:` uses.
+    #[test]
+    fn prss_class_value_interpolates_token_reference() {
+        use std::sync::Arc;
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [tokens.colors]
+            brand = "#5b21b6"
+
+            [class.btn]
+            background = "{tokens.colors.brand}"
+            "##,
+        );
+        let scope = LowerScope::default()
+            .with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS)
+            .with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(r#"<container class="btn"/>"#, &scope).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("interpolated token");
+        assert_eq!((bg.r, bg.g, bg.b), (0x5b, 0x21, 0xb6));
+    }
+
+    /// **PRSS integration** — without a stylesheet installed,
+    /// `class="…"` is a styling no-op. The inline `style:` still
+    /// applies.
+    #[test]
+    fn prss_no_stylesheet_means_class_is_a_noop() {
+        let nodes = interpret(r##"<container class="btn" style:background="#abcdef"/>"##).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("inline style: applied");
+        assert_eq!((bg.r, bg.g, bg.b), (0xab, 0xcd, 0xef));
+    }
+
+    /// **Sugar (`@event`)** — `@click="cmd save"` parses
+    /// identically to `on:click="cmd save"` (Vue shorthand). Both
+    /// lower to a `data-on-click` semantic attr.
+    #[test]
+    fn at_prefix_is_alias_for_on_namespace() {
+        let nodes = interpret(r#"<container @click="cmd save"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attr = props
+            .semantic
+            .attrs
+            .iter()
+            .find(|(k, _)| k == "data-on-click")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(attr, Some("cmd save"));
+    }
+
+    /// **Sugar (`:prop`)** — `:value="form.email"` parses
+    /// identically to `bind:value="form.email"` (Vue shorthand).
+    #[test]
+    fn colon_prefix_is_alias_for_bind_namespace() {
+        let nodes = interpret(r#"<container :value="form.email"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attr = props
+            .semantic
+            .attrs
+            .iter()
+            .find(|(k, _)| k == "data-bind-value")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(attr, Some("form.email"));
+    }
+
+    /// **Sugar (`<fragment>`)** — emits children verbatim with no
+    /// wrapping container.
+    #[test]
+    fn fragment_element_emits_children_unwrapped() {
+        let nodes = interpret(r#"<fragment><text>A</text><text>B</text></fragment>"#).unwrap();
+        assert_eq!(nodes.len(), 2);
+        for n in &nodes {
+            assert!(matches!(n, crate::layout::Node::Text { .. }));
+        }
+    }
+
+    /// **Sugar (`<fragment>`)** — `if=` on the fragment gates its
+    /// whole body. Sibling-level control-flow applies before
+    /// element lowering.
+    #[test]
+    fn fragment_with_if_attribute_gates_children() {
+        let nodes = interpret(r#"<fragment if="{false}"><text>hidden</text></fragment>"#).unwrap();
+        assert!(nodes.is_empty());
+        let nodes = interpret(r#"<fragment if="{true}"><text>shown</text></fragment>"#).unwrap();
+        assert_eq!(nodes.len(), 1);
+    }
+
+    /// **Sugar (padding shorthand)** — `padding="8 16"` is
+    /// vertical/horizontal.
+    #[test]
+    fn padding_shorthand_two_values_is_vertical_horizontal() {
+        let nodes = interpret(r#"<container padding="8 16"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!((props.padding.top - 8.0).abs() < f32::EPSILON);
+        assert!((props.padding.bottom - 8.0).abs() < f32::EPSILON);
+        assert!((props.padding.left - 16.0).abs() < f32::EPSILON);
+        assert!((props.padding.right - 16.0).abs() < f32::EPSILON);
+    }
+
+    /// **Sugar (padding shorthand)** — three values: top, H, bottom.
+    #[test]
+    fn padding_shorthand_three_values_is_top_horizontal_bottom() {
+        let nodes = interpret(r#"<container padding="4 8 12"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!((props.padding.top - 4.0).abs() < f32::EPSILON);
+        assert!((props.padding.left - 8.0).abs() < f32::EPSILON);
+        assert!((props.padding.right - 8.0).abs() < f32::EPSILON);
+        assert!((props.padding.bottom - 12.0).abs() < f32::EPSILON);
+    }
+
+    /// **Sugar (padding shorthand)** — four values: CSS TRBL order.
+    #[test]
+    fn padding_shorthand_four_values_is_css_trbl() {
+        let nodes = interpret(r#"<container padding="1 2 3 4"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!((props.padding.top - 1.0).abs() < f32::EPSILON);
+        assert!((props.padding.right - 2.0).abs() < f32::EPSILON);
+        assert!((props.padding.bottom - 3.0).abs() < f32::EPSILON);
+        assert!((props.padding.left - 4.0).abs() < f32::EPSILON);
+    }
+
+    /// **Sugar (padding shorthand + units)** — each token in the
+    /// shorthand goes through `parse_f32`, so `rem` / `px` /
+    /// `em` suffixes all work per-token.
+    #[test]
+    fn padding_shorthand_with_units() {
+        let nodes = interpret(r#"<container padding="1rem 8px"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!((props.padding.top - 16.0).abs() < f32::EPSILON); // 1rem
+        assert!((props.padding.left - 8.0).abs() < f32::EPSILON); // 8px
     }
 }
