@@ -14,11 +14,13 @@
 //! See `docs/dev/clay-migration-plan.md` §17.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use prism_core::language::prism_ui::{
     self as prism_ui_ast, AttributeName, AttributeNamespace, AttributeValue,
 };
+use prism_core::language::prss;
 use prism_core::language::syntax::{Position, SourceRange};
 use prism_ui_runtime::interpret::{
     lower_document_with_scope, LowerScope, TagEmission, TagResolver,
@@ -57,6 +59,194 @@ impl Skeleton {
     }
 }
 
+/// Pre-parsed `.prss` stylesheet — the boot-time and hot-reload
+/// counterpart to [`Skeleton`] for the PRSS half of the language
+/// (see `docs/dev/prss-reference.md`). Held as `Arc` so it can be
+/// cheap-cloned into every per-frame [`LowerScope`] without paying
+/// the deep-copy cost on the hot render path.
+///
+/// Most hosts construct one of these once at boot via
+/// [`Stylesheet::load_from_path`] (or from an embedded source via
+/// [`Stylesheet::from_source`]) and install it on the `Shell` with
+/// `Shell::install_stylesheet`. The dev-loop hot-reload pipeline
+/// builds a fresh `Stylesheet` from each `.prss` save and reinstalls;
+/// the existing render path picks up the new tokens + classes on the
+/// next frame.
+#[derive(Clone, Debug)]
+pub struct Stylesheet {
+    sheet: Arc<prss::StyleSheet>,
+}
+
+impl Stylesheet {
+    /// Empty stylesheet — equivalent to "no stylesheet loaded". Useful
+    /// as a default before the host parses any `.prss` source. The
+    /// runtime treats `class="..."` against an empty sheet as a
+    /// data-round-trip no-op (the static class list still flows into
+    /// `Semantic::class` for SSR; only the styling lookup is empty).
+    pub fn empty() -> Self {
+        Self {
+            sheet: Arc::new(prss::StyleSheet::default()),
+        }
+    }
+
+    /// Read `.prss` source from `path` and parse. Recoverable
+    /// PRSS diagnostics (`missing-parent`, `cyclic-extends`, …) ride
+    /// alongside the partial sheet; the host's diagnostic surface
+    /// reads them through [`Stylesheet::diagnostics`]. A hard syntax
+    /// error (`toml-syntax`) still parses — the sheet is empty in
+    /// that case but the diagnostic is reported.
+    pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self, String> {
+        let source = std::fs::read_to_string(path.as_ref())
+            .map_err(|e| format!("{}: {e}", path.as_ref().display()))?;
+        Ok(Self::from_source(&source))
+    }
+
+    /// Parse a literal `.prss` source string. Mirrors
+    /// [`Skeleton::from_source`] in shape — recoverable diagnostics
+    /// don't fail the construction; the caller pulls them through
+    /// [`Stylesheet::diagnostics`] separately.
+    pub fn from_source(source: &str) -> Self {
+        let (sheet, _errors) = prss::parse(source);
+        Self {
+            sheet: Arc::new(sheet),
+        }
+    }
+
+    /// Construct from an already-parsed [`prss::StyleSheet`]. Used by
+    /// hot-reload paths that already have the parsed shape in hand
+    /// (the watcher built one to compute the fingerprint anyway).
+    pub fn from_sheet(sheet: prss::StyleSheet) -> Self {
+        Self {
+            sheet: Arc::new(sheet),
+        }
+    }
+
+    /// Borrow the inner Arc so the render path can install it on the
+    /// scope without a fresh allocation.
+    pub fn arc(&self) -> Arc<prss::StyleSheet> {
+        Arc::clone(&self.sheet)
+    }
+
+    /// Borrow the parsed stylesheet for read-only inspection (class
+    /// listing, token table, descendant selectors).
+    pub fn sheet(&self) -> &prss::StyleSheet {
+        &self.sheet
+    }
+
+    /// Re-parse the source and surface every diagnostic. Used by the
+    /// dev-loop watcher when it wants to show authors error messages
+    /// alongside the cached sheet (which keeps rendering with the
+    /// previous good values until the syntax issue is fixed).
+    pub fn diagnostics_for(source: &str) -> Vec<prss::ParseError> {
+        prss::parse(source).1
+    }
+}
+
+impl Default for Stylesheet {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+/// **PRSS hot-reload watcher** — wraps a
+/// [`prism_ui_build::PrssFingerprintCache`] and a freshly-loaded
+/// [`Stylesheet`] in one host-friendly bundle. Each `observe(path)`
+/// call re-reads the file, classifies the change, and on success
+/// rebuilds the active stylesheet. The host then installs the new
+/// sheet on its `Shell` via `Shell::install_stylesheet`.
+///
+/// The watcher owns the cache so the patch outcomes
+/// (`LiteralOnly` / `Structural`) stay deterministic across calls
+/// — every `observe` against the same path classifies relative to
+/// the cache's last-seen fingerprint, not the previous on-disk
+/// state.
+pub struct StylesheetWatcher {
+    cache: prism_ui_build::PrssFingerprintCache,
+    /// The most recent successfully-parsed sheet. The watcher keeps
+    /// it so a `ParseError` / `ReadError` doesn't drop the host's
+    /// styling — the previous good values keep rendering until the
+    /// file becomes valid again.
+    current: Stylesheet,
+}
+
+/// What [`StylesheetWatcher::observe`] returned: the change
+/// classification plus, when the change produced a new valid
+/// sheet, the sheet itself ready for `Shell::install_stylesheet`.
+#[derive(Debug)]
+pub struct StylesheetReload {
+    pub change: prism_ui_build::PrssChange,
+    /// `Some(sheet)` for `FirstSighting` / `LiteralOnly` /
+    /// `Structural`. `None` for `NoChange` / `ParseError` /
+    /// `ReadError` — the host keeps its previously-installed
+    /// stylesheet in those cases.
+    pub stylesheet: Option<Stylesheet>,
+}
+
+impl Default for StylesheetWatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StylesheetWatcher {
+    pub fn new() -> Self {
+        Self {
+            cache: prism_ui_build::PrssFingerprintCache::new(),
+            current: Stylesheet::empty(),
+        }
+    }
+
+    /// The most recent successfully-parsed stylesheet. Hosts that
+    /// want to re-install the cached sheet (e.g. on shell startup
+    /// after a `--hot=subsecond` patch) read it through here.
+    pub fn current(&self) -> Stylesheet {
+        self.current.clone()
+    }
+
+    /// Observe `path` once: read + parse + classify against the
+    /// cache. On a successful classification (`FirstSighting` /
+    /// `LiteralOnly` / `Structural`), updates `self.current` and
+    /// returns it on the [`StylesheetReload`] so the caller can
+    /// hand it to `Shell::install_stylesheet`.
+    pub fn observe(&mut self, path: impl AsRef<Path>) -> StylesheetReload {
+        let path = path.as_ref();
+        let change = self.cache.observe(path);
+        let stylesheet = match &change {
+            prism_ui_build::PrssChange::FirstSighting { .. }
+            | prism_ui_build::PrssChange::LiteralOnly { .. }
+            | prism_ui_build::PrssChange::Structural => match Stylesheet::load_from_path(path) {
+                Ok(s) => {
+                    self.current = s.clone();
+                    Some(s)
+                }
+                Err(_) => None,
+            },
+            _ => None,
+        };
+        StylesheetReload { change, stylesheet }
+    }
+
+    /// Test-friendly variant of [`Self::observe`] — feed source
+    /// directly without touching the filesystem. The path is the
+    /// cache key only.
+    pub fn observe_source(&mut self, path: impl AsRef<Path>, source: &str) -> StylesheetReload {
+        let change = self
+            .cache
+            .observe_source(path.as_ref().to_path_buf(), source);
+        let stylesheet = match &change {
+            prism_ui_build::PrssChange::FirstSighting { .. }
+            | prism_ui_build::PrssChange::LiteralOnly { .. }
+            | prism_ui_build::PrssChange::Structural => {
+                let sheet = Stylesheet::from_source(source);
+                self.current = sheet.clone();
+                Some(sheet)
+            }
+            _ => None,
+        };
+        StylesheetReload { change, stylesheet }
+    }
+}
+
 /// Build the runtime `Node` tree for one frame.
 ///
 /// Pipeline (each step is one function, every block flows through it):
@@ -72,7 +262,7 @@ pub fn render_tree(
     resolver: Arc<dyn TagResolver>,
     ctx: &PropCtx,
 ) -> Vec<UiNode> {
-    render_tree_with(skeleton, bindings, resolver, ctx, None)
+    render_tree_with(skeleton, bindings, resolver, ctx, None, None)
 }
 
 /// **Wave 14.3** — same as [`render_tree`] but threads a host-owned
@@ -81,12 +271,19 @@ pub fn render_tree(
 /// `id="…"` skip re-lowering whenever their dep tuple matches the
 /// previously-cached one. Callers without a cache pass `None` and
 /// get the legacy behaviour.
+///
+/// The `stylesheet` parameter installs a PRSS [`Stylesheet`] into the
+/// lowering scope so every container with a `class="..."` or
+/// `class:foo="{cond}"` attribute resolves through the named-class
+/// vocabulary (`prss-reference.md`). `None` skips the install — the
+/// runtime treats class attributes as data-round-trip only.
 pub fn render_tree_with(
     skeleton: &Skeleton,
     bindings: &ShellPropBindings,
     resolver: Arc<dyn TagResolver>,
     ctx: &PropCtx,
     memo_cache: Option<std::rc::Rc<std::cell::RefCell<prism_ui_runtime::interpret::MemoCache>>>,
+    stylesheet: Option<&Stylesheet>,
 ) -> Vec<UiNode> {
     let emissions = bindings.snapshot(ctx);
     let doc = fill_compositions(skeleton, &emissions);
@@ -111,6 +308,13 @@ pub fn render_tree_with(
         .with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
     if let Some(cache) = memo_cache {
         scope = scope.with_memo_cache(cache);
+    }
+    if let Some(sheet) = stylesheet {
+        // PRSS install runs *after* `with_design_tokens` so the
+        // sheet's `[tokens.*]` overrides cascade over the
+        // workspace default — matches the §4.6 application order
+        // (sheet later → wins on conflicts).
+        scope = scope.with_stylesheet(sheet.arc());
     }
     lower_document_with_scope(&doc, &scope)
 }

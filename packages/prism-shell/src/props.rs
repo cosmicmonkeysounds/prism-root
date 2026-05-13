@@ -147,8 +147,8 @@ const SLOT_BINDINGS: &[(&str, SlotAccessor)] = &[
         s.chrome.status_bar_props(&s.workspace, &s.canvas)
     }),
     // Workspace slot — workflow tabs + recursive dock tree. Adding a
-    // panel is one row in `prism_dock::PanelKind::ALL`, never a
-    // binding edit.
+    // panel is one row in `prism_dock::catalog::register_builtins`,
+    // never a binding edit.
     ("shell.workflow-page-bar", |s| {
         s.workspace.workflow_page_bar_props()
     }),

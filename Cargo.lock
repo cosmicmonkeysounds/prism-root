@@ -4215,6 +4215,7 @@ dependencies = [
 name = "prism-dock"
 version = "0.1.0"
 dependencies = [
+ "indexmap 2.14.0",
  "insta",
  "serde",
  "serde_json",
@@ -4263,10 +4264,12 @@ dependencies = [
  "prism-builder",
  "prism-core",
  "prism-dock",
+ "prism-ui-build",
  "prism-ui-runtime",
  "serde",
  "serde_json",
  "subsecond",
+ "tempfile",
  "thiserror 2.0.18",
  "uuid",
  "wasm-bindgen",

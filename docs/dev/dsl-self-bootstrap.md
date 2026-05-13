@@ -201,3 +201,52 @@ Each step lands with:
 ## Decision log
 
 - 2026-05-13: Doc drafted; implementation kicks off with Loop 1.
+- 2026-05-13: **All four loops landed.** Final shape:
+  - **Loop 1** — `prism_core::AppManifest` (TOML, 5 tests),
+    `prism_shell::app_loader::discover` (4 tests),
+    `seed::initial_state_with_apps` falls through to hardcoded list
+    when no `apps/` dir is present (2 tests). Four manifest stubs
+    seeded under `apps/{lattice,flux,musica,studio}/manifest.toml`.
+  - **Loop 2** — `prism_dock::DockCatalog` runtime registry (5 tests).
+    `PanelKind::ALL` / `from_id` / `tag_for` static API deleted; the
+    two prod call sites (`dock_panel.rs`, `dock_workspace.rs`) now go
+    through `DockCatalog::with_builtins()`. Catalog-on-`LowerCtx`
+    plumbing deferred — built-ins-only lookup is sufficient until
+    apps actually push panels (Loop 4 follow-up).
+  - **Loop 3** — `ServiceScope::{Universal, App}` tagging on every
+    builtin (`add_scoped`), `ServiceRegistry::activate_app_services`
+    filter (3 tests). Wired into `Shell::new` with a permissive
+    default — manifests that omit `[services]` keep every
+    `App`-scoped service intact. Four services tagged `App`:
+    `builder`, `signals`, `luau`, `project`.
+  - **Loop 4** — `prism_core::AppRegistrar` trait (4 tests) +
+    concrete `prism_shell::app_registry::ShellAppRegistrar` (6 tests)
+    wrapping `Arc<Mutex<DockCatalog>>`. `install_panels_from_manifests`
+    walks every `panels.add` row through the registrar — apps can now
+    push panel kinds end-to-end. Component + service registration
+    paths are present in the trait but return
+    `RegistrationError::Unsupported` until follow-up:
+    1. **`register_component`** needs a Luau-backed `Block` impl that
+       calls a script's render fn during `lower_ui`, plus mutable
+       shared access to `prism_builder::ComponentRegistry` (today
+       owned by `ShellInner`, not wrapped in a `Mutex`).
+    2. **`register_service`** needs a Luau-backed `ShellService` shim
+       that routes `on_event` calls through a script handler.
+    3. **Lua bindings** (`prism.register_panel = function(t) ... end`)
+       — the host-side `mlua` state lifecycle lives in
+       `prism-daemon::modules::luau_module`; adding a `UserData` wrapper
+       around `Arc<dyn AppRegistrar>` and binding `prism.register_panel`
+       is the natural next step.
+    4. **Catalog wiring through `LowerCtx`** — `dock_panel_lower` /
+       `dock_workspace_lower` currently construct a transient
+       `DockCatalog::with_builtins()`. Threading the shell-owned
+       `Arc<Mutex<DockCatalog>>` through `PropCtx` → `LowerCtx`
+       (via an opaque extension slot, since `prism-builder` doesn't
+       depend on `prism-dock`) makes app-pushed panels visible to the
+       live dock.
+
+  **Test deltas across the wave:** prism-core +2041 → 2129 (+88, of
+  which 4 are app-registry / 5 are manifest), prism-dock 86 (catalog
+  +5, panel test refactor -2), prism-shell 313 → 338 (+25 across
+  app_loader, seed, services, app_registry).
+

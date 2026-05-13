@@ -1,5 +1,7 @@
-//! Declarative panel catalog — every dockable panel is one row in
-//! [`PanelKind::ALL`].
+//! Declarative panel data. Built-ins are `pub const PanelKind` rows
+//! below; the runtime registry that holds them is the
+//! [`DockCatalog`](crate::DockCatalog), seeded by
+//! [`register_builtins`](crate::register_builtins).
 //!
 //! `PanelKind` is a *data* struct (not an enum) holding everything the
 //! dock or its consumers need to know about a panel: its id, its
@@ -7,14 +9,12 @@
 //! multiple instances are allowed, and (optionally) the `shell.*`
 //! content tag the renderer should embed inside the dock leaf.
 //!
-//! Adding a new panel = one `pub const FOO: PanelKind = PanelKind { ... }`
-//! plus one `&Self::FOO` row in [`PanelKind::ALL`]. No enum match
-//! arms, no parallel routing table, no serde dance. The shell-side
-//! content-tag mapping (formerly `prism_shell::components::panel_routing`)
-//! is now folded into the `tag` field on each spec.
-//!
-//! See `docs/dev/clay-migration-plan.md` §32–§34 for the broader
-//! "one row per registered thing" pattern this collapse follows.
+//! Adding a new built-in panel = one `pub const FOO: PanelKind` row
+//! below + one `catalog.register(PanelKind::FOO)` line in
+//! [`catalog::register_builtins`](crate::catalog::register_builtins).
+//! Apps push their own [`PanelKind`] entries through the same
+//! `catalog.register` method — see `docs/dev/dsl-self-bootstrap.md`
+//! Loop 2.
 
 use serde::{Deserialize, Serialize};
 
@@ -180,39 +180,6 @@ impl PanelKind {
         tag: Some("shell.docs-view"),
     };
 
-    /// Single source of truth for the dockable panel catalog. Adding
-    /// a new panel = one `pub const` above + one `&Self::FOO` row here.
-    pub const ALL: &'static [&'static PanelKind] = &[
-        &Self::BUILDER,
-        &Self::INSPECTOR,
-        &Self::PROPERTIES,
-        &Self::EXPLORER,
-        &Self::CODE_EDITOR,
-        &Self::IDENTITY,
-        &Self::TIMELINE,
-        &Self::NODE_GRAPH,
-        &Self::ASSET_BROWSER,
-        &Self::COMPONENT_PALETTE,
-        &Self::CONSOLE,
-        &Self::SIGNALS,
-        &Self::NAVIGATION,
-        &Self::SCHEMA_DESIGNER,
-        &Self::DOCS,
-    ];
-
-    /// Reverse lookup from kebab-case id. Linear scan is fine — the
-    /// catalog is small and lookups are cold-path (skeleton resolve,
-    /// not per-frame).
-    pub fn from_id(id: &str) -> Option<&'static PanelKind> {
-        Self::ALL.iter().copied().find(|p| p.id == id)
-    }
-
-    /// Convenience: shell content tag (the `tag` field). Subsumes the
-    /// former `prism_shell::components::panel_routing::tag_for_panel`.
-    pub fn tag_for(panel_id: &str) -> Option<&'static str> {
-        Self::from_id(panel_id).and_then(|p| p.tag)
-    }
-
     /// Owned `PanelId` (kebab-case `String`). Equivalent to `id.to_string()`
     /// — kept as a method so the `PanelKind::BUILDER.panel_id()` call
     /// sites read consistently with the `WorkflowPage` / `DockNode`
@@ -225,6 +192,7 @@ impl PanelKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::DockCatalog;
 
     #[test]
     fn ids_are_kebab() {
@@ -236,10 +204,11 @@ mod tests {
     #[test]
     fn meta_fields_populated() {
         assert_eq!(PanelKind::TIMELINE.label, "Timeline");
-        // The only multi-instance panel today is `CodeEditor` — every
+        // The only multi-instance built-in is `CodeEditor` — every
         // other built-in is single-instance.
-        let multi: Vec<&str> = PanelKind::ALL
-            .iter()
+        let cat = DockCatalog::with_builtins();
+        let multi: Vec<&str> = cat
+            .panels()
             .filter(|p| p.allow_multiple)
             .map(|p| p.id)
             .collect();
@@ -248,40 +217,12 @@ mod tests {
 
     #[test]
     fn all_kinds_have_label_and_min_size() {
-        for k in PanelKind::ALL {
+        let cat = DockCatalog::with_builtins();
+        for k in cat.panels() {
             assert!(!k.label.is_empty());
             assert!(k.min_width > 0.0);
             assert!(k.min_height > 0.0);
         }
-    }
-
-    #[test]
-    fn from_id_roundtrip() {
-        for k in PanelKind::ALL {
-            let recovered = PanelKind::from_id(k.id).unwrap();
-            assert_eq!(recovered.id, k.id);
-        }
-    }
-
-    #[test]
-    fn from_id_unknown() {
-        assert!(PanelKind::from_id("nonexistent").is_none());
-        assert!(PanelKind::from_id("").is_none());
-    }
-
-    #[test]
-    fn tag_for_known_panel() {
-        assert_eq!(PanelKind::tag_for("builder"), Some("shell.builder-canvas"));
-        assert_eq!(
-            PanelKind::tag_for("inspector"),
-            Some("shell.inspector-tree"),
-        );
-    }
-
-    #[test]
-    fn tag_for_unmapped_panel() {
-        assert_eq!(PanelKind::tag_for("console"), None);
-        assert_eq!(PanelKind::tag_for("not-a-panel"), None);
     }
 
     #[test]

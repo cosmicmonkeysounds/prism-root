@@ -564,6 +564,57 @@ mod tests {
         assert!(DEFAULT_EXTENSIONS.contains(&"prss"));
     }
 
+    /// `.prss` files survive the default extension filter.
+    /// Companion to `default_extensions_include_prss_for_stylesheet_hot_reload`
+    /// — tests the actual filter pipeline rather than just the
+    /// constant table.
+    #[test]
+    fn filter_batch_keeps_prss_under_default_extensions() {
+        let paths = vec![
+            PathBuf::from("/ws/ui/theme.prss"),
+            PathBuf::from("/ws/notes.txt"),
+            PathBuf::from("/ws/src/lib.rs"),
+        ];
+        let batch = WatchBatch { paths };
+        let exts: Vec<String> = DEFAULT_EXTENSIONS.iter().map(|s| s.to_string()).collect();
+        let filtered = filter_batch(&batch, &exts);
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.contains(&PathBuf::from("/ws/ui/theme.prss")));
+        assert!(filtered.contains(&PathBuf::from("/ws/src/lib.rs")));
+        assert!(!filtered.contains(&PathBuf::from("/ws/notes.txt")));
+    }
+
+    /// End-to-end: writing a `.prss` file under a watched directory
+    /// fires the respawn loop. This is the canonical proof that the
+    /// `.prss` extension is wired all the way through the dev-loop
+    /// pipeline (notify watcher → debounce → extension filter →
+    /// child kill+respawn).
+    #[tokio::test]
+    async fn touching_a_prss_file_respawns_the_child() {
+        let dir = tempdir().expect("tempdir");
+        let counter = dir.path().join("count.txt");
+        let script = format!("echo launched >> {}; sleep 10", counter.to_string_lossy());
+        let sink = VecSink::new();
+        let loop_ = DevLoop::new(sh(&script), vec![dir.path().to_path_buf()])
+            .with_sink(Arc::new(sink.clone()))
+            .with_debounce(Duration::from_millis(50));
+
+        let target = dir.path().join("theme.prss");
+        let shutdown = async move {
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            fs::write(&target, "[class.btn]\nbackground = \"#fff\"\n").expect("write prss");
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+        };
+        let outcome = loop_.run_with_shutdown(shutdown).await.unwrap();
+        assert!(outcome.interrupted, "loop should end via shutdown");
+        assert!(
+            outcome.restart_count >= 1,
+            "expected at least one restart, got {} — sink: {:?}",
+            outcome.restart_count,
+            sink.snapshot().iter().map(|l| &l.text).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn filter_batch_with_default_extensions_keeps_skeleton_edits() {
         let paths = vec![

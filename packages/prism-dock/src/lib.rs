@@ -17,6 +17,7 @@
 //!   (Edit, Design, Code, Fusion) with per-page customization, cross-page
 //!   panel navigation, and serializable state.
 
+pub mod catalog;
 pub mod drop_zone;
 pub mod layout;
 pub mod node;
@@ -25,6 +26,7 @@ pub mod panel;
 pub mod state;
 pub mod workspace;
 
+pub use catalog::{register_builtins, DockCatalog};
 pub use drop_zone::{compute_drop_zones, hit_test_drop_zone, DropZone};
 pub use layout::{
     compute_layout, constrain_ratio, find_divider_at, find_tab_group_at, LayoutNodeKind,

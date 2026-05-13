@@ -31,6 +31,10 @@ prism-core = { path = "../prism-core" }
 prism-builder = { path = "../prism-builder" }
 prism-dock = { path = "../prism-dock" }
 prism-ui-runtime = { path = "../prism-ui-runtime", default-features = false, features = ["html"] }
+# **PRSS hot-reload** — `PrssFingerprintCache` + `PrssChange` ride
+# alongside the existing template-watch substrate. Used by the
+# shell's `Shell::observe_stylesheet_change` hot-reload consumer.
+prism-ui-build = { path = "../prism-ui-build" }
 
 # Phase 9 — runtime hot-patching seam. Gated by the `hot-reload`
 # feature; production builds drop the dep entirely.
@@ -47,3 +51,4 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
+tempfile = "3"

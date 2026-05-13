@@ -23,7 +23,7 @@
 //!   `Handled` wins. Holds the [`CommandTable`] commands contributed
 //!   to at registration time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use prism_ui_runtime::event::Event;
@@ -216,10 +216,32 @@ impl CommandTable {
 
 // ── registry ──────────────────────────────────────────────────────
 
+/// Activation scope for a registered service. See
+/// `docs/dev/dsl-self-bootstrap.md` Loop 3.
+///
+/// - [`Universal`](Self::Universal) — always present. Shell chrome
+///   needs the service regardless of which app is mounted (Input,
+///   UndoRedo, Palette, etc.).
+/// - [`App`](Self::App) — gated. Only active when at least one loaded
+///   app's manifest declares the service id in `services.required` or
+///   `services.optional`. Filtered through
+///   [`ServiceRegistry::activate_app_services`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ServiceScope {
+    Universal,
+    App,
+}
+
+struct RegisteredService {
+    scope: ServiceScope,
+    service: Arc<dyn ShellService>,
+    command_ids: Vec<&'static str>,
+}
+
 /// One row per service, fan-out in declared order.
 #[derive(Default)]
 pub struct ServiceRegistry {
-    services: Vec<Arc<dyn ShellService>>,
+    services: Vec<RegisteredService>,
     by_id: HashMap<&'static str, Arc<dyn ShellService>>,
     commands: CommandTable,
 }
@@ -239,9 +261,20 @@ impl ServiceRegistry {
         reg
     }
 
+    /// Register a universal service (the default scope). Equivalent to
+    /// `add_scoped(ServiceScope::Universal, service)`.
     pub fn add<S: ShellService + 'static>(&mut self, service: S) {
+        self.add_scoped(ServiceScope::Universal, service);
+    }
+
+    /// Register a service with an explicit [`ServiceScope`]. Apps that
+    /// push their own services (Luau-defined / manifest-declared)
+    /// register through this method with `ServiceScope::App` so
+    /// [`Self::activate_app_services`] can filter them.
+    pub fn add_scoped<S: ShellService + 'static>(&mut self, scope: ServiceScope, service: S) {
         let arc: Arc<dyn ShellService> = Arc::new(service);
         let id = arc.id();
+        let mut command_ids = Vec::new();
         for spec in arc.commands() {
             assert!(
                 !self.commands.map.contains_key(spec.id),
@@ -249,11 +282,44 @@ impl ServiceRegistry {
                 spec.id,
                 id
             );
+            command_ids.push(spec.id);
             self.commands.map.insert(spec.id, spec);
         }
         assert!(!self.by_id.contains_key(id), "duplicate service id `{id}`");
         self.by_id.insert(id, Arc::clone(&arc));
-        self.services.push(arc);
+        self.services.push(RegisteredService {
+            scope,
+            service: arc,
+            command_ids,
+        });
+    }
+
+    /// Filter `App`-scoped services against an allowlist. `Universal`
+    /// services are untouched. Each dropped service's commands are
+    /// removed from the [`CommandTable`] as well, so the palette never
+    /// surfaces a stub that won't run.
+    ///
+    /// Pass the union of every loaded `AppManifest`'s
+    /// `services.required` + `services.optional` ids.
+    pub fn activate_app_services(&mut self, allowed: &HashSet<&str>) {
+        let mut keep_flags = Vec::with_capacity(self.services.len());
+        for r in &self.services {
+            let keep =
+                matches!(r.scope, ServiceScope::Universal) || allowed.contains(r.service.id());
+            keep_flags.push(keep);
+        }
+        let mut i = 0;
+        self.services.retain(|r| {
+            let keep = keep_flags[i];
+            i += 1;
+            if !keep {
+                self.by_id.remove(r.service.id());
+                for cmd_id in &r.command_ids {
+                    self.commands.map.remove(cmd_id);
+                }
+            }
+            keep
+        });
     }
 
     /// Cross-service reach. Used sparingly — `SignalsService` calling
@@ -271,8 +337,8 @@ impl ServiceRegistry {
     /// `Handled` / `HandledQuiet`. The router calls this for every
     /// event variant that isn't a §22 pointer arm.
     pub fn fan_out(&self, event: &Event, ctx: &mut MutCtx<'_>) -> EventOutcome {
-        for svc in &self.services {
-            match svc.on_event(event, ctx, &self.commands) {
+        for r in &self.services {
+            match r.service.on_event(event, ctx, &self.commands) {
                 EventOutcome::Pass => continue,
                 outcome => return outcome,
             }
@@ -281,7 +347,26 @@ impl ServiceRegistry {
     }
 
     pub fn service_ids(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.services.iter().map(|s| s.id())
+        self.services.iter().map(|r| r.service.id())
+    }
+
+    /// Scope of a registered service, by id. Returns `None` if the id
+    /// isn't registered.
+    pub fn scope_of(&self, id: &str) -> Option<ServiceScope> {
+        self.services
+            .iter()
+            .find(|r| r.service.id() == id)
+            .map(|r| r.scope)
+    }
+
+    /// Number of currently registered services.
+    pub fn len(&self) -> usize {
+        self.services.len()
+    }
+
+    /// Whether the registry has zero services.
+    pub fn is_empty(&self) -> bool {
+        self.services.is_empty()
     }
 }
 
@@ -300,38 +385,44 @@ impl ServiceRegistry {
 /// at run time through [`CommandTable`], the only ordering effect
 /// is event fan-out.
 pub fn register_shell_services(reg: &mut ServiceRegistry) {
-    reg.add(ShellBaseService);
-    reg.add(UndoRedoService);
+    use ServiceScope::{App, Universal};
+
+    reg.add_scoped(Universal, ShellBaseService);
+    reg.add_scoped(Universal, UndoRedoService);
     // B4 — `FieldFocusService` must register ahead of `InputService`
     // and the modal overlays. When the user is typing into a
     // property-row text field, Text events and plain Esc/Enter/
     // Backspace key events should reach the focus session before any
     // global shortcut, palette, or search modal interprets them.
     // Modifier-bearing keys (Ctrl+S etc.) still pass through.
-    reg.add(FieldFocusService);
+    reg.add_scoped(Universal, FieldFocusService);
     // §25 — `CommandPaletteService` MUST register ahead of `InputService`
     // so its modal-capture `on_event` (returns `Handled` while open)
     // short-circuits Ctrl+S / Ctrl+F / etc. before InputService can
-    // resolve them. The palette's own escape/enter/up/down branches
-    // live on its `on_event` so opening the palette doesn't deactivate
-    // those keys.
-    reg.add(CommandPaletteService);
-    reg.add(InputService::with_defaults());
-    reg.add(SelectionService);
-    reg.add(BuilderService);
-    reg.add(ClipboardService);
-    // §26 — IO services (Persistence / Project / Search).
-    reg.add(PersistenceService);
-    reg.add(ProjectService);
-    reg.add(SearchService);
-    // §27 — cross-service services (Help / Menu / Signals / Luau).
-    // `LuauService` registers last so its commands are appended after
-    // every other service has had its say; cross-service reach is
-    // resource-on-`MutCtx`, not registry traversal.
-    reg.add(HelpService::default());
-    reg.add(MenuService);
-    reg.add(SignalsService);
-    reg.add(LuauService);
+    // resolve them.
+    reg.add_scoped(Universal, CommandPaletteService);
+    reg.add_scoped(Universal, InputService::with_defaults());
+    reg.add_scoped(Universal, SelectionService);
+    // DSL self-bootstrap Loop 3: `App`-scoped services are dropped by
+    // `activate_app_services` unless the loaded app manifests include
+    // them in `services.required` / `services.optional`. Builder /
+    // Signals / Luau / Project are tied to the live document — the
+    // launchpad never needs them.
+    reg.add_scoped(App, BuilderService);
+    reg.add_scoped(Universal, ClipboardService);
+    // §26 — IO services. `Persistence` + `Search` are universal (every
+    // app gets File menu + Ctrl+F); `Project` is app-scoped (only
+    // project-aware apps mount the explorer panel).
+    reg.add_scoped(Universal, PersistenceService);
+    reg.add_scoped(App, ProjectService);
+    reg.add_scoped(Universal, SearchService);
+    // §27 — cross-service services. `Help` + `Menu` are universal
+    // (every app surfaces them); `Signals` + `Luau` are app-scoped
+    // (signal-connections / .luau-script-bearing apps).
+    reg.add_scoped(Universal, HelpService::default());
+    reg.add_scoped(Universal, MenuService);
+    reg.add_scoped(App, SignalsService);
+    reg.add_scoped(App, LuauService);
 }
 
 // ── declarative `cmd!` macro ──────────────────────────────────────
@@ -392,6 +483,71 @@ mod tests {
         let reg = ServiceRegistry::with_builtins();
         for id in ["shell.base", "input", "undo-redo"] {
             assert!(reg.get(id).is_some(), "service `{id}` missing");
+        }
+    }
+
+    #[test]
+    fn builtin_scopes_match_design() {
+        // DSL self-bootstrap Loop 3: the manifest-driven activation
+        // path filters App-scoped services against the loaded app
+        // manifests. Universal services are always present.
+        let reg = ServiceRegistry::with_builtins();
+        assert_eq!(reg.scope_of("builder"), Some(ServiceScope::App));
+        assert_eq!(reg.scope_of("signals"), Some(ServiceScope::App));
+        assert_eq!(reg.scope_of("luau"), Some(ServiceScope::App));
+        assert_eq!(reg.scope_of("project"), Some(ServiceScope::App));
+        for universal in [
+            "shell.base",
+            "undo-redo",
+            "field-focus",
+            "command-palette",
+            "input",
+            "selection",
+            "clipboard",
+            "persistence",
+            "search",
+            "help",
+            "menu",
+        ] {
+            assert_eq!(
+                reg.scope_of(universal),
+                Some(ServiceScope::Universal),
+                "service `{universal}` should be Universal",
+            );
+        }
+    }
+
+    #[test]
+    fn activate_app_services_drops_unlisted_app_scoped() {
+        let mut reg = ServiceRegistry::with_builtins();
+        let before = reg.len();
+        let allowed: HashSet<&str> = ["builder"].into_iter().collect();
+        reg.activate_app_services(&allowed);
+        // Builder kept (allowed); Signals / Luau / Project dropped.
+        assert!(reg.get("builder").is_some());
+        assert!(reg.get("signals").is_none());
+        assert!(reg.get("luau").is_none());
+        assert!(reg.get("project").is_none());
+        // Universal services untouched.
+        assert!(reg.get("input").is_some());
+        assert!(reg.get("undo-redo").is_some());
+        assert_eq!(reg.len(), before - 3);
+        // Dropped services' commands removed from the table.
+        for dead in ["signals.refresh", "luau.run-selection"] {
+            assert!(
+                reg.commands().get(dead).is_none(),
+                "dropped service's command `{dead}` should be unreachable"
+            );
+        }
+    }
+
+    #[test]
+    fn activate_app_services_with_empty_allowlist_drops_every_app_scoped() {
+        let mut reg = ServiceRegistry::with_builtins();
+        let allowed: HashSet<&str> = HashSet::new();
+        reg.activate_app_services(&allowed);
+        for app in ["builder", "signals", "luau", "project"] {
+            assert!(reg.get(app).is_none(), "`{app}` should be dropped");
         }
     }
 

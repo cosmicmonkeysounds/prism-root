@@ -71,7 +71,12 @@ fn dock_panel_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -
     } else if !node.children.is_empty() {
         ctx.lower_children(&node.children)
     } else if !panel_id.is_empty() {
-        prism_dock::PanelKind::tag_for(&panel_id)
+        // DSL self-bootstrap Loop 2: runtime `DockCatalog` replaces
+        // the static `PanelKind::tag_for` lookup. App-pushed panel
+        // kinds will be visible once the catalog is threaded through
+        // `LowerCtx` (Loop 4 follow-up); for now built-ins suffice.
+        prism_dock::DockCatalog::with_builtins()
+            .tag_for(&panel_id)
             .and_then(|tag| {
                 ctx.lower_as(tag, format!("{}::content", node.id), serde_json::json!({}))
             })

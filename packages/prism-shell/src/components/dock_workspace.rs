@@ -112,13 +112,14 @@ fn render_dock(ctx: &LowerCtx<'_>, tree: &DockNode, base_id: &str) -> UiNode {
             // its body in that case (existing behaviour).
             if tabs.len() > 1 {
                 let active_idx = *active;
+                // DSL self-bootstrap Loop 2: runtime `DockCatalog`
+                // supersedes the static `PanelKind::from_id` lookup.
+                let catalog = prism_dock::DockCatalog::with_builtins();
                 let entries: Vec<Value> = tabs
                     .iter()
                     .enumerate()
                     .map(|(i, t)| {
-                        let label = prism_dock::PanelKind::from_id(t)
-                            .map(|p| p.label)
-                            .unwrap_or(t.as_str());
+                        let label = catalog.get(t).map(|p| p.label).unwrap_or(t.as_str());
                         json!({ "tab-id": t, "label": label, "active": i == active_idx })
                     })
                     .collect();

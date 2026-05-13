@@ -58,6 +58,8 @@
 //! `statig` rewrite of the xstate tool machine. None are on the
 //! critical path; the table in `CLAUDE.md` tracks per-module status.
 
+pub mod app;
+pub mod app_registry;
 pub mod boot_config;
 pub mod design_tokens;
 pub mod domain;
@@ -79,6 +81,13 @@ pub mod reactive;
 pub mod shell_mode;
 pub mod widget;
 
+pub use app::{
+    AppEntry, AppManifest, AppManifestError, AppPanelDef, AppPanelsSpec, AppServicesSpec,
+};
+pub use app_registry::{
+    AppRegistrar, ComponentRegistration, NoopAppRegistrar, PanelRegistration, RegistrationError,
+    ServiceRegistration,
+};
 pub use boot_config::{BootConfig, DEFAULT_BOOT_CONFIG};
 pub use design_tokens::DesignTokens;
 pub use kernel::atom::{select, select_memo, select_ref, Atom, AtomSubscription};

@@ -1635,7 +1635,11 @@ fn apply_container_attributes(
     // `class:foo="{true}"` wins on conflicts the same way a literal
     // `class="… foo"` would. No-op when no stylesheet is loaded
     // (headless / SSR / first-boot path) — both forms round-trip as
-    // stale-but-harmless authored attrs in that case.
+    // stale-but-harmless authored attrs in that case. The active
+    // class set is *always* mirrored into [`Semantic::class`] so the
+    // SSR / semantic-HTML emitters pick up the same `class="…"`
+    // author intent — even when no stylesheet is loaded the
+    // static + toggle list still round-trips through HTML.
     //
     // **Descendant selectors** apply *after* flat classes so a more
     // specific match (`btn icon`) overrides the flat (`icon`) entry,
@@ -1643,8 +1647,20 @@ fn apply_container_attributes(
     // outer `lower_element_body`, which threads each container's
     // active classes into [`LowerScope::with_class_chain_appending`]
     // before lowering children.
+    let active = active_class_names(el, scope);
+    if !active.is_empty() {
+        // Dedup while preserving first-seen order so authors writing
+        // `class="btn" class:btn="{true}"` don't get a doubled-up
+        // class attr through the SSR backend.
+        let mut seen: Vec<&str> = Vec::with_capacity(active.len());
+        for name in &active {
+            if !seen.contains(&name.as_str()) {
+                seen.push(name.as_str());
+            }
+        }
+        props.semantic.class = Some(seen.join(" "));
+    }
     if let Some(sheet) = scope.stylesheet() {
-        let active = active_class_names(el, scope);
         for class_name in &active {
             apply_prss_class(sheet, class_name, props, scope);
         }
@@ -5086,6 +5102,60 @@ mod tests {
         assert!(props.background.is_some());
     }
 
+    /// Class round-trip — even with no stylesheet loaded, the active
+    /// class set lands on `Semantic::class` so the SSR / semantic-HTML
+    /// emitter prints `<div class="btn icon">` verbatim. Author intent
+    /// survives independently of PRSS lookup.
+    #[test]
+    fn class_attribute_round_trips_through_semantic_class() {
+        let nodes = interpret(r#"<container class="btn icon"/>"#).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(props.semantic.class.as_deref(), Some("btn icon"));
+    }
+
+    /// Class toggles append to the static class list and round-trip
+    /// through `Semantic::class` together. No-stylesheet path; the
+    /// HTML backend would emit `<div class="btn primary">`.
+    #[test]
+    fn class_toggle_extends_semantic_class_list() {
+        let scope = LowerScope::default().with_binding("on", serde_json::json!(true));
+        let nodes =
+            interpret_with_scope(r#"<container class="btn" class:primary="{on}"/>"#, &scope)
+                .unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(props.semantic.class.as_deref(), Some("btn primary"));
+    }
+
+    /// Falsy `class:foo` keeps the static list intact in
+    /// `Semantic::class` — only truthy toggles contribute.
+    #[test]
+    fn falsy_class_toggle_does_not_appear_in_semantic_class() {
+        let scope = LowerScope::default().with_binding("on", serde_json::json!(false));
+        let nodes =
+            interpret_with_scope(r#"<container class="btn" class:primary="{on}"/>"#, &scope)
+                .unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(props.semantic.class.as_deref(), Some("btn"));
+    }
+
+    /// SSR backend reads `Semantic::class` — verify a class attribute
+    /// authored on a PRUI container actually emits in the HTML.
+    #[test]
+    fn ssr_backend_emits_class_attribute_for_authored_class() {
+        let nodes = interpret(r#"<container class="btn primary"/>"#).unwrap();
+        let html = crate::backends::semantic_html::lower(&nodes[0]);
+        assert!(
+            html.contains("class=\"btn primary\""),
+            "SSR HTML missing class attr: {html}"
+        );
+    }
+
     /// `class:foo` layers on top of static `class="…"` — both lists
     /// participate in PRSS application; later toggles win on key
     /// conflicts.
@@ -5201,6 +5271,369 @@ mod tests {
         None
     }
 
+    /// Three-segment descendant chain (`.a .b .c`) walks two
+    /// ancestors before landing on the current element.
+    #[test]
+    fn prss_three_segment_descendant_selector_matches() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.".a .b .c"]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container class="a">
+                <container class="b">
+                    <container id="leaf" class="c"/>
+                </container>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let leaf = find_container_by_id(&nodes, "leaf").expect("leaf");
+        let Node::Container { props, .. } = leaf else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    /// Three-segment chain skips intermediate ancestors that don't
+    /// match — `.a .c` finds `c` even if there's a non-matching `.x`
+    /// between `a` and `c`.
+    #[test]
+    fn prss_descendant_skips_intermediate_non_matching_ancestors() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.".a .c"]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container class="a">
+                <container class="x">
+                    <container class="y">
+                        <container id="leaf" class="c"/>
+                    </container>
+                </container>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let leaf = find_container_by_id(&nodes, "leaf").expect("leaf");
+        let Node::Container { props, .. } = leaf else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    /// Reverse-order ancestors do not match — `.a .b` requires `a`
+    /// strictly outside `b`.
+    #[test]
+    fn prss_descendant_selector_requires_outer_to_inner_order() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.".btn .icon"]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        // `.icon` outside, `.btn` inside — selector doesn't match.
+        let nodes = interpret_with_scope(
+            r#"<container class="icon">
+                <container id="leaf" class="btn"/>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let leaf = find_container_by_id(&nodes, "leaf").expect("leaf");
+        let Node::Container { props, .. } = leaf else {
+            panic!()
+        };
+        assert!(props.background.is_none());
+    }
+
+    /// Descendant selector with state variant: `[class.".btn .icon".hovered]`
+    /// applies a hover override on the matched leaf. The state lands
+    /// on `ContainerProps::hover` (the same path inline
+    /// `style:background:hovered` takes).
+    #[test]
+    fn prss_descendant_selector_with_state_variant_lowers_into_hover_overrides() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.".btn .icon"]
+            background = "#0060c0"
+
+            [class.".btn .icon".hovered]
+            background = "#a78bfa"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container class="btn">
+                <container id="leaf" class="icon"/>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let leaf = find_container_by_id(&nodes, "leaf").expect("leaf");
+        let Node::Container { props, .. } = leaf else {
+            panic!()
+        };
+        let hover = props.hover.as_ref().expect("hover overrides");
+        let bg = hover.background.expect("hover background");
+        assert_eq!((bg.r, bg.g, bg.b), (0xa7, 0x8b, 0xfa));
+    }
+
+    /// More-specific descendant selector overrides flat-class on the
+    /// same key — CSS specificity ordering: `.btn .icon` (specificity
+    /// 0,0,2,0) wins over `.icon` (0,0,1,0).
+    #[test]
+    fn prss_descendant_selector_overrides_flat_class_for_same_key() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.icon]
+            background = "#aaaaaa"
+
+            [class.".btn .icon"]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container class="btn">
+                <container id="leaf" class="icon"/>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let leaf = find_container_by_id(&nodes, "leaf").expect("leaf");
+        let Node::Container { props, .. } = leaf else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        // Descendant selector wins.
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    /// Multiple descendant selectors that all match contribute their
+    /// disjoint properties — `.a .x` sets background, `.b .x` sets
+    /// radius; both apply on a leaf nested under both ancestors.
+    #[test]
+    fn prss_multiple_descendant_selectors_apply_disjoint_keys() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.".a .x"]
+            background = "#0060c0"
+
+            [class.".b .x"]
+            radius = 8
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container class="a">
+                <container class="b">
+                    <container id="leaf" class="x"/>
+                </container>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let leaf = find_container_by_id(&nodes, "leaf").expect("leaf");
+        let Node::Container { props, .. } = leaf else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+        assert!((props.radius.tl - 8.0).abs() < f32::EPSILON);
+    }
+
+    /// Conflicting descendant selectors resolve by declaration
+    /// order — later wins, mirroring `extends` chain ordering.
+    #[test]
+    fn prss_conflicting_descendant_selectors_resolve_by_declaration_order() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.".a .x"]
+            background = "#aaaaaa"
+
+            [class.".b .x"]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container class="a">
+                <container class="b">
+                    <container id="leaf" class="x"/>
+                </container>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let leaf = find_container_by_id(&nodes, "leaf").expect("leaf");
+        let Node::Container { props, .. } = leaf else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        // `.b .x` declared second → wins.
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    /// Descendant selector inside a sibling subtree must not "leak"
+    /// — once we leave the matching ancestor's subtree, the
+    /// chain unwinds.
+    #[test]
+    fn prss_descendant_selector_does_not_leak_into_sibling_subtree() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.".btn .icon"]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container>
+                <container class="btn">
+                    <container id="inner" class="icon"/>
+                </container>
+                <container id="sibling" class="icon"/>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let inner = find_container_by_id(&nodes, "inner").expect("inner");
+        let sibling = find_container_by_id(&nodes, "sibling").expect("sibling");
+        let Node::Container { props: ip, .. } = inner else {
+            panic!()
+        };
+        let Node::Container { props: sp, .. } = sibling else {
+            panic!()
+        };
+        let inner_bg = ip.background.expect("inner background");
+        assert_eq!((inner_bg.r, inner_bg.g, inner_bg.b), (0x00, 0x60, 0xc0));
+        // Sibling has no `.btn` ancestor — selector misses.
+        assert!(sp.background.is_none());
+    }
+
+    /// Descendant selector with class toggle on the leaf — the
+    /// truthy `class:icon="{cond}"` toggle still feeds the
+    /// rightmost-segment match.
+    #[test]
+    fn prss_descendant_selector_with_class_toggle_on_leaf() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.".btn .icon"]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default()
+            .with_binding("show", serde_json::json!(true))
+            .with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container class="btn">
+                <container id="leaf" class:icon="{show}"/>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let leaf = find_container_by_id(&nodes, "leaf").expect("leaf");
+        let Node::Container { props, .. } = leaf else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    /// Descendant selector with class toggle on the *ancestor* — the
+    /// truthy `class:btn="{cond}"` toggle on an outer container
+    /// participates in the chain match.
+    #[test]
+    fn prss_descendant_selector_with_class_toggle_on_ancestor() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.".btn .icon"]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default()
+            .with_binding("primary", serde_json::json!(true))
+            .with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container class:btn="{primary}">
+                <container id="leaf" class="icon"/>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let leaf = find_container_by_id(&nodes, "leaf").expect("leaf");
+        let Node::Container { props, .. } = leaf else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    /// Same class on multiple ancestors doesn't break the matcher —
+    /// the inner ancestor consumes the segment, the outer one is
+    /// available for further matches if needed.
+    #[test]
+    fn prss_descendant_selector_handles_repeated_class_in_chain() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.".btn .btn .icon"]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container class="btn">
+                <container class="btn">
+                    <container id="leaf" class="icon"/>
+                </container>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let leaf = find_container_by_id(&nodes, "leaf").expect("leaf");
+        let Node::Container { props, .. } = leaf else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    /// Bare-key (unquoted) descendant selector also parses through
+    /// `selector_segments` — `[class."btn icon"]` matches
+    /// `[class.".btn .icon"]` because both decompose to `["btn", "icon"]`.
+    #[test]
+    fn prss_descendant_selector_accepts_bare_segments_without_dots() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class."btn icon"]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container class="btn">
+                <container id="leaf" class="icon"/>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let leaf = find_container_by_id(&nodes, "leaf").expect("leaf");
+        let Node::Container { props, .. } = leaf else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
     // ─── Short-name token references ───────────────────────────
 
     /// PRSS `radius = "md"` resolves through the active token table
@@ -5267,6 +5700,259 @@ mod tests {
             panic!()
         };
         // Default Padding::all(0) survives.
+        assert!((props.padding.left - 0.0).abs() < f32::EPSILON);
+    }
+
+    /// Custom token (PRSS-defined `tokens.colors.brand-purple`)
+    /// resolves through the merged token table on the scope.
+    #[test]
+    fn short_name_resolves_through_custom_prss_token() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [tokens.colors]
+            brand-purple = "#5b21b6"
+
+            [class.btn]
+            background = "brand-purple"
+            "##,
+        );
+        let scope = LowerScope::default()
+            .with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS)
+            .with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(r#"<container class="btn"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x5b, 0x21, 0xb6));
+    }
+
+    /// `font-size = "lg"` resolves to `tokens.typography.font-size-lg`
+    /// — the typography bucket's `font-size-<short>` key shape.
+    #[test]
+    fn short_name_resolves_font_size_lg_through_typography_table() {
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes = interpret_with_scope(r#"<text font-size="lg">Hi</text>"#, &scope).unwrap();
+        let Node::Text { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let expected = prism_core::design_tokens::DEFAULT_TOKENS
+            .typography
+            .font_size_lg as f32;
+        assert!((props.font_size - expected).abs() < f32::EPSILON);
+    }
+
+    /// Per-side padding short names also resolve — `padding-left = "md"`
+    /// reads through `tokens.spacing.md`.
+    #[test]
+    fn short_name_resolves_per_side_padding_through_spacing() {
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes = interpret_with_scope(
+            r#"<container padding-left="md" padding-right="lg"/>"#,
+            &scope,
+        )
+        .unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let expected_md = prism_core::design_tokens::DEFAULT_TOKENS.spacing.md as f32;
+        let expected_lg = prism_core::design_tokens::DEFAULT_TOKENS.spacing.lg as f32;
+        assert!((props.padding.left - expected_md).abs() < f32::EPSILON);
+        assert!((props.padding.right - expected_lg).abs() < f32::EPSILON);
+    }
+
+    /// `gap = "sm"` resolves through `tokens.spacing.sm`.
+    #[test]
+    fn short_name_resolves_gap_through_spacing() {
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes = interpret_with_scope(r#"<container gap="sm"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let expected = prism_core::design_tokens::DEFAULT_TOKENS.spacing.sm as f32;
+        assert!((props.gap - expected).abs() < f32::EPSILON);
+    }
+
+    /// Sizing keywords (`grow`, `fit`, `auto`) on `width`/`height`
+    /// must NOT be resolved as short tokens — these keys aren't in
+    /// the bucket table, so the keyword passes through to
+    /// `parse_sizing` unchanged.
+    #[test]
+    fn short_name_resolution_does_not_eat_sizing_keywords() {
+        use crate::layout::Sizing;
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes =
+            interpret_with_scope(r#"<container width="grow" height="fit"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!(matches!(props.width, Sizing::Grow));
+        assert!(matches!(props.height, Sizing::Fit));
+    }
+
+    /// `direction = "row"` is a known direction keyword — even
+    /// though "row" looks like a token name, the `direction` key
+    /// isn't in the short-name bucket map so resolution is skipped
+    /// and the keyword reaches `parse_direction` intact.
+    #[test]
+    fn short_name_resolution_does_not_eat_direction_keyword() {
+        use crate::layout::Direction;
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes = interpret_with_scope(r#"<container direction="row"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!(matches!(props.direction, Direction::Row));
+    }
+
+    /// Hex colors (`#…`) must NOT be resolved as short tokens —
+    /// the leading `#` rejects them at `is_bare_token_name`.
+    #[test]
+    fn short_name_resolution_skips_hex_color_values() {
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes =
+            interpret_with_scope(r##"<container style:background="#7c3aed"/>"##, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x7c, 0x3a, 0xed));
+    }
+
+    /// Numeric values with units (e.g. `"1rem"`, `"50%"`,
+    /// `"12px"`, `"8"`) must NOT be resolved — they have a leading
+    /// digit so `is_bare_token_name` rejects them. The `1rem` here
+    /// resolves through rem-expansion using the scope's
+    /// `tokens.typography.font-size-md` base (14 in DEFAULT_TOKENS),
+    /// not through `tokens.spacing.1rem` lookup.
+    #[test]
+    fn short_name_resolution_skips_numeric_and_unit_values() {
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes = interpret_with_scope(r#"<container padding="1rem"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let expected = prism_core::design_tokens::DEFAULT_TOKENS
+            .typography
+            .font_size_md as f32;
+        assert!((props.padding.left - expected).abs() < f32::EPSILON);
+    }
+
+    /// `data:` namespace attrs are NOT eligible for short-name
+    /// resolution — `data:role="md"` round-trips verbatim.
+    #[test]
+    fn short_name_resolution_skips_data_namespace() {
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes = interpret_with_scope(r#"<container data:role="md"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        // The data attribute carries through as a literal "md",
+        // not the resolved `tokens.spacing.md` value.
+        assert!(
+            props
+                .semantic
+                .attrs
+                .iter()
+                .any(|(k, v)| k == "data-role" && v == "md"),
+            "data:role should round-trip verbatim, got {:?}",
+            props.semantic.attrs
+        );
+    }
+
+    /// `aria:` namespace attrs are NOT eligible for short-name
+    /// resolution — `aria:level="md"` round-trips verbatim.
+    #[test]
+    fn short_name_resolution_skips_aria_namespace() {
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes = interpret_with_scope(r#"<container aria:level="md"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!(
+            props
+                .semantic
+                .attrs
+                .iter()
+                .any(|(k, v)| k == "aria-level" && v == "md"),
+            "aria:level should round-trip verbatim, got {:?}",
+            props.semantic.attrs
+        );
+    }
+
+    /// Short-name resolution still fires inside a state-suffixed
+    /// style override — `style:background:hovered="accent"` resolves
+    /// through `tokens.colors.accent` then writes to the hover bundle.
+    #[test]
+    fn short_name_resolves_inside_style_state_override() {
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes =
+            interpret_with_scope(r#"<container style:background:hovered="accent"/>"#, &scope)
+                .unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let hover = props.hover.as_ref().expect("hover overrides");
+        let bg = hover.background.expect("hover background");
+        let expected = &prism_core::design_tokens::DEFAULT_TOKENS.colors.accent;
+        assert_eq!(bg.r, expected.r);
+    }
+
+    /// Compound state on a PRSS class — `[class.btn.hovered]` with
+    /// short-name `background = "accent-muted"` resolves through
+    /// the typography path correctly.
+    #[test]
+    fn short_name_resolves_inside_prss_class_state_variant() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.btn]
+            background = "surface"
+
+            [class.btn.hovered]
+            background = "accent-muted"
+            "##,
+        );
+        let scope = LowerScope::default()
+            .with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS)
+            .with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(r#"<container class="btn"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        // Base: background = surface
+        let surface = &prism_core::design_tokens::DEFAULT_TOKENS.colors.surface;
+        let bg = props.background.expect("background");
+        assert_eq!(bg.r, surface.r);
+        // Hover: accent-muted
+        let hover = props.hover.as_ref().expect("hover");
+        let muted = &prism_core::design_tokens::DEFAULT_TOKENS
+            .colors
+            .accent_muted;
+        let hover_bg = hover.background.expect("hover background");
+        assert_eq!(hover_bg.r, muted.r);
+    }
+
+    /// Without a `tokens` binding installed, short-name resolution
+    /// is a no-op — the literal value passes through to the parser.
+    #[test]
+    fn short_name_resolution_no_op_without_tokens() {
+        let scope = LowerScope::default(); // no tokens
+        let nodes = interpret_with_scope(r#"<container padding="md"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        // No resolution happened; "md" failed `parse_padding_shorthand`
+        // and the default Padding::all(0) survived.
         assert!((props.padding.left - 0.0).abs() < f32::EPSILON);
     }
 

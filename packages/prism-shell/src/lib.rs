@@ -27,6 +27,8 @@
 // The shell's `native` / `web` features each pull in the matching
 // runtime feature; library-only builds (neither feature) stay
 // asset-free.
+pub mod app_loader;
+pub mod app_registry;
 #[cfg(any(feature = "native", feature = "web"))]
 pub mod assets;
 pub mod components;
@@ -41,6 +43,7 @@ pub mod state;
 
 mod shell;
 
+pub use render::{Skeleton, Stylesheet, StylesheetReload, StylesheetWatcher};
 pub use render_scope::RenderScope;
 pub use shell::{Shell, ShellError};
 pub use state::{

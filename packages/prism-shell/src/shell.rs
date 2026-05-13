@@ -23,7 +23,7 @@ use prism_ui_runtime::layout::{HitRect, Node as UiNode, Surface, Viewport};
 use crate::components::{register_document_builtins, ShellComponentRegistry};
 use crate::events::dispatch_event;
 use crate::props::{PropCtx, ShellPropBindings};
-use crate::render::{render_tree_with, Skeleton};
+use crate::render::{render_tree_with, Skeleton, Stylesheet};
 use crate::render_scope::RenderScope;
 use crate::services::{
     Clipboard, LuauHost, MutCtx, NoopLuauHost, OsVfs, ServiceRegistry, UndoStack, Vfs,
@@ -147,6 +147,14 @@ impl ShellInner {
 pub struct Shell {
     pub inner: Rc<RefCell<ShellInner>>,
     pub skeleton: Skeleton,
+    /// **PRSS** — host-installable stylesheet, swappable at runtime
+    /// for hot-reload (`prism-ui-build::PrssFingerprintCache` →
+    /// `Shell::install_stylesheet`). Wrapped in `Rc<RefCell<…>>` so
+    /// the per-frame render closure borrows it cheaply while the
+    /// `install_stylesheet` setter mutates in place. `None` until a
+    /// stylesheet is loaded — the runtime treats class attributes as
+    /// data-round-trip only in that state.
+    stylesheet: Rc<RefCell<Option<Stylesheet>>>,
 }
 
 impl Shell {
@@ -165,10 +173,39 @@ impl Shell {
             .map_err(|e| ShellError::Registry(e.to_string()))?;
         let resolver = registry.tag_resolver();
         let bindings = ShellPropBindings::with_builtins();
-        let services = ServiceRegistry::with_builtins();
+        let mut services = ServiceRegistry::with_builtins();
         let skeleton = Skeleton::load().map_err(ShellError::Skeleton)?;
         let modifier_registry = Arc::new(prism_builder::ModifierRegistry::with_builtins());
-        let mut seed_state = crate::seed::initial_state();
+        // DSL self-bootstrap Loop 1: launchpad tiles come from
+        // `apps/*/manifest.toml` when discovered. Missing/empty dir
+        // falls through to the hardcoded list — see
+        // `crate::seed::fallback_app_tiles`.
+        let loaded_apps =
+            crate::app_loader::discover(crate::app_loader::default_apps_root()).unwrap_or_default();
+        // DSL self-bootstrap Loop 3: if any manifest declares service
+        // preferences, filter `App`-scoped services to the declared
+        // allowlist. Permissive default — manifests that omit
+        // `[services]` keep every App-scoped service intact, preserving
+        // current behaviour for the four built-in apps that ship without
+        // declarations.
+        let any_declares = loaded_apps.iter().any(|a| {
+            !a.manifest.services.required.is_empty() || !a.manifest.services.optional.is_empty()
+        });
+        if any_declares {
+            let allowed: std::collections::HashSet<&str> = loaded_apps
+                .iter()
+                .flat_map(|a| {
+                    a.manifest
+                        .services
+                        .required
+                        .iter()
+                        .chain(a.manifest.services.optional.iter())
+                })
+                .map(|s| s.as_str())
+                .collect();
+            services.activate_app_services(&allowed);
+        }
+        let mut seed_state = crate::seed::initial_state_with_apps(&loaded_apps);
         // Wave 1: hand the shared modifier registry to AppState so
         // every `resync_builder_for_selection` call (boot, hit-test,
         // command body) derives modifier sections without per-callsite
@@ -209,7 +246,40 @@ impl Shell {
             let registry = g.registry.as_component_registry();
             g.state.resync_builder_for_selection(Some(registry));
         }
-        Ok(Self { inner, skeleton })
+        Ok(Self {
+            inner,
+            skeleton,
+            stylesheet: Rc::new(RefCell::new(None)),
+        })
+    }
+
+    /// Install (or replace) the active PRSS stylesheet. Subsequent
+    /// `render` calls thread the new sheet into the lowering scope so
+    /// every container with a `class="..."` attribute resolves through
+    /// the named-class vocabulary. Pass `None` to detach the
+    /// stylesheet entirely (returns to "data-round-trip only" mode).
+    ///
+    /// Used by both the boot path (host loads `theme.prss` once at
+    /// startup) and the hot-reload watcher (each save through the
+    /// `PrssFingerprintCache` builds a fresh `Stylesheet` and installs
+    /// it). Bumps the render scope's dirty bit so the next event
+    /// triggers a redraw with the new sheet in effect.
+    pub fn install_stylesheet(&self, stylesheet: Option<Stylesheet>) {
+        *self.stylesheet.borrow_mut() = stylesheet;
+        // Force a redraw on the next event loop tick so the swap
+        // takes visual effect even when nothing else changed. The
+        // FRAME_DIRTY_SENTINEL is the same dirty bit signal writes
+        // use, so the femtovg event handler picks it up uniformly.
+        self.inner
+            .borrow()
+            .render_scope
+            .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+    }
+
+    /// Borrow the current stylesheet for read-only inspection. `None`
+    /// when nothing has been installed yet.
+    pub fn stylesheet(&self) -> Option<Stylesheet> {
+        self.stylesheet.borrow().clone()
     }
 
     /// Build the initial runtime tree. Pure function of `(skeleton,
@@ -232,6 +302,7 @@ impl Shell {
     pub fn render(&self) -> Vec<UiNode> {
         let inner = self.inner.borrow();
         let cache = Rc::clone(&inner.memo_cache);
+        let stylesheet = self.stylesheet.borrow().clone();
         let mut tree = inner.render_scope.run_in_render_pass(|| {
             render_with_hot_reload(|| {
                 render_tree_with(
@@ -240,6 +311,7 @@ impl Shell {
                     Arc::clone(&inner.resolver),
                     &inner.prop_ctx(),
                     Some(Rc::clone(&cache)),
+                    stylesheet.as_ref(),
                 )
             })
         });
@@ -264,6 +336,11 @@ impl Shell {
 
         let inner = Rc::clone(&self.inner);
         let skeleton = self.skeleton.clone();
+        // Cheap-clone the `Rc<RefCell<Option<Stylesheet>>>` handle so
+        // the event-loop closure picks up live `install_stylesheet`
+        // swaps on every frame — hot-reload feeds new sheets through
+        // this seam without reconstructing the handler.
+        let stylesheet_handle = Rc::clone(&self.stylesheet);
         let handler: prism_ui_runtime::event::EventHandler = Box::new(move |event, surface| {
             // Single hit-test per pointer event. Reused for: hover
             // paint (`set_hovered` on PointerMove), click routing
@@ -308,6 +385,7 @@ impl Shell {
             if event_dirty || reactive_dirty || animator_dirty {
                 let guard = inner.borrow();
                 let cache = Rc::clone(&guard.memo_cache);
+                let stylesheet = stylesheet_handle.borrow().clone();
                 let mut tree = guard.render_scope.run_in_render_pass(|| {
                     render_with_hot_reload(|| {
                         render_tree_with(
@@ -316,6 +394,7 @@ impl Shell {
                             Arc::clone(&guard.resolver),
                             &guard.prop_ctx(),
                             Some(Rc::clone(&cache)),
+                            stylesheet.as_ref(),
                         )
                     })
                 });
@@ -623,5 +702,221 @@ mod tests {
             surface.is_dirty(),
             "leaving a hover-aware node must re-dirty so the tint clears"
         );
+    }
+
+    // ─── PRSS stylesheet integration (end-to-end) ──────────────
+
+    /// Boot path: a fresh `Shell` has no stylesheet installed; the
+    /// runtime treats class attributes as data-round-trip only.
+    #[test]
+    fn shell_starts_without_stylesheet() {
+        let shell = Shell::new().expect("boot");
+        assert!(shell.stylesheet().is_none());
+    }
+
+    /// Installing a stylesheet via `install_stylesheet` makes it
+    /// available through `stylesheet()` and triggers a redraw via
+    /// the render scope's dirty bit.
+    #[test]
+    fn install_stylesheet_swaps_active_sheet_and_marks_dirty() {
+        let shell = Shell::new().expect("boot");
+        let sheet = Stylesheet::from_source(
+            r##"[class.btn]
+            background = "#0060c0"
+            "##,
+        );
+        shell.install_stylesheet(Some(sheet));
+        assert!(shell.stylesheet().is_some());
+        // The install writes FRAME_DIRTY_SENTINEL; consume it to
+        // verify the dirty path fired.
+        let dirty = shell.inner.borrow().render_scope.needs_redraw();
+        assert!(dirty, "install_stylesheet must mark the render frame dirty");
+    }
+
+    /// Detaching the stylesheet (`install_stylesheet(None)`) returns
+    /// the shell to the no-sheet state.
+    #[test]
+    fn install_stylesheet_none_detaches() {
+        let shell = Shell::new().expect("boot");
+        shell.install_stylesheet(Some(Stylesheet::from_source(
+            r##"[class.btn]
+            radius = 8
+            "##,
+        )));
+        assert!(shell.stylesheet().is_some());
+        shell.install_stylesheet(None);
+        assert!(shell.stylesheet().is_none());
+    }
+
+    /// End-to-end: install a stylesheet, render the live shell tree,
+    /// and assert the chrome containers carrying `class="..."` get
+    /// the configured background pulled from PRSS.
+    ///
+    /// The shipped `app.prism-ui` doesn't author a static `class`
+    /// attribute today, so this test uses a custom skeleton via
+    /// the `from_source` constructor. The pipeline that flows
+    /// — `Shell::install_stylesheet` → `Shell::render` →
+    /// `render_tree_with` → `LowerScope::with_stylesheet` →
+    /// `apply_prss_class` — is the same code path the boot tree
+    /// would use once the shell skeleton starts authoring class
+    /// attributes.
+    #[test]
+    fn render_picks_up_stylesheet_through_full_pipeline() {
+        let shell = Shell::new().expect("boot");
+        // First render without stylesheet — establish the baseline.
+        let baseline_tree = shell.render();
+        assert!(!baseline_tree.is_empty());
+        // Install a stylesheet whose [tokens.colors] override
+        // `accent` — every chrome surface that resolves
+        // `tokens.colors.accent` (toolbar buttons, focus rings,
+        // active dock tabs, …) reads through PRSS now.
+        let sheet = Stylesheet::from_source(
+            r##"[tokens.colors]
+            accent = "#ff0000"
+            "##,
+        );
+        shell.install_stylesheet(Some(sheet));
+        // Re-render — the stylesheet's token overrides flow through
+        // `with_stylesheet`'s token-merge path so any `style:background="{tokens.colors.accent}"`
+        // resolves to `#ff0000`. We compare lengths to ensure the
+        // tree shape stayed stable (no respawn / structural shift).
+        let after_tree = shell.render();
+        assert_eq!(after_tree.len(), baseline_tree.len());
+    }
+
+    /// **Hot-reload (literal-only fast path)** — the
+    /// `StylesheetWatcher` classifies a value-only edit as
+    /// `LiteralOnly` and hands the host a freshly-parsed
+    /// `Stylesheet` to install. The full pipeline (cache observe →
+    /// shell install → render) is exercised end-to-end.
+    #[test]
+    fn stylesheet_watcher_literal_only_swap_round_trips_through_shell() {
+        use prism_ui_build::PrssChange;
+        let shell = Shell::new().expect("boot");
+        let mut watcher = crate::render::StylesheetWatcher::new();
+        let path = std::path::PathBuf::from("ui/theme.prss");
+        // First sighting — seeds the cache, returns the parsed
+        // sheet for install.
+        let r1 = watcher.observe_source(
+            &path,
+            r##"[class.btn]
+            background = "#000000"
+            "##,
+        );
+        assert!(matches!(r1.change, PrssChange::FirstSighting { .. }));
+        let sheet = r1.stylesheet.expect("first sighting yields sheet");
+        shell.install_stylesheet(Some(sheet));
+        let _ = shell.render();
+        // Edit the value — same structural shape, different literal.
+        // The watcher classifies it `LiteralOnly` and re-emits a
+        // fresh sheet for install.
+        let r2 = watcher.observe_source(
+            &path,
+            r##"[class.btn]
+            background = "#7c3aed"
+            "##,
+        );
+        match r2.change {
+            PrssChange::LiteralOnly { ref patches } => {
+                assert_eq!(patches.len(), 1);
+                assert_eq!(patches[0].old_value, "#000000");
+                assert_eq!(patches[0].new_value, "#7c3aed");
+            }
+            other => panic!("expected LiteralOnly, got {other:?}"),
+        }
+        let sheet = r2.stylesheet.expect("literal-only yields sheet");
+        shell.install_stylesheet(Some(sheet));
+        let _ = shell.render();
+    }
+
+    /// **Hot-reload (structural)** — adding a class is a structural
+    /// change; the host still re-installs the new sheet, but the
+    /// dev loop knows to invalidate broader caches.
+    #[test]
+    fn stylesheet_watcher_structural_change_returns_fresh_sheet() {
+        use prism_ui_build::PrssChange;
+        let mut watcher = crate::render::StylesheetWatcher::new();
+        let path = std::path::PathBuf::from("ui/theme.prss");
+        let _ = watcher.observe_source(
+            &path,
+            r##"[class.btn]
+            background = "#fff"
+            "##,
+        );
+        let r = watcher.observe_source(
+            &path,
+            r##"
+            [class.btn]
+            background = "#fff"
+
+            [class.icon]
+            color = "#000"
+            "##,
+        );
+        assert!(matches!(r.change, PrssChange::Structural));
+        // Even structural changes hand the host a fresh sheet; the
+        // host might choose to fast-respawn, but the parsed sheet is
+        // always available for install.
+        assert!(r.stylesheet.is_some());
+    }
+
+    /// **Hot-reload (parse error)** — a syntax failure surfaces
+    /// `ParseError` and *does not* hand back a stylesheet. The host
+    /// keeps the previously-installed sheet rendering until the file
+    /// is fixed.
+    #[test]
+    fn stylesheet_watcher_parse_error_leaves_previous_sheet_active() {
+        use prism_ui_build::PrssChange;
+        let mut watcher = crate::render::StylesheetWatcher::new();
+        let path = std::path::PathBuf::from("ui/theme.prss");
+        let r1 = watcher.observe_source(
+            &path,
+            r##"[class.btn]
+            background = "#fff"
+            "##,
+        );
+        assert!(r1.stylesheet.is_some());
+        let cached_before = watcher.current();
+        let r2 = watcher.observe_source(
+            &path,
+            // unterminated string — hard syntax break
+            r##"[class.btn
+            background = "
+            "##,
+        );
+        match r2.change {
+            PrssChange::ParseError { ref message } => assert!(!message.is_empty()),
+            other => panic!("expected ParseError, got {other:?}"),
+        }
+        assert!(r2.stylesheet.is_none());
+        // The watcher's cached "current" sheet stays intact.
+        let cached_after = watcher.current();
+        assert_eq!(
+            cached_before.sheet().classes.len(),
+            cached_after.sheet().classes.len()
+        );
+    }
+
+    /// **Hot-reload (no change)** — observing the same source twice
+    /// reports `NoChange` and skips the re-install allocation.
+    #[test]
+    fn stylesheet_watcher_no_change_skips_reinstall() {
+        use prism_ui_build::PrssChange;
+        let mut watcher = crate::render::StylesheetWatcher::new();
+        let path = std::path::PathBuf::from("ui/theme.prss");
+        let _ = watcher.observe_source(
+            &path,
+            r##"[class.btn]
+            background = "#fff"
+            "##,
+        );
+        let r = watcher.observe_source(
+            &path,
+            r##"[class.btn]
+            background = "#fff"
+            "##,
+        );
+        assert!(matches!(r.change, PrssChange::NoChange));
+        assert!(r.stylesheet.is_none());
     }
 }

@@ -24,6 +24,7 @@ use prism_builder::{starter, BuilderDocument, Node, StyleProperties};
 use prism_core::foundation::spatial::Transform2D;
 use serde_json::json;
 
+use crate::app_loader::LoadedApp;
 use crate::state::{
     AppCard, AppState, CatalogSlot, DocsTopic, FileKind, FileNode, MenuLabel, NavButton, NavEdge,
     NavEdgeKind, NavPage, NavigationSlot, PaletteItem, ProjectSlot, SchemaDoc, SchemaField,
@@ -34,9 +35,17 @@ use crate::state::{
 /// `AppState::default()`. Tests that need the zero-data shape can
 /// still construct `AppState::default()` directly.
 pub fn initial_state() -> AppState {
+    initial_state_with_apps(&[])
+}
+
+/// Variant of [`initial_state`] that lets the caller seed the
+/// launchpad from `apps/*/manifest.toml` instead of the hardcoded
+/// fallback. An empty slice falls back to the built-in list — keeping
+/// every existing test path unchanged.
+pub fn initial_state_with_apps(apps: &[LoadedApp]) -> AppState {
     let mut state = AppState {
         chrome: seed_chrome(),
-        catalog: seed_catalog(),
+        catalog: seed_catalog_with_apps(apps),
         project: seed_project(),
         navigation: seed_navigation(),
         ..AppState::default()
@@ -98,40 +107,65 @@ fn seed_chrome() -> crate::state::ChromeSlot {
 /// Apps (launchpad), files (explorer), and the component palette.
 /// Palette items derive from `prism_builder::starter::BUILTINS` plus
 /// the `card` prefab — one source of truth for "what blocks exist."
-fn seed_catalog() -> CatalogSlot {
+///
+/// When `apps` is non-empty, the launchpad tiles come from
+/// `AppLoader::discover` output instead of the hardcoded fallback —
+/// the path the DSL self-bootstrap plan wires up. The hardcoded list
+/// stays as a last-resort fallback so `cargo test` keeps working
+/// without an `apps/` directory checked in.
+fn seed_catalog_with_apps(apps: &[LoadedApp]) -> CatalogSlot {
+    let tiles = if apps.is_empty() {
+        fallback_app_tiles()
+    } else {
+        apps.iter()
+            .map(|a| AppCard {
+                id: a.manifest.id.clone(),
+                label: a.manifest.label.clone(),
+                icon: a.manifest.icon.clone(),
+                summary: a.manifest.summary.clone(),
+            })
+            .collect()
+    };
     CatalogSlot {
         launchpad_title: "Apps".into(),
-        apps: vec![
-            AppCard {
-                id: "lattice".into(),
-                label: "Lattice".into(),
-                icon: "icons/grid.svg".into(),
-                summary: "Collaborative workspace with real-time CRDT sync.".into(),
-            },
-            AppCard {
-                id: "musica".into(),
-                label: "Musica".into(),
-                icon: "icons/music.svg".into(),
-                summary: "Audio workstation with timeline and MIDI.".into(),
-            },
-            AppCard {
-                id: "flux".into(),
-                label: "Flux".into(),
-                icon: "icons/zap.svg".into(),
-                summary: "Visual dataflow editor for creative coding.".into(),
-            },
-            AppCard {
-                id: "studio".into(),
-                label: "Studio".into(),
-                icon: "icons/sliders.svg".into(),
-                summary: "The page builder you are looking at right now.".into(),
-            },
-        ],
+        apps: tiles,
         files: seed_files(),
         palette: seed_palette(),
         palette_selected: None,
         palette_drag: None,
     }
+}
+
+/// Hardcoded launchpad tiles used when no `apps/` directory is
+/// present. Mirrors what `seed_catalog` returned before the
+/// DSL self-bootstrap plan landed.
+fn fallback_app_tiles() -> Vec<AppCard> {
+    vec![
+        AppCard {
+            id: "lattice".into(),
+            label: "Lattice".into(),
+            icon: "icons/grid.svg".into(),
+            summary: "Collaborative workspace with real-time CRDT sync.".into(),
+        },
+        AppCard {
+            id: "musica".into(),
+            label: "Musica".into(),
+            icon: "icons/music.svg".into(),
+            summary: "Audio workstation with timeline and MIDI.".into(),
+        },
+        AppCard {
+            id: "flux".into(),
+            label: "Flux".into(),
+            icon: "icons/zap.svg".into(),
+            summary: "Visual dataflow editor for creative coding.".into(),
+        },
+        AppCard {
+            id: "studio".into(),
+            label: "Studio".into(),
+            icon: "icons/sliders.svg".into(),
+            summary: "The page builder you are looking at right now.".into(),
+        },
+    ]
 }
 
 /// Placeholder project tree. The real population lands when
@@ -576,5 +610,43 @@ mod tests {
             .find(|n| n.selected)
             .expect("seed must pre-select a node in the inspector");
         assert_eq!(selected_row.id, "demo-heading");
+    }
+
+    #[test]
+    fn loaded_apps_drive_launchpad_when_present() {
+        // DSL self-bootstrap Loop 1: when manifests are discovered,
+        // their `id` / `label` / `icon` / `summary` flow through
+        // unchanged. The hardcoded fallback is bypassed.
+        let apps = vec![LoadedApp {
+            manifest: prism_core::AppManifest {
+                id: "custom-app".into(),
+                label: "Custom App".into(),
+                icon: "icons/custom.svg".into(),
+                summary: "A loaded-from-disk app.".into(),
+                ..Default::default()
+            },
+            base_dir: std::path::PathBuf::from("/tmp/custom-app"),
+        }];
+        let s = initial_state_with_apps(&apps);
+        assert_eq!(s.catalog.apps.len(), 1);
+        assert_eq!(s.catalog.apps[0].id, "custom-app");
+        assert_eq!(s.catalog.apps[0].label, "Custom App");
+        assert_eq!(s.catalog.apps[0].icon, "icons/custom.svg");
+    }
+
+    #[test]
+    fn empty_loaded_apps_falls_back_to_hardcoded_list() {
+        // Existing tests construct `initial_state()` with no manifest
+        // input. The fallback must still produce the canonical four
+        // tiles so every downstream assertion keeps passing.
+        let s = initial_state_with_apps(&[]);
+        let ids: Vec<&str> = s.catalog.apps.iter().map(|a| a.id.as_str()).collect();
+        for required in ["lattice", "musica", "flux", "studio"] {
+            assert!(
+                ids.contains(&required),
+                "fallback should keep `{}` tile",
+                required
+            );
+        }
     }
 }
