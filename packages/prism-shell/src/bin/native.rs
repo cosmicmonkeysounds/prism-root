@@ -10,11 +10,13 @@
 //!   Pass `--scene list` to print the available names. Unknown
 //!   names exit with a non-zero status.
 //! * `--screenshot <path>` — render one frame headlessly and
-//!   write a deterministic JSON snapshot of the lowered UI tree to
-//!   `<path>`. Implies "don't open a window". The PNG variant is a
-//!   follow-up that ships when the femtovg offscreen surface
-//!   wiring lands; today's text snapshot is the regression target
-//!   the visual harness diffs against.
+//!   write a snapshot to `<path>`. Output format is chosen from
+//!   the file extension: `*.png` runs the Wave 7.2 software
+//!   rasteriser (`prism_shell::png_paint`) and emits an RGBA PNG;
+//!   anything else (including `.json`) emits the deterministic
+//!   JSON dump of the lowered UI tree. Implies "don't open a
+//!   window". Default PNG viewport is 1280×800; override with
+//!   `--width` / `--height`.
 
 use prism_shell::headless::BuiltinScene;
 use prism_shell::Shell;
@@ -35,8 +37,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         shell.apply_scene(scene);
     }
 
-    if let Cli::Screenshot { path, .. } = &cli {
-        std::fs::write(path, shell.dump_frame())?;
+    if let Cli::Screenshot {
+        path,
+        width,
+        height,
+        ..
+    } = &cli
+    {
+        let is_png = std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("png"))
+            .unwrap_or(false);
+        if is_png {
+            let bytes = shell.dump_png(*width, *height)?;
+            std::fs::write(path, bytes)?;
+        } else {
+            std::fs::write(path, shell.dump_frame())?;
+        }
         return Ok(());
     }
 
@@ -52,9 +70,14 @@ enum Cli {
     /// `--scene list` — print the scene names and exit.
     ListScenes,
     /// `--screenshot <path>` (optionally combined with `--scene`).
+    /// `width`/`height` set the headless viewport in CSS pixels —
+    /// only consumed by the PNG branch (the JSON branch is
+    /// resolution-independent).
     Screenshot {
         path: String,
         scene: Option<BuiltinScene>,
+        width: u32,
+        height: u32,
     },
 }
 
@@ -70,6 +93,8 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
     let mut scene: Option<BuiltinScene> = None;
     let mut screenshot: Option<String> = None;
     let mut list_scenes = false;
+    let mut width: u32 = 1280;
+    let mut height: u32 = 800;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -93,6 +118,22 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
                 screenshot = Some(path.clone());
                 i += 2;
             }
+            "--width" => {
+                width = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--width requires a value".to_string())?
+                    .parse()
+                    .map_err(|_| "--width must be a positive integer".to_string())?;
+                i += 2;
+            }
+            "--height" => {
+                height = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--height requires a value".to_string())?
+                    .parse()
+                    .map_err(|_| "--height must be a positive integer".to_string())?;
+                i += 2;
+            }
             other => return Err(format!("unknown flag '{other}'")),
         }
     }
@@ -100,7 +141,12 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
         return Ok(Cli::ListScenes);
     }
     if let Some(path) = screenshot {
-        return Ok(Cli::Screenshot { path, scene });
+        return Ok(Cli::Screenshot {
+            path,
+            scene,
+            width,
+            height,
+        });
     }
     if let Some(scene) = scene {
         return Ok(Cli::Scene { scene });
@@ -148,6 +194,8 @@ mod tests {
             Cli::Screenshot {
                 path: "/tmp/out.json".into(),
                 scene: None,
+                width: 1280,
+                height: 800,
             }
         );
     }
@@ -166,8 +214,43 @@ mod tests {
             Cli::Screenshot {
                 path: "/tmp/sel.json".into(),
                 scene: Some(BuiltinScene::Selection),
+                width: 1280,
+                height: 800,
             }
         );
+    }
+
+    /// Wave 7.2 — `--width` / `--height` flags ride alongside
+    /// `--screenshot` to set the headless viewport for the PNG
+    /// branch. The JSON branch ignores them (it has no resolution).
+    #[test]
+    fn screenshot_with_explicit_viewport_flags() {
+        let cli = parse_cli(&s(&[
+            "--screenshot",
+            "/tmp/out.png",
+            "--width",
+            "640",
+            "--height",
+            "480",
+        ]))
+        .unwrap();
+        assert_eq!(
+            cli,
+            Cli::Screenshot {
+                path: "/tmp/out.png".into(),
+                scene: None,
+                width: 640,
+                height: 480,
+            }
+        );
+    }
+
+    /// Wave 7.2 — invalid `--width` value falls through with a
+    /// typed error rather than panicking.
+    #[test]
+    fn invalid_width_returns_error() {
+        let err = parse_cli(&s(&["--width", "abc"])).unwrap_err();
+        assert!(err.contains("--width"));
     }
 
     #[test]

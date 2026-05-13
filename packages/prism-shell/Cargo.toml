@@ -16,7 +16,11 @@ required-features = ["native"]
 
 [features]
 default = ["native"]
-native = ["prism-core/crdt", "prism-ui-runtime/femtovg"]
+# Wave 2.5 of `docs/dev/composable-builder-plan.md` — native file
+# dialog seam. `rfd` is pulled only when `native` is on (i.e. not
+# `wasm`); the trait method on `Vfs` has a default `Unsupported`
+# return so wasm builds compile clean.
+native = ["prism-core/crdt", "prism-ui-runtime/femtovg", "dep:rfd"]
 web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom", "uuid/js", "prism-ui-runtime/web"]
 # Phase 9 of `docs/dev/dioxus-inspiration.md`. Wraps the per-frame
 # render walk in `subsecond::call` so a swapped-in `lower_ui` body
@@ -43,6 +47,20 @@ subsecond = { workspace = true, optional = true }
 wasm-bindgen = { workspace = true, optional = true }
 console_error_panic_hook = { workspace = true, optional = true }
 getrandom = { workspace = true, optional = true, features = ["js"] }
+
+# Native file-picker / save-as dialogs. Gated by the `native`
+# feature — wasm never pulls this in. Consumed by `OsVfs::pick_file`
+# (Wave 2.5 — file-button browse) and queued for `file.save-as` /
+# `file.open` plumbing in the persistence service.
+rfd = { workspace = true, optional = true }
+
+# Wave 7.2 of `docs/dev/composable-builder-plan.md` — PNG headless
+# capture sink. The shell's `dump_png` walks the `RenderCommand`
+# stream and writes RGBA via the workspace `image` crate (which
+# pins `png` + `jpeg` features only — no decoder bloat). No GL
+# context required, so the encoder works in CI and on wasm
+# (when the trait gate lifts).
+image = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -53,6 +53,21 @@ impl ComponentRegistry {
         Ok(())
     }
 
+    /// Insert `component`, overwriting any prior registration for the
+    /// same id. Returns the previous entry when one was present —
+    /// hosts that need to surface "swapped X" diagnostics inspect the
+    /// `Some(_)` arm. Use [`register`] when conflicts should be
+    /// errors; use this for hot-reload paths where re-registration of
+    /// the same id is the contract (Phase 6d of
+    /// `docs/dev/luau-integration-plan.md`).
+    pub fn register_or_replace(
+        &mut self,
+        component: Arc<dyn Component>,
+    ) -> Option<Arc<dyn Component>> {
+        let id = component.id().clone();
+        self.components.insert(id, component)
+    }
+
     pub fn get(&self, id: &str) -> Option<Arc<dyn Component>> {
         self.components.get(id).cloned()
     }

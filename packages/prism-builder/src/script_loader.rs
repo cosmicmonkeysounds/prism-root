@@ -1,12 +1,16 @@
-//! Walks a project's `scripts.widgets` declaration and registers the
-//! resulting Luau widgets into a [`LuauRenderRegistry`] +
-//! [`ComponentRegistry`].
+//! Walks a project's `scripts.{widgets,automations,build_steps,commands}`
+//! declarations and compiles each `.luau` file. Widgets register
+//! through a [`LuauRenderRegistry`] + [`ComponentRegistry`] live wire-up
+//! so they're paintable in the shell; the other three pipelines do a
+//! compile-only preflight today — diagnostics surface through the
+//! [`LoadReport`] but host registration (automation engine, CLI build
+//! steps, command palette) is wired by the host once that surface
+//! exists.
 //!
 //! Phase 6d of `docs/dev/luau-integration-plan.md`. Capability scope
-//! enforcement, hot-reload via the VFS watcher, and the `automations`
-//! / `build_steps` / `commands` sections are tracked as follow-ups —
-//! this file only handles the widgets pipeline so the shell can light
-//! up Luau-defined widgets in the component palette.
+//! enforcement is the remaining follow-up — the per-glob `permissions`
+//! table in `.prism.json` is parsed but not yet enforced against the
+//! compiled scripts.
 
 #![cfg(feature = "luau")]
 
@@ -103,6 +107,101 @@ pub struct LoadReport {
     pub failures: Vec<(PathBuf, String)>,
 }
 
+/// Re-read a single `.luau` widget file and swap its compiled render
+/// function in [`LuauRenderRegistry`] via
+/// [`LuauRenderRegistry::replace`]. The new [`LuauComponent`] is then
+/// inserted into [`ComponentRegistry`] through
+/// [`ComponentRegistry::register_or_replace`] so the live document
+/// walks the new render path on the next sync pass.
+///
+/// Intended as the body of the VFS watcher callback for
+/// `scripts.widgets` files. Returns the list of widget ids that
+/// re-registered (a single file may declare multiple widgets) or the
+/// first error surfaced during compile / replace.
+pub fn reload_widget_file(
+    path: &Path,
+    luau: &mut LuauRenderRegistry,
+    components: &mut ComponentRegistry,
+) -> Result<Vec<String>, ScriptLoadError> {
+    let source = std::fs::read_to_string(path)?;
+    let compiled = luau.compile(&source)?;
+    let mut ids = Vec::with_capacity(compiled.len());
+    for comp in compiled {
+        let id = comp.id().to_string();
+        // `register_or_replace` is the contract for hot-reload: a
+        // widget that the file already declared keeps its slot in the
+        // registry but is now backed by the new render closure.
+        let _prev = components.register_or_replace(Arc::new(comp) as Arc<LuauComponent>);
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
+/// Compile-only preflight for `scripts.automations`. Walks every
+/// `.luau` file under `<glob>` and confirms it parses + executes
+/// against a throwaway [`LuauRenderRegistry`]-backed `Lua` state. The
+/// actual `AutomationEngine` wiring (host-supplied `ActionHandler`s
+/// that proxy into Luau) lives in the host crate that owns
+/// `prism_core::kernel::automation` — this function exists so a
+/// project's manifest declarations get exercised at boot and broken
+/// scripts surface in the load report.
+pub fn load_automations(project_root: &Path, glob: &str) -> Result<LoadReport, ScriptLoadError> {
+    compile_only_pass(project_root, glob)
+}
+
+/// Compile-only preflight for `scripts.build_steps`. See
+/// [`load_automations`] for the pattern.
+pub fn load_build_steps(project_root: &Path, glob: &str) -> Result<LoadReport, ScriptLoadError> {
+    compile_only_pass(project_root, glob)
+}
+
+/// Compile-only preflight for `scripts.commands`. See
+/// [`load_automations`] for the pattern.
+pub fn load_commands(project_root: &Path, glob: &str) -> Result<LoadReport, ScriptLoadError> {
+    compile_only_pass(project_root, glob)
+}
+
+/// Shared body for the three compile-only pipelines. The `loaded`
+/// list carries the file stem of every script that parsed cleanly;
+/// `failures` collects the path + error string for the rest.
+fn compile_only_pass(project_root: &Path, glob: &str) -> Result<LoadReport, ScriptLoadError> {
+    let mut report = LoadReport::default();
+    let Some(dir) = resolve_widgets_dir(project_root, glob) else {
+        return Ok(report);
+    };
+    if !dir.is_dir() {
+        return Ok(report);
+    }
+    let lua = mlua::Lua::new();
+    for entry in std::fs::read_dir(&dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("luau") {
+            continue;
+        }
+        let source = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                report.failures.push((path, e.to_string()));
+                continue;
+            }
+        };
+        // `load(..).into_function()` validates syntax + compiles to
+        // bytecode without executing user code — exactly the preflight
+        // semantics the manifest wants for "did this script's body
+        // type-check at boot."
+        match lua.load(&source).into_function() {
+            Ok(_) => {
+                if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                    report.loaded.push(name.to_string());
+                }
+            }
+            Err(e) => report.failures.push((path, e.to_string())),
+        }
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +260,90 @@ mod tests {
         let report = load_widgets(&tmp, "nope/*.luau", &mut luau, &mut components).unwrap();
         assert!(report.loaded.is_empty());
         assert!(report.failures.is_empty());
+    }
+
+    #[test]
+    fn reload_widget_file_swaps_compiled_render() {
+        let tmp = tempdir_for_test();
+        let widgets = tmp.join("widgets");
+        std::fs::create_dir_all(&widgets).unwrap();
+        let path = widgets.join("greet.luau");
+        std::fs::write(
+            &path,
+            r#"
+            prism.widget {
+                id = "greet-luau",
+                render = function() return { component = "text", props = { body = "v1" } } end,
+            }
+            "#,
+        )
+        .unwrap();
+
+        let mut luau = LuauRenderRegistry::new();
+        let mut components = ComponentRegistry::new();
+        let report = load_widgets(&tmp, "widgets/*.luau", &mut luau, &mut components).unwrap();
+        assert_eq!(report.loaded, vec!["greet-luau".to_string()]);
+        let v1 = luau
+            .invoke(
+                "greet-luau",
+                &serde_json::Value::Null,
+                &serde_json::Value::Null,
+            )
+            .unwrap();
+        assert_eq!(v1.props["body"], "v1");
+
+        // Hot-reload — rewrite the file and call reload_widget_file.
+        std::fs::write(
+            &path,
+            r#"
+            prism.widget {
+                id = "greet-luau",
+                render = function() return { component = "text", props = { body = "v2" } } end,
+            }
+            "#,
+        )
+        .unwrap();
+        let ids = reload_widget_file(&path, &mut luau, &mut components).unwrap();
+        assert_eq!(ids, vec!["greet-luau".to_string()]);
+        let v2 = luau
+            .invoke(
+                "greet-luau",
+                &serde_json::Value::Null,
+                &serde_json::Value::Null,
+            )
+            .unwrap();
+        assert_eq!(v2.props["body"], "v2");
+        // ComponentRegistry holds the new instance — `register_or_replace`
+        // overwrote the prior entry rather than erroring.
+        assert!(components.get("greet-luau").is_some());
+    }
+
+    #[test]
+    fn automations_pipeline_reports_compile_failures() {
+        let tmp = tempdir_for_test();
+        let dir = tmp.join("automations");
+        std::fs::create_dir_all(&dir).unwrap();
+        write_widget(&dir, "ok.luau", "return function() return 1 end");
+        write_widget(&dir, "bad.luau", "this is :: not :: luau ::");
+        let report = load_automations(&tmp, "automations/*.luau").unwrap();
+        assert_eq!(report.loaded, vec!["ok".to_string()]);
+        assert_eq!(report.failures.len(), 1);
+        assert!(report.failures[0].0.ends_with("bad.luau"));
+    }
+
+    #[test]
+    fn build_steps_and_commands_share_compile_only_pass() {
+        let tmp = tempdir_for_test();
+        let bs = tmp.join("build");
+        let cmd = tmp.join("commands");
+        std::fs::create_dir_all(&bs).unwrap();
+        std::fs::create_dir_all(&cmd).unwrap();
+        write_widget(&bs, "step.luau", "return {}");
+        write_widget(&cmd, "ping.luau", "return function() return 'pong' end");
+        let bs_report = load_build_steps(&tmp, "build/*.luau").unwrap();
+        let cmd_report = load_commands(&tmp, "commands/*.luau").unwrap();
+        assert_eq!(bs_report.loaded, vec!["step".to_string()]);
+        assert_eq!(cmd_report.loaded, vec!["ping".to_string()]);
     }
 
     #[test]

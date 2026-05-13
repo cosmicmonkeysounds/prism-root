@@ -17,6 +17,7 @@ pub mod document;
 pub mod facet;
 pub mod html;
 pub mod layout;
+pub mod luau_bindings_consts;
 #[cfg(feature = "luau")]
 pub mod luau_component;
 #[cfg(feature = "luau")]
@@ -99,4 +100,7 @@ pub use luau_modifier::{
     LuauModifier, LuauModifierDef, LuauModifierRegistry,
 };
 #[cfg(feature = "luau")]
-pub use script_loader::{load_widgets, LoadReport, ScriptLoadError};
+pub use script_loader::{
+    load_automations, load_build_steps, load_commands, load_widgets, reload_widget_file,
+    LoadReport, ScriptLoadError,
+};

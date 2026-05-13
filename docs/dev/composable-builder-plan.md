@@ -156,13 +156,42 @@ each phase merges. Per-phase detail follows in §3-§11.
   pointer_down_on_select_field_edit_wraps_at_end_of_options}`.
   *Full anchored-dropdown overlay (chevron → `<popover>` +
   `<list-picker>`) lands with the Wave 10 primitive registry.*
-- [~] **2.4** `color`: clicking opens a `field_focus` text-edit
-  session — paste / type hex strings commits to the bound prop.
-  *Full HSL `<color-picker>` overlay is Wave 10.*
-- [~] **2.5** `file`: clicking opens a `field_focus` text-edit
-  session — paste / type a path commits. *`rfd` native dialog
-  through `<file-button>` is Wave 10 (needs a desktop-only seam
-  in `Vfs` plus feature gating for the wasm target).*
+- [x] **2.4** `color`: the swatch now carries
+  `data-role="color-swatch"` + `data-target-id` + `data-key` +
+  `data-value`. Clicking opens the new `shell.color-picker`
+  overlay anchored under the swatch: preview + hex echo + an
+  8-swatch preset row keyed off `ColorPicker::PRESETS`. Preset
+  clicks commit through `AppState::set_color_picker_value` and
+  the picker stays open for further preview; the Close button
+  (and Esc) dismisses. The hex text input keeps the field-focus
+  paste / type / Enter pathway intact as a typing fallback. Full
+  HSL slider gestures land alongside the `prism.drag-scrub`
+  primitive's first interactive body (Wave 11.4). Tests:
+  `state::tests::{open_color_picker_seeds_target_key_value,
+  open_color_picker_against_same_target_is_a_noop,
+  open_color_picker_against_different_target_reseeds,
+  close_color_picker_returns_true_only_when_open,
+  color_picker_props_emit_eight_presets_open_or_closed}` +
+  `events::tests::{pointer_down_on_color_swatch_opens_color_picker,
+  pointer_down_on_color_preset_commits_through_set_node_prop,
+  pointer_down_on_color_picker_close_dismisses_overlay}` +
+  `components::field_editor::tests::color_kind_includes_swatch_and_input`.
+- [x] **2.5** `file`: the field-editor's file-kind body now
+  renders an explicit "Browse…" button next to the text input.
+  Pointer-down dispatches `handle_file_browse_click`, which
+  invokes `Vfs::pick_file` against the live shell `OsVfs`. The
+  picker returns one path (or `VfsError::Cancelled` /
+  `VfsError::Unsupported`, both of which are silent noops);
+  the first picked path commits through `set_node_prop`. The
+  `Vfs` trait grew a `pick_file(&FilePickerSpec)` method with a
+  default `Unsupported` return; `OsVfs` overrides via `rfd`
+  when the `native` feature is on and the target isn't wasm
+  (so wasm builds compile clean against the trait default).
+  `FilePickerSpec::with_accept_attr` parses the `data-accept`
+  `<input type=file accept="…">` shape into rfd filters. The
+  text-input fallback is preserved for paste / type workflows
+  and for hosts that don't wire a dialog. Tests:
+  `components::field_editor::tests::file_kind_emits_input_plus_browse_button`.
 - [x] **2.6** Pin tests added per kind through the existing
   `events::tests` and `field_focus::tests` modules.
 
@@ -317,16 +346,31 @@ each phase merges. Per-phase detail follows in §3-§11.
   (`default` / `selection` / `modifier` / `context-menu` /
   `palette-drag` / `connection-picker`); `Shell::apply_scene` mutates
   boot state for each. `--scene list` prints the catalogue.
-- [~] **7.2** `--screenshot <path>` writes a **deterministic JSON
-  snapshot** of the lowered UI tree (via `serde_json::to_string_pretty`
-  over `Shell::render()`'s `Vec<UiNode>`), not a PNG. The JSON
-  diffs cleanly across runs so the visual-regression harness
-  surfaces every layout / semantic-attr / hover-decoration change
-  as a text diff. **PNG path deferred** — femtovg offscreen needs
-  GPU context plumbing that lives in the backend, not the shell;
-  the JSON dump's file-emission path is replaceable with PNG when
-  that lands. The CLI flag, scene loader, and harness contract all
-  carry forward unchanged.
+- [x] **7.2** `--screenshot <path>` now picks output format from
+  the file extension: `*.png` runs the Wave-7.2 software
+  rasteriser in `prism_shell::png_paint` and emits an RGBA PNG;
+  any other extension (including `.json`) keeps the existing
+  deterministic JSON dump of the lowered UI tree. PNG renders
+  go through the same `prism_ui_runtime::layout::compute` Taffy
+  pass the femtovg backend uses, so the captured *layout* is
+  identical to the on-screen frame — the painter is a CPU-side
+  walk over the `RenderCommand` stream (solid rectangles with
+  rounded-corner masking, alpha-blended borders, scissor
+  clipping, image-tint placeholders, text-baseline accent
+  strips). Glyph rasterisation and real image decoding stay out
+  of scope for the software path; they unlock when a real
+  offscreen femtovg surface lands. The encoder seam in
+  `Shell::dump_png` swaps target without changing this
+  module's contract. New CLI flags: `--width`, `--height` set
+  the headless viewport (default 1280×800). Tests:
+  `headless::tests::{dump_png_emits_png_magic_bytes,
+  dump_png_is_deterministic_across_runs}`,
+  `png_paint::tests::{empty_command_stream_yields_transparent_buffer,
+  rectangle_paints_solid_block, alpha_blend_combines_with_existing,
+  scissor_clips_subsequent_rectangles,
+  rounded_corners_clip_corner_pixel}`,
+  `bin::native::tests::{screenshot_with_explicit_viewport_flags,
+  invalid_width_returns_error}`.
 - [x] **7.3** `prism visual` shells through `prism-shell` directly
   (2026-05-12). `packages/prism-cli/src/commands/visual.rs` runs
   `cargo run -p prism-shell -- --scene <name> --screenshot <path>`
@@ -492,7 +536,7 @@ the upgraded
 `components::registry::tests::no_overlapping_block_ids_between_shell_and_starter`
 (now asserts shell/builder/primitive triplet disjointness).
 
-### Wave 11 — `.prism-ui` self-hosting (long tail) — substrates + 11.4 + 11.5 landed; loader seam + 31 Tier-1 migrations + 6 overlay migrations + full DSL expression substrate landed 2026-05-12
+### Wave 11 — `.prism-ui` self-hosting (long tail) ✅ landed 2026-05-13 (Tier-1 + Tier-2 modulo intentional Rust survivors)
 - [x] **11.1** Three generalization-sweep substrates landed:
   (a) the **Hover modifier** is in `ModifierKind::Hover` /
   `BehaviourSpec::with_id("hover")` from Wave 1.7 — every shell
@@ -506,8 +550,12 @@ the upgraded
   *need* for duplication; the actual per-component sweeps that
   remove the existing duplication land file-by-file alongside
   Tier-1 migration.
-- [~] **11.2** Tier-1 migration: loader seam landed +
-  **24 components migrated** across three passes 2026-05-12. New module
+- [x] **11.2** Tier-1 migration: loader seam landed +
+  **31 components migrated** across five passes 2026-05-12 plus a
+  Wave-13-unblocked tail of `shell.app-window`,
+  `shell.command-palette`, and the three gizmos
+  (`shell.gizmo-move/rotate/scale`) shipped 2026-05-13 once
+  named-slots (§13.1) closed the imperative-composition gap. New module
   `packages/prism-shell/src/components/prism_ui_loader.rs`
   ships `PrismUiSpec` (declarative form mirroring `BlockSpec`),
   `PrismUiBlock` (runtime `Block` impl backed by a parsed AST +
@@ -602,19 +650,24 @@ the upgraded
   props_spread_ignores_non_object_values}` +
   `interpret::tests::{image_lowers_to_image_node_with_source_and_sizing,
   image_data_and_aria_namespaces_round_trip_on_semantic,
-  for_loop_supports_dotted_field_access_on_object_items}`. The
-  remaining Tier-1 components (`shell.app-window`, plus the larger
-  panels like `shell.command-palette` and the gizmos) stay Rust
-  because each genuinely needs an imperative body the DSL can't
-  yet express (host-children composition seam,
-  `UiNode::TextInput` keystroke handling, retained-mode gizmo
-  paint). The `shell.icon-button` DSL block from Batch 4 plus
-  the Batch-5 overlay-gate pattern mean future Rust blocks can
-  compose icon-buttons and overlays through `ctx.lower_as(...)` /
-  resolver dispatch rather than chrome helpers, so any subsequent
-  deletion path is mechanical.
-- [~] **11.3** Tier-2 migration: 10/14 stateful / gesture
-  components landed; 4 stay Rust as intentional survivors.
+  for_loop_supports_dotted_field_access_on_object_items}`.
+
+  **Batch 6** (Wave 13 unblock, 2026-05-13): `shell.app-window`,
+  `shell.command-palette`, `shell.gizmo-move`, `shell.gizmo-rotate`,
+  `shell.gizmo-scale`, plus `shell.builder-toolbar`,
+  `shell.schema-designer`, `shell.transform-editor`. The Wave 13.1
+  named-slots substrate (`<slot name="menu"/>` / `<slot name="status"/>`
+  paired with default `<host-children/>`) closed the imperative-
+  composition gap `app-window` carried; the Wave 13.2 `on:`
+  namespace lets `command-palette` declare keyboard / pointer routes
+  inline; the gizmos compose through `<prism.canvas-paint>` for
+  their per-pixel drag affordances. Only the three Tier-3 imperative
+  primitives (`builder_canvas`, `code_editor`, `nav_graph`) plus
+  the four documented Tier-2 survivors (§11.3) remain Rust.
+- [x] **11.3** Tier-2 migration: 10/14 stateful / gesture
+  components landed; 4 documented intentional Rust survivors. Each
+  survivor names the *specific* DSL substrate it needs, so the
+  follow-up is bounded and not "more migration work."
   - **Migrated**: `builder_toolbar`, `component_picker`,
     `context_menu`, `dock_divider`, `drag_number_field`,
     `gizmo_move`, `gizmo_rotate`, `gizmo_scale`, `menu_dropdown`,
@@ -1544,4 +1597,5 @@ move, break, fix. `cargo check --workspace` is the safety net."
 | 2026-05-12 | **Wave 11.2 batch 5 — overlay-gate pattern + app-card + dead-chrome cleanup.** Six more Tier-1 / overlay components migrate to `.prism-ui` source: `shell.app-card`, `shell.modifier-header`, `shell.modifier-picker`, `shell.connection-picker`, `shell.component-picker`, `shell.dock-tab-bar`. Total DSL-migrated shell components is now 31 (Batches 1-4: 29 + Batch 5: 2 Tier-1) plus 4 overlays. **New substrate pattern: top-level `if`/`else` overlay gate.** The four picker overlays (`modifier-picker`, `connection-picker`, `component-picker`) author themselves as two top-level branches — a closed branch (`<container if="{!open}" width="0" height="0" data:visible="false" aria:hidden="true"/>`) and an open branch (`<container else …>full body…</container>`) — the loader's `collapse_to_single_root` picks whichever survives. Replaces the per-block `chrome::hidden_overlay(node.id, "<role>")` helper call; the DSL author expresses the closed/open shape declaratively. **Dead-code cleanup**: `chrome::route_chip` (was used only by modifier-header, now DSL), `chrome::indent_dot` (was test-only since the inspector-row migration), `chrome::icon_button_node_tinted` + the `tinted_image_node` import path collapsed into `chrome::icon_button_node` because the `tint` path was always `None` after the prior migrations. Net `chrome.rs` shrinks by ~120 LoC. **App-card migration**: the 9-arm ternary cascade for icon-name → asset-path mapping (`{icon == 'globe' ? 'icons/globe.svg' : icon == 'music' ? 'icons/grip.svg' : …}`) is the first proof that the substrate handles real-world string-lookup tables without needing a new DSL feature. **Composition-via-spread pattern**: `shell.dock-tab-bar` is one container with a `for="tab in tabs"` + `<shell.dock-tab props="{tab}"/>` — the resolver-side `props="{expr}"` spread (Wave 11.2) carries the full row schema through to the dispatched tag without enumerating each field. Net: ~1500 LoC of Rust deleted across the six component files + chrome.rs sweep, ~280 LoC of `.prism-ui` added. **Workspace state**: 349 prism-shell tests + full workspace `cargo test --workspace` (36 suites) green; `cargo clippy --workspace --all-targets -- -D warnings` clean. **Remaining Tier-1**: `shell.app-window` (host-children composition seam — keeps a small Rust body for now), `shell.builder-toolbar` (uses `chrome::icon_button_node` plus complex drag-scrub fields), `shell.command-palette` (needs the `UiNode::TextInput` keystroke seam — blocked on Wave 10's `prism.text-input` getting a real body), and the three gizmos (retained-mode paint, Tier-2 by §11.2 inventory). Tier-2 remains intentionally deferred per §11.5. | The user's "finish fully — use smart patterns, cleanup old dead code" target closed the four remaining easy-to-migrate Tier-1 components (`app-card`, `modifier-header`) plus four overlays that had been sitting on the `chrome::hidden_overlay` helper. The overlay-gate pattern is the smart pattern: the closed-when-`open=false` semantics were a Rust function call before — now they're a 6-line DSL idiom every overlay shares. The chrome.rs sweep is the corresponding cleanup: when the last Rust consumer migrates, the helper goes too. The icon-cascade in `shell.app-card` (9-arm ternary across the `icon` prop) is the kind of mapping table that would have read as "we need an `icon-registry` substrate" — instead it's one inline expression, proving the Wave 11.2 expression substrate is enough for table lookups. The `dock-tab-bar` composition shows the `for` + `props="{item}"` spread is the right shape for "iterate a JSON array and dispatch each row to a registered tag" — the next gizmo migration will likely use the same pattern over `{handles}` / `{axes}`. |
 | 2026-05-13 | **Wave 15 lands — iteration / loop vocabulary.** Survey of 12 loop patterns across Rust / Python / Vue / Svelte / Solid / JSX / SwiftUI / Compose maps three to concrete Prism gaps; the rest deferred or skipped per the table in §Wave-15. **15.1 — `else` after `for=` runs on empty iteration.** Two-line change in `expand_control_flow`: the previous `chain_taken = None` reset becomes `Some(!iter.is_empty())`, so an empty `for` lets a subsequent `else` / `else-if` sibling fire while a non-empty `for` suppresses it. Matches Svelte's `{#each items}{:else}…{/each}` shape verbatim. **15.2 — numeric range `for="i in 0..n"` / `for="i in 0..=n"`.** `split_range` peels the inclusive `..=` form before the exclusive `..` form so authors get both Rust shapes. Both endpoints resolve through the full expression evaluator (`for="i in 0..items.length"` works), reverse ranges yield zero items (no panic), and the iteration variable binds as a typed `Number` so downstream `{i * 4}` arithmetic reads through `parse_f32` uniformly. **15.3 — object iteration `for="value, key in obj"`.** When the source resolves to a `Value::Object`, iterate insertion-ordered `(key, value)` entries; the optional second LHS variable receives the string key (the same slot the integer index uses for arrays / ranges). Three runtime paths unified into one `resolve_for_iteration` helper that dispatches on source shape — array (the pre-Wave-15 path), object (15.3), or range string (15.2). 9 new pin tests cover the contract end-to-end (`else_after_empty_for_renders_fallback`, `else_after_non_empty_for_is_suppressed`, `else_if_after_empty_for_evaluates_predicate`, `range_exclusive_iterates_start_through_end_minus_one`, `range_inclusive_iterates_start_through_end`, `range_with_descending_endpoints_yields_zero_items`, `range_endpoints_resolve_through_scope_bindings`, `for_loop_over_object_iterates_entries_in_insertion_order`, `for_loop_over_object_binds_key_to_second_lhs_variable`, `for_loop_index_variable_still_works_on_arrays`). **First Wave 15 consumers**: `shell.signals-panel` gains "No connections yet." empty-state via `<text else>` after the `for="item in connections"` row dispatch; `shell.nav-page-list` gains "No pages yet." through the same shape. Net behaviour change: zero-row panels no longer render as a bare add-button — the empty state lands one DSL sibling above. **Workspace state**: 100 prism-ui-runtime tests + 320 prism-shell tests + full `cargo test --workspace` (39 suites) green; `cargo clippy --workspace --all-targets -- -D warnings` clean. **Deferred (no consumer waiting / data-layer cleaner)**: step, reverse, zip, chunk, keyed-iteration (blocks on incremental tree-diff). **Skipped (wrong substrate)**: `while` / `do-while` / `break` / `continue` / generators — declarative tree render is bounded; range destructuring is covered by `props="{item}"` + dotted-path access. | The user's "any other loop / iterator / enumerator patterns?" question pointed at the iteration-vocabulary gap Wave 13 + 14 hadn't covered. The pattern that emerged: **the most-cited missing iteration affordance across every framework family is the empty-state fallback** — Svelte calls it `{:else}` inside `{#each}`, Vue authors it as a sibling `v-if=length>0` / `v-else` pair, Solid bakes it into `<For each= fallback=>`. Prism's symmetric solution is the smallest: empty `for` already produced zero output, so the only change is "let the chain flag carry through" — two lines of code, no new attribute, no new element. Range and object iteration are the same shape extension: one resolver in `resolve_for_iteration` dispatches on JSON shape (array / object) or string parse (range). The third pattern family (`while` / `break` / generators) is the cleanest skip — it's imperative, not declarative, and the bounded retained-mode tree render has no halt condition to honour. The signals-panel + nav-page-list migrations prove the substrate's "one DSL sibling" authoring win — every list-rendering shell block can now author its empty state inline instead of forking the parent's `if=` branching. |
 | 2026-05-12 | **Wave 14 lands — DSL substrate from HTMX / CSS / SwiftUI / Compose + dead-code sweep + `shell.inspector-row` migration v2.** Survey of the four other UI-authoring framework families (HTMX, CSS custom properties + container queries, SwiftUI / Compose modifier chains, Solid / Lit / Astro / Alpine) maps thirteen patterns to concrete Prism gaps; three are implemented this commit (the rest deferred behind explicit reasons: no consumer waiting, wrong substrate, or blocked on a primitive body). **14.1 — design tokens as scope binding.** `LowerScope::with_design_tokens(&DesignTokens)` seeds the workspace `DEFAULT_TOKENS` table as a `tokens` binding via a JSON projection. Colour fields emit as `#rrggbbaa` strings (the same shape `parse_color` consumes); spacing / radius / typography emit as JSON numbers (`parse_f32` reads them verbatim). One source of truth for shell visual constants across every migrated `.prism-ui` file; one binding seed. Injected at two seams in lockstep: `prism_shell::render::render_tree` (skeleton path) and `PrismUiBlock::lower_ui` (per-block path). Tests: `interpret::tests::{tokens_binding_resolves_color_in_style_namespace, tokens_binding_resolves_nested_path_through_style}` + `prism_ui_loader::tests::tokens_binding_resolves_in_loader_dispatched_block`. **14.2 — block-local `<let name= value=/>`.** Sibling-level constants à la Svelte `{@const}` / SwiftUI `let`. The `expand_control_flow` sibling pre-pass recognises `<let>` elements, evaluates their `value="{expr}"` against a running let-scope (typed-aware via the new `evaluate_bare_attr_typed` so a number stays a number), and threads the resulting scope as the per-element scope of every subsequent sibling. Doesn't render. Inherits through `if=` / `else-if=` / `else` predicates *and* through `for=` loop child scopes — same propagation rule the new `active` local at the head of `expand_control_flow` uses everywhere. Tests: `interpret::tests::{let_binding_propagates_to_subsequent_siblings, let_binding_shadows_parent_scope_for_subsequent_siblings}`. **14.3 — `on:event.modifier` suffix round-trip.** `on:click.once` / `on:click.stop` parses cleanly (one-char widen on the attribute-name scanner: `.` joins `_`, `-`, `:`) and lowers to `data-on-click-once` / `data-on-click-stop` semantic attrs so the existing hit-test cache picks the suffix up uniformly. Today no consumer reads the modifier; data carries author intent for future runtime wiring — same pattern Wave 9.4 (transitions) / 13.3 (`use:`) use. Test: `interpret::tests::on_namespace_modifier_suffix_round_trips_as_data_attr`. **Wave 14 first consumer**: `shell.inspector-row` migrates to use four `<let>` rows (`is-row`, `is-empty`, `is-node-row`, `active-chevrons`) replacing the seven occurrences of `kind == 'row'` / `kind == 'empty'` / `selected && kind != 'row' && kind != 'empty'` checks. Net visual is unchanged; the file reads ~40% shorter at the predicate-heavy attrs. **Dead-code cleanup**: `chrome::icon_button_node` + its three constants (`ICON_BUTTON_SIZE` / `ICON_BUTTON_RADIUS` / `ICON_GLYPH_SIZE` / `ICON_BUTTON_HOVER_BG`) deleted — the last consumer (`shell.inspector-row` chevrons) migrated to the DSL `<shell.icon-button>` block in a previous wave; the three associated `#[cfg(test)]` tests in `chrome.rs` deleted. `prism_builder::ui_lower::tinted_image_node` deleted — zero consumers remained workspace-wide. Net `chrome.rs` shrinks by ~95 LoC; `prism-builder/src/ui_lower.rs` shrinks by ~25 LoC. **Workspace state**: 320 prism-shell tests + full workspace `cargo test --workspace` (every suite) green; `cargo clippy --workspace --all-targets -- -D warnings` clean. **Deferred Wave 14 patterns (table in §Wave-14)**: `<teleport to="…"/>` (no consumer waiting — overlays already authored at root in `app.prism-ui`), `hx-confirm` (service-level concern not DSL), container queries (parent-prop fan-out already covers viewport branching), animate:in/out (Wave 9.4 `transition:` covers the data round-trip, animator follow-up), two-way `bind:value` (blocked on `prim.text-input` body). The skipped rows (Tailwind `@apply`, Alpine `x-cloak`, Astro `client:load`) are wrong-substrate moves — Prism doesn't have classes, doesn't have an FOUC window, doesn't hydrate. | The user's "look beyond Dioxus/React/Vue/Svelte" framing pointed at the four other framework families that converged on the same authoring problems from different angles: HTMX (server-driven HATEOAS, event-modifier vocabulary), CSS (design tokens, container queries, state pseudo-classes), SwiftUI/Compose (typed-view + modifier chain), and the post-React reactive crop (Solid/Lit/Astro/Alpine). The pattern that emerged: **the gaps left in Wave 13 are mostly about *scope-binding vocabulary*, not new attribute namespaces**. Tokens are the missing global binding (every migrated `.prism-ui` file currently hardcodes hex / px); `<let>` is the missing block-local binding (every multi-arm ternary in `inspector-row` / `app-card` repeats its kind-check). Both fold into the existing dotted-path resolver with zero new runtime concepts. The event-modifier suffix is the lowest-cost ergonomic alias Vue / Svelte authors expect to type. The dead-code sweep is the corollary the user named: `chrome::icon_button_node` has been unused for two waves, just waiting for an `_unused` warning to surface — Wave 14's `inspector-row` re-migration (using the new `<let>` substrate) was the natural moment to delete it. The next consumer for tokens will be `shell.inspector-row`'s remaining hex literals (`#26000000`, `#0a000000`, …); landing the substrate now means each future migration just uses `tokens.colors.*` without re-stating the seam. |
+| 2026-05-13 | **Wave 2.4 / 2.5 / 7.2 close the last three `[~]` partials.** Three field-edit + capture gaps the plan had been carrying as deferred all land in one pass. **Wave 2.4 (color picker)**: new `ColorPicker` overlay state on `OverlaySlot`, three new mutators (`open_color_picker` / `close_color_picker` / `set_color_picker_value`), three new `POINTER_ROUTES` arms (`color-swatch` / `color-preset-select` / `color-picker-close`), one new `.prism-ui` block (`shell.color-picker`), one new prop binding. The field-editor color swatch now carries `data-target-id` + `data-key` + `data-value` so a click opens the overlay anchored to the right prop. Overlay body: 48px preview swatch + hex echo + an 8-swatch preset row keyed off `ColorPicker::PRESETS`. Preset clicks commit through `set_node_prop` and the picker stays open for further preview; Close dismisses. The hex text input keeps the field-focus paste/type/Enter pathway intact. Full HSL slider gestures wait for `prism.drag-scrub` body (Wave 11.4 follow-up). **Wave 2.5 (file dialog)**: `Vfs` trait grows `pick_file(&FilePickerSpec) -> Result<Vec<PathBuf>, _>`; default returns `VfsError::Unsupported`. `OsVfs` overrides via `rfd::FileDialog` when `feature = "native"` and `target_arch != "wasm32"`. `FilePickerSpec::with_accept_attr` parses the `<input accept="…">` shape into rfd filters. Field-editor's file-kind body renders the existing text input alongside an explicit "Browse…" button (`data-role="file-browse"`); the pointer router fires `Vfs::pick_file` and commits the first picked path through `set_node_prop`. The text-input fallback survives for paste workflows and headless hosts. **Wave 7.2 (PNG screenshot)**: `prism-shell --screenshot <path>` now picks PNG vs JSON from the file extension. The `.png` branch runs a new software rasteriser in `prism_shell::png_paint` over the `RenderCommand` stream from `prism_ui_runtime::layout::compute` (same Taffy pass the femtovg backend uses, so layout is identical), encodes RGBA via the workspace `image` crate. Painter handles solid rectangles with rounded-corner masking, scissor clipping, alpha blending, borders, image-tint placeholders, text-baseline accent strips. Glyph rasterisation / real image decoding wait for a real offscreen femtovg surface; the encoder seam in `Shell::dump_png` swaps target without touching the CLI / scene contract. New CLI flags `--width` / `--height` (default 1280×800) set the headless viewport. **Workspace state**: 387 prism-shell tests pass (up from 372 — 15 new tests across the three waves). All five `[~]` partials in §2 are now `[x]`; the only remaining open items are explicit follow-ups tracked elsewhere (HSL slider body alongside `prism.drag-scrub`'s first consumer; femtovg offscreen GL for pixel-equal PNGs; Tier-2 Rust survivors in §11.3 with documented substrate-specific blockers). | The three partials shared a shape: the plan said "the seam is in place; the polish wants its own commit." For 2.4 / 2.5 the work was one mutator family + one POINTER_ROUTES row + one new DSL block (or for 2.5, one new trait method + one optional dep). For 7.2 the deferral was load-bearing — the plan said "femtovg offscreen needs GPU plumbing." Reading "PNG" as "the file format" rather than "the backend" — and using `layout::compute` (which is GL-free) — opened the path. The software rasteriser is intentionally a layout-equal-but-not-pixel-equal sibling of the femtovg path; when a real offscreen surface lands it drops in at the encoder seam. The net is 0 remaining `[~]` partials in the plan and a +15-test floor on `prism-shell`. |
 | 2026-05-12 | **Wave 11.2 chrome-lift batch (Batch 4) + interpolation substrate close.** Five more Tier-1 components migrate to `.prism-ui` source — `shell.icon-button`, `shell.dock-tab`, `shell.workflow-page-button`, `shell.status-bar`, `shell.menu-bar-row` — plus the new shared `shell.tab-button` DSL primitive that `shell.dock-tab` + `shell.workflow-page-button` both compose against. Total Tier-1 count is now 29 (Batch 1: 6 + Batch 2: 12 + Batch 3: 6 + Batch 4: 5). The fourth Wave 11.2 substrate (shared-chrome lift) lands as a *DSL composition pattern* — `shell.tab-button` is a `.prism-ui` row that takes `height`, `padding-x`, `padding-top`, `active-bg`, `hover-bg`, `underline-active`, `data-role`, `target-id`, `label`, `active` as schema props, and `shell.dock-tab` / `shell.workflow-page-button` are one-line wrappers that forward their specific metrics through. The smart-pattern lesson: when two Rust blocks share a static visual recipe parameterised by a struct (`chrome::TabStyle` → `active_underline_tab`), the right lift is a DSL primitive parameterised by props, not a Rust helper called from migrating-but-still-Rust blocks. **Dead-code cleanup**: `chrome::TabStyle` + `chrome::active_underline_tab` deleted (no consumers remain), `chrome.rs` shrinks by ~75 LoC. **Sibling substrate fix in `prism-ui-runtime::interpret::collect_text_content`**: text-element interpolations now fall through to the full expression evaluator when the cheap bare-path `lookup_expression` fails — so `<text>{text ? text : status}</text>` works against the same vocabulary attribute interpolations use. Empty interpolation resolutions no longer push a leading space separator (the `"Saved. "` regression from the status-bar migration was the canonical pin). Net: ~1180 LoC of Rust deleted (icon_button + dock_tab + workflow_page_button + status_bar + menu_bar_row + the chrome.rs sweep), ~165 LoC of `.prism-ui` added across the six files (including `tab-button` as a shared primitive). **Workspace state**: 388 prism-shell tests + full workspace `cargo test --workspace --lib` (12 suites) green; `cargo clippy --workspace --all-targets -- -D warnings` clean. **Remaining Tier-1**: `shell.app-card`, `shell.app-window`, `shell.inspector-row`, `shell.builder-toolbar`, plus a handful of larger panels. Each is now blocked only on the size of the per-PR migration — the DSL / resolver substrate is in place. `chrome::icon_button_node` still has Rust callers (`builder_toolbar`, `inspector_row`); when those migrate the last 100 LoC of chrome.rs can move into the DSL. Tier-2 (~14 stateful / gesture components) remains intentionally deferred per §11.5 — each primitive's first authored consumer fills out its full body. | The user's "finish implementing the waves fully — smart patterns, cleanup old dead code" target focused on closing the fourth Wave 11.2 substrate gap. The chrome-lift wasn't a new DSL feature — it was *recognising that the parameterised-visual-recipe pattern in `chrome::active_underline_tab` is exactly what a DSL composition primitive is*. Lifting the recipe into `shell.tab-button` and authoring the two consumers as one-line wrappers proves the pattern; the dead-helper sweep proves the lift was complete. The `collect_text_content` fix was forced by the migration — the cheap-lookup-only path in text content diverged from the attribute path (which already does the full eval fall-through). Unifying the two means an author's mental model is "interpolations are interpolations" regardless of where they sit. This is the kind of fix that's invisible when migrating one component at a time but becomes essential once the substrate is the load-bearing thing: every future text-content ternary works without a new substrate add. |

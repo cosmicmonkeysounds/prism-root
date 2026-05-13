@@ -1,0 +1,98 @@
+<!--
+  shell.color-picker — overlay anchored under a `color-swatch` button.
+  Wave 2.4 of `docs/dev/composable-builder-plan.md`.
+
+  Closed → 0×0 hidden overlay (matches the connection-picker pattern).
+  Open → 256px column with a 48px preview swatch, the current hex
+  echoed underneath, a 4×2 grid of preset swatches the user can
+  click to commit, and a Close button.
+
+  Routing:
+  - Preset swatches carry `data-role="color-preset-select"` +
+    `data-color="<hex>"`. The events router invokes
+    `AppState::set_color_picker_value`, which writes through to
+    `set_node_prop` against the picker's seeded `(target_id, key)`.
+  - The Close button carries `data-role="color-picker-close"`.
+-->
+<container
+    if="{!open}"
+    tag="div"
+    width="0"
+    height="0"
+    data:role="color-picker"
+    data:visible="false"
+    aria:hidden="true"/>
+<container
+    else
+    tag="div"
+    direction="column"
+    gap="8"
+    padding-left="12"
+    padding-right="12"
+    padding-top="12"
+    padding-bottom="12"
+    width="256"
+    style:background="#f0ffffff"
+    style:radius="8"
+    role="dialog"
+    aria-label="Pick a color"
+    data:role="color-picker"
+    data:visible="true">
+  <container
+      id="{id}::preview"
+      direction="row"
+      gap="12"
+      height="48">
+    <container
+        id="{id}::preview-swatch"
+        width="48"
+        height="48"
+        style:radius="6"
+        style:background="{value ? value : '#00000000'}"
+        aria-hidden="true"/>
+    <container
+        id="{id}::preview-meta"
+        direction="column"
+        gap="4">
+      <text font-size="10" style:color="#7f000000">Hex</text>
+      <text font-size="14" style:color="#000000">{value ? value : '—'}</text>
+    </container>
+  </container>
+  <text font-size="10" style:color="#7f000000">Presets</text>
+  <container
+      id="{id}::presets"
+      direction="row"
+      gap="6">
+    <container
+        for="p in presets"
+        id="{id}::preset::{p.value}"
+        tag="button"
+        width="22"
+        height="22"
+        style:radius="4"
+        style:background="{p.value}"
+        role="button"
+        aria-label="{p.value}"
+        data:role="color-preset-select"
+        data:color="{p.value}"
+        data:selected="{p.selected ? 'true' : ''}"/>
+  </container>
+  <container
+      id="{id}::close-row"
+      direction="row"
+      padding-top="4">
+    <container
+        id="{id}::close"
+        tag="button"
+        direction="row"
+        padding-left="16"
+        padding-right="16"
+        height="28"
+        style:background="#11000000"
+        style:radius="4"
+        aria-label="Close"
+        data:role="color-picker-close">
+      <text font-size="12" style:color="#000000">Close</text>
+    </container>
+  </container>
+</container>

@@ -16,6 +16,90 @@ pub enum VfsError {
     Io(String),
     #[error("not found: {0}")]
     NotFound(String),
+    /// Wave 2.5 of `docs/dev/composable-builder-plan.md` — a
+    /// `Vfs::pick_file` / `pick_save` call landed on a backend that
+    /// has no native dialog (wasm, headless tests, or any host that
+    /// chose not to wire one). Callers treat this as "user cancelled"
+    /// for the purposes of UI state; the toast is only emitted when
+    /// the *user* explicitly asked for a picker.
+    #[error("dialog unsupported on this platform")]
+    Unsupported,
+    /// Wave 2.5 — the user closed the dialog without selecting.
+    /// Indistinguishable from an empty multi-select; callers default
+    /// to "noop" rather than emitting an error toast.
+    #[error("dialog cancelled")]
+    Cancelled,
+}
+
+/// Wave 2.5 — descriptor for a file-picker invocation. The fields
+/// mirror the cross-platform subset `rfd::FileDialog` exposes; any
+/// concrete picker (rfd today, web `<input type=file>` later) accepts
+/// the same shape.
+#[derive(Debug, Clone, Default)]
+pub struct FilePickerSpec {
+    /// Window title. Empty → backend default.
+    pub title: String,
+    /// Optional "Filter Name" + extension list (without dots).
+    /// e.g. `("Images", &["png", "jpg", "jpeg"])`.
+    pub filters: Vec<(String, Vec<String>)>,
+    /// Initial directory hint. Empty → backend default.
+    pub start_dir: Option<PathBuf>,
+    /// Pre-filled filename (save dialogs).
+    pub start_file_name: String,
+    /// Allow multi-select (open dialogs only). Ignored for save.
+    pub multiple: bool,
+    /// If true, present a save-as picker (one path, writable).
+    /// Open pickers default to false.
+    pub save: bool,
+}
+
+impl FilePickerSpec {
+    pub fn open(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            ..Default::default()
+        }
+    }
+
+    pub fn save(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            save: true,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_filter(mut self, name: impl Into<String>, exts: &[&str]) -> Self {
+        self.filters
+            .push((name.into(), exts.iter().map(|s| (*s).to_string()).collect()));
+        self
+    }
+
+    pub fn with_accept_attr(mut self, accept: &str) -> Self {
+        // Parse a comma-joined list of MIME types / extension globs
+        // (the `data-accept` shape `<input type="file" accept="…">`
+        // uses). Bare extensions (`.png`) and explicit globs (`*.png`)
+        // are coalesced under one "Files" filter so the dialog stays
+        // single-row. MIME types pass through unchanged where the
+        // platform supports them.
+        let mut exts: Vec<String> = Vec::new();
+        for tok in accept.split(',') {
+            let tok = tok.trim();
+            if tok.is_empty() {
+                continue;
+            }
+            if let Some(stripped) = tok.strip_prefix("*.") {
+                exts.push(stripped.to_string());
+            } else if let Some(stripped) = tok.strip_prefix('.') {
+                exts.push(stripped.to_string());
+            }
+        }
+        if !exts.is_empty() {
+            let refs: Vec<&str> = exts.iter().map(|s| s.as_str()).collect();
+            self = self.with_filter("Files", &refs);
+        }
+        self
+    }
 }
 
 impl From<std::io::Error> for VfsError {
@@ -28,13 +112,21 @@ impl From<std::io::Error> for VfsError {
     }
 }
 
-/// Read/write/list/delete. Four methods cover every IO call any
-/// service in §26/§27 makes.
+/// Read/write/list/delete plus the Wave 2.5 native dialog seam.
+/// Five methods cover every IO call any service in §26/§27 makes.
 pub trait Vfs: Send + Sync {
     fn read(&self, path: &Path) -> Result<Vec<u8>, VfsError>;
     fn write(&mut self, path: &Path, data: &[u8]) -> Result<(), VfsError>;
     fn list_dir(&self, path: &Path) -> Result<Vec<PathBuf>, VfsError>;
     fn exists(&self, path: &Path) -> bool;
+
+    /// Present a native open/save file dialog and return the picked
+    /// path(s). Default impl returns [`VfsError::Unsupported`] — only
+    /// the production [`OsVfs`] overrides this (and only on native
+    /// targets; wasm builds inherit the default).
+    fn pick_file(&self, _spec: &FilePickerSpec) -> Result<Vec<PathBuf>, VfsError> {
+        Err(VfsError::Unsupported)
+    }
 }
 
 #[derive(Default)]
@@ -64,6 +156,41 @@ impl Vfs for OsVfs {
 
     fn exists(&self, path: &Path) -> bool {
         path.exists()
+    }
+
+    /// Wave 2.5 — native picker. Bridges to `rfd` when the
+    /// `desktop-dialogs` half of the `native` feature is on and the
+    /// target isn't wasm; falls through to the trait default
+    /// otherwise (so a `--no-default-features` build, or a future
+    /// embedded host, stays compiling).
+    #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
+    fn pick_file(&self, spec: &FilePickerSpec) -> Result<Vec<PathBuf>, VfsError> {
+        let mut dlg = rfd::FileDialog::new();
+        if !spec.title.is_empty() {
+            dlg = dlg.set_title(&spec.title);
+        }
+        if let Some(dir) = &spec.start_dir {
+            dlg = dlg.set_directory(dir);
+        }
+        if !spec.start_file_name.is_empty() {
+            dlg = dlg.set_file_name(&spec.start_file_name);
+        }
+        for (name, exts) in &spec.filters {
+            let ext_refs: Vec<&str> = exts.iter().map(|s| s.as_str()).collect();
+            dlg = dlg.add_filter(name, &ext_refs);
+        }
+        let picked: Vec<PathBuf> = if spec.save {
+            dlg.save_file().into_iter().collect()
+        } else if spec.multiple {
+            dlg.pick_files().unwrap_or_default()
+        } else {
+            dlg.pick_file().into_iter().collect()
+        };
+        if picked.is_empty() {
+            Err(VfsError::Cancelled)
+        } else {
+            Ok(picked)
+        }
     }
 }
 

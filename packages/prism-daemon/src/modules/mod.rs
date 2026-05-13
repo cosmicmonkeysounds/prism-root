@@ -14,6 +14,12 @@ pub mod prism_context;
 #[cfg(feature = "luau")]
 pub mod debug_module;
 
+#[cfg(feature = "luau")]
+pub mod luau_automation;
+
+#[cfg(feature = "luau")]
+pub mod luau_formula;
+
 #[cfg(feature = "build")]
 pub mod build_module;
 

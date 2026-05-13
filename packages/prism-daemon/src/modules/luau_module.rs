@@ -1,7 +1,13 @@
-//! Luau scripting module. Exposes `luau.exec`.
+//! Luau scripting module. Exposes `luau.exec` and `luau.eval`.
 //!
-//! Payload shape: `{ script: String, args?: Object }`
-//! Result: whatever JSON the script evaluates to.
+//! `luau.exec` payload: `{ script: String, args?: Object }` — runs the
+//! script body and returns whatever its last `return` statement yields.
+//!
+//! `luau.eval` payload: `{ expression: String, args?: Object }` — wraps
+//! the input in `return (<expression>)` so palette REPL authors can
+//! type `prism.objects:query{}` and get the value back without writing
+//! `return` themselves (Phase 4.7 of
+//! `docs/dev/luau-integration-plan.md`).
 //!
 //! Every script runs with the `prism` global pre-installed (see
 //! [`crate::modules::prism_context::PrismContext`]) — Phase 1 of
@@ -15,7 +21,7 @@ use prism_luau_derive::{daemon_command, daemon_module};
 use serde::Deserialize;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-#[daemon_module(id = "prism.luau", commands(exec_cmd))]
+#[daemon_module(id = "prism.luau", commands(exec_cmd, eval_cmd))]
 pub struct LuauModule;
 
 #[derive(Debug, Deserialize)]
@@ -28,6 +34,31 @@ struct ExecArgs {
 #[daemon_command(id = "luau.exec")]
 fn exec_cmd(args: ExecArgs) -> Result<JsonValue, String> {
     exec(&args.script, args.args.as_ref())
+}
+
+#[derive(Debug, Deserialize)]
+struct EvalArgs {
+    expression: String,
+    #[serde(default)]
+    args: Option<JsonMap<String, JsonValue>>,
+}
+
+#[daemon_command(id = "luau.eval")]
+fn eval_cmd(args: EvalArgs) -> Result<JsonValue, String> {
+    eval(&args.expression, args.args.as_ref())
+}
+
+/// Evaluate a Luau expression and return its value as JSON. Wraps
+/// `expression` in `return (...)` so REPL authors don't need to type
+/// the `return` keyword themselves. Multi-statement bodies that need a
+/// trailing expression should call [`exec`] instead and supply their
+/// own `return`.
+pub fn eval(
+    expression: &str,
+    args: Option<&JsonMap<String, JsonValue>>,
+) -> Result<JsonValue, String> {
+    let wrapped = format!("return ({expression})");
+    exec(&wrapped, args)
 }
 
 /// Execute a Luau script and return the result as JSON. Equivalent to
@@ -230,5 +261,51 @@ mod tests {
         // that don't want JSON intermediation (e.g. the Studio IPC bridge).
         let result = exec("return 2 * 3", None).unwrap();
         assert_eq!(result, JsonValue::Number(6.into()));
+    }
+
+    #[test]
+    fn luau_eval_returns_expression_value() {
+        let kernel = DaemonBuilder::new().with_luau().build().unwrap();
+        let out = kernel
+            .invoke("luau.eval", json!({ "expression": "2 + 2" }))
+            .unwrap();
+        assert_eq!(out, JsonValue::Number(4.into()));
+    }
+
+    #[test]
+    fn luau_eval_sees_prism_global() {
+        // Phase 4.7: REPL authors expect the same context as scripts.
+        let kernel = DaemonBuilder::new().with_luau().build().unwrap();
+        let out = kernel
+            .invoke(
+                "luau.eval",
+                json!({ "expression": "prism.tokens.colors.accent.r" }),
+            )
+            .unwrap();
+        assert_eq!(out, JsonValue::Number(110.into()));
+    }
+
+    #[test]
+    fn luau_eval_with_args() {
+        let kernel = DaemonBuilder::new().with_luau().build().unwrap();
+        let out = kernel
+            .invoke(
+                "luau.eval",
+                json!({ "expression": "x * y", "args": { "x": 6, "y": 7 } }),
+            )
+            .unwrap();
+        assert_eq!(out, JsonValue::Number(42.into()));
+    }
+
+    #[test]
+    fn luau_module_registers_eval() {
+        let kernel = DaemonBuilder::new().with_luau().build().unwrap();
+        assert!(kernel.capabilities().contains(&"luau.eval".to_string()));
+    }
+
+    #[test]
+    fn luau_eval_pure_fn() {
+        let out = eval("1 + 2 + 3", None).unwrap();
+        assert_eq!(out, JsonValue::Number(6.into()));
     }
 }

@@ -22,7 +22,8 @@ watchers.
 
 | Layer | What exists | Gap |
 |-------|------------|-----|
-| Daemon (`luau_module.rs`) | `luau.exec` — fire-and-forget script with JSON args/return + `prism` global preinstalled | No reactive subscriptions, no `luau.eval` REPL, no persistent script lifecycle, no `luau.register_widget` / `luau.register_automation` |
+| Daemon (`luau_module.rs`) | `luau.exec` — fire-and-forget script with JSON args/return + `prism` global preinstalled; **`luau.eval`** wraps an expression in `return (...)` for palette REPL use (Phase 4.7). | No reactive subscriptions, no persistent script lifecycle, no `luau.register_widget`. |
+| Daemon (`luau_automation.rs`) | `LuauActionHandler` implements `prism_core::kernel::automation::ActionHandler` — wraps a Luau source string, binds `action` + `context` as globals, executes through `luau_module::exec_with_context` per invocation. Hosts swap the per-call `PrismContext` via `with_context_fn`. | No automation engine wiring yet — host must register handlers itself. Phase 4.3. |
 | Daemon (`prism_context.rs`) | `PrismContext { tokens, shell_mode, permission, objects, edges, config }` + `with_collection(Rc<RefCell<CollectionStore>>)` builder method that lights up the Phase 4 instance API on `objects` and `edges` | No `document` / `app` / `selection` / `vfs` / `signals` / `commands` / `crypto` / `automation` surfaces |
 | Macro (`prism-luau-derive`) | `#[luau_expose]` for named-field structs, unit-only enums, **and tagged-union enums** (Phase 1.1 — table-shaped `{ tag = "Variant", … }` round-trip); `manual_impl` / `mutable` / `read_only` / `rename` / `luau_skip` opts | `#[luau_expose]` on free functions |
 | Core (`luau_types.rs` + `luau_bindings*.rs`) | Hand-rolled `GraphObject` / `ObjectEdge` / `ObjectsHandle` / **`EdgesHandle`** / `ConfigHandle` UserData; **`ObjectsHandle::with_collection` + `EdgesHandle::with_collection` gate the Phase 4 instance API (`get` / `list` / `query` / `create` / `update` / `delete`) on a live `CollectionStore`**; codegen registry collects every `LUAU_TYPE_DEF` const | `BuilderDocument`, `Node`, `PrismApp`, `Page`, `LayoutMode`, `StyleProperties`, `Connection`, signal payloads, timeline / Flux types |
@@ -31,7 +32,8 @@ watchers.
 | Builder (`facet/mod.rs`) | `FacetKind::Script { source, language, graph }` data type; `ScriptLanguage::{Luau, VisualGraph}` | — (now executed; see Shell row) |
 | Shell (`app/mod.rs::fire_signal`) | `Custom` connection handler runs through `prism_daemon::modules::luau_module::exec_with_setup` with the shell's `ShellHandles` installed: `prism.document` (writable, mutations queued + drained through `LiveDocument` source surgery for undo parity), `prism.signals` (writable, fired through `ShellInner::fire_signal` after exec), `prism.selection` / `prism.app` (read-only snapshots), plus the live `Rc<RefCell<CollectionStore>>` for `prism.objects` / `prism.edges`. The legacy `_actions` / `set_properties` / `navigate` return-value protocol still runs through `apply_luau_result` for one release. | No per-event lifecycle, no atom subscriptions (Phase 3), no widget hot-reload (Phase 6). |
 | Shell (`app/sync.rs`) | `FacetKind::Script` resolves through `luau_module::exec_with_setup` per facet evaluation. `ShellHandles` are installed in `DocumentMode::ReadOnly` — a facet script that calls `prism.document:set_prop` raises a typed Luau error rather than recursing into the sync pass. `prism.objects` / `prism.edges` reads return the live collection state. | No incremental re-eval on dependency change; one-shot per sync pass. Signals fired from a facet resolver are dropped (deferred-signal slot is a follow-up). |
-| CLI (`codegen.rs`) | `prism codegen luau-types` emits `<workspace>/types/core.d.luau`, **`builder.d.luau`** (Phase 5 fan-out — `StyleProperties`, `Dimension`, `GridPlacement`, layout enums), and **`signals.d.luau`** (per-component signal payloads from the built-in `ComponentRegistry` via `generate_signal_type_stubs`) | Per-workspace component contributions still aren't walked — the registry instantiation in `render_signals_stub` only seeds built-ins. |
+| CLI (`codegen.rs`) | `prism codegen luau-types` emits `<workspace>/types/core.d.luau`, **`builder.d.luau`** (Phase 5 fan-out — `StyleProperties`, `Dimension`, `GridPlacement`, layout enums, **plus hand-rolled stubs from `luau_bindings_consts.rs` for `SignalDef` / `FieldSpec` / `FieldKind` / `ActionKind` / `Connection` / `ResourceDef` / `ResourceKind` / `ExposedSlot` / `PrefabDef`** — types whose `#[serde(tag = ...)]` discriminator names conflict with the macro's fixed `tag` literal), and **`signals.d.luau`** (per-component signal payloads from the built-in `ComponentRegistry` *plus* every core-engine `WidgetContribution` via `register_core_widgets`, fed through `generate_signal_type_stubs`) | Per-*project* widget contributions (user-authored `.luau` files declared in `.prism.json` `scripts.widgets`) still aren't walked — the registry instantiation in `render_signals_stub` seeds workspace-level catalogs only. `BuilderDocument`, `Node`, `PrismApp`, `Page`, `LayoutMode` need either macro work to honour `#[serde(tag = ...)]` or a hand-rolled stub pass. |
+| CLI (`scripts.rs`) | `prism scripts validate` reads `<project>/.prism.json` and dispatches each declared `scripts.*` glob through `prism_builder::{load_widgets, load_automations, load_build_steps, load_commands}`. Compile failures surface with their file paths; non-zero exit when anything broke. Phase 6d preflight at the CLI layer. | — |
 
 ---
 
@@ -478,7 +480,24 @@ function resolve()
 end
 ```
 
-### 4.3 Automation actions (AutomationEngine)  ⬜ not started
+### 4.3 Automation actions (AutomationEngine)  🟡 handler shipped, engine wiring pending
+
+`prism_daemon::LuauActionHandler` implements
+`prism_core::kernel::automation::ActionHandler` — it stores a Luau
+source string and runs it per `handle` call against a fresh `Lua`
+state through `luau_module::exec_with_context`. The handler binds
+`action` and `context` as Luau globals (serialised from the
+matching Rust structs via `serde_json`) so an automation body can
+`local id = context.object.id` and `prism.objects:update(id, ...)`
+without any per-event glue. Hosts wanting a live `CollectionStore`
+(automation writes flowing into the same store the UI mutates from)
+pass an `Rc` factory through `LuauActionHandler::with_context_fn`.
+
+Still open: **engine wiring.** Hosts construct their own
+`AutomationEngine` today; binding the handler to a per-rule action
+type so the engine actually fires it (and the
+`scripts.automations` glob auto-registers handlers per file)
+belongs to the host crate that owns the engine instance.
 
 ```luau
 -- Triggered by automation rules
@@ -556,7 +575,25 @@ function render_chart(props, data)
 end
 ```
 
-### 4.7 Interactive shell / REPL  ⬜ not started
+### 4.7 Interactive shell / REPL  🟡 daemon command shipped, palette panel pending
+
+`luau.eval` joins `luau.exec` on the daemon. It wraps the supplied
+expression in `return (...)` so REPL authors can type
+`prism.objects:query{}` and get the value back without writing
+`return` themselves. Same `PrismContext` setup as `luau.exec` — the
+global is preinstalled, errors surface as `CommandError::Handler`.
+
+```rust
+let v = kernel.invoke(
+    "luau.eval",
+    json!({ "expression": "prism.tokens.colors.accent.r" }),
+)?;
+```
+
+Still open: **palette panel.** The dedicated Luau console / command
+palette REPL surface in the shell is the next half — `luau.eval`
+gives it the back-end channel, but the UI plumbing belongs to
+`prism-shell` and lands once the panel slot exists.
 
 ```luau
 -- Available via command palette or a dedicated Luau console panel
@@ -971,15 +1008,30 @@ the VFS watcher.
      (`ScriptsConfig` in `prism_core::identity::manifest`) with
      `widgets` / `automations` / `build_steps` / `commands` glob
      fields. `prism_builder::load_widgets(project_root, glob,
-     &mut LuauRenderRegistry, &mut ComponentRegistry, &mut
-     HtmlRegistry)` walks `<dir>/*.luau` (the simple case),
-     compiles each file, and registers the resulting
-     `LuauComponent`s into both registries via `register_block`.
-     Failed files are reported in `LoadReport.failures` rather
-     than aborting the boot. **Pending**: capability scope
-     enforcement (per-glob `permissions` map), VFS-watcher hot
-     reload via `LuauRenderRegistry::replace`, and the
-     `automations` / `build_steps` / `commands` pipelines.
+     &mut LuauRenderRegistry, &mut ComponentRegistry)` walks
+     `<dir>/*.luau` (the simple case), compiles each file, and
+     registers the resulting `LuauComponent`s into the registry
+     via `register_block`. Failed files are reported in
+     `LoadReport.failures` rather than aborting the boot.
+     **VFS hot-reload** lands through
+     `prism_builder::reload_widget_file(path, &mut LuauRenderRegistry,
+     &mut ComponentRegistry)`: re-reads the file, calls
+     `LuauRenderRegistry::replace` on each declared widget, and
+     swaps the `ComponentRegistry` entry via the new
+     `register_or_replace` (returns the previous `Arc` so hosts
+     can surface "swapped X" diagnostics). Wired into the watcher
+     callback is a host concern; the building block is in place.
+     **Compile-only preflight** for the other three globs lands
+     through `load_automations` / `load_build_steps` /
+     `load_commands` — each walks `<dir>/*.luau`, syntax-checks
+     every file through a throwaway `mlua::Lua`, and surfaces
+     broken scripts in `LoadReport.failures`. Engine-side
+     registration (host-supplied `ActionHandler`s for automations;
+     CLI plumbing for build steps; command-palette wiring for
+     commands) follows once those surfaces exist on the host;
+     today the preflight gives the manifest's `scripts` section
+     end-to-end coverage at boot. **Pending**: capability scope
+     enforcement (per-glob `permissions` map).
    - 6e. ⬜ CLI hook + shell wiring. `prism dev shell` doesn't
      yet read `scripts.widgets` from the project manifest and
      hand it to `Shell` at boot — `Shell::open_project` would
@@ -1009,7 +1061,7 @@ Status legend: ✅ realised today · 🟡 partial · ⬜ pending.
 | Hand-written `WidgetContribution` struct per widget (20+ fields) | `prism.widget { ... }` in Luau — 10 lines | ⬜ Phase 6 |
 | `impl Component for X` + `impl HtmlBlock for X` per widget | `render` function in Luau, walker handles both targets | ⬜ Phase 6 |
 | Hand-written JSON marshalling in every daemon module | `#[luau_expose]` auto-derives `UserData` impls | 🟡 leaf types annotated; stateful subsystems hand-roll via `manual_impl` (intentional — see Phase 1) |
-| Hand-maintained `.d.luau` type stubs | Generated from annotated Rust types | 🟡 `prism codegen luau-types` ships `core.d.luau` + `builder.d.luau` + `signals.d.luau`; deeper `prism-builder` annotation (`BuilderDocument` / `Node` / `Connection` / `LayoutMode` / `FacetDef` / …) still pending |
+| Hand-maintained `.d.luau` type stubs | Generated from annotated Rust types | 🟡 `prism codegen luau-types` ships `core.d.luau` + `builder.d.luau` + `signals.d.luau` (now walking core-engine `WidgetContribution`s as well as starter blocks); deeper `prism-builder` annotation (`BuilderDocument` / `Node` / `Connection` / `LayoutMode` / `FacetDef` / …) still pending |
 | Duplicate `FieldSpec` builder calls across Rust + signal stubs | Single `prism.field.*` API in Luau, backed by the same `FieldSpec` | ⬜ Phase 6 |
 | `ActionKind::Custom { handler }` as dead code | Live execution path through `PrismContext` | ✅ shell `fire_signal` runs Custom handlers via `luau_module::exec_with_context` with the live `Rc<RefCell<CollectionStore>>` attached |
 | Scripts unable to mutate the object graph | `prism.objects` / `prism.edges` instance API on top of `CollectionStore` | ✅ migration step 4 — `prism.objects:create / update / delete / get / list / query` and `prism.edges:create / delete / get / list / query` round-trip through the live store in shell contexts |

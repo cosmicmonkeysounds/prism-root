@@ -63,7 +63,7 @@ pub use search::SearchService;
 pub use selection::SelectionService;
 pub use signals::SignalsService;
 pub use undo::{UndoRedoService, UndoStack};
-pub use vfs::{OsVfs, Vfs, VfsError};
+pub use vfs::{FilePickerSpec, OsVfs, Vfs, VfsError};
 
 // ── trait + outcome ────────────────────────────────────────────────
 

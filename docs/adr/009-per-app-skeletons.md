@@ -201,10 +201,20 @@ Phase 0 (this ADR's implementation):
 
 Phase 1 (follow-on):
 
-- Author distinct skeletons for Musica + Flux that prove the
-  framework supports app-specific chrome.
-- Wire `set_active_app` to mark the frame dirty so swaps are
-  immediate.
+- ~~Author distinct skeletons for Musica + Flux that prove the
+  framework supports app-specific chrome.~~ Landed 2026-05-13:
+  `apps/musica/shell.prism-ui` + `apps/flux/shell.prism-ui` ship
+  with `musica-stage` / `flux-canvas` dock root ids so the swap is
+  observable end-to-end. The matching `<musica.transport>` /
+  `<musica.timeline>` / `<flux.canvas>` components remain unbuilt
+  — until those land each app's body falls through to a Musica /
+  Flux-distinct dock workspace. See `docs/dev/dsl-self-bootstrap.md`
+  decision log.
+- ~~Wire `set_active_app` to mark the frame dirty so swaps are
+  immediate.~~ Landed earlier — `ShellInner::switch_active_app`
+  marks `FRAME_DIRTY_SENTINEL`; `handle_app_card_click` lifted
+  onto the same path so launchpad clicks drive the full swap
+  chain.
 
 ## Rationale
 

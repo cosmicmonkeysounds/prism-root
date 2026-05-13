@@ -291,6 +291,14 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         Box::new(|ctx| PropEmission::from_props(ctx.state.overlay.connection_picker_props())),
     );
 
+    // Wave 2.4 — `shell.color-picker` binding. Preset list is seeded
+    // from `ColorPicker::PRESETS`; `(target-id, key, value)` reflect
+    // the swatch that opened the overlay.
+    reg.register(
+        "shell.color-picker",
+        Box::new(|ctx| PropEmission::from_props(ctx.state.overlay.color_picker_props())),
+    );
+
     // DSL self-bootstrap Loop 2 / 4 — `shell.dock-workspace` emits the
     // dock tree plus `labels` and `tags` sidecar maps resolved from
     // the live `DockCatalog`. Falls back to the catalog-less variant

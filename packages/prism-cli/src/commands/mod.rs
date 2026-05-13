@@ -19,6 +19,7 @@ pub mod dev;
 pub mod e2e;
 pub mod fmt;
 pub mod lint;
+pub mod scripts;
 pub mod test;
 pub mod visual;
 
@@ -67,6 +68,9 @@ pub enum Command {
     /// Emit derived artefacts (Luau type stubs, etc.) from the
     /// workspace's `#[luau_expose]` annotations.
     Codegen(codegen::CodegenArgs),
+    /// Validate / inspect Luau scripts declared in a project's
+    /// `.prism.json` `scripts` section.
+    Scripts(scripts::ScriptsArgs),
 }
 
 /// Dispatch a parsed [`Cli`] to the right subcommand.
@@ -83,6 +87,7 @@ pub fn run(cli: &Cli, workspace: &Workspace) -> Result<u8> {
         Command::E2e(args) => e2e::run(args, workspace, cli.dry_run),
         Command::Clean => clean::run(workspace, cli.dry_run),
         Command::Codegen(args) => codegen::run(args, workspace, cli.dry_run),
+        Command::Scripts(args) => scripts::run(args, workspace, cli.dry_run),
     }
 }
 

@@ -107,6 +107,15 @@ pub fn type_defs() -> Vec<(&'static str, &'static str)> {
             crate::luau_bindings_consts::REACTIVE_MEMO_TYPE_NAME,
             crate::luau_bindings_consts::REACTIVE_MEMO_TYPE_DEF,
         ),
+        // DSL self-bootstrap Loop 4: `prism.app` userdata for the
+        // `register_panel / register_component / register_service`
+        // verbs. Bindings live in `crate::luau_bindings` (feature-
+        // gated), constants live here so codegen picks them up
+        // without the `luau` feature.
+        (
+            crate::luau_bindings_consts::REGISTRAR_HANDLE_TYPE_NAME,
+            crate::luau_bindings_consts::REGISTRAR_HANDLE_TYPE_DEF,
+        ),
     ]);
     defs
 }

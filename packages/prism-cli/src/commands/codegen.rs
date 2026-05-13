@@ -83,11 +83,24 @@ fn luau_types(args: &LuauTypesArgs, workspace: &Workspace, dry_run: bool) -> Res
 /// Build the `signals.d.luau` payload by walking the built-in
 /// `ComponentRegistry` and emitting one symbol class per component.
 /// Defined here (rather than in `prism-builder`) because the registry
-/// instantiation is a CLI-side concern: future iterations will
-/// additionally walk per-workspace component contributions.
+/// instantiation is a CLI-side concern.
+///
+/// Seeds two layers:
+///
+/// 1. `register_builtins` — the 17 starter blocks (`text`, `button`, …).
+/// 2. `register_core_widgets` — every per-engine
+///    `WidgetContribution` (calendar / timekeeping / ledger /
+///    spreadsheet / habits / goals / fitness / reminders / crm /
+///    projects / focus-planner / comments / dashboard / views).
+///
+/// Per-workspace user-defined widgets aren't walked here — they live
+/// in the project's `.prism.json` `scripts.widgets` glob and the
+/// shell registers them per-document. Surfacing their signal stubs
+/// is tracked as a follow-up.
 fn render_signals_stub() -> String {
     let mut registry = prism_builder::registry::ComponentRegistry::new();
     let _ = prism_builder::starter::register_builtins(&mut registry);
+    let _ = prism_builder::register_core_widgets(&mut registry);
     prism_builder::signal::generate_signal_type_stubs(&registry, "prism")
 }
 
@@ -130,11 +143,47 @@ mod tests {
         assert!(builder.contains("export type StyleProperties"));
         assert!(builder.contains("export type Dimension"));
         assert!(builder.contains("{ tag: \"Px\", value: number }"));
+        // Hand-rolled stubs from `luau_bindings_consts` should also
+        // surface — these cover SignalDef/Connection/ActionKind/
+        // Resource{Def,Kind}/PrefabDef/ExposedSlot which can't go
+        // through the macro because of custom serde tag names.
+        for name in [
+            "SignalDef",
+            "FieldSpec",
+            "FieldKind",
+            "ActionKind",
+            "Connection",
+            "ResourceDef",
+            "ResourceKind",
+            "PrefabDef",
+            "ExposedSlot",
+            "FlowProps",
+            "AbsoluteProps",
+            "LayoutMode",
+            "Node",
+            "Page",
+            "PrismApp",
+            "BuilderDocument",
+        ] {
+            let needle = format!("export type {name}");
+            assert!(
+                builder.contains(&needle),
+                "builder.d.luau missing `{needle}`"
+            );
+        }
 
         let signals = fs::read_to_string(tmp.path().join("signals.d.luau")).unwrap();
         // Built-in components include Button (clicked) — confirm the
         // per-component class made it into the file.
         assert!(!signals.is_empty(), "signals.d.luau should not be empty");
+        // Core-engine widgets (calendar, ledger, …) registered through
+        // `register_core_widgets` should now appear in the stub. The
+        // calendar engine ships at least one widget; assert its
+        // signal class is present so the per-engine walk is wired.
+        assert!(
+            signals.contains("calendar") || signals.contains("Calendar"),
+            "expected at least one core-engine widget in signals.d.luau, got:\n{signals}"
+        );
 
         let ui = fs::read_to_string(tmp.path().join("prism-ui.d.luau")).unwrap();
         assert!(ui.starts_with("--!strict\n"));

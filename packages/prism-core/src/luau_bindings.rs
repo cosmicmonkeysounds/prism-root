@@ -40,6 +40,7 @@ pub use crate::luau_bindings_consts::{
     CONFIG_HANDLE_TYPE_DEF, CONFIG_HANDLE_TYPE_NAME, EDGES_HANDLE_TYPE_DEF, EDGES_HANDLE_TYPE_NAME,
     GRAPH_OBJECT_TYPE_DEF, GRAPH_OBJECT_TYPE_NAME, OBJECTS_HANDLE_TYPE_DEF,
     OBJECTS_HANDLE_TYPE_NAME, OBJECT_EDGE_TYPE_DEF, OBJECT_EDGE_TYPE_NAME,
+    REGISTRAR_HANDLE_TYPE_DEF, REGISTRAR_HANDLE_TYPE_NAME,
 };
 
 #[cfg(feature = "crdt")]
@@ -650,6 +651,233 @@ impl UserData for ConfigHandle {
     }
 }
 
+// ───── LuauCallbackStore ────────────────────────────────────────────
+
+/// Persistent store for Lua closures retained across registration time
+/// and call time. The persistent-Luau system (DSL self-bootstrap Loop
+/// 4 follow-up — see [`crate::luau_runtime::LuauRuntime`]) stashes
+/// `render` fns and `on_event` fns under their dispatch keys so a
+/// later `LuauComponentBlock::lower_ui` / `LuauScriptedService::on_event`
+/// call can fetch them and invoke. The store is `!Send + !Sync` (the
+/// inner `Rc<RefCell<…>>` is single-threaded) — matching the
+/// single-threaded shell render path the dispatch flows through.
+#[derive(Clone, Default)]
+pub struct LuauCallbackStore {
+    render_fns:
+        std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, mlua::RegistryKey>>>,
+    on_event_fns:
+        std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, mlua::RegistryKey>>>,
+}
+
+impl LuauCallbackStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Retain a render function under `key`. Replaces any previous
+    /// retention under the same key — re-registering a component
+    /// replaces its render body, which matches the hot-reload story.
+    pub fn retain_render(&self, key: String, rk: mlua::RegistryKey) {
+        self.render_fns.borrow_mut().insert(key, rk);
+    }
+
+    pub fn retain_on_event(&self, key: String, rk: mlua::RegistryKey) {
+        self.on_event_fns.borrow_mut().insert(key, rk);
+    }
+
+    /// Number of retained render callbacks (test introspection).
+    pub fn render_count(&self) -> usize {
+        self.render_fns.borrow().len()
+    }
+
+    /// Number of retained event callbacks (test introspection).
+    pub fn on_event_count(&self) -> usize {
+        self.on_event_fns.borrow().len()
+    }
+
+    /// Run `f` against the retained render fn for `key`, if any. `None`
+    /// when no callback was retained — the caller falls through to its
+    /// placeholder body (the contract every Luau-backed block honours
+    /// when no runtime is in play).
+    pub fn with_render<R>(&self, key: &str, f: impl FnOnce(&mlua::RegistryKey) -> R) -> Option<R> {
+        self.render_fns.borrow().get(key).map(f)
+    }
+
+    pub fn with_on_event<R>(
+        &self,
+        key: &str,
+        f: impl FnOnce(&mlua::RegistryKey) -> R,
+    ) -> Option<R> {
+        self.on_event_fns.borrow().get(key).map(f)
+    }
+}
+
+// ───── RegistrarHandle ──────────────────────────────────────────────
+
+/// Lua-side handle around an [`AppRegistrar`]. Closes the
+/// `prism.register_panel / register_component / register_service`
+/// gap in `docs/dev/dsl-self-bootstrap.md` Loop 4: scripts loaded
+/// against a script-aware host see a `prism.app` userdata with three
+/// methods, each accepting a Lua table that converts directly into
+/// the matching `*Registration` struct.
+///
+/// Two roles, both clone-cheap:
+/// * `inner: Arc<dyn AppRegistrar>` — the *what* of registration
+///   (panel kinds, component shells, service shells).
+/// * `callbacks: Option<LuauCallbackStore>` — the *how* of dispatch.
+///   When present, `register_component({render = fn})` additionally
+///   retains the `fn` as an `mlua::RegistryKey` so a later
+///   `LuauRuntime::call_render` can fetch and invoke it. Without a
+///   store, the only thing that lands is the registration record
+///   itself — matching the daemon's bare `luau.exec` contract.
+#[derive(Clone)]
+pub struct RegistrarHandle {
+    inner: std::sync::Arc<dyn crate::app_registry::AppRegistrar>,
+    callbacks: Option<LuauCallbackStore>,
+}
+
+impl RegistrarHandle {
+    pub fn new(inner: std::sync::Arc<dyn crate::app_registry::AppRegistrar>) -> Self {
+        Self {
+            inner,
+            callbacks: None,
+        }
+    }
+
+    /// Builder: attach a callback store. The persistent-Luau runtime
+    /// owns the store; the handle's `register_*` methods retain Lua
+    /// closures into it. Call once at runtime construction time.
+    pub fn with_callbacks(mut self, store: LuauCallbackStore) -> Self {
+        self.callbacks = Some(store);
+        self
+    }
+
+    pub fn inner(&self) -> &std::sync::Arc<dyn crate::app_registry::AppRegistrar> {
+        &self.inner
+    }
+
+    pub fn callbacks(&self) -> Option<&LuauCallbackStore> {
+        self.callbacks.as_ref()
+    }
+}
+
+impl UserData for RegistrarHandle {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("register_panel", |_, this, t: mlua::Table| {
+            let panel = panel_from_table(&t)?;
+            this.inner
+                .register_panel(panel)
+                .map_err(mlua::Error::external)?;
+            Ok(())
+        });
+        methods.add_method("register_component", |lua, this, t: mlua::Table| {
+            let component = component_from_table(&t)?;
+            // Capture the optional `render` Lua function *before*
+            // forwarding to the inner registrar — `Function` is `!Send`
+            // so we can't carry it across the `Send` boundary of
+            // `AppRegistrar::register_component`. Retention happens
+            // after the registrar accepts so we don't keep a callback
+            // for a registration that got rejected.
+            let render_fn = match t.get::<mlua::Value>("render")? {
+                mlua::Value::Function(f) => Some(f),
+                _ => None,
+            };
+            this.inner
+                .register_component(component.clone())
+                .map_err(mlua::Error::external)?;
+            if let (Some(store), Some(f)) = (&this.callbacks, render_fn) {
+                let rk = lua.create_registry_value(f)?;
+                store.retain_render(component.render_key.clone(), rk);
+            }
+            Ok(())
+        });
+        methods.add_method("register_service", |lua, this, t: mlua::Table| {
+            let service = service_from_table(&t)?;
+            let on_event_fn = match t.get::<mlua::Value>("on_event")? {
+                mlua::Value::Function(f) => Some(f),
+                _ => None,
+            };
+            this.inner
+                .register_service(service.clone())
+                .map_err(mlua::Error::external)?;
+            if let (Some(store), Some(f)) = (&this.callbacks, on_event_fn) {
+                let rk = lua.create_registry_value(f)?;
+                store.retain_on_event(service.on_event_key.clone(), rk);
+            }
+            Ok(())
+        });
+    }
+}
+
+fn panel_from_table(t: &mlua::Table) -> mlua::Result<crate::app_registry::PanelRegistration> {
+    let id: String = t
+        .get::<Option<String>>("id")?
+        .ok_or_else(|| mlua::Error::external("register_panel: missing required field `id`"))?;
+    let label: String = t
+        .get::<Option<String>>("label")?
+        .unwrap_or_else(|| id.clone());
+    let icon_hint: String = t.get::<Option<String>>("icon_hint")?.unwrap_or_default();
+    let min_width: f32 = t.get::<Option<f32>>("min_width")?.unwrap_or(240.0);
+    let min_height: f32 = t.get::<Option<f32>>("min_height")?.unwrap_or(120.0);
+    let allow_multiple: bool = t.get::<Option<bool>>("allow_multiple")?.unwrap_or(false);
+    let tag: Option<String> = t.get::<Option<String>>("tag")?;
+    Ok(crate::app_registry::PanelRegistration {
+        id,
+        label,
+        icon_hint,
+        min_width,
+        min_height,
+        allow_multiple,
+        tag,
+    })
+}
+
+fn component_from_table(
+    t: &mlua::Table,
+) -> mlua::Result<crate::app_registry::ComponentRegistration> {
+    let id: String = t
+        .get::<Option<String>>("id")?
+        .ok_or_else(|| mlua::Error::external("register_component: missing required field `id`"))?;
+    // Accept either an explicit `render_key` for opaque dispatch keys, or
+    // — more naturally for Lua authors — a `render` function value, in
+    // which case we synthesise the dispatch key from the component id.
+    // The actual fn isn't retained here (the in-process script lifecycle
+    // owns it); we surface the synthesised key so the runtime can wire
+    // dispatch when it lands.
+    let explicit_key: Option<String> = t.get::<Option<String>>("render_key")?;
+    let render_key = match explicit_key {
+        Some(k) if !k.is_empty() => k,
+        _ => {
+            let has_render_fn = matches!(t.get::<mlua::Value>("render")?, mlua::Value::Function(_));
+            if has_render_fn {
+                format!("{id}.render")
+            } else {
+                String::new()
+            }
+        }
+    };
+    Ok(crate::app_registry::ComponentRegistration { id, render_key })
+}
+
+fn service_from_table(t: &mlua::Table) -> mlua::Result<crate::app_registry::ServiceRegistration> {
+    let id: String = t
+        .get::<Option<String>>("id")?
+        .ok_or_else(|| mlua::Error::external("register_service: missing required field `id`"))?;
+    let explicit_key: Option<String> = t.get::<Option<String>>("on_event_key")?;
+    let on_event_key = match explicit_key {
+        Some(k) if !k.is_empty() => k,
+        _ => {
+            let has_handler = matches!(t.get::<mlua::Value>("on_event")?, mlua::Value::Function(_));
+            if has_handler {
+                format!("{id}.on_event")
+            } else {
+                String::new()
+            }
+        }
+    };
+    Ok(crate::app_registry::ServiceRegistration { id, on_event_key })
+}
+
 // ───── helper: install each type's stub into a target Lua state ─────
 
 /// Convenience wrapper used by tests to install a fresh
@@ -869,5 +1097,281 @@ mod tests {
             .eval::<mlua::Value>()
             .unwrap_err();
         assert!(err.to_string().contains("missing target_id"));
+    }
+
+    // ── RegistrarHandle (DSL self-bootstrap Loop 4) ─────────────────
+
+    /// Counting registrar that records every registration it sees so
+    /// the Luau-side tests can assert "yes, the script's
+    /// `prism.app:register_panel(...)` call actually flowed through to
+    /// the host's registry".
+    #[derive(Default)]
+    struct RecordingRegistrar {
+        panels: std::sync::Mutex<Vec<crate::app_registry::PanelRegistration>>,
+        components: std::sync::Mutex<Vec<crate::app_registry::ComponentRegistration>>,
+        services: std::sync::Mutex<Vec<crate::app_registry::ServiceRegistration>>,
+    }
+
+    impl crate::app_registry::AppRegistrar for RecordingRegistrar {
+        fn register_panel(
+            &self,
+            p: crate::app_registry::PanelRegistration,
+        ) -> Result<(), crate::app_registry::RegistrationError> {
+            if p.id.trim().is_empty() {
+                return Err(crate::app_registry::RegistrationError::Invalid(
+                    "panel id empty".into(),
+                ));
+            }
+            self.panels.lock().unwrap().push(p);
+            Ok(())
+        }
+        fn register_component(
+            &self,
+            c: crate::app_registry::ComponentRegistration,
+        ) -> Result<(), crate::app_registry::RegistrationError> {
+            self.components.lock().unwrap().push(c);
+            Ok(())
+        }
+        fn register_service(
+            &self,
+            s: crate::app_registry::ServiceRegistration,
+        ) -> Result<(), crate::app_registry::RegistrationError> {
+            self.services.lock().unwrap().push(s);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn registrar_handle_register_panel_round_trips_through_lua() {
+        let rec = std::sync::Arc::new(RecordingRegistrar::default());
+        let handle = RegistrarHandle::new(rec.clone() as std::sync::Arc<dyn crate::AppRegistrar>);
+        let lua = Lua::new();
+        lua.globals().set("app", handle).unwrap();
+        lua.load(
+            r#"
+                app:register_panel({
+                    id = "my.peers",
+                    label = "Peers",
+                    icon_hint = "users",
+                    min_width = 200,
+                    min_height = 100,
+                    allow_multiple = true,
+                    tag = "my.peers-canvas",
+                })
+            "#,
+        )
+        .exec()
+        .unwrap();
+        let panels = rec.panels.lock().unwrap();
+        assert_eq!(panels.len(), 1);
+        assert_eq!(panels[0].id, "my.peers");
+        assert_eq!(panels[0].label, "Peers");
+        assert_eq!(panels[0].icon_hint, "users");
+        assert_eq!(panels[0].min_width, 200.0);
+        assert_eq!(panels[0].min_height, 100.0);
+        assert!(panels[0].allow_multiple);
+        assert_eq!(panels[0].tag.as_deref(), Some("my.peers-canvas"));
+    }
+
+    #[test]
+    fn registrar_handle_register_panel_defaults_missing_fields() {
+        let rec = std::sync::Arc::new(RecordingRegistrar::default());
+        let handle = RegistrarHandle::new(rec.clone() as std::sync::Arc<dyn crate::AppRegistrar>);
+        let lua = Lua::new();
+        lua.globals().set("app", handle).unwrap();
+        // The bare minimum: only `id`. Every other field defaults — the
+        // Lua-side contract is "id is the only required key".
+        lua.load(r#"app:register_panel({ id = "bare.panel" })"#)
+            .exec()
+            .unwrap();
+        let panels = rec.panels.lock().unwrap();
+        assert_eq!(panels[0].id, "bare.panel");
+        assert_eq!(panels[0].label, "bare.panel");
+        assert_eq!(panels[0].min_width, 240.0);
+        assert_eq!(panels[0].min_height, 120.0);
+        assert!(!panels[0].allow_multiple);
+        assert!(panels[0].tag.is_none());
+    }
+
+    #[test]
+    fn registrar_handle_register_component_synthesises_key_from_render_fn() {
+        // Lua authors pass `render = function(...) ... end` rather than
+        // an opaque `render_key`. The binding synthesises the key from
+        // the component id so the placeholder block has something to
+        // surface in its `data-luau-key` attribute. The actual closure
+        // is retained by the in-process script lifecycle, not by the
+        // registration — that's why we don't try to wire it through
+        // here.
+        let rec = std::sync::Arc::new(RecordingRegistrar::default());
+        let handle = RegistrarHandle::new(rec.clone() as std::sync::Arc<dyn crate::AppRegistrar>);
+        let lua = Lua::new();
+        lua.globals().set("app", handle).unwrap();
+        lua.load(
+            r#"
+                app:register_component({
+                    id = "my.card",
+                    render = function(_props, _children) return nil end,
+                })
+            "#,
+        )
+        .exec()
+        .unwrap();
+        let comps = rec.components.lock().unwrap();
+        assert_eq!(comps.len(), 1);
+        assert_eq!(comps[0].id, "my.card");
+        assert_eq!(comps[0].render_key, "my.card.render");
+    }
+
+    #[test]
+    fn registrar_handle_register_component_accepts_explicit_render_key() {
+        let rec = std::sync::Arc::new(RecordingRegistrar::default());
+        let handle = RegistrarHandle::new(rec.clone() as std::sync::Arc<dyn crate::AppRegistrar>);
+        let lua = Lua::new();
+        lua.globals().set("app", handle).unwrap();
+        lua.load(r#"app:register_component({ id = "my.card", render_key = "custom.key" })"#)
+            .exec()
+            .unwrap();
+        assert_eq!(rec.components.lock().unwrap()[0].render_key, "custom.key");
+    }
+
+    #[test]
+    fn registrar_handle_register_service_round_trips() {
+        let rec = std::sync::Arc::new(RecordingRegistrar::default());
+        let handle = RegistrarHandle::new(rec.clone() as std::sync::Arc<dyn crate::AppRegistrar>);
+        let lua = Lua::new();
+        lua.globals().set("app", handle).unwrap();
+        lua.load(
+            r#"
+                app:register_service({
+                    id = "my.metronome",
+                    on_event = function(_ctx, _event) return nil end,
+                })
+            "#,
+        )
+        .exec()
+        .unwrap();
+        let svcs = rec.services.lock().unwrap();
+        assert_eq!(svcs.len(), 1);
+        assert_eq!(svcs[0].id, "my.metronome");
+        assert_eq!(svcs[0].on_event_key, "my.metronome.on_event");
+    }
+
+    #[test]
+    fn registrar_handle_missing_id_raises_luau_error() {
+        let rec = std::sync::Arc::new(RecordingRegistrar::default());
+        let handle = RegistrarHandle::new(rec.clone() as std::sync::Arc<dyn crate::AppRegistrar>);
+        let lua = Lua::new();
+        lua.globals().set("app", handle).unwrap();
+        let err = lua
+            .load(r#"app:register_panel({ label = "no id here" })"#)
+            .exec()
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("missing required field `id`"),
+            "expected missing-id error, got: {err}"
+        );
+        assert!(rec.panels.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn registrar_handle_with_callbacks_retains_render_fn() {
+        // When the handle carries a `LuauCallbackStore`, registering a
+        // component with an inline `render = function() ... end` body
+        // additionally stashes the function as a `RegistryKey` keyed
+        // off the synthesised render_key. The persistent-Luau runtime
+        // walks this store at dispatch time.
+        let rec = std::sync::Arc::new(RecordingRegistrar::default());
+        let store = LuauCallbackStore::new();
+        let handle = RegistrarHandle::new(rec.clone() as std::sync::Arc<dyn crate::AppRegistrar>)
+            .with_callbacks(store.clone());
+        let lua = Lua::new();
+        lua.globals().set("app", handle).unwrap();
+        lua.load(
+            r#"
+                app:register_component({
+                    id = "my.card",
+                    render = function(_p, _c) return "hello" end,
+                })
+            "#,
+        )
+        .exec()
+        .unwrap();
+        // Retention happened: one render fn under `my.card.render`.
+        assert_eq!(store.render_count(), 1);
+        let saw = store.with_render("my.card.render", |_rk| ()).is_some();
+        assert!(saw, "render fn should be retained under synthesised key");
+        // The registration itself still landed at the inner registrar.
+        assert_eq!(rec.components.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn registrar_handle_without_callbacks_skips_retention() {
+        // Default `RegistrarHandle::new` carries no callback store —
+        // matches the daemon's bare `luau.exec` contract. A `render`
+        // function in the registration table is silently ignored (only
+        // the registration record itself lands). This preserves the
+        // existing behaviour any test relying on the daemon's plain
+        // `prism.app` userdata observes.
+        let rec = std::sync::Arc::new(RecordingRegistrar::default());
+        let handle = RegistrarHandle::new(rec.clone() as std::sync::Arc<dyn crate::AppRegistrar>);
+        let lua = Lua::new();
+        lua.globals().set("app", handle).unwrap();
+        lua.load(
+            r#"
+                app:register_component({
+                    id = "my.card",
+                    render = function(_p, _c) return "ignored" end,
+                })
+            "#,
+        )
+        .exec()
+        .unwrap();
+        // Registration landed; no callback retention possible.
+        assert_eq!(rec.components.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn registrar_handle_with_callbacks_retains_on_event_fn() {
+        let rec = std::sync::Arc::new(RecordingRegistrar::default());
+        let store = LuauCallbackStore::new();
+        let handle = RegistrarHandle::new(rec.clone() as std::sync::Arc<dyn crate::AppRegistrar>)
+            .with_callbacks(store.clone());
+        let lua = Lua::new();
+        lua.globals().set("app", handle).unwrap();
+        lua.load(
+            r#"
+                app:register_service({
+                    id = "my.metronome",
+                    on_event = function(_ctx, _event) return "Handled" end,
+                })
+            "#,
+        )
+        .exec()
+        .unwrap();
+        assert_eq!(store.on_event_count(), 1);
+        assert!(store
+            .with_on_event("my.metronome.on_event", |_rk| ())
+            .is_some());
+    }
+
+    #[test]
+    fn registrar_handle_registry_error_surfaces_to_luau() {
+        // Invalid panels (empty id) bubble through the registrar's own
+        // validation and surface as a Lua error. Proves the `?` ladder
+        // in the UserData method actually wires registrar errors back
+        // through `mlua::Error::external`.
+        let rec = std::sync::Arc::new(RecordingRegistrar::default());
+        let handle = RegistrarHandle::new(rec.clone() as std::sync::Arc<dyn crate::AppRegistrar>);
+        let lua = Lua::new();
+        lua.globals().set("app", handle).unwrap();
+        let err = lua
+            // id is present but empty — the registrar itself rejects it.
+            .load(r#"app:register_panel({ id = "" })"#)
+            .exec()
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("panel id empty"),
+            "expected registrar error, got: {err}"
+        );
     }
 }

@@ -768,6 +768,20 @@ fn connection_picker_schema() -> Vec<FieldSpec> {
     ]
 }
 
+/// Wave 2.4 — schema for `shell.color-picker`. `presets` is the
+/// preset-swatch array; each entry is an object with `value` (hex
+/// string) and `selected` (bool). The DSL's `for=` loop iterates
+/// over it.
+fn color_picker_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::boolean("open", "Open").with_default(Value::Bool(false)),
+        FieldSpec::text("target-id", "Target doc-node id"),
+        FieldSpec::text("key", "Bound prop key"),
+        FieldSpec::text("value", "Current hex value"),
+        FieldSpec::text("presets", "Preset swatch list (JSON array)"),
+    ]
+}
+
 fn drag_number_field_schema() -> Vec<FieldSpec> {
     vec![
         FieldSpec::text("key", "Key"),
@@ -1246,6 +1260,14 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
         include_str!("../../ui/components/connection-picker.prism-ui"),
     )
     .schema(connection_picker_schema),
+    // Wave 2.4 — anchored overlay opened by the field-editor color
+    // swatch. Renders preview + hex echo + preset grid; commits
+    // through `set_color_picker_value`.
+    PrismUiSpec::new(
+        "shell.color-picker",
+        include_str!("../../ui/components/color-picker.prism-ui"),
+    )
+    .schema(color_picker_schema),
     PrismUiSpec::new(
         "shell.component-picker",
         include_str!("../../ui/components/component-picker.prism-ui"),

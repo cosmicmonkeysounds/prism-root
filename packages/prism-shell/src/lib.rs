@@ -34,6 +34,10 @@ pub mod assets;
 pub mod components;
 pub mod events;
 pub mod headless;
+/// Wave 7.2 — software rasteriser for the `--screenshot` PNG path.
+/// Walks a `RenderCommand` stream into an RGBA buffer the `image`
+/// crate's PNG encoder consumes.
+pub mod png_paint;
 pub mod props;
 pub mod render;
 pub mod render_scope;

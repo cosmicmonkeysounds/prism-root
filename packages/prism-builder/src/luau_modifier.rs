@@ -46,7 +46,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::rc::Rc;
 
 use mlua::{Function, Lua, RegistryKey, Table, Value as LuaValue};
 use serde::Deserialize;
@@ -96,7 +96,7 @@ pub struct LuauModifierRegistry {
     defs: HashMap<String, LuauModifierDef>,
     wrap_fns: HashMap<String, RegistryKey>,
     install_effects_fns: HashMap<String, RegistryKey>,
-    pending: Arc<RefCell<Vec<PendingModifier>>>,
+    pending: Rc<RefCell<Vec<PendingModifier>>>,
 }
 
 impl Default for LuauModifierRegistry {
@@ -108,7 +108,7 @@ impl Default for LuauModifierRegistry {
 impl LuauModifierRegistry {
     pub fn new() -> Self {
         let lua = Lua::new();
-        let pending: Arc<RefCell<Vec<PendingModifier>>> = Arc::new(RefCell::new(Vec::new()));
+        let pending: Rc<RefCell<Vec<PendingModifier>>> = Rc::new(RefCell::new(Vec::new()));
         // Best-effort install. Caller can re-run `install_global` if a
         // host wants to re-bind after their own setup.
         let _ = install_modifier_global(&lua, pending.clone());
@@ -255,7 +255,7 @@ impl ModifierBehaviour for LuauModifier {
 
 fn install_modifier_global(
     lua: &Lua,
-    pending: Arc<RefCell<Vec<PendingModifier>>>,
+    pending: Rc<RefCell<Vec<PendingModifier>>>,
 ) -> mlua::Result<()> {
     let globals = lua.globals();
     let existing: LuaValue = globals.get("prism").unwrap_or(LuaValue::Nil);
@@ -432,6 +432,7 @@ mod tests {
     use super::*;
     use crate::modifier::ModifierRegistry;
     use serde_json::{json, Value};
+    use std::sync::Arc;
 
     #[test]
     fn prism_modifier_global_registers_an_entry_with_schema() {

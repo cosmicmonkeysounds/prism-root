@@ -119,6 +119,12 @@ pub use modules::vfs_module::{VfsEntry, VfsError, VfsManager, VfsStats};
 #[cfg(feature = "actors")]
 pub use modules::actors_module::{ActorKind, ActorMessage, ActorStatus, ActorsManager};
 
+#[cfg(feature = "luau")]
+pub use modules::luau_automation::LuauActionHandler;
+
+#[cfg(feature = "luau")]
+pub use modules::luau_formula::LuauFormulaEvaluator;
+
 // ── Daemon-level error surface ─────────────────────────────────────────
 //
 // Kept at the crate root because the built-in CRDT service (and any host

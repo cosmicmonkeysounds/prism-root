@@ -961,6 +961,95 @@ styles = "app.prss"
 }
 
 #[test]
+fn musica_and_flux_each_swap_in_a_distinct_app_skeleton() {
+    // ADR-009 Phase 1: Musica + Flux author distinct skeletons under
+    // `apps/<id>/shell.prism-ui`. The active-app cursor swap selects
+    // the matching skeleton; each app's rendered tree contains a
+    // root container with the app-specific dock id.
+    let manifests: &[(&str, &str)] = &[
+        (
+            "lattice",
+            r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+skeleton = "shell.prism-ui"
+"#,
+        ),
+        (
+            "musica",
+            r#"id = "musica"
+label = "Musica"
+
+[entry]
+skeleton = "shell.prism-ui"
+"#,
+        ),
+        (
+            "flux",
+            r#"id = "flux"
+label = "Flux"
+
+[entry]
+skeleton = "shell.prism-ui"
+"#,
+        ),
+    ];
+    with_apps_dir("musica_flux_skeletons", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        // Author each app's skeleton inline so the test is fully
+        // self-contained — it doesn't depend on the on-disk
+        // `apps/<id>/shell.prism-ui` fixtures.
+        std::fs::write(
+            std::path::Path::new(&root)
+                .join("lattice")
+                .join("shell.prism-ui"),
+            r#"<shell.dock-workspace id="lattice-dock"/>"#,
+        )
+        .unwrap();
+        std::fs::write(
+            std::path::Path::new(&root)
+                .join("musica")
+                .join("shell.prism-ui"),
+            r#"<shell.dock-workspace id="musica-stage"/>"#,
+        )
+        .unwrap();
+        std::fs::write(
+            std::path::Path::new(&root)
+                .join("flux")
+                .join("shell.prism-ui"),
+            r#"<shell.dock-workspace id="flux-canvas"/>"#,
+        )
+        .unwrap();
+
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+
+        // Each app id selects its own dock root id end-to-end.
+        for (app_id, root_id) in [
+            ("lattice", "lattice-dock"),
+            ("musica", "musica-stage"),
+            ("flux", "flux-canvas"),
+        ] {
+            // Use the public swap entry point so service rebuild + dirty
+            // mark fire alongside the skeleton swap — ADR-009 + ADR-010
+            // composed end-to-end.
+            let moved = shell.inner.borrow_mut().switch_active_app(Some(app_id));
+            assert!(
+                moved || shell.inner.borrow().state.workspace.active_app.as_deref() == Some(app_id),
+                "switch_active_app should move (or be a no-op if already active) for `{app_id}`"
+            );
+            let tree = shell.render();
+            let mut found = false;
+            walk_ids(&tree, root_id, &mut found);
+            assert!(
+                found,
+                "expected rendered tree for `{app_id}` to carry id `{root_id}`"
+            );
+        }
+    });
+}
+
+#[test]
 fn no_apps_directory_falls_back_to_hardcoded_launchpad() {
     // Sanity check: clear PRISM_APPS_DIR + point at a path that
     // doesn't exist; Shell::new still constructs without panic and

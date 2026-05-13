@@ -318,6 +318,19 @@ const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
         "connection-picker-cancel",
         handle_connection_picker_cancel_click,
     ),
+    // Wave 2.5 — file-kind property row's "Browse…" button. Invokes
+    // `Vfs::pick_file` on the live shell `ShellInner::vfs`; the
+    // first picked path commits via `set_node_prop`. On Cancelled /
+    // Unsupported / Err the handler is a noop (no toast — the user
+    // *chose* to dismiss the dialog).
+    ("file-browse", handle_file_browse_click),
+    // Wave 2.4 — color-kind property row's swatch + `shell.color-picker`
+    // overlay rows. Swatch click opens the picker, preset rows
+    // commit through `set_node_prop`, and the close button dismisses
+    // the overlay without committing.
+    ("color-swatch", handle_color_swatch_click),
+    ("color-preset-select", handle_color_preset_select_click),
+    ("color-picker-close", handle_color_picker_close_click),
 ];
 
 fn route_pointer_down(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
@@ -1056,6 +1069,82 @@ fn handle_connection_picker_cancel_click(inner: &Rc<RefCell<ShellInner>>, _hit: 
     inner.borrow_mut().state.close_connection_picker()
 }
 
+/// Wave 2.5 — file-kind property row's "Browse…" button. Reads
+/// `data-target-id` + `data-key` + (optional) `data-accept` off the
+/// hit, invokes `Vfs::pick_file` against the shell's live vfs, and
+/// commits the first picked path through `set_node_prop`. On
+/// `VfsError::Cancelled` / `Unsupported` the handler is a noop —
+/// the user dismissed the dialog (or the host didn't wire one), so
+/// no mutation, no toast, no redraw.
+/// Wave 2.4 — color-kind property row's swatch button. Reads
+/// `data-target-id` + `data-key` + `data-value` (the current color
+/// hex, mirrored off the field-edit row's `data-value` attr by the
+/// field-editor lower) and seeds the `OverlaySlot::color_picker`
+/// state. The overlay's rendering is handled by the bound
+/// `shell.color-picker` block on the next frame.
+fn handle_color_swatch_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(target) = attr_value(hit, "data-target-id") else {
+        return false;
+    };
+    let Some(key) = attr_value(hit, "data-key") else {
+        return false;
+    };
+    let value = attr_value(hit, "data-value").unwrap_or("");
+    inner
+        .borrow_mut()
+        .state
+        .open_color_picker(target, key, value)
+}
+
+/// Wave 2.4 — a preset swatch inside `shell.color-picker`. Reads
+/// `data-color` (the hex literal) and commits it through
+/// `set_color_picker_value` so the bound prop on the picker's
+/// (target_id, key) target moves immediately. The picker stays
+/// open so the user can preview multiple presets without
+/// reopening.
+fn handle_color_preset_select_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(color) = attr_value(hit, "data-color") else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let registry = g.registry.as_component_registry();
+    g.state.set_color_picker_value(color, Some(registry))
+}
+
+/// Wave 2.4 — close button on the color picker. Mirrors Esc.
+fn handle_color_picker_close_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRect) -> bool {
+    inner.borrow_mut().state.close_color_picker()
+}
+
+fn handle_file_browse_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(target) = attr_value(hit, "data-target-id") else {
+        return false;
+    };
+    let Some(key) = attr_value(hit, "data-key") else {
+        return false;
+    };
+    let accept = attr_value(hit, "data-accept");
+    let mut spec = crate::services::FilePickerSpec::open("Choose a file");
+    if let Some(accept) = accept {
+        spec = spec.with_accept_attr(accept);
+    }
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let picked = match g.vfs.pick_file(&spec) {
+        Ok(paths) if !paths.is_empty() => paths,
+        _ => return false,
+    };
+    let path_str = picked[0].to_string_lossy().into_owned();
+    let registry = g.registry.as_component_registry();
+    g.state.set_node_prop(
+        target,
+        key,
+        serde_json::Value::String(path_str),
+        Some(registry),
+    )
+}
+
 /// Wave 3.2: hit-tests for whether a pointer-down landed on the
 /// canvas (any of the canvas's tagged frames, the page rect, the
 /// preview layer, or any preview node). When the catalog has a
@@ -1400,6 +1489,105 @@ mod tests {
             .and_then(|n| n.props.get("level").cloned())
             .expect("level prop set");
         assert_eq!(level, serde_json::Value::String("h1".into()));
+    }
+
+    /// Wave 2.4 — pointer-down on a `data-role="color-swatch"` hit
+    /// opens the color-picker overlay against the swatch's
+    /// (target-id, key, value) triple. The overlay is rendered by
+    /// the bound `shell.color-picker` block on the next frame.
+    #[test]
+    fn pointer_down_on_color_swatch_opens_color_picker() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        let hit = hit_with(
+            "color-swatch",
+            "demo-heading",
+            &[("data-key", "color"), ("data-value", "#ff0000")],
+        );
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty);
+        let picker = &shell.inner.borrow().state.overlay.color_picker;
+        assert!(picker.open);
+        assert_eq!(picker.target_id, "demo-heading");
+        assert_eq!(picker.key, "color");
+        assert_eq!(picker.value, "#ff0000");
+    }
+
+    /// Wave 2.4 — pointer-down on a `data-role="color-preset-select"`
+    /// hit commits the preset's `data-color` through `set_node_prop`,
+    /// leaving the picker open for further preview.
+    #[test]
+    fn pointer_down_on_color_preset_commits_through_set_node_prop() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        shell
+            .inner
+            .borrow_mut()
+            .state
+            .open_color_picker("demo-heading", "color", "#000000");
+        let hit = hit_with(
+            "color-preset-select",
+            "ignored-target",
+            &[("data-color", "#0060c0")],
+        );
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty);
+        let guard = shell.inner.borrow();
+        // Picker stays open so the user can preview multiple presets.
+        assert!(guard.state.overlay.color_picker.open);
+        assert_eq!(guard.state.overlay.color_picker.value, "#0060c0");
+        // Doc node received the new color.
+        let color = guard
+            .state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find("demo-heading"))
+            .and_then(|n| n.props.get("color").cloned())
+            .expect("color prop set");
+        assert_eq!(color, serde_json::Value::String("#0060c0".into()));
+    }
+
+    /// Wave 2.4 — pointer-down on `data-role="color-picker-close"`
+    /// dismisses the overlay without committing.
+    #[test]
+    fn pointer_down_on_color_picker_close_dismisses_overlay() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        shell
+            .inner
+            .borrow_mut()
+            .state
+            .open_color_picker("demo-heading", "color", "#000000");
+        let hit = hit_with("color-picker-close", "", &[]);
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty);
+        assert!(!shell.inner.borrow().state.overlay.color_picker.open);
     }
 
     /// Number field-edit shape under the B4 drag-scrubber: pointer-down

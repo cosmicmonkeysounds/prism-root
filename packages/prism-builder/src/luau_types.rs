@@ -11,13 +11,25 @@
 use crate::layout::{
     AlignOption, Dimension, FlexDirection, FlowDisplay, GridPlacement, JustifyOption,
 };
+use crate::luau_bindings_consts::{
+    ABSOLUTE_PROPS_TYPE_DEF, ABSOLUTE_PROPS_TYPE_NAME, ACTION_KIND_TYPE_DEF, ACTION_KIND_TYPE_NAME,
+    APP_ICON_TYPE_DEF, APP_ICON_TYPE_NAME, BUILDER_DOCUMENT_TYPE_DEF, BUILDER_DOCUMENT_TYPE_NAME,
+    CONNECTION_TYPE_DEF, CONNECTION_TYPE_NAME, EXPOSED_SLOT_TYPE_DEF, EXPOSED_SLOT_TYPE_NAME,
+    FIELD_KIND_TYPE_DEF, FIELD_KIND_TYPE_NAME, FIELD_SPEC_TYPE_DEF, FIELD_SPEC_TYPE_NAME,
+    FLOW_PROPS_TYPE_DEF, FLOW_PROPS_TYPE_NAME, LAYOUT_MODE_TYPE_DEF, LAYOUT_MODE_TYPE_NAME,
+    NAVIGATION_CONFIG_TYPE_DEF, NAVIGATION_CONFIG_TYPE_NAME, NAVIGATION_STYLE_TYPE_DEF,
+    NAVIGATION_STYLE_TYPE_NAME, NODE_TYPE_DEF, NODE_TYPE_NAME, PAGE_TYPE_DEF, PAGE_TYPE_NAME,
+    PREFAB_DEF_TYPE_DEF, PREFAB_DEF_TYPE_NAME, PRISM_APP_TYPE_DEF, PRISM_APP_TYPE_NAME,
+    RESOURCE_DEF_TYPE_DEF, RESOURCE_DEF_TYPE_NAME, RESOURCE_KIND_TYPE_DEF, RESOURCE_KIND_TYPE_NAME,
+    SIGNAL_DEF_TYPE_DEF, SIGNAL_DEF_TYPE_NAME,
+};
 use crate::style::StyleProperties;
 
 /// Every Luau-exposed type defined in `prism-builder`. Each entry is
 /// `(luau type name, full `export type` declaration)`. Curated leaf-first
 /// so referenced types declare before their dependents.
 pub fn type_defs() -> Vec<(&'static str, &'static str)> {
-    prism_core::luau_types![
+    let mut defs = prism_core::luau_types![
         // layout leaves
         FlowDisplay,
         FlexDirection,
@@ -27,7 +39,37 @@ pub fn type_defs() -> Vec<(&'static str, &'static str)> {
         GridPlacement,
         // style cascade
         StyleProperties,
-    ]
+    ];
+    // Hand-rolled stubs for the structs/enums whose serde representation
+    // doesn't fit the `#[luau_expose]` macro's fixed `tag` discriminator
+    // (custom `#[serde(tag = "...")]` names, etc.). The strings live in
+    // `luau_bindings_consts.rs` so they round-trip through the same
+    // codegen pipeline as the macro-derived constants.
+    defs.extend([
+        // Leaves needed by the layout / document stubs below.
+        (FIELD_KIND_TYPE_NAME, FIELD_KIND_TYPE_DEF),
+        (FIELD_SPEC_TYPE_NAME, FIELD_SPEC_TYPE_DEF),
+        (SIGNAL_DEF_TYPE_NAME, SIGNAL_DEF_TYPE_DEF),
+        (ACTION_KIND_TYPE_NAME, ACTION_KIND_TYPE_DEF),
+        (CONNECTION_TYPE_NAME, CONNECTION_TYPE_DEF),
+        (RESOURCE_KIND_TYPE_NAME, RESOURCE_KIND_TYPE_DEF),
+        (RESOURCE_DEF_TYPE_NAME, RESOURCE_DEF_TYPE_DEF),
+        (EXPOSED_SLOT_TYPE_NAME, EXPOSED_SLOT_TYPE_DEF),
+        (PREFAB_DEF_TYPE_NAME, PREFAB_DEF_TYPE_DEF),
+        // Layout / document tree (Phase 5 deeper-builder fan-out).
+        (FLOW_PROPS_TYPE_NAME, FLOW_PROPS_TYPE_DEF),
+        (ABSOLUTE_PROPS_TYPE_NAME, ABSOLUTE_PROPS_TYPE_DEF),
+        (LAYOUT_MODE_TYPE_NAME, LAYOUT_MODE_TYPE_DEF),
+        (NODE_TYPE_NAME, NODE_TYPE_DEF),
+        // App / page surface.
+        (NAVIGATION_STYLE_TYPE_NAME, NAVIGATION_STYLE_TYPE_DEF),
+        (NAVIGATION_CONFIG_TYPE_NAME, NAVIGATION_CONFIG_TYPE_DEF),
+        (APP_ICON_TYPE_NAME, APP_ICON_TYPE_DEF),
+        (PAGE_TYPE_NAME, PAGE_TYPE_DEF),
+        (PRISM_APP_TYPE_NAME, PRISM_APP_TYPE_DEF),
+        (BUILDER_DOCUMENT_TYPE_NAME, BUILDER_DOCUMENT_TYPE_DEF),
+    ]);
+    defs
 }
 
 /// Concatenate every entry from [`type_defs`] into a single Luau source

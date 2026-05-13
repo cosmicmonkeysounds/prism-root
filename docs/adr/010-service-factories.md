@@ -200,12 +200,22 @@ Phase 0 (this ADR's implementation):
 
 Phase 1 (follow-on, not in this ADR):
 
-- Convert `install_services` to use factories so Luau-backed
-  services pick up the active-app context.
-- Wire the active-app cursor (`WorkspaceSlot::set_active_app`) to
-  call `rebuild_app_services` on change.
+- ~~Convert `install_services` to use factories so Luau-backed
+  services pick up the active-app context.~~ Landed —
+  `install_services` calls `add_factory_scoped` with a closure that
+  stamps the `ServiceContext::app_id` onto each
+  `LuauScriptedService::new_with_context` invocation.
+- ~~Wire the active-app cursor (`WorkspaceSlot::set_active_app`) to
+  call `rebuild_app_services` on change.~~ Landed —
+  `ShellInner::switch_active_app` now drives every App-scoped
+  factory rebuild before marking `FRAME_DIRTY_SENTINEL`. Both the
+  public `Shell::switch_active_app` entry and the launchpad
+  pointer-down handler share this path.
 - Add lazy instantiation gate on hot-reload (Phase 9 of
-  `dioxus-inspiration.md`).
+  `dioxus-inspiration.md`) — still open. Today every factory runs
+  eagerly at registration; the seam exists but the lazy flip
+  pre-supposes the subsecond hot-reload pipeline that's still
+  feature-gated off.
 
 ## Rationale
 

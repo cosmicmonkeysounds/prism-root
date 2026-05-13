@@ -468,6 +468,60 @@ impl AppState {
     /// open picker is a clean no-op; the existing fields persist so
     /// an accidental click on the "+" button doesn't reset the
     /// user's in-progress entry.
+    /// Wave 2.4 — open the color-picker overlay against a
+    /// `(target_id, key, value)` triple. Idempotent against an
+    /// already-open picker pinned to the same target. Returns
+    /// `true` when the picker state actually changed.
+    pub fn open_color_picker(&mut self, target_id: &str, key: &str, value: &str) -> bool {
+        let p = &self.overlay.color_picker;
+        if p.open && p.target_id == target_id && p.key == key {
+            return false;
+        }
+        self.overlay.color_picker = ColorPicker {
+            open: true,
+            target_id: target_id.to_string(),
+            key: key.to_string(),
+            value: value.to_string(),
+        };
+        true
+    }
+
+    /// Wave 2.4 — close the color picker. Used by Esc, the close
+    /// button, clicking outside, and post-commit. Returns `true`
+    /// when it was actually open.
+    pub fn close_color_picker(&mut self) -> bool {
+        if !self.overlay.color_picker.open {
+            return false;
+        }
+        self.overlay.color_picker = ColorPicker::default();
+        true
+    }
+
+    /// Wave 2.4 — commit a color value (from a preset click, the
+    /// hex echo input, or a future HSL slider) through
+    /// `set_node_prop`. The picker stays open so the user can
+    /// preview successive presets without re-clicking the swatch;
+    /// the close path is the dedicated `close_color_picker` /
+    /// `cancel-color-picker` route. Returns `true` when the bound
+    /// prop actually moved.
+    pub fn set_color_picker_value(
+        &mut self,
+        value: &str,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        let picker = self.overlay.color_picker.clone();
+        if !picker.open || picker.target_id.is_empty() || picker.key.is_empty() {
+            return false;
+        }
+        self.overlay.color_picker.value = value.to_string();
+        self.set_node_prop(
+            &picker.target_id,
+            &picker.key,
+            Value::String(value.to_string()),
+            registry,
+        )
+    }
+
     pub fn open_connection_picker(&mut self) -> bool {
         if self.overlay.connection_picker.open {
             return false;
@@ -1718,6 +1772,35 @@ pub struct OverlaySlot {
     /// Add Connection" footer is clicked; the three form fields
     /// drive a new `SignalConnection` on confirm.
     pub connection_picker: ConnectionPicker,
+    /// Wave 2.4 of `docs/dev/composable-builder-plan.md` — color
+    /// picker overlay. `open = true` after a color swatch is clicked;
+    /// the picker hex input + preset palette commit through
+    /// `set_node_prop` against `(target_id, key)`.
+    pub color_picker: ColorPicker,
+}
+
+/// Wave 2.4 — open/closed state of `shell.color-picker`. The picker
+/// is anchored under the swatch that opened it; the target_id +
+/// key are seeded at open time and consumed by the hex commit /
+/// preset-click mutators.
+#[derive(Clone, Debug, Default)]
+pub struct ColorPicker {
+    pub open: bool,
+    pub target_id: String,
+    pub key: String,
+    pub value: String,
+}
+
+impl ColorPicker {
+    /// Wave 2.4 — eight preset swatches the picker exposes as a
+    /// click-to-commit row. Tuned for inspector workflows: high-
+    /// contrast neutrals + the project accent + a few cools / warms
+    /// for quick mock-ups. Authors who want a different palette
+    /// override this list via the `presets` prop on `shell.color-picker`
+    /// when authoring against a custom skeleton.
+    pub const PRESETS: &'static [&'static str] = &[
+        "#ffffff", "#cccccc", "#666666", "#000000", "#0060c0", "#ff5050", "#ffb020", "#22aa66",
+    ];
 }
 
 /// Wave 1.6 — open/closed state of the `shell.modifier-picker`
@@ -1886,6 +1969,30 @@ impl OverlaySlot {
             "open": self.modifier_picker.open,
             "target-id": self.modifier_picker.target_id,
             "options": options,
+        })
+    }
+
+    /// Wave 2.4 — JSON for `shell.color-picker`. Closed → collapses
+    /// to a 0×0 hidden div; open → renders preview swatch + hex echo
+    /// + preset row keyed off `ColorPicker::PRESETS`. The hex value
+    ///   rides through the existing field-focus pipeline so paste /
+    ///   type / Enter commits land via `set_node_prop`.
+    pub fn color_picker_props(&self) -> Value {
+        let presets: Vec<Value> = ColorPicker::PRESETS
+            .iter()
+            .map(|hex| {
+                json!({
+                    "value": *hex,
+                    "selected": self.color_picker.value.eq_ignore_ascii_case(hex),
+                })
+            })
+            .collect();
+        json!({
+            "open": self.color_picker.open,
+            "target-id": self.color_picker.target_id,
+            "key": self.color_picker.key,
+            "value": self.color_picker.value,
+            "presets": presets,
         })
     }
 
@@ -4730,6 +4837,76 @@ mod tests {
     }
 
     // ── Wave 4 connection picker + mutator tests ────────────────────
+
+    #[test]
+    fn open_color_picker_seeds_target_key_value() {
+        // Wave 2.4 — opening seeds the (target_id, key, value) triple
+        // so subsequent preset clicks can route through
+        // `set_color_picker_value` without re-reading the swatch's
+        // routing attrs.
+        let mut state = AppState::default();
+        assert!(state.open_color_picker("demo-heading", "color", "#ff0000"));
+        assert!(state.overlay.color_picker.open);
+        assert_eq!(state.overlay.color_picker.target_id, "demo-heading");
+        assert_eq!(state.overlay.color_picker.key, "color");
+        assert_eq!(state.overlay.color_picker.value, "#ff0000");
+    }
+
+    #[test]
+    fn open_color_picker_against_same_target_is_a_noop() {
+        let mut state = AppState::default();
+        state.open_color_picker("demo-heading", "color", "#ff0000");
+        // Re-opening with the same target leaves the picker as-is;
+        // the user's in-progress preview survives a spurious second
+        // click on the swatch.
+        state.overlay.color_picker.value = "#00ff00".into();
+        assert!(!state.open_color_picker("demo-heading", "color", "#ff0000"));
+        assert_eq!(state.overlay.color_picker.value, "#00ff00");
+    }
+
+    #[test]
+    fn open_color_picker_against_different_target_reseeds() {
+        let mut state = AppState::default();
+        state.open_color_picker("a", "fg", "#fff");
+        // A *different* swatch reseeds — the picker tracks one
+        // anchor at a time.
+        assert!(state.open_color_picker("b", "bg", "#000"));
+        assert_eq!(state.overlay.color_picker.target_id, "b");
+        assert_eq!(state.overlay.color_picker.key, "bg");
+    }
+
+    #[test]
+    fn close_color_picker_returns_true_only_when_open() {
+        let mut state = AppState::default();
+        assert!(!state.close_color_picker());
+        state.open_color_picker("x", "k", "#fff");
+        assert!(state.close_color_picker());
+        assert!(!state.overlay.color_picker.open);
+        assert!(state.overlay.color_picker.target_id.is_empty());
+    }
+
+    #[test]
+    fn color_picker_props_emit_eight_presets_open_or_closed() {
+        // Wave 2.4 — `color_picker_props` always emits the full preset
+        // list (so the closed overlay's tree shape stays stable
+        // through layout); the `open` field drives the hidden / shown
+        // branch on the DSL side.
+        let mut state = AppState::default();
+        let closed = state.overlay.color_picker_props();
+        assert_eq!(closed["open"], Value::Bool(false));
+        let presets = closed["presets"].as_array().expect("presets array");
+        assert_eq!(presets.len(), ColorPicker::PRESETS.len());
+        state.open_color_picker("x", "k", "#0060c0");
+        let open = state.overlay.color_picker_props();
+        assert_eq!(open["open"], Value::Bool(true));
+        // One preset matches the current value → `selected=true`.
+        let presets = open["presets"].as_array().expect("presets array");
+        let selected_count = presets
+            .iter()
+            .filter(|p| p["selected"].as_bool().unwrap_or(false))
+            .count();
+        assert_eq!(selected_count, 1);
+    }
 
     #[test]
     fn open_connection_picker_seeds_form_defaults() {

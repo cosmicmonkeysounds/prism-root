@@ -89,6 +89,40 @@ pub const CONFIG_HANDLE_TYPE_DEF: &str = r#"export type Config = {
     is_overridden: (self: Config, key: string) -> boolean,
 }"#;
 
+// ───── RegistrarHandle (DSL self-bootstrap Loop 4) ────────────────────
+// Type stub for the `prism.app` userdata in `crate::luau_bindings`.
+// Mirrors `prism_core::app_registry`'s {Panel,Component,Service}
+// Registration shapes — keep these in lockstep when fields move.
+
+pub const REGISTRAR_HANDLE_TYPE_NAME: &str = "AppRegistrar";
+pub const REGISTRAR_HANDLE_TYPE_DEF: &str = r#"export type PanelRegistration = {
+    id: string,
+    label: string?,
+    icon_hint: string?,
+    min_width: number?,
+    min_height: number?,
+    allow_multiple: boolean?,
+    tag: string?,
+}
+
+export type ComponentRegistration = {
+    id: string,
+    render_key: string?,
+    render: ((props: any, children: any) -> any)?,
+}
+
+export type ServiceRegistration = {
+    id: string,
+    on_event_key: string?,
+    on_event: ((ctx: any, event: any) -> any)?,
+}
+
+export type AppRegistrar = {
+    register_panel: (self: AppRegistrar, spec: PanelRegistration) -> (),
+    register_component: (self: AppRegistrar, spec: ComponentRegistration) -> (),
+    register_service: (self: AppRegistrar, spec: ServiceRegistration) -> (),
+}"#;
+
 // ───── Reactive substrate (Phase 5) ───────────────────────────────────
 // Type stubs for the userdata impls in `crate::luau_reactive`. Lands
 // in a sibling `reactive.d.luau` file (next to `signals.d.luau`) once

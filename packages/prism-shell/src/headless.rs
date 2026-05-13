@@ -162,6 +162,57 @@ impl Shell {
         serde_json::to_string_pretty(&tree)
             .unwrap_or_else(|e| format!("/* failed to serialize tree: {e} */"))
     }
+
+    /// Wave 7.2 — render one frame headlessly and encode it as a
+    /// PNG byte buffer. Walks the lowered UI tree through
+    /// `prism_ui_runtime::layout::compute` (the same Taffy pass the
+    /// femtovg backend uses) to recover laid-out
+    /// [`prism_ui_runtime::command::RenderCommand`]s, then
+    /// rasterises them through a CPU-side painter into an RGBA
+    /// buffer and PNG-encodes via the workspace `image` crate.
+    ///
+    /// The painter is intentionally simple: solid rectangles,
+    /// borders, scissor clipping, text-bounding-box placeholders
+    /// (one accented strip at the baseline). It is not pixel-equal
+    /// to the femtovg backend's output (no glyph rasterisation, no
+    /// image decoding, no antialiased corner radii) — but the
+    /// **layout** is identical, so before/after diffs catch every
+    /// box-model regression the visual harness exists to surface.
+    /// Path forward to pixel-equal: a real `femtovg` offscreen
+    /// surface land replaces this body without changing the seam.
+    pub fn dump_png(&self, width: u32, height: u32) -> Result<Vec<u8>, String> {
+        use prism_ui_runtime::layout::{
+            self, ContainerProps, Direction, Node as UiNode, Sizing, Viewport,
+        };
+        let children = self.render();
+        let root = UiNode::Container {
+            id: String::new(),
+            props: ContainerProps {
+                direction: Direction::Column,
+                width: Sizing::Grow,
+                height: Sizing::Grow,
+                ..Default::default()
+            },
+            children,
+        };
+        let viewport = Viewport {
+            width: width as f32,
+            height: height as f32,
+        };
+        let commands = layout::compute(&root, viewport);
+        let buffer = crate::png_paint::rasterize(&commands, width, height);
+        let mut out: Vec<u8> = Vec::new();
+        let encoder = image::codecs::png::PngEncoder::new(&mut out);
+        image::ImageEncoder::write_image(
+            encoder,
+            &buffer,
+            width,
+            height,
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|e| format!("png encode failed: {e}"))?;
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -179,6 +230,29 @@ mod tests {
     #[test]
     fn unknown_scene_name_yields_none() {
         assert!(BuiltinScene::from_name("does-not-exist").is_none());
+    }
+
+    /// Wave 7.2 — `dump_png` emits a non-empty PNG byte buffer
+    /// starting with the standard 8-byte PNG magic. Renders against
+    /// a small viewport to keep the test fast.
+    #[test]
+    fn dump_png_emits_png_magic_bytes() {
+        let shell = Shell::new().expect("boot");
+        let bytes = shell.dump_png(64, 48).expect("png encode");
+        assert!(bytes.len() > 50, "encoded PNG should be non-trivial");
+        // PNG magic: 89 50 4E 47 0D 0A 1A 0A
+        assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    /// Wave 7.2 — running `dump_png` twice on the same scene yields
+    /// byte-identical output. Pins the determinism contract the
+    /// visual harness diffs against.
+    #[test]
+    fn dump_png_is_deterministic_across_runs() {
+        let shell = Shell::new().expect("boot");
+        let first = shell.dump_png(64, 48).expect("png encode");
+        let second = shell.dump_png(64, 48).expect("png encode");
+        assert_eq!(first, second);
     }
 
     #[test]

@@ -35,7 +35,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::rc::Rc;
 
 use mlua::{FromLua, Function, Lua, RegistryKey, Table, Value as LuaValue};
 use prism_core::widget::field::FieldSpec;
@@ -86,6 +86,9 @@ impl VirtualNode {
 }
 
 impl mlua::FromLua for VirtualNode {
+    // `lua` is part of the trait signature; clippy can't see it's
+    // load-bearing for the recursive `from_lua` calls below.
+    #[allow(clippy::only_used_in_recursion)]
     fn from_lua(value: LuaValue, lua: &Lua) -> mlua::Result<Self> {
         let table: Table = match value {
             LuaValue::Table(t) => t,
@@ -205,7 +208,7 @@ pub struct LuauRenderRegistry {
     /// Buffer that `prism.widget {...}` calls drain into. `compile`
     /// resets it on each pass so a single source file can register
     /// multiple widgets.
-    pending: Arc<RefCell<Vec<PendingWidget>>>,
+    pending: Rc<RefCell<Vec<PendingWidget>>>,
 }
 
 struct PendingWidget {
@@ -222,7 +225,7 @@ impl Default for LuauRenderRegistry {
 impl LuauRenderRegistry {
     pub fn new() -> Self {
         let lua = Lua::new();
-        let pending: Arc<RefCell<Vec<PendingWidget>>> = Arc::new(RefCell::new(Vec::new()));
+        let pending: Rc<RefCell<Vec<PendingWidget>>> = Rc::new(RefCell::new(Vec::new()));
         // Best-effort install. Caller can re-run `install_global` if a
         // host wants to re-bind after their own setup.
         let _ = install_widget_global(&lua, pending.clone());
@@ -322,7 +325,7 @@ impl LuauRenderRegistry {
 
 // ── prism.widget global helper (Phase 6c) ───────────────────────────
 
-fn install_widget_global(lua: &Lua, pending: Arc<RefCell<Vec<PendingWidget>>>) -> mlua::Result<()> {
+fn install_widget_global(lua: &Lua, pending: Rc<RefCell<Vec<PendingWidget>>>) -> mlua::Result<()> {
     // Either grab the existing `prism` userdata and wrap it, or build a
     // fresh table. Either way the result is a table writable from the
     // Rust side.

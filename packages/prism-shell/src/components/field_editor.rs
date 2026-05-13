@@ -100,7 +100,7 @@ const KIND_TABLE: &[KindEntry] = &[
     },
     KindEntry {
         kind: "file",
-        body: build_text_body,
+        body: build_file_body,
         aria_role: "group",
     },
     KindEntry {
@@ -144,6 +144,11 @@ fn field_editor_schema() -> Vec<FieldSpec> {
         // can cycle without re-resolving the schema. Number/integer rows
         // ignore it.
         FieldSpec::text("options", "Select options (JSON array of {value,label})"),
+        // Wave 2.5 — comma-joined extension / MIME accept-list the
+        // file-kind browse button forwards into `Vfs::pick_file` as
+        // a single "Files" filter. Mirrors the `<input type=file
+        // accept="…">` attribute shape. Empty → no filter (all files).
+        FieldSpec::text("accept", "Accept (file dialog filter)"),
         // §43 C2: doc-node-id the edit applies to. Populated by
         // `derive_property_rows`; consumed by the hit-test router.
         FieldSpec::text("target-id", "Target node ID"),
@@ -340,21 +345,35 @@ fn build_select_body(ctx: &LowerCtx<'_>, node: &Node) -> Vec<UiNode> {
 
 fn build_color_body(ctx: &LowerCtx<'_>, node: &Node) -> Vec<UiNode> {
     let value = ctx.prop_str(node, "value");
+    let target_id = ctx.prop_str(node, "target-id");
+    let key = ctx.prop_str(node, "key");
     let style = StyleProperties::default();
 
-    // Swatch keeps a non-empty id only because the swatch *does*
-    // carry its own click semantic (`color-swatch` → opens a picker
-    // in the future). Until that handler lands the swatch routes
-    // nowhere; the surrounding field-edit row's click-cycle still
-    // owns the interaction.
+    // Wave 2.4 — swatch carries `data-role="color-swatch"` plus
+    // `data-target-id` + `data-key` + `data-value` so the pointer
+    // router can open the `shell.color-picker` overlay anchored to
+    // *this* field's bound prop. The picker writes back through
+    // `set_color_picker_value` so the swatch's bg updates in place
+    // on commit. The swatch keeps a non-empty id so its hit rect
+    // surfaces ahead of the row's `field-edit` route.
     let swatch = bare_container(format!("{}::swatch", node.id), vec![], |p| {
         p.width = Sizing::Fixed(SWATCH_SIZE);
         p.height = Sizing::Fixed(SWATCH_SIZE);
         p.radius = uniform_radius(SWATCH_RADIUS);
         p.background = parse_color(&value);
-        p.semantic = Semantic::tag("button")
+        let mut s = Semantic::tag("button")
             .with_attr("type", "button")
             .with_attr("data-role", "color-swatch");
+        if !target_id.is_empty() {
+            s = s.with_attr("data-target-id", target_id);
+        }
+        if !key.is_empty() {
+            s = s.with_attr("data-key", key);
+        }
+        if !value.is_empty() {
+            s = s.with_attr("data-value", value.clone());
+        }
+        p.semantic = s;
     });
 
     let hex = text_input_node(
@@ -451,6 +470,76 @@ fn slider_track(_field_id: &str, fill: f32) -> UiNode {
         p.padding = Padding::default();
         p.semantic = Semantic::tag("div").with_attr("data-role", "slider-track");
     })
+}
+
+/// Wave 2.5 — file-kind body. Renders the text input the user can
+/// paste a path into *plus* a "Browse…" button that fires the
+/// native picker through `Vfs::pick_file`. The text input keeps
+/// keyboard / paste workflows working when the dialog isn't
+/// available (wasm, headless tests, hosts that didn't wire rfd).
+fn build_file_body(ctx: &LowerCtx<'_>, node: &Node) -> Vec<UiNode> {
+    let value = ctx.prop_str(node, "value");
+    let focused = ctx.prop_bool(node, "focused", false);
+    let target_id = ctx.prop_str(node, "target-id");
+    let key = ctx.prop_str(node, "key");
+    let accept = ctx.prop_str(node, "accept");
+    let style = StyleProperties::default();
+
+    let input = prism_builder::ui_lower::text_input_node_with_focus(
+        format!("{}::input", node.id),
+        value,
+        String::new(),
+        &style,
+        Sizing::Grow,
+        Sizing::Fixed(PILL_HEIGHT),
+        12.0,
+        focused,
+    );
+
+    // Browse button — the pointer-down router (events.rs) reads
+    // `data-role="file-browse"` + `data-target-id` + `data-key` +
+    // `data-accept` to invoke `Vfs::pick_file` and commit the
+    // resulting path through `set_node_prop`. Carries a non-empty
+    // id so its hit rect surfaces in `Surface::hit_test_at`.
+    let browse_label = colored_text_node(
+        format!("{}::browse-label", node.id),
+        "Browse…".into(),
+        &style,
+        12.0,
+        "#000000",
+    );
+    let browse = bare_container(format!("{}::browse", node.id), vec![browse_label], |p| {
+        p.direction = Direction::Row;
+        p.height = Sizing::Fixed(PILL_HEIGHT);
+        p.padding = Padding {
+            left: 10.0,
+            right: 10.0,
+            top: 0.0,
+            bottom: 0.0,
+        };
+        p.radius = uniform_radius(PILL_RADIUS);
+        p.background = parse_color(PILL_BG);
+        p.hover = hover_bg(PILL_HOVER_BG);
+        let mut s = Semantic::tag("button")
+            .with_attr("type", "button")
+            .with_attr("data-role", "file-browse");
+        if !target_id.is_empty() {
+            s = s.with_attr("data-target-id", target_id);
+        }
+        if !key.is_empty() {
+            s = s.with_attr("data-key", key);
+        }
+        if !accept.is_empty() {
+            s = s.with_attr("data-accept", accept);
+        }
+        p.semantic = s;
+    });
+
+    vec![bare_container(String::new(), vec![input, browse], |p| {
+        p.direction = Direction::Row;
+        p.gap = PICKER_GAP;
+        p.height = Sizing::Fixed(PILL_HEIGHT);
+    })]
 }
 
 fn build_text_body(ctx: &LowerCtx<'_>, node: &Node) -> Vec<UiNode> {
@@ -638,7 +727,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_declares_ten_fields() {
+    fn schema_declares_eleven_fields() {
         let block = prism_builder::SpecBlock::new(&super::FIELD_EDITOR_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
         assert_eq!(
@@ -652,10 +741,55 @@ mod tests {
                 "min",
                 "max",
                 "options",
+                "accept",
                 "target-id",
                 "focused",
             ]
         );
+    }
+
+    #[test]
+    fn file_kind_emits_input_plus_browse_button() {
+        // Wave 2.5 — file-kind rows surface a `data-role="file-browse"`
+        // button alongside the text input. The events.rs route reads
+        // `data-target-id` + `data-key` + `data-accept` off the hit
+        // and invokes `Vfs::pick_file`.
+        let ui = lower(json!({
+            "kind": "file",
+            "label": "Source",
+            "key": "src",
+            "target-id": "demo-node",
+            "value": "/tmp/x.png",
+            "accept": ".png,.jpg",
+        }));
+        let UiNode::Container { children, .. } = ui else {
+            panic!()
+        };
+        // label + row
+        let UiNode::Container {
+            children: row_kids, ..
+        } = &children[1]
+        else {
+            panic!()
+        };
+        assert_eq!(row_kids.len(), 2, "input + browse button");
+        let UiNode::Container { props, .. } = &row_kids[1] else {
+            panic!("browse button is a container")
+        };
+        let s = &props.semantic;
+        assert!(s
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "file-browse"));
+        assert!(s
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-target-id" && v == "demo-node"));
+        assert!(s.attrs.iter().any(|(k, v)| k == "data-key" && v == "src"));
+        assert!(s
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-accept" && v == ".png,.jpg"));
     }
 
     #[test]

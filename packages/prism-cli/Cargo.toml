@@ -23,13 +23,24 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io
 notify = { workspace = true }
 # `prism codegen luau-types` walks the workspace's `#[luau_expose]`
 # annotations through `prism-core`'s + `prism-builder`'s curated
-# registries. The Luau runtime itself is *not* needed here — only the
-# type-stub constants — so we pull both crates in without their `luau`
-# feature to keep the CLI's build cheap. `prism-builder` also exposes
-# the per-component signal stub generator (`generate_signal_type_stubs`),
-# which the codegen subcommand fans out alongside the type registry.
+# registries. `prism scripts validate` additionally drives the
+# `prism_builder::load_*` script preflight pipelines, which need
+# `prism-builder/luau` (pulls in `mlua` for the compile-only pass).
+# `prism-builder` also exposes the per-component signal stub generator
+# (`generate_signal_type_stubs`), which the codegen subcommand fans out
+# alongside the type registry.
 prism-core = { path = "../prism-core" }
-prism-builder = { path = "../prism-builder" }
+prism-builder = { path = "../prism-builder", features = ["luau"] }
+# `prism scripts run` invokes a project script through the daemon's
+# `luau_module::exec` so the `prism` global is installed identically
+# to live execution. `default-features = false` keeps the heavyweight
+# modules (whisper / vfs / watcher / actors / conferencing) out of
+# the CLI's build.
+prism-daemon = { path = "../prism-daemon", default-features = false, features = ["luau"] }
+# `.prism.json` parsing — `prism scripts validate` reads the manifest's
+# `scripts` section and dispatches to the matching loader.
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 # `prism codegen luau-types` also walks the runtime's value-type
 # registry to emit `prism-ui.d.luau` (clay-migration-plan.md §4.8).
 # Default features (HTML SSR only) keep the dep graph cheap — no

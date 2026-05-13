@@ -365,6 +365,79 @@ Each step lands with:
   registrar trait surface is finalised; what remains is the
   `mlua`-side glue and the in-process script lifecycle in
   `prism-daemon::modules::luau_module`.
+- 2026-05-13: **Luau registrar bindings landed.** Closes the
+  previous wave's residual follow-up.
+  1. **`prism_core::luau_bindings::RegistrarHandle`** — new
+     `mlua::UserData` wrapper around `Arc<dyn AppRegistrar>` with
+     three methods (`register_panel` / `register_component` /
+     `register_service`) that accept Lua tables and convert them into
+     the matching `*Registration` shapes. Field validation lives in
+     three free helpers (`panel_from_table` / `component_from_table` /
+     `service_from_table`); registrar errors round-trip back to Lua
+     through `mlua::Error::external`. `id` is the only required key
+     per registration — other fields default to a reasonable shape.
+     **7 new unit tests** covering happy paths, defaults, error
+     surfacing, missing-id failure, and the `render_key` /
+     `on_event_key` synthesis from inline `render` / `on_event`
+     function tables.
+  2. **`REGISTRAR_HANDLE_TYPE_NAME` / `_DEF`** — type-stub constants
+     in `luau_bindings_consts` (always compiled, no `luau` feature
+     gate) so the `prism codegen luau-types` pipeline picks up the
+     `AppRegistrar` / `PanelRegistration` / `ComponentRegistration` /
+     `ServiceRegistration` shapes alongside the existing handle defs.
+     Registered in `luau_types::type_defs`.
+  3. **`PrismContext::with_app_registrar`** — daemon-side builder
+     that stamps an `Option<RegistrarHandle>` onto the `prism`
+     userdata, surfaced as `prism.app`. The bare `luau.exec` path
+     keeps the field `nil` so scripts can guard with
+     `if prism.app then ...`; script-aware hosts (the eventual
+     shell-side script loader) build the context with a live
+     registrar wired through. **3 new daemon-side tests** in
+     `modules::prism_context::tests`: `prism_app_is_nil_by_default`,
+     `prism_app_register_panel_flows_through_to_host_registrar`, and
+     `prism_app_register_three_verbs_in_one_script` (drives panel +
+     component + service through a single script body — the
+     realistic shape of a real app's `main.luau`).
+- 2026-05-13: **ADR-009 Phase 1 advanced — Musica + Flux skeletons.**
+  `apps/musica/shell.prism-ui` and `apps/flux/shell.prism-ui` ship as
+  proof-of-concept distinct skeletons (`musica-stage` / `flux-canvas`
+  dock root ids). Both manifests gain `[entry] skeleton = "shell.prism-ui"`.
+  The matching `<musica.transport>` / `<musica.timeline>` / `<flux.canvas>`
+  components remain unbuilt — until they land the skeletons use a
+  distinct dock id so the swap is observable without depending on
+  unbuilt blocks. **1 new e2e test** in `tests/dsl_self_bootstrap.rs`
+  (`musica_and_flux_each_swap_in_a_distinct_app_skeleton`) drives
+  all three apps through `Shell::switch_active_app` and asserts each
+  rendered tree carries its app-specific dock id end-to-end.
+
+  **Test deltas:** prism-core +7 unit tests (`luau_bindings::tests`,
+  `RegistrarHandle`), prism-daemon +3 unit tests
+  (`modules::prism_context::tests`, `prism.app` end-to-end),
+  prism-shell +1 e2e test (`tests/dsl_self_bootstrap`, Musica + Flux
+  skeleton swap).
+
+  **Remaining gaps:**
+  - **Shell-side Luau script lifecycle.** `prism-shell` still ships
+    `NoopLuauHost` — apps' `main.luau` files aren't yet executed
+    during `Shell::new`. Wiring would call
+    `prism_daemon::modules::luau_module::exec_with_setup` once per
+    discovered app, installing the live `ShellAppRegistrar` through
+    `PrismContext::with_app_registrar` and draining the queues
+    afterwards. Blocked on the shell taking a dep on `prism-daemon`
+    (or factoring the `exec_with_setup` helper out of the daemon
+    into a shareable crate).
+  - **Luau render / event dispatch.** `LuauComponentBlock::lower_ui`
+    and `LuauScriptedService::on_event` still emit placeholders.
+    Closing those needs a persistent Lua state in the shell (not
+    the daemon's per-call disposable state) so the registered
+    closures are alive when the renderer / event router calls them
+    back. Architecture-level decision needed before impl.
+  - **Distinct Musica / Flux chrome.** The skeleton swap is wired
+    through; the actual `<musica.transport>` / `<musica.timeline>` /
+    `<musica.mixer>` / `<flux.canvas>` components are unbuilt. Each
+    is a discrete `BlockSpec` + lower fn under
+    `prism-shell/src/components/` (or a separate `prism-musica` /
+    `prism-flux` crate if the surface grows).
 - 2026-05-13: **All four loops landed.** Final shape:
   - **Loop 1** — `prism_core::AppManifest` (TOML, 5 tests),
     `prism_shell::app_loader::discover` (4 tests),
