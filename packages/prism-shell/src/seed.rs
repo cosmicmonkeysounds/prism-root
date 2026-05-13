@@ -627,6 +627,7 @@ mod tests {
             },
             base_dir: std::path::PathBuf::from("/tmp/custom-app"),
             skeleton: None,
+            stylesheet: None,
         }];
         let s = initial_state_with_apps(&apps);
         assert_eq!(s.catalog.apps.len(), 1);

@@ -142,9 +142,7 @@ impl<T: HasId> Catalog<T> {
 
 impl<T: HasId + fmt::Debug> fmt::Display for Catalog<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_map()
-            .entries(self.entries.iter().map(|(k, v)| (k, v)))
-            .finish()
+        f.debug_map().entries(self.entries.iter()).finish()
     }
 }
 

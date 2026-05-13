@@ -294,6 +294,39 @@ Each step lands with:
   **Workspace total: 3646 tests passing**, zero failures,
   `cargo clippy --workspace --all-targets -- -D warnings` clean.
 
+- 2026-05-13: **Deepening wave** — five concrete extensions:
+  1. **`prism_core::Catalog<T>`** — generic registry primitive
+     (`register / get / iter / len / from_seed / drain / remove`).
+     `DockCatalog` collapsed to a thin newtype around it; ADR
+     intent ("symmetric to ComponentRegistry / ModifierRegistry")
+     made literal. **10 new tests** in `prism-core::registry`.
+  2. **`Shell::switch_active_app(id)`** — first-class active-app
+     cursor swap. Single call updates `state.workspace.active_app`,
+     re-runs every `App`-scoped service factory with a fresh
+     `ServiceContext`, and marks `FRAME_DIRTY_SENTINEL`. Idempotent
+     (no-op returns `false`). **4 new unit tests** in `shell::tests`.
+  3. **`install_services` migrated to ADR-010 factory path.** Luau
+     services now register via `add_factory_scoped` so
+     `switch_active_app` actually re-binds the bound app id on each
+     swap. `LuauScriptedService::new_with_context` is the new
+     ctor; `bound_app_id()` accessor lets tests + future Luau
+     dispatch confirm the rebind. **2 new app-registry tests**.
+  4. **Per-app PRSS stylesheets.** `[entry] styles = "..."` parses
+     through `AppLoader`; `ShellInner.app_stylesheets` caches.
+     `Stylesheet::merge_with(overlay)` layers app sheet over host
+     (overlay wins on conflict for tokens + classes). Render path
+     uses the cascaded sheet via `inner.active_app_stylesheet()`.
+     **3 new e2e tests**.
+  5. **End-to-end `switch_active_app` integration test.**
+     `full_swap_chain_skeleton_stylesheet_services_all_track`
+     drives all three side effects (skeleton + services +
+     stylesheet) through a single `switch_active_app("lattice")`
+     call against a manifest declaring all three. **2 new e2e
+     tests** plus the headline integration.
+
+  **Workspace total after wave: 3690 tests passing**, zero failures,
+  `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
   **Residual follow-up:** binding `prism.register_panel` /
   `prism.register_component` / `prism.register_service` as Luau
   `UserData` methods on a `Arc<dyn AppRegistrar>` handle, threaded

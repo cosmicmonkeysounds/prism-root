@@ -355,6 +355,24 @@ fn emit_notice(sink: &Arc<dyn LineSink>, label: &str, color: Color, text: String
 }
 
 async fn drain_child_io(reader_tasks: &mut JoinSet<()>, sink_task: tokio::task::JoinHandle<()>) {
+    // Let the readers exit naturally — when the child's stdout /
+    // stderr pipes close on process exit, `lines.next_line()` yields
+    // `Ok(None)` and the spawned tasks return. Aborting early
+    // dropped any output still buffered in `BufReader`, producing a
+    // race where `stdout_is_routed_through_the_sink` would
+    // intermittently see an empty sink even though the child had
+    // already printed.
+    //
+    // Cap the wait at one second so a hung reader (e.g. a closed
+    // file descriptor that doesn't propagate EOF for some reason)
+    // can't block dev-loop shutdown indefinitely.
+    let drain_deadline = Duration::from_secs(1);
+    let _ = tokio::time::timeout(drain_deadline, async {
+        while reader_tasks.join_next().await.is_some() {}
+    })
+    .await;
+    // If the timeout fired, force-abort the stragglers so we don't
+    // leak background tasks across the join_next loop's stop point.
     reader_tasks.abort_all();
     while reader_tasks.join_next().await.is_some() {}
     let _ = sink_task.await;

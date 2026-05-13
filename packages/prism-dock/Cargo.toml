@@ -9,6 +9,7 @@ description = "Renderer-agnostic dockable panel layout engine for Prism"
 serde = { workspace = true }
 serde_json = { workspace = true }
 indexmap = { workspace = true }
+prism-core = { path = "../prism-core" }
 
 [dev-dependencies]
 insta = { workspace = true }

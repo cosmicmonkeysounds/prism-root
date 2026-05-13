@@ -207,6 +207,49 @@ impl Stylesheet {
     pub fn diagnostics_for(source: &str) -> Vec<prss::ParseError> {
         prss::parse(source).1
     }
+
+    /// ADR-009 follow-on: produce a new stylesheet by layering
+    /// `overlay` on top of `self`. The overlay's tokens and class
+    /// definitions win on conflict — same semantics as CSS where a
+    /// later rule with the same specificity overrides the earlier.
+    /// Used by the render path to cascade an app stylesheet over the
+    /// host's global stylesheet.
+    ///
+    /// Returns a fresh `Stylesheet` — both inputs are left untouched
+    /// so a single host stylesheet can serve many active-app swaps.
+    pub fn merge_with(&self, overlay: &Stylesheet) -> Stylesheet {
+        let mut merged = (*self.sheet).clone();
+        let other = overlay.sheet.as_ref();
+        // Token overrides: each of the four bucket maps merges
+        // entry-by-entry with the overlay winning on key conflict.
+        for (k, v) in &other.tokens.colors {
+            merged.tokens.colors.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &other.tokens.spacing {
+            merged.tokens.spacing.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &other.tokens.radius {
+            merged.tokens.radius.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &other.tokens.typography {
+            merged.tokens.typography.insert(k.clone(), v.clone());
+        }
+        // Classes: overlay's class definitions replace base's. We
+        // don't field-level merge inside `ClassDef` — PRSS classes
+        // are atomic by name (a class with the same name in two
+        // sheets is the same class; the overlay says "use my full
+        // definition").
+        for (name, def) in &other.classes {
+            merged.classes.insert(name.clone(), def.clone());
+        }
+        // Version: overlay wins if it specifies one, else keep base's.
+        if other.version.is_some() {
+            merged.version = other.version;
+        }
+        Stylesheet {
+            sheet: Arc::new(merged),
+        }
+    }
 }
 
 impl Default for Stylesheet {

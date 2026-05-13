@@ -74,6 +74,14 @@ pub struct ShellInner {
     /// `None` or its id has no entry in [`Self::app_skeletons`].
     /// Parsed once at boot to avoid re-running the parser per frame.
     pub default_app_skeleton: Skeleton,
+    /// ADR-009 follow-on: per-app PRSS stylesheet cache. Keyed by
+    /// `manifest.id`; built once at boot from every `LoadedApp` whose
+    /// manifest declared `[entry] styles = "..."`. The active app's
+    /// stylesheet (if present) layers over the host stylesheet
+    /// installed via `Shell::install_stylesheet` — token overrides +
+    /// class definitions in the app sheet win on conflict because
+    /// they come later in the cascade.
+    pub app_stylesheets: std::collections::HashMap<String, Stylesheet>,
     pub state: crate::AppState,
     pub viewport: Viewport,
     pub undo: UndoStack,
@@ -160,6 +168,20 @@ impl ShellInner {
             .unwrap_or(&self.default_app_skeleton)
     }
 
+    /// ADR-009 follow-on: the active app's PRSS stylesheet, if any.
+    /// Returns `None` when the active app is unset, when no app is
+    /// active, or when the active app declared no `[entry] styles`.
+    /// The render path layers the host stylesheet first, then the
+    /// app's sheet on top — token + class overrides in the app
+    /// sheet win on conflict.
+    pub fn active_app_stylesheet(&self) -> Option<&Stylesheet> {
+        self.state
+            .workspace
+            .active_app
+            .as_deref()
+            .and_then(|id| self.app_stylesheets.get(id))
+    }
+
     /// Sister to [`Self::prop_ctx`] for the §24 write side. Every
     /// service handler and every command body takes one of these.
     /// Adding a new datum = one field on `MutCtx` and one assignment
@@ -240,6 +262,15 @@ impl Shell {
                     .map(|s| (a.manifest.id.clone(), s.clone()))
             })
             .collect();
+        // ADR-009 follow-on: same shape for stylesheets.
+        let app_stylesheets: std::collections::HashMap<String, Stylesheet> = loaded_apps
+            .iter()
+            .filter_map(|a| {
+                a.stylesheet
+                    .as_ref()
+                    .map(|s| (a.manifest.id.clone(), s.clone()))
+            })
+            .collect();
         let default_app = default_app_skeleton();
         // DSL self-bootstrap Loop 3: if any manifest declares service
         // preferences, filter `App`-scoped services to the declared
@@ -280,6 +311,7 @@ impl Shell {
             dock_catalog,
             app_skeletons,
             default_app_skeleton: default_app,
+            app_stylesheets,
             // §43 A1 + Wave 1: hydrated boot state with the modifier
             // registry installed. `AppState::default()` is the
             // zero-data shape for tests and headless renders;
@@ -314,6 +346,62 @@ impl Shell {
             skeleton,
             stylesheet: Rc::new(RefCell::new(None)),
         })
+    }
+
+    /// ADR-009 + ADR-010: change the active app. Performs three
+    /// linked side effects in one call so callers never forget any:
+    ///
+    /// 1. Update `state.workspace.active_app` — the source of truth
+    ///    read by [`ShellInner::active_app_skeleton`].
+    /// 2. Re-run every `App`-scoped [`ServiceFactory`] with a fresh
+    ///    [`ServiceContext`] carrying the new app id, so Luau-backed
+    ///    services re-bind to the new app's script handles. Eager
+    ///    services (no factory) are left untouched.
+    /// 3. Mark `FRAME_DIRTY_SENTINEL` so the next event-loop tick
+    ///    re-renders against the new skeleton.
+    ///
+    /// Idempotent: switching to the already-active app is a no-op
+    /// (no rebuild, no dirty mark). Switching to `None` un-mounts
+    /// any app — the host skeleton falls back to the default app
+    /// skeleton.
+    ///
+    /// Returns `true` when the cursor actually moved, `false` for
+    /// the idempotent no-op path.
+    ///
+    /// [`ServiceFactory`]: crate::services::ServiceFactory
+    /// [`ServiceContext`]: crate::services::ServiceContext
+    pub fn switch_active_app(&self, app_id: Option<&str>) -> bool {
+        // Cheap pre-check: if the cursor is already where the caller
+        // wants it, don't re-run the rebuild or mark dirty.
+        {
+            let inner = self.inner.borrow();
+            if inner.state.workspace.active_app.as_deref() == app_id {
+                return false;
+            }
+        }
+        // Three side effects, single `&mut` borrow.
+        let mut inner = self.inner.borrow_mut();
+        inner.state.workspace.active_app = app_id.map(|s| s.to_string());
+        // Rebuild scope held inline so the borrow of services + the
+        // construction of the ServiceContext don't overlap. The
+        // context is `Copy`, so cloning the app_id slice from the
+        // freshly-set state field is cheap.
+        let ctx_app_id = inner.state.workspace.active_app.clone();
+        inner
+            .services
+            .rebuild_app_services(&crate::services::ServiceContext {
+                app_id: ctx_app_id.as_deref(),
+            });
+        inner
+            .render_scope
+            .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+        true
+    }
+
+    /// Read the currently-active app id. `None` when no launchpad
+    /// tile has been activated yet.
+    pub fn active_app(&self) -> Option<String> {
+        self.inner.borrow().state.workspace.active_app.clone()
     }
 
     /// Install (or replace) the active PRSS stylesheet. Subsequent
@@ -365,7 +453,20 @@ impl Shell {
     pub fn render(&self) -> Vec<UiNode> {
         let inner = self.inner.borrow();
         let cache = Rc::clone(&inner.memo_cache);
-        let stylesheet = self.stylesheet.borrow().clone();
+        let host_stylesheet = self.stylesheet.borrow().clone();
+        // ADR-009 follow-on: cascade host + active-app stylesheet.
+        // Host sheet provides the base tokens / classes; the active
+        // app's sheet (if any) layers on top so its token overrides
+        // and class definitions win on conflict. Held as an owned
+        // local because `merge_with` returns a fresh value — the
+        // host's stylesheet field stays untouched.
+        let app_stylesheet = inner.active_app_stylesheet();
+        let effective_stylesheet: Option<Stylesheet> = match (host_stylesheet, app_stylesheet) {
+            (Some(host), Some(app)) => Some(host.merge_with(app)),
+            (Some(host), None) => Some(host),
+            (None, Some(app)) => Some(app.clone()),
+            (None, None) => None,
+        };
         // ADR-009: graft the active app's skeleton body into the host
         // skeleton's `<shell.app-window>` element. Cheap (AST clone),
         // bounded (host skeleton is ~50 nodes), and runs once per
@@ -379,7 +480,7 @@ impl Shell {
                     Arc::clone(&inner.resolver),
                     &inner.prop_ctx(),
                     Some(Rc::clone(&cache)),
-                    stylesheet.as_ref(),
+                    effective_stylesheet.as_ref(),
                 )
             })
         });
@@ -593,6 +694,47 @@ mod tests {
         let a = shell.render();
         let b = shell.render();
         assert_eq!(a, b, "two consecutive renders must be equal");
+    }
+
+    #[test]
+    fn switch_active_app_updates_cursor_and_returns_true() {
+        let shell = Shell::new().expect("boot");
+        assert!(shell.active_app().is_none());
+        let moved = shell.switch_active_app(Some("lattice"));
+        assert!(moved, "first cursor move should report `true`");
+        assert_eq!(shell.active_app().as_deref(), Some("lattice"));
+    }
+
+    #[test]
+    fn switch_active_app_is_idempotent() {
+        let shell = Shell::new().expect("boot");
+        shell.switch_active_app(Some("musica"));
+        let moved_again = shell.switch_active_app(Some("musica"));
+        assert!(!moved_again, "no-op cursor move should report `false`");
+    }
+
+    #[test]
+    fn switch_active_app_to_none_unmounts() {
+        let shell = Shell::new().expect("boot");
+        shell.switch_active_app(Some("flux"));
+        assert_eq!(shell.active_app().as_deref(), Some("flux"));
+        let moved = shell.switch_active_app(None);
+        assert!(moved);
+        assert!(shell.active_app().is_none());
+    }
+
+    #[test]
+    fn switch_active_app_marks_render_scope_dirty() {
+        let shell = Shell::new().expect("boot");
+        // Drain any pre-existing dirty state from boot.
+        let _ = shell.render();
+        let was_dirty_before = shell.inner.borrow().render_scope.needs_redraw();
+        shell.switch_active_app(Some("studio"));
+        let is_dirty_after = shell.inner.borrow().render_scope.needs_redraw();
+        assert!(
+            is_dirty_after && !was_dirty_before,
+            "switch must flip the dirty bit (before={was_dirty_before}, after={is_dirty_after})"
+        );
     }
 
     /// Wave 14.3 — `Shell::render` runs the animator pre/post the

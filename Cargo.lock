@@ -4217,6 +4217,7 @@ version = "0.1.0"
 dependencies = [
  "indexmap 2.14.0",
  "insta",
+ "prism-core",
  "serde",
  "serde_json",
 ]

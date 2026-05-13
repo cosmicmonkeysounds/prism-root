@@ -1274,8 +1274,8 @@ fn resolve_for_iteration(
     //
     // Note: `step` is range-only; arrays and objects always emit every
     // entry. `reverse` flips the final order for either shape.
-    let resolved = lookup_path_owned(trimmed, scope)
-        .or_else(|| evaluate_expression(trimmed, scope));
+    let resolved =
+        lookup_path_owned(trimmed, scope).or_else(|| evaluate_expression(trimmed, scope));
     let mut entries: Vec<(serde_json::Value, serde_json::Value)> = match resolved {
         Some(serde_json::Value::Object(map)) => map
             .into_iter()

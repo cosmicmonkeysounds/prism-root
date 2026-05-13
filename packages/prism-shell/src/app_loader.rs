@@ -25,6 +25,12 @@ pub struct LoadedApp {
     /// either declared no skeleton or its skeleton failed to load —
     /// the shell falls back to [`crate::render::default_app_skeleton`].
     pub skeleton: Option<crate::render::Skeleton>,
+    /// ADR-009 follow-on: the parsed PRSS stylesheet when
+    /// `[entry] styles` was declared and the file loaded cleanly.
+    /// Cascades over the host's global stylesheet when this app is
+    /// active. `None` means the app inherits the host stylesheet
+    /// untouched.
+    pub stylesheet: Option<crate::render::Stylesheet>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -81,10 +87,30 @@ pub fn discover(root: impl AsRef<Path>) -> Result<Vec<LoadedApp>, AppLoaderError
                 }
             }
         });
+        // ADR-009 follow-on: optional per-app PRSS stylesheet.
+        // Read failures log + drop the sheet (app inherits host
+        // stylesheet); syntactically invalid PRSS still loads with
+        // its `parse` diagnostics — the host's PRSS diagnostic
+        // surface picks those up if needed.
+        let stylesheet = manifest.entry.styles.as_ref().and_then(|rel| {
+            let prss_path = path.join(rel);
+            match crate::render::Stylesheet::load_from_path(&prss_path) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    eprintln!(
+                        "prism-shell: failed to load app stylesheet `{}` for `{}`: {e}",
+                        prss_path.display(),
+                        manifest.id
+                    );
+                    None
+                }
+            }
+        });
         out.push(LoadedApp {
             manifest,
             base_dir: path,
             skeleton,
+            stylesheet,
         });
     }
     // Deterministic order — file system iteration is unspecified on

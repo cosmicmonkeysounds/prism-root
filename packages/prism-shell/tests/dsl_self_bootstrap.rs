@@ -662,6 +662,251 @@ fn walk_ids(nodes: &[prism_ui_runtime::layout::Node], needle: &str, found: &mut 
     }
 }
 
+// ── ADR-009 follow-on — per-app stylesheets ──────────────────────
+
+#[test]
+fn manifest_declared_stylesheet_loads_and_caches_in_shell() {
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+styles = "app.prss"
+"#,
+    )];
+    with_apps_dir("stylesheet_loads", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let styles_path = std::path::Path::new(&root).join("lattice").join("app.prss");
+        std::fs::write(
+            &styles_path,
+            "[tokens.colors]\n\
+             accent = \"#ff0000\"\n\
+             \n\
+             [class.lattice-card]\n\
+             background = \"{tokens.colors.accent}\"\n",
+        )
+        .unwrap();
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        let inner = shell.inner.borrow();
+        let app_sheet = inner.app_stylesheets.get("lattice").expect("cached");
+        // The sheet's class table has the lattice-card class.
+        assert!(
+            app_sheet.sheet().classes.contains_key("lattice-card"),
+            "expected `lattice-card` class in cached app stylesheet"
+        );
+    });
+}
+
+#[test]
+fn active_app_stylesheet_selects_per_app_or_none() {
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+styles = "app.prss"
+"#,
+    )];
+    with_apps_dir("active_app_sheet", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let styles_path = std::path::Path::new(&root).join("lattice").join("app.prss");
+        std::fs::write(
+            &styles_path,
+            "[class.lattice-only]\nbackground = \"#deadbe\"\n",
+        )
+        .unwrap();
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        // No active app: returns None.
+        assert!(shell.inner.borrow().active_app_stylesheet().is_none());
+
+        // Switch to lattice: stylesheet surfaces.
+        shell.switch_active_app(Some("lattice"));
+        let inner = shell.inner.borrow();
+        let sheet = inner.active_app_stylesheet().expect("active stylesheet");
+        assert!(sheet.sheet().classes.contains_key("lattice-only"));
+
+        // Switch to an unknown app: falls back to None.
+        drop(inner);
+        shell.switch_active_app(Some("nonexistent"));
+        assert!(shell.inner.borrow().active_app_stylesheet().is_none());
+    });
+}
+
+#[test]
+fn stylesheet_merge_layers_overlay_over_host() {
+    use prism_shell::render::Stylesheet;
+    let host = Stylesheet::from_source(
+        "[tokens.colors]\n\
+         accent = \"#000000\"\n\
+         text = \"#111111\"\n\
+         \n\
+         [class.btn]\n\
+         background = \"#000000\"\n",
+    );
+    let overlay = Stylesheet::from_source(
+        "[tokens.colors]\n\
+         accent = \"#ff0000\"\n\
+         \n\
+         [class.btn]\n\
+         background = \"#ff0000\"\n\
+         \n\
+         [class.lattice-card]\n\
+         background = \"#dddddd\"\n",
+    );
+    let merged = host.merge_with(&overlay);
+    let sheet = merged.sheet();
+
+    // Overlay wins on conflict (accent).
+    assert_eq!(
+        sheet.tokens.colors.get("accent").map(String::as_str),
+        Some("#ff0000")
+    );
+    // Host-only tokens preserved (text).
+    assert_eq!(
+        sheet.tokens.colors.get("text").map(String::as_str),
+        Some("#111111")
+    );
+    // Overlay class replaces base class (atomic).
+    let btn = sheet.classes.get("btn").expect("btn class");
+    assert_eq!(
+        btn.properties.get("background").map(String::as_str),
+        Some("#ff0000")
+    );
+    // Overlay-only class added.
+    assert!(sheet.classes.contains_key("lattice-card"));
+}
+
+// ── ADR-010 Phase 1 + Shell::switch_active_app ───────────────────
+
+#[test]
+fn switch_active_app_triggers_render_and_service_rebuild() {
+    let manifests: &[(&str, &str)] = &[
+        (
+            "alpha",
+            r#"id = "alpha"
+label = "Alpha"
+"#,
+        ),
+        (
+            "beta",
+            r#"id = "beta"
+label = "Beta"
+"#,
+        ),
+    ];
+    with_apps_dir("switch_chain", manifests, || {
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        // Boot: no active app.
+        assert!(shell.active_app().is_none());
+        let _ = shell.render();
+
+        // Switch to alpha → state updates, render scope dirty, render
+        // produces a new tree.
+        let moved = shell.switch_active_app(Some("alpha"));
+        assert!(moved);
+        assert_eq!(shell.active_app().as_deref(), Some("alpha"));
+        let tree_a = shell.render();
+        assert!(!tree_a.is_empty());
+
+        // Switch to beta → state updates again.
+        shell.switch_active_app(Some("beta"));
+        assert_eq!(shell.active_app().as_deref(), Some("beta"));
+
+        // Idempotent: same target returns false, no dirty bump.
+        let _ = shell.render();
+        let moved_again = shell.switch_active_app(Some("beta"));
+        assert!(!moved_again);
+    });
+}
+
+#[test]
+fn full_swap_chain_skeleton_stylesheet_services_all_track() {
+    // The headline integration: a single switch_active_app call
+    // drives skeleton swap + service activation + stylesheet swap
+    // + render dirty all together.
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+skeleton = "shell.prism-ui"
+styles = "app.prss"
+
+[services]
+required = ["builder"]
+"#,
+    )];
+    with_apps_dir("full_swap_chain", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let dir = std::path::Path::new(&root).join("lattice");
+        std::fs::write(
+            dir.join("shell.prism-ui"),
+            r#"<shell.dock-workspace id="lattice-dock"/>"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("app.prss"),
+            "[class.lattice-class]\nbackground = \"#abcdef\"\n",
+        )
+        .unwrap();
+
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+
+        // Boot: service filter applied (builder kept, signals dropped).
+        {
+            let inner = shell.inner.borrow();
+            assert!(inner.services.get("builder").is_some());
+            assert!(
+                inner.services.get("signals").is_none(),
+                "signals should be filtered out by manifest's services.required"
+            );
+            // No app active yet — default skeleton, no app stylesheet.
+            assert!(inner.active_app_stylesheet().is_none());
+        }
+
+        // Activate lattice — all three pieces should flip.
+        shell.switch_active_app(Some("lattice"));
+        {
+            let inner = shell.inner.borrow();
+            // Skeleton: app's lattice-dock id surfaces.
+            let skel = inner.active_app_skeleton();
+            let mut found_id = None;
+            for n in &skel.doc.nodes {
+                if let prism_core::language::prism_ui::Node::Element(el) = n {
+                    for a in &el.attributes {
+                        if a.name.raw == "id" {
+                            if let prism_core::language::prism_ui::AttributeValue::String {
+                                value,
+                                ..
+                            } = &a.value
+                            {
+                                found_id = Some(value.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            assert_eq!(found_id.as_deref(), Some("lattice-dock"));
+            // Stylesheet: the lattice-class lands.
+            let sheet = inner.active_app_stylesheet().expect("active sheet");
+            assert!(sheet.sheet().classes.contains_key("lattice-class"));
+        }
+        // Render produces a coherent tree.
+        let tree = shell.render();
+        assert!(!tree.is_empty());
+
+        // Deactivate — falls back to defaults.
+        shell.switch_active_app(None);
+        {
+            let inner = shell.inner.borrow();
+            assert!(inner.active_app_stylesheet().is_none());
+        }
+    });
+}
+
 #[test]
 fn no_apps_directory_falls_back_to_hardcoded_launchpad() {
     // Sanity check: clear PRISM_APPS_DIR + point at a path that

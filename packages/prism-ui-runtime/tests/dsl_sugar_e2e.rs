@@ -504,8 +504,8 @@ fn sort_by_descending_flips_order() {
 
 #[test]
 fn unique_drops_duplicates_preserving_first_occurrence() {
-    let scope = LowerScope::default()
-        .with_binding("tags", json!(["red", "green", "red", "blue", "green"]));
+    let scope =
+        LowerScope::default().with_binding("tags", json!(["red", "green", "red", "blue", "green"]));
     let nodes = lower(
         r#"<container>
             <text for="t in unique(tags)">{t}</text>
@@ -537,10 +537,8 @@ fn reverse_returns_typed_reversed_array() {
 
 #[test]
 fn keys_and_values_iterate_object_entries() {
-    let scope = LowerScope::default().with_binding(
-        "form",
-        json!({"name": "Ada", "email": "ada@example.com"}),
-    );
+    let scope = LowerScope::default()
+        .with_binding("form", json!({"name": "Ada", "email": "ada@example.com"}));
     let nodes = lower(
         r#"<container>
             <text for="k in keys(form)">{k}</text>
