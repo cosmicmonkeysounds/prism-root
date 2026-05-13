@@ -455,9 +455,14 @@ via the `LowerCtx::prop_*` accessors and writes through the
 `NodeMutator` builder. The original plan called for a typed
 `ctx.prop_signal::<String>("title")` returning `Signal<String>`; the
 landed surface gives `ctx.prop_signal(node, "title") -> Option<Signal<Value>>`
-plus the typed `prop_str` / `prop_bool` reads — full
-`Signal<String>` is a follow-up `Memo` one-liner if it becomes a
-common need.
+plus the typed `prop_str` / `prop_bool` reads. The typed
+`Memo<T>`-shaped follow-up landed as `LowerCtx::prop_memo_str(node, key)
+-> Option<Memo<String>>` and `LowerCtx::prop_memo_bool(node, key, default)
+-> Option<Memo<bool>>` (2026-05-13) — both allocate against the
+`DocumentBindings` owner so the memo's lifetime tracks the canvas's
+binding context. `None` when no bindings are wired (headless tests,
+SSR). Pinned by `ui_lower::tests::{prop_memo_str_returns_typed_memo_with_reactive_recompute,
+prop_memo_str_returns_none_without_bindings}`.
 
 - `Node::props` stays serializable JSON for the on-disk document.
   In-memory access goes through `DocumentBindings`, which lazily
@@ -651,11 +656,17 @@ Phases 9–10 are dev-ergonomics and can land any time.
   a new `lower_ui` body, the existing `Owner` is preserved but
   the reactive context captured the *old* function pointer's
   source `Location`. Verify the diagnostics layer survives.
-- **CRDT atomicity.** A single Loro transaction can update many
-  containers; today `CrdtSync` notifies per-container. With
-  reactive dependents, batched notification (one dirty flush per
-  transaction) is important to avoid flicker. Implement via a
-  `ReactiveContext::batch(|| { ... })` scope.
+- **CRDT atomicity.** ✅ landed 2026-05-13.
+  `ReactiveContext::batch(|| { ... })` (in `prism-core::reactive`)
+  defers `mark_dirty` callbacks while the scope is open; the
+  outermost scope drains the deduped pending-set on exit so every
+  subscriber wakes exactly once per transaction. `CrdtSync::process_changes`
+  and `CrdtSync::refresh_all` now wrap their fan-out in the scope,
+  so a single Loro commit touching many containers wakes each
+  dependent `Effect` / `Memo` once regardless of container count.
+  Nested batches are tolerated; only the outermost flushes.
+  Pinned by `reactive::tests::batch_*` (5 tests) plus
+  `crdt_sync::tests::{process_changes,refresh_all}_batches_reactive_wakeups_across_containers`.
 - **Remote signal failure modes.** Local `Signal<T>::read()`
   cannot fail. `RemoteSignal`, `FederatedSignal`, `PeerSignal`,
   `RelaySignal` can — peer offline, relay unavailable, timeout.

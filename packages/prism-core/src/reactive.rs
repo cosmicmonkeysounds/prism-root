@@ -104,6 +104,14 @@ thread_local! {
     static STACK: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
     static CONTEXTS: RefCell<HashMap<u64, ContextSlot>> = RefCell::new(HashMap::new());
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
+    /// Active [`ReactiveContext::batch`] scopes on this thread. While
+    /// `> 0`, [`mark_dirty`] collects ids into `BATCH_PENDING` instead
+    /// of firing callbacks; the outermost scope drains them once on
+    /// exit. Coalesces multi-write transactions (e.g. a single Loro
+    /// commit that updates many containers) into one wave of subscriber
+    /// notifications.
+    static BATCH_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static BATCH_PENDING: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
 }
 
 fn fresh_id() -> u64 {
@@ -207,6 +215,43 @@ impl ReactiveContext {
         result
     }
 
+    /// Run `f` with subscriber notifications deferred until the
+    /// outermost batch exits. Every [`Signal::write`] / [`Signal::set`]
+    /// / [`Signal::try_set`] inside the scope queues its subscriber
+    /// ids; on exit each unique id fires exactly once.
+    ///
+    /// **Use case (Phase 8 open Q of
+    /// `docs/dev/dioxus-inspiration.md`):** a single Loro transaction
+    /// can update many CRDT containers. Without batching, each
+    /// container's reactive listeners fire mid-transaction —
+    /// `Effect`s observing several containers re-run once per write.
+    /// Wrapping the commit in `batch(..)` collapses every dependent
+    /// reactive scope to one wake-up per transaction, regardless of
+    /// how many containers it touched.
+    ///
+    /// Nested batches are fine — only the outermost flushes. The
+    /// callback's return value passes through verbatim.
+    pub fn batch<R>(f: impl FnOnce() -> R) -> R {
+        BATCH_DEPTH.with(|d| d.set(d.get() + 1));
+        let result = f();
+        let outermost = BATCH_DEPTH.with(|d| {
+            let next = d.get() - 1;
+            d.set(next);
+            next == 0
+        });
+        if outermost {
+            // Drain in FIFO order. New writes triggered by a fired
+            // callback land in the freshly-empty queue and run inline
+            // (depth has already dropped to zero), matching the
+            // non-batched semantics for callback-internal writes.
+            let drained = BATCH_PENDING.with(|q| std::mem::take(&mut *q.borrow_mut()));
+            for id in drained {
+                mark_dirty(id);
+            }
+        }
+        result
+    }
+
     /// Release the context's slot. Removes the context from every
     /// signal it was subscribed to. After dispose, [`mark_dirty`] for
     /// this id is a no-op.
@@ -248,6 +293,18 @@ impl ReactiveContext {
 fn mark_dirty(id: u64) {
     let on_stack = STACK.with(|s| s.borrow().contains(&id));
     if on_stack {
+        return;
+    }
+    // Inside a `ReactiveContext::batch` scope, defer the callback —
+    // the outermost scope's drain will fire each unique id once after
+    // the transaction completes.
+    if BATCH_DEPTH.with(|d| d.get()) > 0 {
+        BATCH_PENDING.with(|q| {
+            let mut q = q.borrow_mut();
+            if !q.contains(&id) {
+                q.push(id);
+            }
+        });
         return;
     }
     let cb = CONTEXTS.with(|m| {
@@ -1235,5 +1292,101 @@ mod tests {
         // read time), so only inner fires. Outer is unaffected.
         assert_eq!(inner_runs.get(), 1);
         assert_eq!(outer_runs.get(), 1);
+    }
+
+    #[test]
+    fn batch_collapses_multiple_writes_to_a_single_callback_run() {
+        // Two writes to the same signal inside one batch wake the
+        // subscriber exactly once. Without batching, every set fires
+        // the dependent effect synchronously — the headline reason to
+        // expose `batch` (Phase 8 open Q of dioxus-inspiration.md).
+        let owner = Owner::new();
+        let sig = owner.insert(0_i32);
+        let runs = Rc::new(Cell::new(0));
+        let runs_for_effect = Rc::clone(&runs);
+        let _e = Effect::new(move || {
+            sig.read(|_| {});
+            runs_for_effect.set(runs_for_effect.get() + 1);
+        });
+        assert_eq!(runs.get(), 1, "effect runs once on construction");
+
+        ReactiveContext::batch(|| {
+            sig.set(1);
+            sig.set(2);
+            sig.set(3);
+            // No subscriber wake-up during the batch.
+            assert_eq!(runs.get(), 1);
+        });
+        assert_eq!(runs.get(), 2, "single drain after batch exits");
+    }
+
+    #[test]
+    fn batch_dedups_dirty_set_across_multiple_signals() {
+        // A single effect subscribed to two signals fires once per
+        // batch even if both signals write — the per-id dedup in
+        // `BATCH_PENDING` collapses the wave.
+        let owner = Owner::new();
+        let a = owner.insert(0_i32);
+        let b = owner.insert(0_i32);
+        let runs = Rc::new(Cell::new(0));
+        let runs_for_effect = Rc::clone(&runs);
+        let _e = Effect::new(move || {
+            a.read(|_| {});
+            b.read(|_| {});
+            runs_for_effect.set(runs_for_effect.get() + 1);
+        });
+        assert_eq!(runs.get(), 1);
+
+        ReactiveContext::batch(|| {
+            a.set(10);
+            b.set(20);
+        });
+        assert_eq!(runs.get(), 2, "one wake-up across both writes");
+    }
+
+    #[test]
+    fn batch_nested_scopes_only_flush_at_outermost_exit() {
+        let owner = Owner::new();
+        let sig = owner.insert(0_i32);
+        let runs = Rc::new(Cell::new(0));
+        let runs_for_effect = Rc::clone(&runs);
+        let _e = Effect::new(move || {
+            sig.read(|_| {});
+            runs_for_effect.set(runs_for_effect.get() + 1);
+        });
+        assert_eq!(runs.get(), 1);
+
+        ReactiveContext::batch(|| {
+            sig.set(1);
+            ReactiveContext::batch(|| {
+                sig.set(2);
+                assert_eq!(runs.get(), 1);
+            });
+            // Inner scope exited; outer still open — no flush yet.
+            assert_eq!(runs.get(), 1);
+            sig.set(3);
+        });
+        assert_eq!(runs.get(), 2);
+    }
+
+    #[test]
+    fn batch_returns_callback_value() {
+        let n = ReactiveContext::batch(|| 7_i32 + 3);
+        assert_eq!(n, 10);
+    }
+
+    #[test]
+    fn batch_with_no_writes_does_not_run_callbacks() {
+        let owner = Owner::new();
+        let sig = owner.insert(0_i32);
+        let runs = Rc::new(Cell::new(0));
+        let runs_for_effect = Rc::clone(&runs);
+        let _e = Effect::new(move || {
+            sig.read(|_| {});
+            runs_for_effect.set(runs_for_effect.get() + 1);
+        });
+        assert_eq!(runs.get(), 1);
+        ReactiveContext::batch(|| {});
+        assert_eq!(runs.get(), 1);
     }
 }

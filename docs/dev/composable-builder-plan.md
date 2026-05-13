@@ -159,14 +159,23 @@ each phase merges. Per-phase detail follows in §3-§11.
 - [x] **2.4** `color`: the swatch now carries
   `data-role="color-swatch"` + `data-target-id` + `data-key` +
   `data-value`. Clicking opens the new `shell.color-picker`
-  overlay anchored under the swatch: preview + hex echo + an
-  8-swatch preset row keyed off `ColorPicker::PRESETS`. Preset
-  clicks commit through `AppState::set_color_picker_value` and
-  the picker stays open for further preview; the Close button
-  (and Esc) dismisses. The hex text input keeps the field-focus
-  paste / type / Enter pathway intact as a typing fallback. Full
-  HSL slider gestures land alongside the `prism.drag-scrub`
-  primitive's first interactive body (Wave 11.4). Tests:
+  overlay anchored under the swatch: preview + hex echo + three
+  HSL slider tracks (Hue / Saturation / Lightness) + an 8-swatch
+  preset row keyed off `ColorPicker::PRESETS`. **HSL gesture
+  landed 2026-05-13**: pointer-down on a track captures the
+  channel + bounds in `OverlaySlot::color_picker.slider_drag`;
+  pointer-move applies the fraction continuously by parsing the
+  current hex through `prism_builder::color::rgb_to_hsl`,
+  replacing the targeted channel, and writing the new hex via
+  `set_color_picker_value`. Pointer-up clears the capture slot.
+  Color math lives in the new `prism-builder/src/color.rs`
+  module (`Rgba`, `parse_hex` / `format_hex`, `rgb_to_hsl` /
+  `hsl_to_rgb`, `ColorChannel` enum) — 9 unit tests pin every
+  round-trip. Preset clicks commit through
+  `AppState::set_color_picker_value` and the picker stays open
+  for further preview; the Close button (and Esc) dismisses.
+  The hex text input keeps the field-focus paste / type / Enter
+  pathway intact as a typing fallback. Tests:
   `state::tests::{open_color_picker_seeds_target_key_value,
   open_color_picker_against_same_target_is_a_noop,
   open_color_picker_against_different_target_reseeds,

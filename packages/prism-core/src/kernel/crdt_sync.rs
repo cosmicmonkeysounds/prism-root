@@ -207,42 +207,57 @@ impl CrdtSync {
     ///
     /// Use this when external code mutates the `CollectionStore`
     /// directly (bypassing `CrdtSync`), e.g. daemon IPC commands.
+    ///
+    /// Wraps the fan-out in [`crate::reactive::ReactiveContext::batch`]
+    /// — a single Loro transaction touching many containers wakes each
+    /// dependent reactive scope **exactly once**, not once per
+    /// container. This is the Phase 8 open-Q resolution from
+    /// `docs/dev/dioxus-inspiration.md`: bridging the CRDT layer to
+    /// reactive subscribers without flicker.
     pub fn process_changes(&mut self, changes: &[CollectionChange]) {
-        for change in changes {
-            match change.kind {
-                CollectionChangeKind::ObjectPut | CollectionChangeKind::ObjectRemove => {
-                    self.sync_object(&change.id);
-                    let object = self.store.borrow().get_object(&ObjectId(change.id.clone()));
-                    self.emit(SyncEvent::ObjectChanged {
-                        id: change.id.clone(),
-                        object,
-                    });
-                }
-                CollectionChangeKind::EdgePut | CollectionChangeKind::EdgeRemove => {
-                    self.sync_edge(&change.id);
-                    let edge = self.store.borrow().get_edge(&EdgeId(change.id.clone()));
-                    self.emit(SyncEvent::EdgeChanged {
-                        id: change.id.clone(),
-                        edge,
-                    });
+        crate::reactive::ReactiveContext::batch(|| {
+            for change in changes {
+                match change.kind {
+                    CollectionChangeKind::ObjectPut | CollectionChangeKind::ObjectRemove => {
+                        self.sync_object(&change.id);
+                        let object = self.store.borrow().get_object(&ObjectId(change.id.clone()));
+                        self.emit(SyncEvent::ObjectChanged {
+                            id: change.id.clone(),
+                            object,
+                        });
+                    }
+                    CollectionChangeKind::EdgePut | CollectionChangeKind::EdgeRemove => {
+                        self.sync_edge(&change.id);
+                        let edge = self.store.borrow().get_edge(&EdgeId(change.id.clone()));
+                        self.emit(SyncEvent::EdgeChanged {
+                            id: change.id.clone(),
+                            edge,
+                        });
+                    }
                 }
             }
-        }
+        });
     }
 
     // ── Refresh ──────────────────────────────────────────────────
 
     /// Refresh all tracked atoms from the CRDT.
+    ///
+    /// Batched: every refreshed atom that's also wired into a reactive
+    /// `Effect` / `Memo` wakes at most once across the sweep (Phase 8
+    /// open-Q resolution — see [`Self::process_changes`]).
     pub fn refresh_all(&mut self) {
-        let store = self.store.borrow();
-        for (id, atom) in &self.object_atoms {
-            let current = store.get_object(&ObjectId(id.clone()));
-            atom.set(current);
-        }
-        for (id, atom) in &self.edge_atoms {
-            let current = store.get_edge(&EdgeId(id.clone()));
-            atom.set(current);
-        }
+        crate::reactive::ReactiveContext::batch(|| {
+            let store = self.store.borrow();
+            for (id, atom) in &self.object_atoms {
+                let current = store.get_object(&ObjectId(id.clone()));
+                atom.set(current);
+            }
+            for (id, atom) in &self.edge_atoms {
+                let current = store.get_edge(&EdgeId(id.clone()));
+                atom.set(current);
+            }
+        });
     }
 
     // ── Sync event bus ───────────────────────────────────────────
@@ -700,5 +715,91 @@ mod tests {
             &*names.borrow(),
             &["(none)", "Created", "Updated", "(none)"]
         );
+    }
+
+    /// Phase 8 open-Q resolution: a multi-container transaction
+    /// delivered through `process_changes` wakes each dependent
+    /// reactive scope exactly once, regardless of how many containers
+    /// the transaction touched. Without `ReactiveContext::batch`, an
+    /// effect observing two objects would fire twice per commit.
+    #[test]
+    fn process_changes_batches_reactive_wakeups_across_containers() {
+        let mut sync = make_sync();
+        sync.write_object(&make_object("obj-1", "Initial-1"))
+            .unwrap();
+        sync.write_object(&make_object("obj-2", "Initial-2"))
+            .unwrap();
+
+        let owner = crate::reactive::Owner::new();
+        let sig_a = sync.object_signal("obj-1", &owner);
+        let sig_b = sync.object_signal("obj-2", &owner);
+
+        let runs = Rc::new(Cell::new(0_usize));
+        let runs_for = runs.clone();
+        let _e = crate::reactive::Effect::new(move || {
+            sig_a.read(|_| {});
+            sig_b.read(|_| {});
+            runs_for.set(runs_for.get() + 1);
+        });
+        assert_eq!(runs.get(), 1, "effect runs once on construction");
+
+        // Simulate one transaction touching two containers — both
+        // ObjectPut events arrive in a single `process_changes` call.
+        sync.store
+            .borrow_mut()
+            .put_object(&make_object("obj-1", "Tx-1"))
+            .unwrap();
+        sync.store
+            .borrow_mut()
+            .put_object(&make_object("obj-2", "Tx-2"))
+            .unwrap();
+        sync.process_changes(&[
+            CollectionChange {
+                kind: CollectionChangeKind::ObjectPut,
+                id: "obj-1".into(),
+            },
+            CollectionChange {
+                kind: CollectionChangeKind::ObjectPut,
+                id: "obj-2".into(),
+            },
+        ]);
+
+        assert_eq!(
+            runs.get(),
+            2,
+            "exactly one wake-up across the two-container transaction"
+        );
+    }
+
+    #[test]
+    fn refresh_all_batches_reactive_wakeups_across_containers() {
+        let mut sync = make_sync();
+        sync.write_object(&make_object("obj-1", "v1")).unwrap();
+        sync.write_object(&make_object("obj-2", "v1")).unwrap();
+
+        let owner = crate::reactive::Owner::new();
+        let sig_a = sync.object_signal("obj-1", &owner);
+        let sig_b = sync.object_signal("obj-2", &owner);
+
+        let runs = Rc::new(Cell::new(0_usize));
+        let runs_for = runs.clone();
+        let _e = crate::reactive::Effect::new(move || {
+            sig_a.read(|_| {});
+            sig_b.read(|_| {});
+            runs_for.set(runs_for.get() + 1);
+        });
+        assert_eq!(runs.get(), 1);
+
+        // Mutate both containers behind CrdtSync's back, then refresh.
+        sync.store
+            .borrow_mut()
+            .put_object(&make_object("obj-1", "v2"))
+            .unwrap();
+        sync.store
+            .borrow_mut()
+            .put_object(&make_object("obj-2", "v2"))
+            .unwrap();
+        sync.refresh_all();
+        assert_eq!(runs.get(), 2, "one wake-up across the refresh sweep");
     }
 }

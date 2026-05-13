@@ -438,6 +438,79 @@ Each step lands with:
     is a discrete `BlockSpec` + lower fn under
     `prism-shell/src/components/` (or a separate `prism-musica` /
     `prism-flux` crate if the surface grows).
+
+- 2026-05-13: **Persistent Luau runtime landed.** Closes the
+  shell-side script lifecycle + render/event dispatch gaps.
+  1. **`prism_core::luau_runtime::LuauRuntime`** — owns a long-lived
+     `Rc<mlua::Lua>` plus a [`LuauCallbackStore`]
+     (`Rc<RefCell<HashMap<String, RegistryKey>>>` pair for render +
+     event closures). Constructor installs `prism.app`
+     ([`RegistrarHandle`] with callback retention) and the
+     `prism.element(tag, attrs?, children?)` helper. Methods:
+     `load_script`, `call_render → VirtualNode`,
+     `call_on_event → LuauEventOutcome`, `exec`. **14 new unit
+     tests** in `prism-core/src/luau_runtime.rs` covering boot
+     globals, persistent-state survival across calls, app
+     registrations flowing through to the host registrar, retained-
+     callback dispatch (nested elements + scalar returns + error
+     surfacing), and `on_event` outcome decoding.
+  2. **`VirtualNode`** — the render-side IR: `Text(String)` or
+     `Element { tag, attrs, children }`. Lua tables shaped
+     `{tag = "...", attrs = {...}, children = {...}}` translate
+     automatically; bare strings/numbers/booleans coerce to
+     `Text`. Stable attr ordering (lexicographic) so re-renders
+     don't churn dirty.
+  3. **`LuauCallbackStore` retention on `RegistrarHandle`.** When
+     a `register_component({render = fn})` table carries a Lua
+     function, the handle stashes it as an `mlua::RegistryKey`
+     keyed by the synthesised `render_key`. Re-registration
+     replaces (the hot-reload contract). The store is opt-in via
+     `RegistrarHandle::with_callbacks(...)` — the daemon's bare
+     `luau.exec` skips retention.
+  4. **Shell-side wiring (`prism-shell`).** New `luau` feature on
+     `prism-core` enabled under `native`; `Shell::new` builds a
+     `LuauRuntime` when any app declares `[entry] script`, loads
+     each `main.luau` against the shared state, and drains the
+     registrar's component / service queues into the live shell
+     registries. The runtime is owned by `ShellInner::luau_runtime`
+     for the program lifetime; dispatch goes through a
+     thread-local active-runtime slot (`set_active_runtime` /
+     `with_active_runtime`) because `Block: Send + Sync` and
+     `ShellService: Send + Sync` forbid carrying `Rc<LuauRuntime>`
+     on the types themselves.
+  5. **Dispatch in `LuauComponentBlock::lower_ui`.** Reads
+     `node.props` (the runtime-resolved JSON from skeleton authoring),
+     hands them to the retained `render(props, children)` closure,
+     translates the `VirtualNode` return into a `UiNode` tree
+     (Container nodes carry `data-component`/`data-luau-key`/the
+     script-emitted attrs). Falls through to the labelled
+     placeholder when no runtime is wired, no closure is retained,
+     or dispatch errors.
+  6. **Dispatch in `LuauScriptedService::on_event`.** Projects the
+     `prism_ui_runtime::event::Event` onto a tagged JSON shape
+     (`{kind = "PointerDown", x = …, y = …, button = …}`),
+     calls the retained `on_event` closure, decodes the return
+     into `EventOutcome::Handled` (return `"Handled"` or `true`)
+     vs `Pass` (anything else). Errors log + pass.
+
+  **End-to-end tests:** 3 new integration tests in
+  `tests/dsl_self_bootstrap.rs` exercising the full chain:
+  - `app_main_luau_registers_component_whose_render_dispatches_through_runtime`
+    — writes `main.luau` to disk that calls
+    `prism.app:register_component({render = …})`; asserts the
+    rendered tree carries the script-emitted `data-name="Hi"` attr.
+  - `app_main_luau_with_no_render_fn_falls_back_to_placeholder` —
+    proves the degradation path stays alive (a registration without
+    inline `render` lands the labelled placeholder).
+  - `app_main_luau_registers_service_dispatching_on_event` — drives
+    the service's `on_event` with synthetic `PointerDown` + `Wheel`
+    events, asserts the script's outcome decoding into
+    `EventOutcome::{Handled, Pass}` round-trips correctly.
+
+  **Test deltas:** prism-core +14 (`luau_runtime`) +3
+  (`luau_bindings::tests::registrar_handle_*` for `LuauCallbackStore`
+  retention) → 2094 lib tests. prism-shell +3 integration tests →
+  27 in `dsl_self_bootstrap`. prism-shell lib unchanged at 387.
 - 2026-05-13: **All four loops landed.** Final shape:
   - **Loop 1** — `prism_core::AppManifest` (TOML, 5 tests),
     `prism_shell::app_loader::discover` (4 tests),

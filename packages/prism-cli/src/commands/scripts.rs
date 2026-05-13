@@ -200,7 +200,12 @@ fn run_script(args: &RunArgs, dry_run: bool) -> Result<u8> {
         .scripts
         .as_ref()
         .and_then(|s| s.commands.as_deref())
-        .ok_or_else(|| anyhow::anyhow!("no `scripts.commands` declared in {}", manifest_path.display()))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no `scripts.commands` declared in {}",
+                manifest_path.display()
+            )
+        })?;
 
     // Resolve `<glob-dir>/<name>.luau`. The validator's
     // `resolve_widgets_dir` is private to `prism-builder`; reimplement
@@ -329,10 +334,7 @@ mod tests {
             &tmp.path().join(".prism.json"),
             r#"{ "scripts": { "commands": "commands/*.luau" } }"#,
         );
-        write(
-            &tmp.path().join("commands/ping.luau"),
-            "return 'pong'",
-        );
+        write(&tmp.path().join("commands/ping.luau"), "return 'pong'");
         let exit = run_script(
             &RunArgs {
                 name: "ping".to_string(),

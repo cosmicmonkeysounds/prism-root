@@ -7,8 +7,7 @@
 use std::path::PathBuf;
 
 use prism_builder::{
-    load_widgets, register_block, starter::register_builtins, ComponentRegistry,
-    LuauRenderRegistry,
+    load_widgets, register_block, starter::register_builtins, ComponentRegistry, LuauRenderRegistry,
 };
 use serde_json::json;
 
@@ -70,7 +69,11 @@ fn tabs_luau_renders_a_pill_per_label() {
     for (i, pill) in strip.children.iter().enumerate() {
         assert_eq!(pill.component, "container");
         // First pill gets the highlight background, the rest sit muted.
-        let bg = pill.props.get("background").and_then(|v| v.as_str()).unwrap_or_default();
+        let bg = pill
+            .props
+            .get("background")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
         if i == 0 {
             assert_eq!(bg, "#2e3440");
         } else {

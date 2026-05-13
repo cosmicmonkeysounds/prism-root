@@ -75,10 +75,7 @@ pub fn format_hex(rgba: Rgba) -> String {
     if rgba.a == 0xff {
         format!("#{:02x}{:02x}{:02x}", rgba.r, rgba.g, rgba.b)
     } else {
-        format!(
-            "#{:02x}{:02x}{:02x}{:02x}",
-            rgba.r, rgba.g, rgba.b, rgba.a
-        )
+        format!("#{:02x}{:02x}{:02x}{:02x}", rgba.r, rgba.g, rgba.b, rgba.a)
     }
 }
 

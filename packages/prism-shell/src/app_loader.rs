@@ -31,6 +31,13 @@ pub struct LoadedApp {
     /// active. `None` means the app inherits the host stylesheet
     /// untouched.
     pub stylesheet: Option<crate::render::Stylesheet>,
+    /// Persistent-Luau follow-up: the on-disk source for the app's
+    /// `[entry] script`. Read but not executed by the loader — the
+    /// shell's `LuauRuntime` runs it once at boot against a long-lived
+    /// `Lua` state. `None` when the manifest declared no script or the
+    /// file failed to load (read error logged + skipped, app loads
+    /// without scripting).
+    pub script_source: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -106,11 +113,30 @@ pub fn discover(root: impl AsRef<Path>) -> Result<Vec<LoadedApp>, AppLoaderError
                 }
             }
         });
+        // Persistent-Luau follow-up: read the script source if the
+        // manifest declared one. Read failures log + drop the source
+        // (app boots without Luau registration, same as if no script
+        // were declared at all).
+        let script_source = manifest.entry.script.as_ref().and_then(|rel| {
+            let script_path = path.join(rel);
+            match std::fs::read_to_string(&script_path) {
+                Ok(src) => Some(src),
+                Err(e) => {
+                    eprintln!(
+                        "prism-shell: failed to load app script `{}` for `{}`: {e}",
+                        script_path.display(),
+                        manifest.id
+                    );
+                    None
+                }
+            }
+        });
         out.push(LoadedApp {
             manifest,
             base_dir: path,
             skeleton,
             stylesheet,
+            script_source,
         });
     }
     // Deterministic order — file system iteration is unspecified on

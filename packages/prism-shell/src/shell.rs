@@ -120,6 +120,15 @@ pub struct ShellInner {
     /// lowering pass short-circuits stable subtrees. Threaded into
     /// every render through `LowerScope::with_memo_cache`.
     pub memo_cache: Rc<RefCell<prism_ui_runtime::interpret::MemoCache>>,
+    /// Persistent-Luau runtime — the long-lived `mlua::Lua` state app
+    /// `[entry] script` bodies ran in at boot. `None` when no app
+    /// declared a script (or when the build doesn't pull in mlua, e.g.
+    /// `wasm32-unknown-unknown`). `LuauComponentBlock::lower_ui` and
+    /// `LuauScriptedService::on_event` dispatch through this handle
+    /// when present, falling through to their placeholder bodies
+    /// otherwise.
+    #[cfg(feature = "native")]
+    pub luau_runtime: Option<Rc<prism_core::luau_runtime::LuauRuntime>>,
 }
 
 impl ShellInner {
@@ -247,14 +256,11 @@ impl Shell {
         // `.prism-ui`-authored `SHELL_PRISM_UI_COMPONENTS` land into
         // the same registry, then `finalize_prism_ui_resolver` lets
         // composed `<shell.*>` / `<prism.*>` tags inside a DSL source
-        // dispatch against the live merged registry. The helper is
-        // also the test-side bootstrap so test/prod paths share the
-        // exact same registration order.
+        // dispatch against the live merged registry.
         crate::components::registry::register_full_shell_chrome(&mut registry)
             .map_err(|e| ShellError::Registry(e.to_string()))?;
         register_document_builtins(&mut registry)
             .map_err(|e| ShellError::Registry(e.to_string()))?;
-        let resolver = registry.tag_resolver();
         let bindings = ShellPropBindings::with_builtins();
         let mut services = ServiceRegistry::with_builtins();
         let skeleton = Skeleton::load().map_err(ShellError::Skeleton)?;
@@ -267,11 +273,68 @@ impl Shell {
             crate::app_loader::discover(crate::app_loader::default_apps_root()).unwrap_or_default();
         // DSL self-bootstrap Loop 4: build the production
         // `AppRegistrar`, install every manifest's `panels.add` row
-        // into its catalog, and freeze the snapshot for the read side.
+        // into its catalog.
         let app_registrar = crate::app_registry::ShellAppRegistrar::with_builtin_panels();
         let _panel_count =
             crate::app_registry::install_panels_from_manifests(&app_registrar, &loaded_apps);
+        // Persistent-Luau: when any app declares an `[entry] script`,
+        // build a `LuauRuntime`, install the registrar as
+        // `prism.app`, and run each app's script body against the
+        // shared Lua state. Scripts can call
+        // `prism.app:register_panel/component/service` to extend the
+        // shell at boot. Any registrations land in the registrar's
+        // queues + `LuauCallbackStore` for downstream draining.
+        #[cfg(feature = "native")]
+        let luau_runtime: Option<Rc<prism_core::luau_runtime::LuauRuntime>> = {
+            let any_script = loaded_apps.iter().any(|a| a.script_source.is_some());
+            if any_script {
+                let registrar_arc: std::sync::Arc<dyn prism_core::AppRegistrar> =
+                    std::sync::Arc::new(app_registrar.clone());
+                match prism_core::luau_runtime::LuauRuntime::new(registrar_arc) {
+                    Ok(rt) => {
+                        for app in &loaded_apps {
+                            if let Some(src) = &app.script_source {
+                                if let Err(e) = rt.load_script(src, &app.manifest.id) {
+                                    eprintln!(
+                                        "prism-shell: app `{}` boot script failed: {e}",
+                                        app.manifest.id
+                                    );
+                                }
+                            }
+                        }
+                        Some(Rc::new(rt))
+                    }
+                    Err(e) => {
+                        eprintln!("prism-shell: failed to build LuauRuntime: {e}");
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
+        // Drain any scripted component registrations into the live
+        // registry *before* the resolver snapshot so `<my.tag/>` in a
+        // skeleton can dispatch through. Pre-wave behaviour is
+        // preserved when no scripts ran — the drain is a no-op.
+        #[cfg(feature = "native")]
+        crate::app_registry::install_components_with_runtime(
+            &app_registrar,
+            &mut registry,
+            luau_runtime.as_ref().map(Rc::clone),
+        );
+        // Resolver finalised after component installs — every scripted
+        // tag is now resolvable end-to-end.
+        let resolver = registry.tag_resolver();
         let dock_catalog = Arc::new(app_registrar.snapshot_catalog());
+        // Drain scripted service registrations into the live registry.
+        // Like components, this is a no-op pre-script.
+        #[cfg(feature = "native")]
+        crate::app_registry::install_services_with_runtime(
+            &app_registrar,
+            &mut services,
+            luau_runtime.as_ref().map(Rc::clone),
+        );
         // ADR-009: cache every loaded app's parsed skeleton so the
         // render path can graft the active app's body into the host
         // skeleton's `<shell.app-window>` per frame.
@@ -350,6 +413,8 @@ impl Shell {
             render_scope: RenderScope::new(),
             animator: RefCell::new(prism_ui_runtime::animator::Animator::new()),
             memo_cache: Rc::new(RefCell::new(prism_ui_runtime::interpret::MemoCache::new())),
+            #[cfg(feature = "native")]
+            luau_runtime,
         }));
         // §43 C1: one-shot post-boot resync. The seed sets selection
         // and the inspector tree, but `derive_property_rows` needs the

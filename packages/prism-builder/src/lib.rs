@@ -11,6 +11,10 @@
 pub mod app;
 pub mod asset;
 pub mod block;
+/// Wave 2.4 — RGB ↔ HSL math + hex parse/format used by the color
+/// picker's H/S/L slider gestures and by Luau-authored modifiers
+/// that compose colour transforms.
+pub mod color;
 pub mod component;
 pub mod core_widget;
 pub mod document;

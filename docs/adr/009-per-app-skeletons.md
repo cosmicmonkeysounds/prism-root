@@ -216,6 +216,21 @@ Phase 1 (follow-on):
   onto the same path so launchpad clicks drive the full swap
   chain.
 
+Phase 2 (persistent Luau, landed 2026-05-13):
+
+- App `[entry] script` bodies run at boot against a long-lived
+  `prism_core::luau_runtime::LuauRuntime` (`Rc<mlua::Lua>` +
+  `LuauCallbackStore`). Scripts can call
+  `prism.app:register_component({render = fn})` and the retained
+  closure dispatches through `LuauComponentBlock::lower_ui` at
+  render time (translates `VirtualNode` → `UiNode`). Same shape
+  for `register_service({on_event = fn})` →
+  `LuauScriptedService::on_event` →
+  `EventOutcome::{Handled, Pass}`.
+- Per-app skeletons can now reference scripted tags (e.g.
+  `<musica.transport/>` once Musica's `main.luau` registers it)
+  and have them render end-to-end.
+
 ## Rationale
 
 - **Slot composition** keeps the chrome under shell ownership.

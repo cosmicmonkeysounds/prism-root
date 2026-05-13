@@ -770,8 +770,9 @@ fn connection_picker_schema() -> Vec<FieldSpec> {
 
 /// Wave 2.4 — schema for `shell.color-picker`. `presets` is the
 /// preset-swatch array; each entry is an object with `value` (hex
-/// string) and `selected` (bool). The DSL's `for=` loop iterates
-/// over it.
+/// string) and `selected` (bool). `h` / `s` / `l` + the matching
+/// `*-pct` percentage projections drive the HSL slider thumbs and
+/// the textual readout under each track.
 fn color_picker_schema() -> Vec<FieldSpec> {
     vec![
         FieldSpec::boolean("open", "Open").with_default(Value::Bool(false)),
@@ -779,6 +780,18 @@ fn color_picker_schema() -> Vec<FieldSpec> {
         FieldSpec::text("key", "Bound prop key"),
         FieldSpec::text("value", "Current hex value"),
         FieldSpec::text("presets", "Preset swatch list (JSON array)"),
+        FieldSpec::number("h", "Hue (0..360)", NumericBounds::default())
+            .with_default(Value::from(0.0)),
+        FieldSpec::number("s", "Saturation (0..100)", NumericBounds::default())
+            .with_default(Value::from(0.0)),
+        FieldSpec::number("l", "Lightness (0..100)", NumericBounds::default())
+            .with_default(Value::from(0.0)),
+        FieldSpec::number("h-pct", "Hue %", NumericBounds::default())
+            .with_default(Value::from(0.0)),
+        FieldSpec::number("s-pct", "Saturation %", NumericBounds::default())
+            .with_default(Value::from(0.0)),
+        FieldSpec::number("l-pct", "Lightness %", NumericBounds::default())
+            .with_default(Value::from(0.0)),
     ]
 }
 

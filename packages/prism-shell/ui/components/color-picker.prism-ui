@@ -58,6 +58,52 @@
       <text font-size="14" style:color="#000000">{value ? value : '—'}</text>
     </container>
   </container>
+  <text font-size="10" style:color="#7f000000">HSL</text>
+  <container
+      id="{id}::hue-row"
+      direction="column"
+      gap="2">
+    <container
+        id="{id}::hue-track"
+        height="14"
+        style:background="#33000000"
+        style:radius="3"
+        role="slider"
+        aria-label="Hue"
+        data:role="color-hsl-slider"
+        data:channel="h"
+        data:value="{h}"/>
+  </container>
+  <container
+      id="{id}::sat-row"
+      direction="column"
+      gap="2">
+    <container
+        id="{id}::sat-track"
+        height="14"
+        style:background="#33000000"
+        style:radius="3"
+        role="slider"
+        aria-label="Saturation"
+        data:role="color-hsl-slider"
+        data:channel="s"
+        data:value="{s}"/>
+  </container>
+  <container
+      id="{id}::light-row"
+      direction="column"
+      gap="2">
+    <container
+        id="{id}::light-track"
+        height="14"
+        style:background="#33000000"
+        style:radius="3"
+        role="slider"
+        aria-label="Lightness"
+        data:role="color-hsl-slider"
+        data:channel="l"
+        data:value="{l}"/>
+  </container>
   <text font-size="10" style:color="#7f000000">Presets</text>
   <container
       id="{id}::presets"

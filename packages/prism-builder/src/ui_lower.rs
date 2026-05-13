@@ -562,6 +562,38 @@ impl<'a> LowerCtx<'a> {
         }
     }
 
+    /// Phase 4b follow-up: a typed `Memo<String>` derived from the
+    /// `Value`-typed `prop_signal`. Advanced consumers (cross-block
+    /// effects, derived bindings) that want a `Copy + 'static`-able
+    /// reactive read of a string prop hold one of these; chrome
+    /// blocks still reach for the eager `prop_str` accessor.
+    ///
+    /// Returns `None` when no [`DocumentBindings`] is installed
+    /// (headless tests, SSR) — the call site falls back to a direct
+    /// JSON read in that branch.
+    pub fn prop_memo_str(
+        &self,
+        node: &Node,
+        key: &str,
+    ) -> Option<prism_core::reactive::Memo<String>> {
+        let owner = self.bindings?.owner();
+        let sig = self.prop_signal(node, key)?;
+        Some(owner.insert_memo(move || sig.read(|v| v.as_str().unwrap_or("").to_string())))
+    }
+
+    /// Typed `Memo<bool>` companion to [`Self::prop_memo_str`]. Same
+    /// `None` semantics: returns `None` without a bindings install.
+    pub fn prop_memo_bool(
+        &self,
+        node: &Node,
+        key: &str,
+        default: bool,
+    ) -> Option<prism_core::reactive::Memo<bool>> {
+        let owner = self.bindings?.owner();
+        let sig = self.prop_signal(node, key)?;
+        Some(owner.insert_memo(move || sig.read(|v| v.as_bool().unwrap_or(default))))
+    }
+
     /// Resolve and lower an *embedded* block by its registered component
     /// id, synthesising a derived `Node` from a JSON props value. The
     /// dispatch goes through whichever [`ComponentRegistry`] is on this
@@ -1420,6 +1452,68 @@ mod tests {
             "reactive write wakes the subscribing context"
         );
         rcx.dispose();
+    }
+
+    #[test]
+    fn prop_memo_str_returns_typed_memo_with_reactive_recompute() {
+        // Phase 4b typed-memo follow-up: `prop_memo_str` yields a
+        // `Memo<String>` whose `get` re-reads from the underlying
+        // `Signal<Value>`. Writes through `NodeMutator` flow through
+        // the memo without the caller subscribing the inner signal
+        // directly.
+        use crate::layout::LayoutMode;
+        use crate::mutator::NodeMutator;
+        use crate::reactive_props::DocumentBindings;
+        use prism_core::foundation::spatial::Transform2D;
+        use serde_json::json;
+        let mut node = Node {
+            id: "n".into(),
+            component: "x".into(),
+            props: json!({ "label": "alpha", "selected": false }),
+            children: vec![],
+            layout_mode: LayoutMode::default(),
+            transform: Transform2D::default(),
+            modifiers: vec![],
+            style: StyleProperties::default(),
+        };
+        let bindings = DocumentBindings::new();
+        let style = StyleProperties::default();
+        let ctx = LowerCtx::new(None, &style).with_bindings(&bindings);
+
+        let memo = ctx
+            .prop_memo_str(&node, "label")
+            .expect("memo present with bindings");
+        assert_eq!(memo.get(), "alpha");
+        NodeMutator::with_bindings(&bindings).write(&mut node, "label", json!("beta"));
+        assert_eq!(memo.get(), "beta", "memo re-derives after prop write");
+
+        let bool_memo = ctx
+            .prop_memo_bool(&node, "selected", false)
+            .expect("bool memo present");
+        assert!(!bool_memo.get());
+        NodeMutator::with_bindings(&bindings).write(&mut node, "selected", json!(true));
+        assert!(bool_memo.get());
+    }
+
+    #[test]
+    fn prop_memo_str_returns_none_without_bindings() {
+        use crate::layout::LayoutMode;
+        use prism_core::foundation::spatial::Transform2D;
+        use serde_json::json;
+        let node = Node {
+            id: "n".into(),
+            component: "x".into(),
+            props: json!({ "label": "alpha" }),
+            children: vec![],
+            layout_mode: LayoutMode::default(),
+            transform: Transform2D::default(),
+            modifiers: vec![],
+            style: StyleProperties::default(),
+        };
+        let style = StyleProperties::default();
+        let ctx = LowerCtx::new(None, &style);
+        assert!(ctx.prop_memo_str(&node, "label").is_none());
+        assert!(ctx.prop_memo_bool(&node, "selected", false).is_none());
     }
 
     #[test]

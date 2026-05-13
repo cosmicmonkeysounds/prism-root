@@ -75,6 +75,8 @@ pub mod luau_bindings;
 pub mod luau_bindings_consts;
 #[cfg(feature = "luau")]
 pub mod luau_reactive;
+#[cfg(feature = "luau")]
+pub mod luau_runtime;
 pub mod luau_types;
 pub mod network;
 pub mod reactive;

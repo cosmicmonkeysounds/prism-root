@@ -70,10 +70,20 @@ pub fn dispatch_event(
                     .unwrap_or(false);
                 return blurred || opened;
             }
-            let routed = hit
+            // Wave 2.4 HSL — slider press needs the exact pointer-x
+            // (in viewport-space) to compute the channel fraction;
+            // route it *before* `route_pointer_down` (whose handler
+            // signature has no event x/y) so the table-driven path
+            // never sees the hit.
+            let slider = hit
                 .as_ref()
-                .map(|h| route_pointer_down(inner, h))
+                .map(|h| route_color_slider_press(inner, h, *x))
                 .unwrap_or(false);
+            let routed = slider
+                || hit
+                    .as_ref()
+                    .map(|h| route_pointer_down(inner, h))
+                    .unwrap_or(false);
             // §43 A1: an authored `on:click="<action>"` attribute lands
             // on the hit as `data-on-click`. Dispatch through the action
             // grammar parser → `fire_signal` / command table. Sits
@@ -190,9 +200,26 @@ pub fn dispatch_event(
             // false when no session is active so this falls through
             // cleanly.
             let resized = inner.borrow_mut().state.update_resize_drag(*x, *y);
+            // Wave 2.4 HSL — a color-slider drag updates whichever
+            // channel was captured on pointer-down. Cheap-checks the
+            // optional drag state up-front so non-drag pointer-moves
+            // pay nothing.
+            let slid = if inner
+                .borrow()
+                .state
+                .overlay
+                .color_picker
+                .slider_drag
+                .is_some()
+            {
+                apply_color_slider_at(inner, *x)
+            } else {
+                false
+            };
             scrubbed
                 || palette_moved
                 || resized
+                || slid
                 || inner.borrow_mut().state.canvas.pointer_move(*x, *y)
         }
         Event::PointerUp { x, y, .. } => {
@@ -233,9 +260,24 @@ pub fn dispatch_event(
             // already live in the document; this just drops the
             // session so the next click can start a new one.
             let resize_committed = inner.borrow_mut().state.end_resize_drag();
+            // Wave 2.4 HSL — release any captured color-slider drag.
+            // `set_color_picker_value` already wrote the live channel
+            // through `set_node_prop`; this just clears the capture
+            // slot so the next press starts a fresh session.
+            let slider_released = {
+                let mut guard = inner.borrow_mut();
+                guard
+                    .state
+                    .overlay
+                    .color_picker
+                    .slider_drag
+                    .take()
+                    .is_some()
+            };
             stepped
                 || dropped
                 || resize_committed
+                || slider_released
                 || inner.borrow_mut().state.canvas.pointer_up(*x, *y)
         }
         // §24: every other event variant fans out through the service
@@ -331,6 +373,11 @@ const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
     ("color-swatch", handle_color_swatch_click),
     ("color-preset-select", handle_color_preset_select_click),
     ("color-picker-close", handle_color_picker_close_click),
+    // Wave 2.4 HSL — the slider press path is routed *before*
+    // `route_pointer_down` because the channel commit needs the
+    // exact pointer-x coordinate (the in-table handler signature
+    // can't access it). See `route_color_slider_press` for the
+    // pointer-y / move / up wiring.
 ];
 
 fn route_pointer_down(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
@@ -1115,6 +1162,62 @@ fn handle_color_preset_select_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRe
 /// Wave 2.4 — close button on the color picker. Mirrors Esc.
 fn handle_color_picker_close_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRect) -> bool {
     inner.borrow_mut().state.close_color_picker()
+}
+
+/// Wave 2.4 HSL — `data-role="color-hsl-slider"` press. Reads
+/// `data-channel` (one of `h` / `s` / `l`), computes the normalised
+/// position the click landed at `(event.x - bounds.x) / bounds.width`,
+/// converts the picker's current hex through `rgb_to_hsl`, replaces
+/// the targeted channel, and writes the new hex back through
+/// `set_color_picker_value`. Returns `true` when the bound prop
+/// actually moved.
+fn route_color_slider_press(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect, x: f32) -> bool {
+    if attr_value(hit, "data-role") != Some("color-hsl-slider") {
+        return false;
+    }
+    let Some(channel_attr) = attr_value(hit, "data-channel") else {
+        return false;
+    };
+    let Some(channel) = crate::state::ColorChannel::from_attr(channel_attr) else {
+        return false;
+    };
+    let track_x = hit.bounds.x;
+    let track_width = hit.bounds.width;
+    let mut guard = inner.borrow_mut();
+    guard.state.overlay.color_picker.slider_drag = Some(crate::state::ColorSliderDrag {
+        channel,
+        track_x,
+        track_width,
+    });
+    drop(guard);
+    apply_color_slider_at(inner, x)
+}
+
+/// Wave 2.4 HSL — recompute the captured channel from the live
+/// pointer-x and write the new hex through `set_color_picker_value`.
+/// Called once from the press handler and again from every
+/// pointer-move while the drag is active.
+fn apply_color_slider_at(inner: &Rc<RefCell<ShellInner>>, x: f32) -> bool {
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let Some(drag) = g.state.overlay.color_picker.slider_drag.clone() else {
+        return false;
+    };
+    let width = drag.track_width.max(1.0);
+    let fraction = ((x - drag.track_x) / width).clamp(0.0, 1.0);
+    let current = g.state.overlay.color_picker.value.clone();
+    let parsed =
+        prism_builder::color::parse_hex(&current).unwrap_or(prism_builder::color::Rgba::BLACK);
+    let (mut h, mut s, mut l) = prism_builder::color::rgb_to_hsl(parsed);
+    match drag.channel {
+        crate::state::ColorChannel::Hue => h = fraction * 360.0,
+        crate::state::ColorChannel::Saturation => s = fraction * 100.0,
+        crate::state::ColorChannel::Lightness => l = fraction * 100.0,
+    }
+    let next = prism_builder::color::hsl_to_rgb(h, s, l, parsed.a);
+    let hex = prism_builder::color::format_hex(next);
+    let registry = g.registry.as_component_registry();
+    g.state.set_color_picker_value(&hex, Some(registry))
 }
 
 fn handle_file_browse_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {

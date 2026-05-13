@@ -482,6 +482,7 @@ impl AppState {
             target_id: target_id.to_string(),
             key: key.to_string(),
             value: value.to_string(),
+            slider_drag: None,
         };
         true
     }
@@ -1789,6 +1790,41 @@ pub struct ColorPicker {
     pub target_id: String,
     pub key: String,
     pub value: String,
+    /// Wave 2.4 HSL — when a slider press captures, stash the
+    /// (channel, track_x, track_width) triple so subsequent
+    /// pointer-moves rewrite the same channel without re-reading
+    /// the hit attrs. Cleared on pointer-up or when the picker
+    /// closes.
+    pub slider_drag: Option<ColorSliderDrag>,
+}
+
+/// Wave 2.4 HSL slider drag state — captured at pointer-down so
+/// pointer-move recomputes the channel fraction against a stable
+/// track rect (the hit cache rebuilds across re-renders, so we
+/// can't rely on re-hit-testing mid-drag).
+#[derive(Clone, Debug)]
+pub struct ColorSliderDrag {
+    pub channel: ColorChannel,
+    pub track_x: f32,
+    pub track_width: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorChannel {
+    Hue,
+    Saturation,
+    Lightness,
+}
+
+impl ColorChannel {
+    pub fn from_attr(s: &str) -> Option<Self> {
+        match s {
+            "h" => Some(Self::Hue),
+            "s" => Some(Self::Saturation),
+            "l" => Some(Self::Lightness),
+            _ => None,
+        }
+    }
 }
 
 impl ColorPicker {
@@ -1987,12 +2023,21 @@ impl OverlaySlot {
                 })
             })
             .collect();
+        let parsed = prism_builder::color::parse_hex(&self.color_picker.value)
+            .unwrap_or(prism_builder::color::Rgba::BLACK);
+        let (h, s, l) = prism_builder::color::rgb_to_hsl(parsed);
         json!({
             "open": self.color_picker.open,
             "target-id": self.color_picker.target_id,
             "key": self.color_picker.key,
             "value": self.color_picker.value,
             "presets": presets,
+            "h": h,
+            "s": s,
+            "l": l,
+            "h-pct": (h / 360.0) * 100.0,
+            "s-pct": s,
+            "l-pct": l,
         })
     }
 

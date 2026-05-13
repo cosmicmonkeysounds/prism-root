@@ -1049,6 +1049,271 @@ skeleton = "shell.prism-ui"
     });
 }
 
+// ── Persistent-Luau end-to-end ──────────────────────────────────────
+
+#[test]
+fn app_main_luau_registers_component_whose_render_dispatches_through_runtime() {
+    // The full persistent-Luau chain: an app's `[entry] script`
+    // points at a `main.luau` body that calls
+    // `prism.app:register_component({render = ...})`. At boot,
+    // Shell::new builds a LuauRuntime, runs the script against it,
+    // drains the registrar's component queue into the live
+    // ShellComponentRegistry with the runtime attached, and the
+    // resulting `LuauComponentBlock::lower_ui` dispatches through
+    // the retained closure.
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+skeleton = "shell.prism-ui"
+script = "main.luau"
+"#,
+    )];
+    with_apps_dir("persistent_luau_render", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let dir = std::path::Path::new(&root).join("lattice");
+        // The skeleton hosts a custom `<my.card name="Hi"/>` tag —
+        // the Luau-registered component the script provides.
+        std::fs::write(
+            dir.join("shell.prism-ui"),
+            r#"<my.card id="card-1" name="Hi"/>"#,
+        )
+        .unwrap();
+        // The boot script registers `my.card` with a render body
+        // that returns a `<section data-role="card">` containing
+        // the `name` prop. Verifies the props flow from skeleton →
+        // node.props → JSON → Lua table → script return →
+        // VirtualNode → UiNode end-to-end.
+        std::fs::write(
+            dir.join("main.luau"),
+            r#"
+                prism.app:register_component({
+                    id = "my.card",
+                    render = function(props, _children)
+                        return prism.element("section",
+                            { ["data-name"] = props.name },
+                            { props.name })
+                    end,
+                })
+            "#,
+        )
+        .unwrap();
+
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        {
+            let mut inner = shell.inner.borrow_mut();
+            inner.state.workspace.active_app = Some("lattice".to_string());
+        }
+        let tree = shell.render();
+
+        // Walk the rendered tree looking for a container whose
+        // semantic carries `data-name="Hi"` (the script wrote that
+        // attr from props.name). Its presence proves the chain
+        // executed end-to-end — without the runtime the placeholder
+        // body would carry `data-role="luau-component"` but no
+        // `data-name`.
+        fn walk_for_attr(
+            nodes: &[prism_ui_runtime::layout::Node],
+            attr_k: &str,
+            attr_v: &str,
+            found: &mut bool,
+        ) {
+            use prism_ui_runtime::layout::Node as UiNode;
+            if *found {
+                return;
+            }
+            for n in nodes {
+                if *found {
+                    return;
+                }
+                if let UiNode::Container {
+                    props, children, ..
+                } = n
+                {
+                    for (k, v) in &props.semantic.attrs {
+                        if k == attr_k && v == attr_v {
+                            *found = true;
+                            return;
+                        }
+                    }
+                    walk_for_attr(children, attr_k, attr_v, found);
+                }
+            }
+        }
+        let mut found = false;
+        walk_for_attr(&tree, "data-name", "Hi", &mut found);
+        assert!(
+            found,
+            "expected rendered tree to carry script-emitted data-name=\"Hi\" \
+             — Luau dispatch did not flow through end-to-end"
+        );
+    });
+}
+
+#[test]
+fn app_main_luau_with_no_render_fn_falls_back_to_placeholder() {
+    // Persistent-Luau degrades gracefully: a script that registers a
+    // component *without* an inline `render` fn (i.e. only the spec
+    // table) gets the labelled placeholder, same as a NoopAppRegistrar
+    // would. Proves the fallback path is reachable.
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+skeleton = "shell.prism-ui"
+script = "main.luau"
+"#,
+    )];
+    with_apps_dir("persistent_luau_placeholder", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let dir = std::path::Path::new(&root).join("lattice");
+        std::fs::write(dir.join("shell.prism-ui"), r#"<my.card id="card-1"/>"#).unwrap();
+        std::fs::write(
+            dir.join("main.luau"),
+            r#"prism.app:register_component({ id = "my.card" })"#,
+        )
+        .unwrap();
+
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        {
+            let mut inner = shell.inner.borrow_mut();
+            inner.state.workspace.active_app = Some("lattice".to_string());
+        }
+        let tree = shell.render();
+        fn walk_for_attr(
+            nodes: &[prism_ui_runtime::layout::Node],
+            attr_k: &str,
+            attr_v: &str,
+            found: &mut bool,
+        ) {
+            use prism_ui_runtime::layout::Node as UiNode;
+            if *found {
+                return;
+            }
+            for n in nodes {
+                if *found {
+                    return;
+                }
+                if let UiNode::Container {
+                    props, children, ..
+                } = n
+                {
+                    for (k, v) in &props.semantic.attrs {
+                        if k == attr_k && v == attr_v {
+                            *found = true;
+                            return;
+                        }
+                    }
+                    walk_for_attr(children, attr_k, attr_v, found);
+                }
+            }
+        }
+        let mut found_placeholder = false;
+        walk_for_attr(&tree, "data-role", "luau-component", &mut found_placeholder);
+        assert!(
+            found_placeholder,
+            "expected placeholder body for component without render fn"
+        );
+    });
+}
+
+#[test]
+fn app_main_luau_registers_service_dispatching_on_event() {
+    // Persistent-Luau service path: the script registers a service
+    // with an inline `on_event` body. When the shell's event router
+    // calls `on_event`, the retained closure runs and its return
+    // value decodes into the matching EventOutcome. Drives the
+    // service directly through the registry since the event router
+    // isn't trivial to invoke from a test harness.
+    use prism_ui_runtime::event::Event;
+    use prism_ui_runtime::layout::Viewport;
+
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+script = "main.luau"
+"#,
+    )];
+    with_apps_dir("persistent_luau_on_event", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let dir = std::path::Path::new(&root).join("lattice");
+        std::fs::write(
+            dir.join("main.luau"),
+            r#"
+                prism.app:register_service({
+                    id = "lattice.click-catcher",
+                    on_event = function(event)
+                        if event.kind == "PointerDown" then
+                            return "Handled"
+                        end
+                        return "Pass"
+                    end,
+                })
+            "#,
+        )
+        .unwrap();
+
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        let inner = shell.inner.borrow();
+        let svc = inner
+            .services
+            .get("lattice.click-catcher")
+            .expect("service registered");
+        // Drive `on_event` directly with a synthetic event. The
+        // service's return shapes the EventOutcome the router would
+        // see if dispatched live.
+        drop(inner);
+        let mut bind = shell.inner.borrow_mut();
+        let mut state = std::mem::take(&mut bind.state);
+        let mut undo = std::mem::take(&mut bind.undo);
+        let mut vfs: Box<dyn prism_shell::services::Vfs> =
+            std::mem::replace(&mut bind.vfs, Box::new(prism_shell::services::OsVfs));
+        let mut luau: Box<dyn prism_shell::services::LuauHost> = std::mem::replace(
+            &mut bind.luau,
+            Box::new(prism_shell::services::NoopLuauHost::default()),
+        );
+        let mut clipboard = std::mem::take(&mut bind.clipboard);
+        let cmds = bind.services.commands();
+        let mut ctx = prism_shell::services::MutCtx {
+            state: &mut state,
+            viewport: Viewport {
+                width: 1.0,
+                height: 1.0,
+            },
+            undo: &mut undo,
+            vfs: vfs.as_mut(),
+            luau: luau.as_mut(),
+            clipboard: &mut clipboard,
+            registry: None,
+            modifier_registry: None,
+        };
+        // The script's `on_event` returns "Handled" only for
+        // `kind == "PointerDown"` — the projection in
+        // `event_to_json` carries that name on PointerDown events.
+        let handled = svc.on_event(
+            &Event::PointerDown {
+                x: 0.0,
+                y: 0.0,
+                button: prism_ui_runtime::event::PointerButton::Primary,
+            },
+            &mut ctx,
+            cmds,
+        );
+        assert_eq!(handled, prism_shell::services::EventOutcome::Handled);
+        // Wheel events fall through to "Pass" — the script's
+        // explicit else branch.
+        let passed = svc.on_event(&Event::Wheel { dx: 0.0, dy: 0.0 }, &mut ctx, cmds);
+        assert_eq!(passed, prism_shell::services::EventOutcome::Pass);
+    });
+}
+
 #[test]
 fn no_apps_directory_falls_back_to_hardcoded_launchpad() {
     // Sanity check: clear PRISM_APPS_DIR + point at a path that

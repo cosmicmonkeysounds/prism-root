@@ -189,6 +189,26 @@ pub fn install_components(
     registrar: &ShellAppRegistrar,
     registry: &mut crate::components::ShellComponentRegistry,
 ) -> usize {
+    install_components_with_runtime(registrar, registry, None)
+}
+
+/// Persistent-Luau variant: installs the runtime into a thread-local
+/// slot every [`LuauComponentBlock::lower_ui`] / [`LuauScriptedService::on_event`]
+/// dispatch reads at call time. The `Send + Sync` constraint on
+/// `Block` / `ShellService` forbids carrying `Rc<LuauRuntime>` on the
+/// types themselves — the thread-local is the only sound channel, and
+/// it's safe because the shell render path runs on the same thread the
+/// runtime was constructed on. `None` runtime is a no-op (degrades to
+/// the placeholder body).
+#[cfg(feature = "native")]
+pub fn install_components_with_runtime(
+    registrar: &ShellAppRegistrar,
+    registry: &mut crate::components::ShellComponentRegistry,
+    runtime: Option<std::rc::Rc<prism_core::luau_runtime::LuauRuntime>>,
+) -> usize {
+    if let Some(rt) = runtime {
+        set_active_runtime(rt);
+    }
     let mut count = 0;
     for spec in registrar.drain_components() {
         let block = Arc::new(LuauComponentBlock::new(spec));
@@ -218,6 +238,23 @@ pub fn install_services(
     registrar: &ShellAppRegistrar,
     services: &mut crate::services::ServiceRegistry,
 ) -> usize {
+    install_services_with_runtime(registrar, services, None)
+}
+
+/// Persistent-Luau variant. Captures the `runtime` handle in each
+/// factory closure so re-built service instances (one per
+/// `Shell::switch_active_app`) all see the same persistent state and
+/// can dispatch through it. `None` runtime degrades to the
+/// placeholder `Pass` body the pre-persistence wave shipped.
+#[cfg(feature = "native")]
+pub fn install_services_with_runtime(
+    registrar: &ShellAppRegistrar,
+    services: &mut crate::services::ServiceRegistry,
+    runtime: Option<std::rc::Rc<prism_core::luau_runtime::LuauRuntime>>,
+) -> usize {
+    if let Some(rt) = runtime {
+        set_active_runtime(rt);
+    }
     let mut count = 0;
     for spec in registrar.drain_services() {
         services.add_factory_scoped(
@@ -231,26 +268,77 @@ pub fn install_services(
     count
 }
 
+// ── Active runtime thread-local ──────────────────────────────────
+//
+// `Rc<LuauRuntime>` is `!Send`, but the types that need to dispatch
+// through it (`LuauComponentBlock` impls `Block: Send + Sync`,
+// `LuauScriptedService` impls `ShellService: Send + Sync`) can't
+// carry the `Rc`. Solution: a thread-local that the shell installs at
+// boot and reads at dispatch time. Safe because:
+//
+// * The runtime is constructed on the shell's main thread.
+// * Render + event dispatch run on the same thread (winit's event
+//   loop, or test code that exercises `lower_ui` directly).
+// * The thread-local is private to this module — only `Shell::new`
+//   writes it (via [`install_*_with_runtime`]).
+//
+// A drop hook on `Shell` is intentionally not wired today. The
+// runtime survives for the program lifetime (single shell per
+// process); when multi-shell hosts land they'll need explicit
+// `clear_active_runtime` on teardown to avoid cross-shell leakage.
+
+#[cfg(feature = "native")]
+thread_local! {
+    static ACTIVE_LUAU_RUNTIME: std::cell::RefCell<Option<std::rc::Rc<prism_core::luau_runtime::LuauRuntime>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Install the persistent runtime in the thread-local dispatch slot.
+/// Subsequent `LuauComponentBlock::lower_ui` /
+/// `LuauScriptedService::on_event` calls on the same thread query
+/// this slot to find the runtime. Replaces any prior install — the
+/// shell-side wiring calls this exactly once during `Shell::new`.
+#[cfg(feature = "native")]
+pub fn set_active_runtime(rt: std::rc::Rc<prism_core::luau_runtime::LuauRuntime>) {
+    ACTIVE_LUAU_RUNTIME.with(|s| *s.borrow_mut() = Some(rt));
+}
+
+/// Tear down the active runtime — used by hosts that recreate the
+/// shell mid-process and want to drop the prior Lua state. Today
+/// only test-side cleanup paths need this; production runs hold the
+/// runtime for the program lifetime.
+#[cfg(feature = "native")]
+pub fn clear_active_runtime() {
+    ACTIVE_LUAU_RUNTIME.with(|s| *s.borrow_mut() = None);
+}
+
+#[cfg(feature = "native")]
+fn with_active_runtime<R>(
+    f: impl FnOnce(&prism_core::luau_runtime::LuauRuntime) -> R,
+) -> Option<R> {
+    ACTIVE_LUAU_RUNTIME.with(|s| s.borrow().as_ref().map(|rt| f(rt)))
+}
+
 // ── Luau-backed shims ─────────────────────────────────────────────
 
-/// `Block` impl that renders a labelled placeholder for an
-/// app-registered component. Today the placeholder is a static
-/// container with a `data-component` semantic attribute; when the
-/// Luau runtime lands, the placeholder body grows into a real
-/// `script.render(props, children)` dispatch keyed on `render_key`.
+/// `Block` impl for an app-registered component. When constructed
+/// with a [`LuauRuntime`] handle, `lower_ui` dispatches through the
+/// retained `render` closure and translates the resulting
+/// [`VirtualNode`] into a `UiNode` tree. Without a runtime — or when
+/// the runtime has no closure retained for `render_key` — the block
+/// emits a labelled placeholder so debug builds + relay SSR can
+/// surface the component end-to-end without a Lua state.
 pub struct LuauComponentBlock {
     id: ComponentId,
-    /// Opaque Luau render dispatch key. Surfaced via
-    /// `data-luau-key` on the rendered semantic so the eventual
-    /// runtime can correlate placeholders to scripts during
-    /// hot-reload.
+    /// Opaque Luau render dispatch key. Surfaced via `data-luau-key`
+    /// on the rendered semantic for both runtime-backed and
+    /// placeholder outputs — hot-reload + SSR correlate against this.
     render_key: String,
 }
 
 impl LuauComponentBlock {
     pub fn new(spec: ComponentRegistration) -> Self {
         Self {
-            // `ComponentId` is a `String` type alias in prism-builder.
             id: spec.id,
             render_key: spec.render_key,
         }
@@ -264,17 +352,42 @@ impl Block for LuauComponentBlock {
 
     fn schema(&self) -> Vec<FieldSpec> {
         // Luau-defined components declare their schema through the
-        // script today; until the runtime is wired, expose an empty
-        // schema so the property panel renders the catch-all.
+        // script today; until a `schema` table opt-in lands, expose
+        // an empty schema so the property panel renders the catch-all.
         vec![]
     }
 
     fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let component_id = self.id.clone();
-        let render_key = self.render_key.clone();
-        // Build a minimal container with semantic markers — the live
-        // dock + relay SSR both render this as a labelled placeholder
-        // until the Luau runtime supplies a real body.
+        // Persistent-Luau path: if the host installed an active
+        // runtime and the script retained a `render` closure under
+        // our key, dispatch and translate. The runtime lookup goes
+        // through `with_active_runtime` because `Block: Send + Sync`
+        // forbids carrying `Rc<LuauRuntime>` on the block itself.
+        #[cfg(feature = "native")]
+        {
+            let dispatched = with_active_runtime(|rt| {
+                let props = node_props_to_json(node);
+                rt.call_render(&self.render_key, &props, &[])
+            })
+            .flatten();
+            if let Some(result) = dispatched {
+                match result {
+                    Ok(vnode) => {
+                        return virtual_node_to_ui(&vnode, &node.id, &self.id, &self.render_key);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "prism-shell: render `{}` failed: {e} — falling back to placeholder",
+                            self.render_key
+                        );
+                    }
+                }
+            }
+        }
+        // Placeholder fallback — every shipped Luau-backed component
+        // renders this when no runtime is wired or no closure is
+        // retained under `render_key`. Carries the metadata SSR /
+        // hot-reload correlates against.
         UiNode::Container {
             id: node.id.clone(),
             props: prism_ui_runtime::layout::ContainerProps {
@@ -282,8 +395,8 @@ impl Block for LuauComponentBlock {
                 height: Sizing::Grow,
                 semantic: Semantic::tag("div")
                     .with_attr("data-role", "luau-component")
-                    .with_attr("data-component", component_id)
-                    .with_attr("data-luau-key", render_key),
+                    .with_attr("data-component", self.id.clone())
+                    .with_attr("data-luau-key", self.render_key.clone()),
                 ..Default::default()
             },
             children: Vec::new(),
@@ -291,18 +404,98 @@ impl Block for LuauComponentBlock {
     }
 }
 
-/// `ShellService` shim for a Luau-registered service. Today's
-/// `on_event` always returns `Pass` — the Luau dispatch lands when
-/// the in-process runtime is wired (Loop 4 follow-up).
+// ── VirtualNode → UiNode translation ──────────────────────────────
+
+#[cfg(feature = "native")]
+fn node_props_to_json(node: &Node) -> serde_json::Value {
+    // `Node.props` is the runtime-resolved JSON value authored on the
+    // skeleton (e.g. `<my.card name="Hi"/>` → `{"name": "Hi"}`).
+    // Pass through verbatim so scripts read `props.name` directly.
+    // Default `Null` propagates as `nil` on the Lua side.
+    node.props.clone()
+}
+
+#[cfg(feature = "native")]
+fn virtual_node_to_ui(
+    vnode: &prism_core::luau_runtime::VirtualNode,
+    node_id: &str,
+    component_id: &str,
+    render_key: &str,
+) -> UiNode {
+    use prism_core::luau_runtime::VirtualNode as VN;
+    match vnode {
+        // A bare text return wraps in a labelled span so the dock /
+        // SSR consumer still sees the component metadata.
+        VN::Text(s) => UiNode::Container {
+            id: node_id.to_string(),
+            props: prism_ui_runtime::layout::ContainerProps {
+                width: Sizing::Grow,
+                height: Sizing::Grow,
+                semantic: Semantic::tag("span")
+                    .with_attr("data-role", "luau-component")
+                    .with_attr("data-component", component_id.to_string())
+                    .with_attr("data-luau-key", render_key.to_string())
+                    .with_attr("data-text", s.clone()),
+                ..Default::default()
+            },
+            children: Vec::new(),
+        },
+        VN::Element {
+            tag,
+            attrs,
+            children,
+        } => {
+            let mut sem = Semantic::tag(tag.clone())
+                .with_attr("data-role", "luau-component")
+                .with_attr("data-component", component_id.to_string())
+                .with_attr("data-luau-key", render_key.to_string());
+            for (k, v) in attrs {
+                sem = sem.with_attr(k.clone(), v.clone());
+            }
+            // Inline-text sugar: a `text="..."` attr lowers to a
+            // single text child via `data-text`. The `VirtualNode`
+            // shape already promotes `text` into a child Text run,
+            // so we just walk children here.
+            let child_nodes: Vec<UiNode> = children
+                .iter()
+                .enumerate()
+                .map(|(i, child)| {
+                    let child_id = format!("{node_id}.child.{i}");
+                    virtual_node_to_ui(child, &child_id, component_id, render_key)
+                })
+                .collect();
+            UiNode::Container {
+                id: node_id.to_string(),
+                props: prism_ui_runtime::layout::ContainerProps {
+                    width: Sizing::Grow,
+                    height: Sizing::Grow,
+                    semantic: sem,
+                    ..Default::default()
+                },
+                children: child_nodes,
+            }
+        }
+    }
+}
+
+/// `ShellService` shim for a Luau-registered service. When the
+/// persistent [`LuauRuntime`] is wired in and the script retained
+/// an `on_event` closure under `on_event_key`, `on_event` dispatches
+/// through it and translates the result into [`EventOutcome`].
+/// Without a runtime (or without a retained closure) the body
+/// returns [`EventOutcome::Pass`] — preserving the pre-persistence
+/// wave's behaviour.
 ///
 /// ADR-010 Phase 1: instances carry the active-app id from the
 /// [`crate::services::ServiceContext`] supplied when the factory
-/// ran. Tests + future Luau dispatch use this to confirm a rebuild
-/// actually re-bound the service against the new app.
+/// ran. The runtime is attached after `new_with_context` via
+/// [`Self::with_runtime`] (the factory closure can't capture an
+/// `Rc<LuauRuntime>` directly because `ServiceRegistry` requires
+/// `Send + Sync` factories).
 pub struct LuauScriptedService {
     id: &'static str,
-    /// Opaque Luau handler dispatch key. Stored for future runtime
-    /// dispatch; surfaced via [`Self::on_event_key`] for tests.
+    /// Opaque Luau handler dispatch key. Surfaced via
+    /// [`Self::on_event_key`] for tests + future SSR observation.
     on_event_key: String,
     /// The `app_id` from the `ServiceContext` the factory was passed
     /// at construction. `None` for the initial pre-app-mount pass.
@@ -326,9 +519,6 @@ impl LuauScriptedService {
         spec: ServiceRegistration,
         ctx: &crate::services::ServiceContext<'_>,
     ) -> Self {
-        // ShellService::id returns `&'static str`. Promote the owned
-        // string via `Box::leak` — registrations happen at app load,
-        // never per-frame, so the leak is bounded.
         Self {
             id: Box::leak(spec.id.into_boxed_str()),
             on_event_key: spec.on_event_key,
@@ -355,15 +545,95 @@ impl ShellService for LuauScriptedService {
 
     fn on_event(
         &self,
-        _event: &prism_ui_runtime::event::Event,
+        event: &prism_ui_runtime::event::Event,
         _ctx: &mut MutCtx<'_>,
         _cmds: &CommandTable,
     ) -> EventOutcome {
+        // Dispatch through the thread-local active runtime — the
+        // `ShellService: Send + Sync` constraint forbids carrying
+        // `Rc<LuauRuntime>` on the service. Shell render + event
+        // routing run on the same thread the runtime was installed on,
+        // so the lookup is safe.
+        #[cfg(feature = "native")]
+        {
+            let dispatched = with_active_runtime(|rt| {
+                let event_json = event_to_json(event);
+                rt.call_on_event(&self.on_event_key, &event_json)
+            })
+            .flatten();
+            if let Some(result) = dispatched {
+                match result {
+                    Ok(prism_core::luau_runtime::LuauEventOutcome::Handled) => {
+                        return EventOutcome::Handled;
+                    }
+                    Ok(prism_core::luau_runtime::LuauEventOutcome::Pass) => {
+                        return EventOutcome::Pass;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "prism-shell: on_event `{}` failed: {e} — passing",
+                            self.on_event_key
+                        );
+                    }
+                }
+            }
+        }
         EventOutcome::Pass
     }
 
     fn commands(&self) -> Vec<CommandSpec> {
         Vec::new()
+    }
+}
+
+#[cfg(feature = "native")]
+fn event_to_json(event: &prism_ui_runtime::event::Event) -> serde_json::Value {
+    // Project the event onto a minimal JSON shape — the Lua side
+    // sees `{kind = "...", ...}` and can match on `kind`. The
+    // shapes here mirror the variants the shell's event router
+    // already fans out; growing the projection is one match arm.
+    use prism_ui_runtime::event::Event;
+    use serde_json::json;
+    match event {
+        Event::PointerDown { x, y, button } => json!({
+            "kind": "PointerDown",
+            "x": x,
+            "y": y,
+            "button": format!("{button:?}"),
+        }),
+        Event::PointerUp { x, y, button } => json!({
+            "kind": "PointerUp",
+            "x": x,
+            "y": y,
+            "button": format!("{button:?}"),
+        }),
+        Event::PointerMove { x, y } => json!({
+            "kind": "PointerMove",
+            "x": x,
+            "y": y,
+        }),
+        Event::Wheel { dx, dy } => json!({
+            "kind": "Wheel",
+            "dx": dx,
+            "dy": dy,
+        }),
+        Event::Key {
+            code,
+            pressed,
+            modifiers,
+        } => json!({
+            "kind": "Key",
+            "code": code,
+            "pressed": pressed,
+            "modifiers": format!("{modifiers:?}"),
+        }),
+        Event::Text { text } => json!({
+            "kind": "Text",
+            "text": text,
+        }),
+        // Catch-all for variants the projection hasn't grown yet —
+        // scripts can still see the shape via the `kind` field.
+        other => json!({ "kind": format!("{other:?}") }),
     }
 }
 
@@ -623,6 +893,7 @@ mod tests {
                 base_dir: std::path::PathBuf::from("/tmp/lattice"),
                 skeleton: None,
                 stylesheet: None,
+                script_source: None,
             },
             LoadedApp {
                 manifest: AppManifest {
@@ -633,6 +904,7 @@ mod tests {
                 base_dir: std::path::PathBuf::from("/tmp/musica"),
                 skeleton: None,
                 stylesheet: None,
+                script_source: None,
             },
         ];
         let reg = ShellAppRegistrar::with_builtin_panels();
@@ -671,6 +943,7 @@ mod tests {
             base_dir: std::path::PathBuf::from("/tmp/broken"),
             skeleton: None,
             stylesheet: None,
+            script_source: None,
         }];
         let reg = ShellAppRegistrar::with_builtin_panels();
         let count = install_panels_from_manifests(&reg, &apps);
