@@ -322,6 +322,18 @@ impl<'a> LowerCtx<'a> {
         self.tag_emissions.as_ref().and_then(|m| m.get(tag))
     }
 
+    /// Borrow the underlying tag-emissions map so a DSL block's
+    /// `lower_ui` can forward it onto its inner `LowerScope`. Without
+    /// this propagation a `<dispatch component="{expr}"/>` element
+    /// inside a DSL body never sees the live binding props for the
+    /// dispatched tag — the dock-panel migration relies on this for
+    /// `shell.component-palette` / `shell.properties-panel` / every
+    /// other shell tag the dock workspace routes to. Wave 11.3
+    /// addition.
+    pub fn tag_emissions_arc(&self) -> Option<Arc<HashMap<String, TagEmission>>> {
+        self.tag_emissions.clone()
+    }
+
     /// Pre-lowered children, if a host upstream of `lower_ui`
     /// supplied any. Composition blocks read this in preference to
     /// walking `node.children`:

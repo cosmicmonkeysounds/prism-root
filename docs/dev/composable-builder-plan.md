@@ -673,10 +673,107 @@ the upgraded
   their per-pixel drag affordances. Only the three Tier-3 imperative
   primitives (`builder_canvas`, `code_editor`, `nav_graph`) plus
   the four documented Tier-2 survivors (§11.3) remain Rust.
-- [x] **11.3** Tier-2 migration: 10/14 stateful / gesture
-  components landed; 4 documented intentional Rust survivors. Each
-  survivor names the *specific* DSL substrate it needs, so the
-  follow-up is bounded and not "more migration work."
+- [x] **11.3** Tier-2 migration: **14/14 stateful / gesture
+  components landed** (2026-05-13 update: `dock_panel.rs`,
+  `field_editor.rs`, `dock_workspace.rs`, and `chrome.rs` all
+  migrated / deleted on the back of four substrate closures —
+  see below); zero Rust survivors remain in the documented
+  Tier-2 list.
+
+  **dock-panel substrate closures (Wave 11.3 / 2026-05-13).** Two
+  small but load-bearing additions unblocked the migration:
+  - `dispatch_element_to_builder_node` (in
+    `prism-builder/src/ui_resolver.rs`) now seeds its props from
+    `scope.tag_emission_for(target)` before overlaying author
+    attrs — same precedence rule `LowerCtx::lower_as` uses, so a
+    `<dispatch component="shell.component-palette"/>` picks up
+    the live `items` / `selected-id` binding emission exactly
+    like the static `<shell.component-palette/>` form does.
+  - The DSL loader (`PrismUiBlock::lower_ui` in
+    `prism-shell/src/components/prism_ui_loader.rs`) now forwards
+    `ctx.tag_emissions_arc()` into the inner `LowerScope` so the
+    snapshot survives the runtime-side scope rebuild a DSL block
+    triggers. Without this propagation a dynamic `<dispatch/>`
+    inside a DSL block saw an empty emissions map regardless of
+    what the top-level binding snapshot held. New accessors:
+    `LowerCtx::tag_emissions_arc` and
+    `LowerScope::with_tag_emissions_arc`.
+
+  Net effect of the migration: `dock_panel.rs` deleted (~240 LoC
+  of Rust), `ui/components/dock-panel.prism-ui` added (~40 LoC of
+  DSL), `prism_ui_loader::SHELL_PRISM_UI_COMPONENTS` gains one
+  row with the matching `dock_panel_schema`. Tabs render through
+  `<shell.dock-tab-bar if="{tabs}" tabs="{tabs}"/>`; the body
+  uses `<host-children><dispatch if="{content-tag}"
+  component="{content-tag}"/></host-children>` so authored
+  children win and the dynamic dispatch fallback fires only when
+  the caller didn't compose a body.
+
+  **field-editor + chrome closure (Wave 11.3 / 2026-05-13).** The
+  largest Tier-2 survivor (`field_editor.rs`, ~720 LoC) and the
+  long-deferred `chrome.rs` helper module (~180 LoC) both deleted
+  the same commit. Substrate closures:
+  - `state::property_row_from_spec` now pre-computes the DSL-side
+    substrate fields (`data-value` string projection,
+    `options-joined` comma-joined select-option-values string,
+    `min-set` / `max-set` booleans, `slider-fill-pct` 0..100
+    fraction, `drag-display-value` formatted-number string,
+    `accept` comma-joined file dialog filter). The DSL block
+    consumes these directly so its kind dispatch is one `if`/
+    `else-if` cascade over `kind`, no null-comparison
+    expressions, no array-join builtins.
+  - `format_drag_value` lifted out of `chrome.rs` and inlined
+    into `state::format_drag_value` — the only remaining
+    consumer (the binding's `drag-display-value` projection).
+  - `ui/components/field-editor.prism-ui` ships seven branches
+    (text / textarea / boolean / select / color / number with
+    bounds / number without bounds / file) under one
+    expression-driven `if`/`else` chain. The color swatch
+    carries the same Wave 2.4 routing attrs the old Rust block
+    emitted (`data-role="color-swatch"` + target / key / value);
+    the file row carries the Wave 2.5 Browse button shape
+    verbatim.
+  - `chrome.rs` deleted; the `hidden_overlay` /
+    `color_or_transparent` helpers (its other surface) had no
+    remaining consumers — the Wave 11.2 batch-5 overlay-gate
+    pattern (`if="{!open}" data:visible="false"`) replaced
+    `hidden_overlay` two waves earlier.
+
+  **dock-workspace closure (Wave 11.3 / 2026-05-13).** The
+  recursive `DockNode` tree walker migrates to a two-file DSL
+  shape: `shell.dock-workspace` is the entry point the skeleton
+  authors against; `shell.dock-node` recursively dispatches
+  itself on `node.first` / `node.second` for splits and
+  dispatches `shell.dock-panel` for tab-group leaves. Substrate
+  closure: `state::enrich_dock_node` walks the raw `DockNode`
+  JSON and replaces every `TabGroup` with a flat shape
+  (`{type: "tab-group", panel-id, content-tag, tabs: [{tab-id,
+  label, active}]}`), so the DSL never has to consult the dock
+  catalog or array-index into `tabs[active]`. The no-catalog
+  variant of `dock_workspace_props` returns the same shape with
+  empty `content-tag` / `tabs` so headless tests run through one
+  JSON contract.
+
+  **Resolver fix (Wave 11.3 / 2026-05-13).** The
+  `<host-children>fallback</host-children>` element previously
+  always treated `Some(empty Vec)` as "host children present"
+  because `RegistryTagResolver::resolve` installed the empty
+  pre-lowered slice on `LowerCtx::with_host_children`
+  unconditionally. The fix mirrors `LowerCtx::lower_as`'s filter
+  — empty `pre_lowered` no longer installs a `host_children` slot,
+  so a DSL block's `<host-children>…fallback…</host-children>`
+  emits its fallback children when no caller body was authored.
+  Without this fix the dock-panel migration's body-dispatch
+  fallback never fired.
+
+  Verified: 360 prism-shell lib tests + 7 production-click
+  integration tests + 31 dsl-bootstrap tests green;
+  workspace `cargo fmt --all --check` clean;
+  `cargo clippy --workspace --all-targets -- -D warnings` clean.
+  `packages/prism-shell/src/components/` now contains only the
+  three Tier-3 imperative primitives (`builder_canvas`,
+  `code_editor`, `nav_graph`) plus `prism_ui_loader` /
+  `registry` — no further Tier-2 / Tier-1 Rust survivors.
   - **Migrated**: `builder_toolbar`, `component_picker`,
     `context_menu`, `dock_divider`, `drag_number_field`,
     `gizmo_move`, `gizmo_rotate`, `gizmo_scale`, `menu_dropdown`,

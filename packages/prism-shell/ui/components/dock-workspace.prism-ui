@@ -1,0 +1,18 @@
+<!--
+  shell.dock-workspace — root of the dock tree render. Wave 11.3
+  migration of dock_workspace.rs. The recursion lives in
+  `shell.dock-node` (see sibling file); this wrapper is the entry
+  point the skeleton authors against.
+
+  An empty workspace renders a zero-size frame so the chrome never
+  collapses to a missing rect during a partial migration / loading
+  state — mirrors the legacy Rust block's `data-empty` branch.
+-->
+<container
+    width="grow"
+    height="grow"
+    data:role="dock-workspace">
+  <shell.dock-node
+      if="{dock}"
+      node="{dock}"/>
+</container>

@@ -194,6 +194,17 @@ impl Block for PrismUiBlock {
         if let Some(slots) = ctx.host_children_by_slot() {
             scope = scope.with_host_children_by_slot(Arc::clone(slots));
         }
+        // Wave 11.3 — forward the live tag-emissions snapshot the
+        // resolver gave us so a `<dispatch component="{expr}"/>`
+        // inside this DSL body picks up the binding emission for
+        // the dispatched tag. Without this propagation a routed
+        // panel (the dock-panel migration is the canonical case)
+        // would see empty props for its dynamically-dispatched
+        // content (`shell.component-palette`'s `items`,
+        // `shell.properties-panel`'s `rows`, …).
+        if let Some(emissions) = ctx.tag_emissions_arc() {
+            scope = scope.with_tag_emissions((*emissions).clone());
+        }
 
         let nodes = lower_document_with_scope(&self.parsed, &scope);
         match collapse_to_single_root(nodes, node, style, ctx) {
@@ -682,6 +693,105 @@ fn component_palette_schema() -> Vec<FieldSpec> {
 
 fn dock_tab_bar_schema() -> Vec<FieldSpec> {
     vec![FieldSpec::text("tabs", "Tabs (JSON array)")]
+}
+
+/// Wave 11.3 — schema for the DSL-migrated `shell.field-editor`.
+/// Pairs with `state::property_row_from_spec`, which pre-computes
+/// the substrate fields (`data-value` / `options-joined` /
+/// `min-set` / `max-set` / `slider-fill-pct` / `drag-display-value` /
+/// `accept`) so the DSL block stays expression-light.
+fn field_editor_schema() -> Vec<FieldSpec> {
+    use prism_builder::registry::SelectOption;
+    vec![
+        FieldSpec::text("key", "Key"),
+        FieldSpec::text("label", "Label"),
+        FieldSpec::select(
+            "kind",
+            "Kind",
+            vec![
+                SelectOption::new("text", "Text"),
+                SelectOption::new("number", "Number"),
+                SelectOption::new("integer", "Integer"),
+                SelectOption::new("boolean", "Boolean"),
+                SelectOption::new("select", "Select"),
+                SelectOption::new("color", "Color"),
+                SelectOption::new("file", "File"),
+            ],
+        )
+        .with_default(Value::from("text")),
+        FieldSpec::text("value", "Value"),
+        FieldSpec::text("data-value", "Value (string projection)"),
+        FieldSpec::boolean("required", "Required").with_default(Value::Bool(false)),
+        FieldSpec::number("min", "Minimum", NumericBounds::default()),
+        FieldSpec::number("max", "Maximum", NumericBounds::default()),
+        FieldSpec::boolean("min-set", "Min is set").with_default(Value::Bool(false)),
+        FieldSpec::boolean("max-set", "Max is set").with_default(Value::Bool(false)),
+        FieldSpec::number("slider-fill-pct", "Slider fill %", NumericBounds::default())
+            .with_default(Value::from(0.0)),
+        FieldSpec::text("drag-display-value", "Drag pill display value")
+            .with_default(Value::String("0".into())),
+        FieldSpec::text("options", "Select options (JSON array of {value,label})"),
+        FieldSpec::text("options-joined", "Select option values (comma joined)"),
+        FieldSpec::text("accept", "Accept (file dialog filter)"),
+        FieldSpec::text("target-id", "Target node ID"),
+        FieldSpec::boolean("focused", "Currently focused").with_default(Value::Bool(false)),
+    ]
+}
+
+fn field_editor_signals() -> Vec<prism_builder::signal::SignalDef> {
+    use prism_builder::signal::SignalDef;
+    prism_builder::with_common_signals(vec![
+        SignalDef::new(
+            "field-edited",
+            "Edit committed (text/select/color/file/boolean) — payload (key, text).",
+        ),
+        SignalDef::new(
+            "field-edited-number",
+            "Numeric drag tick — payload (key, value).",
+        ),
+        SignalDef::new(
+            "file-browse-requested",
+            "User clicked the browse button on a `file`-kind row.",
+        ),
+    ])
+}
+
+/// Wave 11.3 — schema for `shell.dock-workspace`. The binding
+/// (`state::dock_workspace_props_with_catalog`) emits a single
+/// `dock` value — the recursively-enriched [`prism_dock::DockNode`]
+/// tree, with `panel-id` / `content-tag` / `tabs` pre-resolved on
+/// every TabGroup leaf via `enrich_dock_node`. `labels` / `tags`
+/// remain on the props bag as sidecars for any future direct
+/// reader; the DSL block today consumes only `dock`.
+fn dock_workspace_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("dock", "Active DockNode (JSON)"),
+        FieldSpec::text("labels", "Panel labels sidecar (JSON object)"),
+        FieldSpec::text("tags", "Panel content tags sidecar (JSON object)"),
+    ]
+}
+
+/// Wave 11.3 — schema for the recursive `shell.dock-node` helper.
+/// Accepts one DockNode at a time (Split or TabGroup, distinguished
+/// by `node.type`) and dispatches itself for child splits.
+fn dock_node_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("node", "Dock node (JSON)")]
+}
+
+/// Wave 11.3 — schema for `shell.dock-panel`. Mirrors the pre-
+/// migration Rust block exactly so the `dock_workspace` binding's
+/// `tag` → `content-tag` pre-resolution and `tabs` array forwarding
+/// stay byte-identical.
+fn dock_panel_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("panel-id", "Panel id"),
+        FieldSpec::text("title", "Panel title"),
+        FieldSpec::text("tabs", "Tabs (JSON array)"),
+        FieldSpec::text(
+            "content-tag",
+            "Routed content tag (pre-resolved by binding)",
+        ),
+    ]
 }
 
 fn schema_designer_schema() -> Vec<FieldSpec> {
@@ -1292,6 +1402,50 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
         include_str!("../../ui/components/dock-tab-bar.prism-ui"),
     )
     .schema(dock_tab_bar_schema),
+    // Wave 11.3 — Tier-2 migration of dock_panel.rs (the first of
+    // the four Rust survivors §11.3 documented). Tabs render via
+    // `shell.dock-tab-bar` (guarded by `if="{tabs}"`); content
+    // dispatches dynamically through `<dispatch component="{content-tag}"/>`
+    // with `<host-children>` taking precedence when the caller
+    // authored an explicit body.
+    PrismUiSpec::new(
+        "shell.dock-panel",
+        include_str!("../../ui/components/dock-panel.prism-ui"),
+    )
+    .schema(dock_panel_schema),
+    // Wave 11.3 — Tier-2 migration of dock_workspace.rs. The
+    // recursion lives in the sibling `shell.dock-node` helper
+    // (binary Split / TabGroup tree walk); this wrapper is the
+    // entry point the skeleton dispatches against. The binding
+    // (`state::dock_workspace_props_with_catalog`) pre-enriches
+    // every TabGroup leaf with `panel-id` / `content-tag` / `tabs`
+    // so the DSL never has to consult the dock catalog at lower
+    // time.
+    PrismUiSpec::new(
+        "shell.dock-workspace",
+        include_str!("../../ui/components/dock-workspace.prism-ui"),
+    )
+    .schema(dock_workspace_schema),
+    PrismUiSpec::new(
+        "shell.dock-node",
+        include_str!("../../ui/components/dock-node.prism-ui"),
+    )
+    .schema(dock_node_schema),
+    // Wave 11.3 — Tier-2 migration of field_editor.rs (the largest
+    // of the four Tier-2 Rust survivors §11.3 documented). The
+    // kind-dispatch table collapses to an `if`/`else-if` chain
+    // over `kind`; substrate fields (`data-value`, `options-joined`,
+    // `min-set`/`max-set`, `slider-fill-pct`, `drag-display-value`,
+    // `accept`) are pre-computed by `state::property_row_from_spec`
+    // so the DSL stays expression-light. Signals
+    // (`field-edited`/`field-edited-number`/`file-browse-requested`)
+    // round-trip through `field_editor_signals` for codegen.
+    PrismUiSpec::new(
+        "shell.field-editor",
+        include_str!("../../ui/components/field-editor.prism-ui"),
+    )
+    .schema(field_editor_schema)
+    .signals(field_editor_signals),
     // Wave 11.3 — Tier-2 migration of schema_designer.rs.
     PrismUiSpec::new(
         "shell.schema-designer",

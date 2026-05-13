@@ -34,6 +34,20 @@ pub fn dispatch_event(
     event: &Event,
     hit: Option<HitRect>,
 ) -> bool {
+    // Phase 8 open-Q resolution (`docs/dev/dioxus-inspiration.md`):
+    // every event is one logical transaction from the reactive graph's
+    // point of view. A pointer-down may fan through hit-routing, a
+    // signal cascade, a field-focus blur, and a property write all in
+    // one shot — wrap the whole dispatch in `ReactiveContext::batch` so
+    // every dependent `Effect` / `Memo` wakes exactly once per event.
+    prism_core::reactive::ReactiveContext::batch(|| dispatch_event_inner(inner, event, hit))
+}
+
+fn dispatch_event_inner(
+    inner: &Rc<RefCell<ShellInner>>,
+    event: &Event,
+    hit: Option<HitRect>,
+) -> bool {
     match event {
         Event::Resize { width, height } => {
             let mut guard = inner.borrow_mut();

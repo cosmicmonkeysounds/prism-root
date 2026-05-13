@@ -641,10 +641,19 @@ Phases 9–10 are dev-ergonomics and can land any time.
 
 ## 8. Open questions
 
-- **Async / `Resource`.** Deferred. The synchronous core needs
-  to land first; once it does, `Resource<T>` is `Memo<T>` + a
-  spawned future. Decide async runtime then (likely the existing
-  `tokio` workspace pin).
+- **Async / `Resource`.** ✅ landed 2026-05-13 (substrate layer).
+  `prism_core::reactive::Resource<T>` is a `Signal<ResourceState<T>>`
+  carrier (`Pending` / `Loading { last }` / `Ready(T)` /
+  `Errored { last, err }`) with `start_load` / `resolve` / `fail`
+  transitions. **Executor-agnostic** — `prism-core` stays leaf; hosts
+  drive resolution from `tokio`, `wasm-bindgen-futures`, or sync
+  block-on as they prefer. Loading carries the previous `Ready` value
+  forward via `last`, so spinner-over-stale-data UIs read the prior
+  snapshot through `last_known()` without distinguishing branches.
+  Subscribers wake on every lifecycle transition; selecting `is_ready`
+  / `is_loading` through a downstream `Memo` is the typical
+  derivation pattern. Pinned by `reactive::tests::resource_*` (5
+  tests).
 - **Send/Sync story.** Dioxus splits `UnsyncStorage` and
   `SyncStorage` in `generational-box`. Prism's shell is `!Send`
   by design (`ConfigModel`, `ActivityStore`); the daemon is

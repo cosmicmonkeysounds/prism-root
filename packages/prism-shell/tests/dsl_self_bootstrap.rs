@@ -341,11 +341,13 @@ fn register_component_queue_drains_into_shell_component_registry() {
     reg.register_component(ComponentRegistration {
         id: "e2e.card".into(),
         render_key: "e2e.scripts.card.render".into(),
+        ..Default::default()
     })
     .unwrap();
     reg.register_component(ComponentRegistration {
         id: "e2e.list".into(),
         render_key: "e2e.scripts.list.render".into(),
+        ..Default::default()
     })
     .unwrap();
     let mut registry = prism_shell::components::registry::ShellComponentRegistry::new();
@@ -388,6 +390,7 @@ fn luau_component_block_surfaces_in_render() {
     let block = LuauComponentBlock::new(ComponentRegistration {
         id: "e2e.surface".into(),
         render_key: "e2e.scripts.surface.render".into(),
+        ..Default::default()
     });
     let node = prism_builder::Node {
         id: "instance-1".into(),
@@ -1311,6 +1314,365 @@ script = "main.luau"
         // explicit else branch.
         let passed = svc.on_event(&Event::Wheel { dx: 0.0, dy: 0.0 }, &mut ctx, cmds);
         assert_eq!(passed, prism_shell::services::EventOutcome::Pass);
+    });
+}
+
+#[test]
+fn musica_main_luau_drives_full_render_chain() {
+    // End-to-end against the on-disk Musica artefacts. The script
+    // registers three `musica.*` components; the skeleton references
+    // each one with authored props. Shell::new boots the runtime,
+    // loads the script, and the render walk dispatches every
+    // component through the script's `render(props, _)` body. The
+    // resulting tree carries script-emitted attrs like
+    // `data-app="musica"` / `data-bpm="120"`, so the test asserts
+    // the chain ran by walking for those markers.
+    let manifests: &[(&str, &str)] = &[(
+        "musica",
+        r#"id = "musica"
+label = "Musica"
+
+[entry]
+skeleton = "shell.prism-ui"
+script = "main.luau"
+"#,
+    )];
+    let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf();
+    let real_skeleton =
+        std::fs::read_to_string(workspace_root.join("apps/musica/shell.prism-ui")).unwrap();
+    let real_script =
+        std::fs::read_to_string(workspace_root.join("apps/musica/main.luau")).unwrap();
+
+    with_apps_dir("musica_full_chain", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let dir = std::path::Path::new(&root).join("musica");
+        std::fs::write(dir.join("shell.prism-ui"), &real_skeleton).unwrap();
+        std::fs::write(dir.join("main.luau"), &real_script).unwrap();
+
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        {
+            let mut inner = shell.inner.borrow_mut();
+            inner.state.workspace.active_app = Some("musica".to_string());
+        }
+        let tree = shell.render();
+
+        fn walk_count_attr(
+            nodes: &[prism_ui_runtime::layout::Node],
+            attr_k: &str,
+            attr_v: &str,
+            count: &mut usize,
+        ) {
+            use prism_ui_runtime::layout::Node as UiNode;
+            for n in nodes {
+                if let UiNode::Container {
+                    props, children, ..
+                } = n
+                {
+                    for (k, v) in &props.semantic.attrs {
+                        if k == attr_k && v == attr_v {
+                            *count += 1;
+                            break;
+                        }
+                    }
+                    walk_count_attr(children, attr_k, attr_v, count);
+                }
+            }
+        }
+        let mut musica_hits = 0;
+        walk_count_attr(&tree, "data-app", "musica", &mut musica_hits);
+        assert!(
+            musica_hits >= 3,
+            "expected >=3 musica components in render tree, got {musica_hits}"
+        );
+
+        fn walk_seek(
+            nodes: &[prism_ui_runtime::layout::Node],
+            attr: &str,
+            value_prefix: &str,
+            seen: &mut bool,
+        ) {
+            use prism_ui_runtime::layout::Node as UiNode;
+            for n in nodes {
+                if *seen {
+                    return;
+                }
+                if let UiNode::Container {
+                    props, children, ..
+                } = n
+                {
+                    for (k, v) in &props.semantic.attrs {
+                        if k == attr && v.starts_with(value_prefix) {
+                            *seen = true;
+                            return;
+                        }
+                    }
+                    walk_seek(children, attr, value_prefix, seen);
+                }
+            }
+        }
+        let mut bpm_seen = false;
+        walk_seek(&tree, "data-bpm", "120", &mut bpm_seen);
+        assert!(
+            bpm_seen,
+            "expected data-bpm=120 from musica.transport render"
+        );
+    });
+}
+
+#[test]
+fn flux_main_luau_renders_nested_canvas_with_nodes() {
+    let manifests: &[(&str, &str)] = &[(
+        "flux",
+        r#"id = "flux"
+label = "Flux"
+
+[entry]
+skeleton = "shell.prism-ui"
+script = "main.luau"
+"#,
+    )];
+    let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf();
+    let real_skeleton =
+        std::fs::read_to_string(workspace_root.join("apps/flux/shell.prism-ui")).unwrap();
+    let real_script = std::fs::read_to_string(workspace_root.join("apps/flux/main.luau")).unwrap();
+
+    with_apps_dir("flux_full_chain", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let dir = std::path::Path::new(&root).join("flux");
+        std::fs::write(dir.join("shell.prism-ui"), &real_skeleton).unwrap();
+        std::fs::write(dir.join("main.luau"), &real_script).unwrap();
+
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        {
+            let mut inner = shell.inner.borrow_mut();
+            inner.state.workspace.active_app = Some("flux".to_string());
+        }
+        let tree = shell.render();
+
+        fn walk_for_attr_value(
+            nodes: &[prism_ui_runtime::layout::Node],
+            attr: &str,
+            value: &str,
+            seen: &mut bool,
+        ) {
+            use prism_ui_runtime::layout::Node as UiNode;
+            for n in nodes {
+                if *seen {
+                    return;
+                }
+                if let UiNode::Container {
+                    props, children, ..
+                } = n
+                {
+                    for (k, v) in &props.semantic.attrs {
+                        if k == attr && v == value {
+                            *seen = true;
+                            return;
+                        }
+                    }
+                    walk_for_attr_value(children, attr, value, seen);
+                }
+            }
+        }
+        let mut canvas_seen = false;
+        walk_for_attr_value(&tree, "data-block", "canvas", &mut canvas_seen);
+        assert!(canvas_seen, "expected flux.canvas to render");
+        let mut source_seen = false;
+        walk_for_attr_value(&tree, "data-kind", "source", &mut source_seen);
+        assert!(source_seen, "expected flux.node[kind=source] to render");
+        let mut sink_seen = false;
+        walk_for_attr_value(&tree, "data-kind", "sink", &mut sink_seen);
+        assert!(sink_seen, "expected flux.node[kind=sink] to render");
+    });
+}
+
+#[test]
+fn install_app_script_hot_swaps_render_body() {
+    // Persistent-Luau hot-reload: after Shell::new boots with one
+    // render body, a second `install_app_script` call against the
+    // same id swaps the retained closure. The next render walks
+    // the new body — proving the dev-loop file-watcher contract
+    // works end-to-end (re-run script → re-render with the swap).
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+skeleton = "shell.prism-ui"
+script = "main.luau"
+"#,
+    )];
+    with_apps_dir("hot_reload_swap", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let dir = std::path::Path::new(&root).join("lattice");
+        std::fs::write(dir.join("shell.prism-ui"), r#"<my.greet id="card-1"/>"#).unwrap();
+        std::fs::write(
+            dir.join("main.luau"),
+            r#"
+                prism.app:register_component({
+                    id = "my.greet",
+                    render = function(_p, _c)
+                        return prism.element("section",
+                            { ["data-v"] = "v1" },
+                            { "hello v1" })
+                    end,
+                })
+            "#,
+        )
+        .unwrap();
+
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        {
+            let mut inner = shell.inner.borrow_mut();
+            inner.state.workspace.active_app = Some("lattice".to_string());
+        }
+
+        // Initial render — v1 body.
+        let tree_v1 = shell.render();
+        fn walk_seek(
+            nodes: &[prism_ui_runtime::layout::Node],
+            attr: &str,
+            value: &str,
+            seen: &mut bool,
+        ) {
+            use prism_ui_runtime::layout::Node as UiNode;
+            for n in nodes {
+                if *seen {
+                    return;
+                }
+                if let UiNode::Container {
+                    props, children, ..
+                } = n
+                {
+                    for (k, v) in &props.semantic.attrs {
+                        if k == attr && v == value {
+                            *seen = true;
+                            return;
+                        }
+                    }
+                    walk_seek(children, attr, value, seen);
+                }
+            }
+        }
+        let mut v1_seen = false;
+        walk_seek(&tree_v1, "data-v", "v1", &mut v1_seen);
+        assert!(v1_seen, "expected initial v1 render");
+
+        // Hot-swap: install a new script body for the same id.
+        let v2_script = r#"
+            prism.app:register_component({
+                id = "my.greet",
+                render = function(_p, _c)
+                    return prism.element("section",
+                        { ["data-v"] = "v2" },
+                        { "hello v2" })
+                end,
+            })
+        "#;
+        shell
+            .install_app_script("lattice", v2_script)
+            .expect("install_app_script");
+
+        // Re-render — v2 body now in effect.
+        let tree_v2 = shell.render();
+        let mut v2_seen = false;
+        walk_seek(&tree_v2, "data-v", "v2", &mut v2_seen);
+        assert!(v2_seen, "expected v2 render after install_app_script");
+        // And v1 should be gone — the new closure replaced the old.
+        let mut v1_after = false;
+        walk_seek(&tree_v2, "data-v", "v1", &mut v1_after);
+        assert!(!v1_after, "expected v1 to be replaced, not coexist");
+    });
+}
+
+#[test]
+fn install_app_script_errors_surface_without_corrupting_state() {
+    // Hot-reload failure path: a script body with a syntax / runtime
+    // error must surface as Err and leave the prior registration
+    // intact. The next render still emits the v1 body.
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+skeleton = "shell.prism-ui"
+script = "main.luau"
+"#,
+    )];
+    with_apps_dir("hot_reload_err", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let dir = std::path::Path::new(&root).join("lattice");
+        std::fs::write(dir.join("shell.prism-ui"), r#"<my.greet id="card-1"/>"#).unwrap();
+        std::fs::write(
+            dir.join("main.luau"),
+            r#"
+                prism.app:register_component({
+                    id = "my.greet",
+                    render = function(_p, _c)
+                        return prism.element("section",
+                            { ["data-v"] = "v1" }, { "v1" })
+                    end,
+                })
+            "#,
+        )
+        .unwrap();
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        {
+            let mut inner = shell.inner.borrow_mut();
+            inner.state.workspace.active_app = Some("lattice".to_string());
+        }
+        // Broken script: missing `end`, ill-formed function.
+        let bad = r#"
+            prism.app:register_component({
+                id = "my.greet",
+                render = function(_p _c) return "broken" end,
+            })
+        "#;
+        let err = shell.install_app_script("lattice", bad).unwrap_err();
+        assert!(
+            !err.is_empty(),
+            "expected error message from failed install"
+        );
+        // Render still surfaces the v1 body.
+        let tree = shell.render();
+        fn walk_seek(
+            nodes: &[prism_ui_runtime::layout::Node],
+            attr: &str,
+            value: &str,
+            seen: &mut bool,
+        ) {
+            use prism_ui_runtime::layout::Node as UiNode;
+            for n in nodes {
+                if *seen {
+                    return;
+                }
+                if let UiNode::Container {
+                    props, children, ..
+                } = n
+                {
+                    for (k, v) in &props.semantic.attrs {
+                        if k == attr && v == value {
+                            *seen = true;
+                            return;
+                        }
+                    }
+                    walk_seek(children, attr, value, seen);
+                }
+            }
+        }
+        let mut v1_seen = false;
+        walk_seek(&tree, "data-v", "v1", &mut v1_seen);
+        assert!(v1_seen, "v1 must survive a failed install");
     });
 }
 

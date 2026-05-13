@@ -511,6 +511,61 @@ Each step lands with:
   (`luau_bindings::tests::registrar_handle_*` for `LuauCallbackStore`
   retention) → 2094 lib tests. prism-shell +3 integration tests →
   27 in `dsl_self_bootstrap`. prism-shell lib unchanged at 387.
+
+- 2026-05-13: **Persistent-Luau integration deepening.** Layers four
+  follow-ups on top of the persistent-Luau substrate.
+
+  1. **`prism.tokens` / `prism.shell_mode` / `prism.permission` in
+     the runtime.** `LuauRuntime::new` now installs the daemon-side
+     `PrismContext` field shape onto the shell-side runtime too:
+     scripts read `prism.tokens.colors.accent.r` /
+     `prism.shell_mode` / `prism.permission` for theme-aware
+     rendering. The new `new_with_tokens(registrar, tokens,
+     shell_mode, permission)` variant lets hosts pass non-default
+     values; `Shell::new` will switch over once it carries those
+     values explicitly (today the runtime is created via the
+     default-tokens constructor).
+  2. **Schema declarations from scripts.** `ComponentRegistration`
+     gained a `schema: Vec<FieldSpec>` field (default empty).
+     Lua-side, `register_component({ schema = { … } })` parses a
+     list of `{key, label, kind, default, ...}` tables via a new
+     `field_spec_from_table` helper covering text/textarea/number/
+     integer/boolean/select/color/file/date/date-time/duration/
+     currency. `LuauComponentBlock::schema()` returns the parsed
+     list verbatim, so the shell's property panel paints
+     script-declared fields end-to-end.
+  3. **Real Musica + Flux scripts.** `apps/musica/main.luau`
+     registers `musica.transport` / `musica.timeline` /
+     `musica.mixer` components with schemas + theme-aware
+     `data-accent` attrs, plus a `musica.transport-svc` that
+     handles Spacebar through `on_event`. `apps/flux/main.luau`
+     registers `flux.canvas` + `flux.node` with a selectable
+     `kind` (source/transform/sink) and a stub
+     `flux.canvas-svc`. Both manifests opt in via
+     `[entry] script = "main.luau"`. Skeletons now reference the
+     scripted tags directly; the dock workspace falls beneath the
+     scripted body (rather than wrapping it) because
+     `<shell.dock-workspace>` doesn't render skeleton-authored
+     children.
+  4. **Hot-reload via `Shell::install_app_script(id, source)`.**
+     Re-runs the script against the long-lived `Lua` state,
+     drains the registrar's component queue with replace semantics
+     (`ShellComponentRegistry::register_or_replace`), and refreshes
+     the tag resolver so newly-introduced tags become dispatchable
+     mid-process. Service registrations re-flow through the
+     factory path. Frame is marked dirty when the affected app is
+     active. Failed scripts surface as `Err(String)` and leave the
+     prior registry intact — the dev-loop watcher just logs +
+     keeps serving the last good build.
+
+  **Test deltas:** prism-core +1 (`luau_runtime::tests::new_exposes_design_tokens_shell_mode_permission`)
+  +1 (`luau_bindings::tests::registrar_handle_register_component_parses_schema`)
+  → 2101 lib tests. prism-shell +4 integration tests
+  (`musica_main_luau_drives_full_render_chain`,
+  `flux_main_luau_renders_nested_canvas_with_nodes`,
+  `install_app_script_hot_swaps_render_body`,
+  `install_app_script_errors_surface_without_corrupting_state`)
+  → 31 in `dsl_self_bootstrap`.
 - 2026-05-13: **All four loops landed.** Final shape:
   - **Loop 1** — `prism_core::AppManifest` (TOML, 5 tests),
     `prism_shell::app_loader::discover` (4 tests),

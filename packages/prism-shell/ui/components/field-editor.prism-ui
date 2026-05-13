@@ -1,0 +1,239 @@
+<!--
+  shell.field-editor — kind-driven property-row used by every
+  property panel that edits a single value. Wave 11.3 migration of
+  field_editor.rs (the largest of the four Tier-2 Rust survivors
+  §11.3 documented).
+
+  The migration depends on `state::property_row_from_spec`
+  pre-computing the DSL-friendly substrate the legacy Rust block
+  computed inline:
+   * `data-value`          — string projection of `value` for hit
+                              routing (Wave 2.5 already populated
+                              it for color swatches).
+   * `options-joined`      — comma-joined select option values.
+   * `min-set` / `max-set` — booleans the `if=` predicates test.
+   * `slider-fill-pct`     — clamped 0..100 fraction for the
+                              optional number-row track.
+   * `drag-display-value`  — pre-formatted number string.
+   * `accept`              — comma-joined accept list for the
+                              file-kind browse dialog.
+
+  Kind dispatch: a single `<container>` wraps a label + the
+  kind-specific body. The body's seven branches are guarded by
+  `if=` / `else-if=` / `else` against `kind` so the DSL never
+  needs a runtime variant-match (the Rust block's `KIND_TABLE`
+  becomes one expression cascade).
+-->
+<container
+    tag="div"
+    direction="column"
+    gap="4"
+    padding-left="4"
+    padding-right="4"
+    padding-top="6"
+    padding-bottom="6"
+    style:radius="4"
+    style:background:hovered="#0a000000"
+    role="{kind == 'select' ? 'group' : kind == 'boolean' ? 'group' : 'group'}"
+    data:role="field-edit"
+    data:key="{key}"
+    data:kind="{kind}"
+    data:target-id="{target-id}"
+    data:value="{data-value}"
+    data:options="{options-joined}"
+    data:min="{min-set ? min : ''}"
+    data:max="{max-set ? max : ''}"
+    data:focused="{focused ? 'true' : ''}">
+  <!-- Label — Wave 1 inspector authored the `*` suffix for
+       required-marked fields. Empty label suppresses the line. -->
+  <text
+      if="{label}"
+      font-size="12">{label}{required ? ' *' : ''}</text>
+
+  <!-- ── boolean: track + thumb switch ───────────────────────── -->
+  <container
+      if="{kind == 'boolean'}"
+      tag="input"
+      direction="row"
+      width="36"
+      height="18"
+      style:radius="9"
+      style:background="{data-value == 'true' ? '#336699' : '#33000000'}"
+      padding-left="{data-value == 'true' ? 20 : 2}"
+      padding-right="0"
+      padding-top="2"
+      padding-bottom="2"
+      data:type="checkbox"
+      data:checked="{data-value == 'true' ? 'checked' : ''}">
+    <container
+        width="14"
+        height="14"
+        style:radius="7"
+        style:background="#ffffff"/>
+  </container>
+
+  <!-- ── select: pill with chevron + click-to-cycle ──────────── -->
+  <container
+      else-if="{kind == 'select'}"
+      tag="button"
+      height="28"
+      style:radius="4"
+      style:background="#08000000"
+      style:background:hovered="#14000000"
+      data:type="button">
+    <container
+        direction="row"
+        gap="6"
+        padding-left="8"
+        padding-right="8"
+        padding-top="0"
+        padding-bottom="0"
+        height="grow">
+      <container width="grow" height="grow">
+        <text font-size="12" style:color="#000000">{data-value}</text>
+      </container>
+      <image
+          src="icons/chevron-left.svg"
+          width="10"
+          height="10"/>
+    </container>
+  </container>
+
+  <!-- ── color: swatch + hex input ────────────────────────────── -->
+  <container
+      else-if="{kind == 'color'}"
+      direction="row"
+      gap="6"
+      height="28">
+    <container
+        id="{id}::swatch"
+        tag="button"
+        width="28"
+        height="28"
+        style:radius="4"
+        style:background="{data-value}"
+        data:type="button"
+        data:role="color-swatch"
+        data:target-id="{target-id}"
+        data:key="{key}"
+        data:value="{data-value}"/>
+    <input
+        id="{id}::hex"
+        value="{data-value}"
+        placeholder="#000000"
+        width="grow"
+        height="28"
+        font-size="12"/>
+  </container>
+
+  <!-- ── file: text input + Browse button ────────────────────── -->
+  <container
+      else-if="{kind == 'file'}"
+      direction="row"
+      gap="6"
+      height="28">
+    <input
+        id="{id}::input"
+        value="{data-value}"
+        placeholder=""
+        width="grow"
+        height="28"
+        font-size="12"
+        data:focused="{focused ? 'true' : ''}"/>
+    <container
+        id="{id}::browse"
+        tag="button"
+        direction="row"
+        height="28"
+        padding-left="10"
+        padding-right="10"
+        padding-top="0"
+        padding-bottom="0"
+        style:radius="4"
+        style:background="#08000000"
+        style:background:hovered="#14000000"
+        data:type="button"
+        data:role="file-browse"
+        data:target-id="{target-id}"
+        data:key="{key}"
+        data:accept="{accept}">
+      <text font-size="12" style:color="#000000">Browse…</text>
+    </container>
+  </container>
+
+  <!-- ── number / integer with bounds: drag pill + slider ────── -->
+  <container
+      else-if="{(kind == 'number' || kind == 'integer') && min-set && max-set}"
+      direction="row"
+      gap="8"
+      height="28">
+    <!-- Drag-number pill. Empty container ids so its hit rect
+         doesn't shadow the outer field-edit row in hit-testing
+         (the legacy Rust chrome held the same rule). -->
+    <container
+        height="28"
+        style:radius="4"
+        style:background="#28000000"
+        style:background:hovered="#3c000000"
+        tag="label"
+        data:key="{key}">
+      <container
+          direction="row"
+          gap="4"
+          padding-left="6"
+          padding-right="6"
+          padding-top="0"
+          padding-bottom="0"
+          height="grow">
+        <text font-size="12" style:color="#000000">{drag-display-value}</text>
+      </container>
+    </container>
+    <!-- Slider track — readout only today; pointer-drag wiring
+         lands alongside the `prism.drag-scrub` primitive body. -->
+    <container
+        direction="row"
+        width="grow"
+        height="4"
+        style:radius="2"
+        style:background="#1f000000"
+        data:role="slider-track">
+      <container
+          width="{slider-fill-pct}%"
+          height="grow"
+          style:radius="2"
+          style:background="#0060c0"/>
+    </container>
+  </container>
+
+  <!-- ── number / integer without bounds: drag pill only ─────── -->
+  <container
+      else-if="{kind == 'number' || kind == 'integer'}"
+      height="28"
+      style:radius="4"
+      style:background="#28000000"
+      style:background:hovered="#3c000000"
+      tag="label"
+      data:key="{key}">
+    <container
+        direction="row"
+        gap="4"
+        padding-left="6"
+        padding-right="6"
+        padding-top="0"
+        padding-bottom="0"
+        height="grow">
+      <text font-size="12" style:color="#000000">{drag-display-value}</text>
+    </container>
+  </container>
+
+  <!-- ── text / textarea / unknown kind: text input fallback ─── -->
+  <input
+      else
+      id="{id}::input"
+      value="{data-value}"
+      placeholder=""
+      width="grow"
+      height="28"
+      font-size="12"
+      data:focused="{focused ? 'true' : ''}"/>
+</container>

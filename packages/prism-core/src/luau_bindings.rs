@@ -856,7 +856,161 @@ fn component_from_table(
             }
         }
     };
-    Ok(crate::app_registry::ComponentRegistration { id, render_key })
+    // Optional `schema = { {key=..., label=..., kind=..., ...}, ... }`
+    // entry. Empty or missing → empty schema (placeholder body remains).
+    // Each entry is a flat dict mirroring the shape of `FieldSpec` so
+    // hand-authoring stays terse.
+    let schema: Vec<crate::widget::field::FieldSpec> =
+        match t.get::<Option<mlua::Table>>("schema")? {
+            Some(arr) => {
+                let mut out = Vec::new();
+                for pair in arr.sequence_values::<mlua::Table>() {
+                    out.push(field_spec_from_table(pair?)?);
+                }
+                out
+            }
+            None => Vec::new(),
+        };
+    Ok(crate::app_registry::ComponentRegistration {
+        id,
+        render_key,
+        schema,
+    })
+}
+
+/// Decode a single Lua schema-entry table into a [`FieldSpec`]. The
+/// grammar is intentionally close to the Rust constructor surface:
+///
+/// ```lua
+/// { key = "title", label = "Title", kind = "text", default = "Hi" }
+/// { key = "level", label = "Level", kind = "integer", min = 1, max = 6 }
+/// { key = "mode",  label = "Mode",  kind = "select",
+///   options = { { value = "draft", label = "Draft" }, ... } }
+/// ```
+///
+/// `kind` is a kebab-case string matching the [`FieldKind`] variants
+/// (text, textarea, number, integer, boolean, select, color, file,
+/// date, date-time, duration, currency). `default`, `required`,
+/// `help`, `group` are optional and apply to every kind.
+fn field_spec_from_table(t: mlua::Table) -> mlua::Result<crate::widget::field::FieldSpec> {
+    use crate::widget::field::{
+        FieldKind, FieldSpec, FileFieldConfig, NumericBounds, SelectOption,
+    };
+    let key: String = t
+        .get::<Option<String>>("key")?
+        .ok_or_else(|| mlua::Error::external("schema field: missing `key`"))?;
+    let label: String = t
+        .get::<Option<String>>("label")?
+        .unwrap_or_else(|| key.clone());
+    let kind_tag: String = t
+        .get::<Option<String>>("kind")?
+        .unwrap_or_else(|| "text".to_string());
+    let kind = match kind_tag.as_str() {
+        "text" => FieldKind::Text,
+        "textarea" => FieldKind::TextArea,
+        "number" => {
+            let min = t.get::<Option<f64>>("min")?;
+            let max = t.get::<Option<f64>>("max")?;
+            FieldKind::Number(NumericBounds { min, max })
+        }
+        "integer" => {
+            let min = t.get::<Option<f64>>("min")?;
+            let max = t.get::<Option<f64>>("max")?;
+            FieldKind::Integer(NumericBounds { min, max })
+        }
+        "boolean" => FieldKind::Boolean,
+        "select" => {
+            let opts_tbl: Option<mlua::Table> = t.get("options")?;
+            let mut opts = Vec::new();
+            if let Some(tbl) = opts_tbl {
+                for pair in tbl.sequence_values::<mlua::Table>() {
+                    let p = pair?;
+                    let v: String = p
+                        .get::<Option<String>>("value")?
+                        .ok_or_else(|| mlua::Error::external("select option: missing `value`"))?;
+                    let l: String = p
+                        .get::<Option<String>>("label")?
+                        .unwrap_or_else(|| v.clone());
+                    opts.push(SelectOption::new(v, l));
+                }
+            }
+            FieldKind::Select(opts)
+        }
+        "color" => FieldKind::Color,
+        "file" => {
+            let accept: Vec<String> = t.get::<Option<Vec<String>>>("accept")?.unwrap_or_default();
+            FieldKind::File(FileFieldConfig { accept })
+        }
+        "date" => FieldKind::Date,
+        "date-time" | "datetime" => FieldKind::DateTime,
+        "duration" => FieldKind::Duration,
+        "currency" => {
+            let code: Option<String> = t.get::<Option<String>>("currency_code")?;
+            FieldKind::Currency {
+                currency_code: code,
+            }
+        }
+        other => {
+            return Err(mlua::Error::external(format!(
+                "schema field `{key}`: unsupported kind `{other}`"
+            )));
+        }
+    };
+    let mut spec = FieldSpec::new(&key, &label, kind);
+    if let Some(d) = t.get::<Option<mlua::Value>>("default")? {
+        if !matches!(d, mlua::Value::Nil) {
+            spec.default = lua_value_to_json(d)?;
+        }
+    }
+    if let Some(req) = t.get::<Option<bool>>("required")? {
+        spec.required = req;
+    }
+    if let Some(h) = t.get::<Option<String>>("help")? {
+        spec.help = Some(h);
+    }
+    if let Some(g) = t.get::<Option<String>>("group")? {
+        spec.group = Some(g);
+    }
+    Ok(spec)
+}
+
+/// Trivial Lua → JSON shim used by the schema decoder. The `mlua`
+/// crate's serde bridge would also work but requires an `&Lua`
+/// reference; this stays plain.
+fn lua_value_to_json(v: mlua::Value) -> mlua::Result<serde_json::Value> {
+    match v {
+        mlua::Value::Nil => Ok(serde_json::Value::Null),
+        mlua::Value::Boolean(b) => Ok(serde_json::Value::Bool(b)),
+        mlua::Value::Integer(i) => Ok(serde_json::Value::Number(i.into())),
+        mlua::Value::Number(n) => Ok(serde_json::Number::from_f64(n)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null)),
+        mlua::Value::String(s) => Ok(serde_json::Value::String(s.to_str()?.to_string())),
+        mlua::Value::Table(t) => {
+            // Lua tables can be either array-shaped or dict-shaped.
+            // Use the sequence-length heuristic mlua's own serde
+            // bridge uses elsewhere.
+            let len = t.raw_len();
+            if len > 0 {
+                let mut arr = Vec::with_capacity(len);
+                for i in 1..=len {
+                    let elem: mlua::Value = t.raw_get(i)?;
+                    arr.push(lua_value_to_json(elem)?);
+                }
+                Ok(serde_json::Value::Array(arr))
+            } else {
+                let mut obj = serde_json::Map::new();
+                for pair in t.pairs::<String, mlua::Value>() {
+                    let (k, val) = pair?;
+                    obj.insert(k, lua_value_to_json(val)?);
+                }
+                Ok(serde_json::Value::Object(obj))
+            }
+        }
+        other => Err(mlua::Error::external(format!(
+            "cannot serialise lua value to JSON: {other:?}"
+        ))),
+    }
 }
 
 fn service_from_table(t: &mlua::Table) -> mlua::Result<crate::app_registry::ServiceRegistration> {
@@ -1232,6 +1386,70 @@ mod tests {
             .exec()
             .unwrap();
         assert_eq!(rec.components.lock().unwrap()[0].render_key, "custom.key");
+    }
+
+    #[test]
+    fn registrar_handle_register_component_parses_schema() {
+        // Scripts declare a property-panel schema via a `schema = {...}`
+        // list of `{key, label, kind, default, ...}` tables. The
+        // registrar receives the list as `Vec<FieldSpec>` ready for the
+        // shell's property panel to walk.
+        use crate::widget::field::FieldKind;
+        let rec = std::sync::Arc::new(RecordingRegistrar::default());
+        let handle = RegistrarHandle::new(rec.clone() as std::sync::Arc<dyn crate::AppRegistrar>);
+        let lua = Lua::new();
+        lua.globals().set("app", handle).unwrap();
+        lua.load(
+            r#"
+                app:register_component({
+                    id = "my.card",
+                    render_key = "my.card.render",
+                    schema = {
+                        { key = "title", label = "Title", kind = "text", default = "Untitled" },
+                        { key = "level", label = "Level", kind = "integer", min = 1, max = 6, default = 1 },
+                        { key = "color", label = "Color", kind = "color" },
+                        { key = "mode",  label = "Mode",  kind = "select",
+                          options = {
+                              { value = "draft", label = "Draft" },
+                              { value = "live",  label = "Live"  },
+                          } },
+                    },
+                })
+            "#,
+        )
+        .exec()
+        .unwrap();
+        let comps = rec.components.lock().unwrap();
+        assert_eq!(comps.len(), 1);
+        let schema = &comps[0].schema;
+        assert_eq!(schema.len(), 4);
+        // Title — text + default.
+        assert_eq!(schema[0].key, "title");
+        assert!(matches!(schema[0].kind, FieldKind::Text));
+        assert_eq!(schema[0].default.as_str(), Some("Untitled"));
+        // Level — integer + bounds + default.
+        assert_eq!(schema[1].key, "level");
+        match &schema[1].kind {
+            FieldKind::Integer(b) => {
+                assert_eq!(b.min, Some(1.0));
+                assert_eq!(b.max, Some(6.0));
+            }
+            other => panic!("expected Integer kind, got {other:?}"),
+        }
+        assert_eq!(schema[1].default.as_i64(), Some(1));
+        // Color.
+        assert_eq!(schema[2].key, "color");
+        assert!(matches!(schema[2].kind, FieldKind::Color));
+        // Select — option list survives.
+        assert_eq!(schema[3].key, "mode");
+        match &schema[3].kind {
+            FieldKind::Select(opts) => {
+                assert_eq!(opts.len(), 2);
+                assert_eq!(opts[0].value, "draft");
+                assert_eq!(opts[1].label, "Live");
+            }
+            other => panic!("expected Select kind, got {other:?}"),
+        }
     }
 
     #[test]

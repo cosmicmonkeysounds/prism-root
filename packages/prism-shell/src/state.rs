@@ -1267,6 +1267,18 @@ fn property_row_from_spec(
         .get(&spec.key)
         .cloned()
         .unwrap_or_else(|| spec.default.clone());
+    // Wave 11.3 — pre-compute `data-value` (the string projection of
+    // `value` the hit-test router reads as `data-value`) so the DSL
+    // field-editor block doesn't need a runtime variant-match. The
+    // old `prop_str` in the Rust block only handled `Value::String`;
+    // surfacing the projection here means a `Number(8)` prop shows
+    // up as `"8"` for `data-value` consistently across every kind.
+    let data_value = match &value {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        _ => String::new(),
+    };
     let mut row_props = json!({
         "key": spec.key,
         "label": spec.label,
@@ -1274,11 +1286,27 @@ fn property_row_from_spec(
         "value": value,
         "required": spec.required,
         "target-id": target_id,
+        "data-value": data_value,
     });
     // Kind-specific extensions: select carries its options so the
     // click-to-cycle path (`handle_field_edit_click`) can step through
     // them without re-resolving the spec; number / integer carry their
     // bounds so the +/- step clamps at the schema-declared range.
+    //
+    // Wave 11.3 — also pre-compute the DSL-side substrate the
+    // `shell.field-editor` block reads at lower time:
+    // - `options-joined`: comma-joined option values (the
+    //   `data-options` attr the select-cycle router reads).
+    // - `min-set` / `max-set`: booleans the DSL's `if=` predicate
+    //   tests without null-comparison expressions.
+    // - `slider-fill-pct`: clamped 0..100 fraction; the slider
+    //   track's filled rect reads it as a `width="{slider-fill-pct}%"`.
+    // - `drag-display-value`: the same `format_drag_value` shape
+    //   the legacy `chrome::drag_number_field_node` emitted, so
+    //   the DSL surface stays byte-identical to the migrated Rust
+    //   block.
+    // - `accept-joined`: comma-joined accept list for file-kind
+    //   browse dialogs (matches `<input accept="…">` shape).
     match &spec.kind {
         FieldKind::Select(options) => {
             row_props["options"] = Value::Array(
@@ -1287,6 +1315,12 @@ fn property_row_from_spec(
                     .map(|o| json!({ "value": o.value, "label": o.label }))
                     .collect(),
             );
+            let joined = options
+                .iter()
+                .map(|o| o.value.clone())
+                .collect::<Vec<_>>()
+                .join(",");
+            row_props["options-joined"] = json!(joined);
         }
         FieldKind::Number(bounds) | FieldKind::Integer(bounds) => {
             if let Some(min) = bounds.min {
@@ -1295,12 +1329,49 @@ fn property_row_from_spec(
             if let Some(max) = bounds.max {
                 row_props["max"] = json!(max);
             }
+            let min_set = bounds.min.is_some();
+            let max_set = bounds.max.is_some();
+            row_props["min-set"] = json!(min_set);
+            row_props["max-set"] = json!(max_set);
+            let raw = value
+                .as_f64()
+                .or_else(|| value.as_str().and_then(|s| s.parse().ok()))
+                .unwrap_or(0.0);
+            row_props["drag-display-value"] = json!(format_drag_value(raw));
+            if let (Some(mn), Some(mx)) = (bounds.min, bounds.max) {
+                if mx > mn {
+                    let pct = ((raw - mn) / (mx - mn)).clamp(0.0, 1.0) * 100.0;
+                    row_props["slider-fill-pct"] = json!(pct);
+                }
+            }
+        }
+        FieldKind::File(cfg) => {
+            if !cfg.accept.is_empty() {
+                row_props["accept"] = json!(cfg.accept.join(","));
+            }
         }
         _ => {}
     }
     PropertyRow {
         component: "shell.field-editor".into(),
         props: row_props,
+    }
+}
+
+/// Wave 11.3 — `chrome::format_drag_value` lifted out of the
+/// `chrome` module so `property_row_from_spec` can pre-compute
+/// `drag-display-value` without the field-editor migration
+/// leaving a Rust-only consumer behind. Rounds to two decimal
+/// places, trims trailing zeros and a trailing decimal point so
+/// integers render as `"3"` rather than `"3.00"`.
+fn format_drag_value(v: f64) -> String {
+    let rounded = (v * 100.0).round() / 100.0;
+    let raw = format!("{rounded:.2}");
+    let trimmed = raw.trim_end_matches('0').trim_end_matches('.');
+    if trimmed.is_empty() {
+        "0".into()
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -1656,7 +1727,15 @@ impl WorkspaceSlot {
     /// workflow page (or customising the dock layout) automatically
     /// flows through this method on the next frame.
     pub fn dock_workspace_props(&self) -> Value {
-        json!({ "dock": self.workspace.active_dock().root })
+        // Wave 11.3 — emit the same enriched shape the catalog
+        // variant produces, just with empty `content-tag` /
+        // `tabs` placeholders. Keeping a single JSON shape on
+        // both paths means the DSL `shell.dock-node` block reads
+        // identical fields whether a catalog is wired or not
+        // (headless tests run through this no-catalog path).
+        let enriched =
+            enrich_dock_node(&self.workspace.active_dock().root, &DockCatalog::default());
+        json!({ "dock": enriched })
     }
 
     /// Catalog-enriched variant: emits the same `dock` tree plus two
@@ -1666,10 +1745,11 @@ impl WorkspaceSlot {
     /// panels surface in the dock with no further plumbing. See
     /// `docs/dev/dsl-self-bootstrap.md` Loop 2 / Loop 4.
     pub fn dock_workspace_props_with_catalog(&self, catalog: &DockCatalog) -> Value {
-        let dock = json!(self.workspace.active_dock().root);
+        let root = &self.workspace.active_dock().root;
+        let enriched = enrich_dock_node(root, catalog);
         let mut labels = serde_json::Map::new();
         let mut tags = serde_json::Map::new();
-        for panel_id in collect_panel_ids(&self.workspace.active_dock().root) {
+        for panel_id in collect_panel_ids(root) {
             if let Some(p) = catalog.get(&panel_id) {
                 labels.insert(panel_id.clone(), Value::String(p.label.to_string()));
                 if let Some(t) = p.tag {
@@ -1677,7 +1757,7 @@ impl WorkspaceSlot {
                 }
             }
         }
-        json!({ "dock": dock, "labels": labels, "tags": tags })
+        json!({ "dock": enriched, "labels": labels, "tags": tags })
     }
 
     /// Tab list shape consumed by both `shell.menu-bar-row` and
@@ -1719,6 +1799,71 @@ impl WorkspaceSlot {
                 })
                 .collect(),
         )
+    }
+}
+
+/// Wave 11.3 — recursive enrichment of a `DockNode` JSON shape with
+/// the pre-resolved fields the DSL `shell.dock-node` block consumes:
+/// for every `TabGroup` leaf we add `panel-id` (active tab),
+/// `content-tag` (catalog lookup), and `tabs` (label-annotated tab
+/// row for multi-tab groups). Splits round-trip with their existing
+/// `axis` / `ratio` / `first` / `second` fields. Without this
+/// enrichment the DSL block would need array-indexing
+/// (`node.tabs[node.active]`) and per-frame catalog lookups, neither
+/// of which is in scope for the runtime's expression evaluator.
+fn enrich_dock_node(node: &DockNode, catalog: &DockCatalog) -> Value {
+    match node {
+        DockNode::Split {
+            axis,
+            ratio,
+            first,
+            second,
+        } => json!({
+            "type": "split",
+            "axis": match axis {
+                prism_dock::Axis::Horizontal => "horizontal",
+                prism_dock::Axis::Vertical => "vertical",
+            },
+            "ratio": ratio,
+            "first": enrich_dock_node(first, catalog),
+            "second": enrich_dock_node(second, catalog),
+        }),
+        DockNode::TabGroup { tabs, active } => {
+            let active_idx = *active;
+            let panel_id = tabs
+                .get(active_idx)
+                .cloned()
+                .unwrap_or_else(|| tabs.first().cloned().unwrap_or_default());
+            let content_tag = catalog
+                .get(&panel_id)
+                .and_then(|p| p.tag)
+                .map(str::to_string)
+                .unwrap_or_default();
+            let tab_entries = if tabs.len() > 1 {
+                tabs.iter()
+                    .enumerate()
+                    .map(|(i, t)| {
+                        let label = catalog
+                            .get(t)
+                            .map(|p| p.label.to_string())
+                            .unwrap_or_else(|| t.clone());
+                        json!({
+                            "tab-id": t,
+                            "label": label,
+                            "active": i == active_idx,
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            json!({
+                "type": "tab-group",
+                "panel-id": panel_id,
+                "content-tag": content_tag,
+                "tabs": tab_entries,
+            })
+        }
     }
 }
 

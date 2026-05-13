@@ -45,6 +45,13 @@ impl ShellService for SignalsService {
 /// The single dispatch entry. `pointer-down`, `clicked`, etc. all
 /// route through here. Returns the number of connections fired —
 /// callers ignore unless they specifically care.
+///
+/// Wraps the full cascade (and any recursive `EmitSignal` fan-out) in
+/// [`prism_core::reactive::ReactiveContext::batch`] so an authored
+/// chain that writes to several props or fires several downstream
+/// connections wakes each dependent reactive scope **once** at the end
+/// of the cascade, not once per write. Nested `fire_signal` calls
+/// inherit the outer batch; the outermost call drains.
 pub fn fire_signal(
     ctx: &mut MutCtx<'_>,
     source_node: &str,
@@ -55,20 +62,22 @@ pub fn fire_signal(
     if depth >= MAX_CASCADE_DEPTH {
         return 0;
     }
-    let connections: Vec<_> = ctx
-        .state
-        .canvas
-        .document
-        .connections
-        .iter()
-        .filter(|c| c.source_node == source_node && c.signal == signal)
-        .cloned()
-        .collect();
-    let n = connections.len();
-    for c in connections {
-        apply_action(ctx, &c, payload, depth + 1);
-    }
-    n
+    prism_core::reactive::ReactiveContext::batch(|| {
+        let connections: Vec<_> = ctx
+            .state
+            .canvas
+            .document
+            .connections
+            .iter()
+            .filter(|c| c.source_node == source_node && c.signal == signal)
+            .cloned()
+            .collect();
+        let n = connections.len();
+        for c in connections {
+            apply_action(ctx, &c, payload, depth + 1);
+        }
+        n
+    })
 }
 
 fn apply_action(

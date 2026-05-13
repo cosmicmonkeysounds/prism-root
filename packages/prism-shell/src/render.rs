@@ -732,7 +732,12 @@ mod tests {
         let skel = host.with_app_body(&default_app_skeleton());
         let bindings = ShellPropBindings::with_builtins();
         let mut reg = ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("register");
+        // Wave 11.3 — the dock-workspace / dock-panel / field-editor
+        // migrations moved every chrome block into the DSL registry.
+        // The test runs through the resolver, so it has to register
+        // the full chrome (native + DSL) instead of just the native
+        // `SHELL_BUILTINS` table.
+        crate::components::registry::register_full_shell_chrome(&mut reg).expect("register");
         let resolver = reg.tag_resolver();
         let state = AppState::default();
 

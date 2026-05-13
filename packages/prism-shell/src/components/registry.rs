@@ -54,6 +54,17 @@ impl ShellComponentRegistry {
         self.inner.register(block as Arc<dyn Component>)
     }
 
+    /// Hot-reload variant: overwrite any prior registration under the
+    /// block's id. Used by `Shell::install_app_script` so re-running a
+    /// `main.luau` against the same persistent runtime replaces the
+    /// previous render handler without erroring on duplicate id.
+    pub fn register_or_replace<T: Block + 'static>(
+        &mut self,
+        block: Arc<T>,
+    ) -> Option<Arc<dyn Component>> {
+        self.inner.register_or_replace(block as Arc<dyn Component>)
+    }
+
     pub fn get(&self, id: &str) -> Option<Arc<dyn Component>> {
         self.inner.get(id)
     }
@@ -117,9 +128,22 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     // `register_prism_ui_components` in `shell.rs`. The
     // `prism_ui_specs_register_disjoint_from_native_builtins` test in
     // `prism_ui_loader.rs` pins that they don't double-register.
-    &super::field_editor::FIELD_EDITOR_SPEC,
-    &super::dock_panel::DOCK_PANEL_SPEC,
-    &super::dock_workspace::DOCK_WORKSPACE_SPEC,
+    // `shell.field-editor` migrated to DSL 2026-05-13 (Wave 11.3) —
+    // see `SHELL_PRISM_UI_COMPONENTS` in `prism_ui_loader.rs`.
+    // `state::property_row_from_spec` pre-computes the substrate
+    // fields the DSL block reads (`data-value` / `options-joined` /
+    // `min-set` / `max-set` / `slider-fill-pct` /
+    // `drag-display-value` / `accept`); `chrome.rs`'s last consumer
+    // dropped with the migration.
+    // `shell.dock-panel` migrated to DSL 2026-05-13 (Wave 11.3) —
+    // see `SHELL_PRISM_UI_COMPONENTS` in `prism_ui_loader.rs`.
+    // `shell.dock-workspace` migrated to DSL 2026-05-13 (Wave 11.3)
+    // alongside its new recursive `shell.dock-node` helper. The
+    // binding (`state::dock_workspace_props_with_catalog`) pre-
+    // enriches every TabGroup leaf with `panel-id` /
+    // `content-tag` / `tabs`, so the DSL block does no catalog
+    // lookups and walks the tree via resolver self-dispatch on
+    // `shell.dock-node`.
     &super::nav_graph::NAV_GRAPH_SPEC,
     &super::code_editor::CODE_EDITOR_SPEC,
     &super::builder_canvas::BUILDER_CANVAS_SPEC,

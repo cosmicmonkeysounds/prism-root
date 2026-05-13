@@ -62,6 +62,13 @@ pub struct ComponentRegistration {
     /// impl — typically a Luau-script-registered render-fn id.
     #[serde(default)]
     pub render_key: String,
+    /// Declared schema. The property panel walks these to paint a
+    /// field editor per entry. Empty by default — scripts opt in by
+    /// passing a `schema = {...}` table to `register_component`. The
+    /// table grammar mirrors [`crate::widget::field::FieldSpec`]
+    /// exactly (key/label/kind/default/required/help/group).
+    #[serde(default)]
+    pub schema: Vec<crate::widget::field::FieldSpec>,
 }
 
 /// One service an app contributes to the shell's service registry.
@@ -156,6 +163,7 @@ mod tests {
         reg.register_component(ComponentRegistration {
             id: "noop.component".into(),
             render_key: "noop.key".into(),
+            ..Default::default()
         })
         .unwrap();
         reg.register_service(ServiceRegistration {

@@ -143,9 +143,20 @@ impl TagResolver for RegistryTagResolver {
         // for host_children. Without this thread-through, routed
         // content tags (`shell.builder-canvas`, `shell.component-palette`,
         // `shell.properties-panel`) get empty props / zero children.
+        // Wave 11.3 — treat empty pre_lowered as "no host children"
+        // rather than "host children present and empty". Without this
+        // filter, a DSL block's `<host-children>fallback</host-children>`
+        // pattern always picks the empty path because the loader
+        // installs `Some(empty Vec)` regardless. The lower_as path
+        // already had this filter; the resolver path inherits it now
+        // so the dock-panel migration's body fallback `<dispatch
+        // component="{content-tag}"/>` actually fires when no caller
+        // body was authored.
         let mut ctx = LowerCtx::new(Some(&self.registry), &cascade)
-            .with_host_children(&pre_lowered)
             .with_tag_emissions(scope.tag_emissions_arc());
+        if !pre_lowered.is_empty() {
+            ctx = ctx.with_host_children(&pre_lowered);
+        }
         if !slot_map.is_empty() {
             ctx = ctx.with_host_children_by_slot(Arc::new(slot_map));
         }
@@ -527,7 +538,20 @@ fn dispatch_element_to_builder_node(
     scope: &LowerScope,
 ) -> BuilderNode {
     let mut id = String::new();
-    let mut props: Map<String, Value> = Map::new();
+    // Seed props with the live binding emission for the target tag
+    // (when one exists). This mirrors `LowerCtx::lower_as` so a
+    // `<dispatch component="shell.component-palette"/>` from a DSL
+    // block picks up the same `items` / `selected-id` the static
+    // `<shell.component-palette/>` form would. Author-supplied
+    // attrs on the `<dispatch/>` element win on key collision
+    // (same precedence rule `lower_as` uses).
+    let mut props: Map<String, Value> = match scope.tag_emission_for(target) {
+        Some(emission) => match &emission.props {
+            Value::Object(map) => map.clone(),
+            _ => Map::new(),
+        },
+        None => Map::new(),
+    };
     for attr in &element.attributes {
         let local = attr.name.local.as_str();
         match attr.name.namespace {

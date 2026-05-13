@@ -1,0 +1,48 @@
+<!--
+  shell.dock-panel — one panel of the Studio dock layout. Wave 11.3
+  migration of dock_panel.rs (one of the four Tier-2 Rust survivors
+  the plan listed at §11.3). The migration unblocks because:
+
+  - `content-tag` is pre-resolved by the dock-workspace binding
+    (see `dock_workspace::render_dock_panel_leaf`), so the DSL block
+    receives the routed shell tag as a prop without consulting
+    `prism_dock::DockCatalog` at lower time.
+  - The runtime's `<dispatch component="{expr}"/>` substrate
+    handles dynamic-tag dispatch from a binding value — the same
+    seam `shell.properties-panel`'s rows-with-component-field uses.
+  - The runtime's `<host-children/>` element accepts inline
+    fallback children that emit when nothing was injected — the
+    slot-fallback contract from Wave 13.1.
+
+  Body precedence: pre-lowered host children (from the AST or a
+  host-side injection) win; if no host children are present, the
+  `<dispatch>` fallback kicks in against `content-tag`. When
+  neither is set the body renders empty — defence-in-depth for a
+  panel-id the catalog doesn't recognise.
+-->
+<container
+    tag="section"
+    direction="column"
+    width="grow"
+    height="grow"
+    style:background="#fafafa"
+    role="section"
+    data:role="dock-panel"
+    data:panel="{panel-id}">
+  <shell.dock-tab-bar
+      if="{tabs}"
+      id="{id}::tabs"
+      tabs="{tabs}"/>
+  <container
+      id="{id}::body"
+      width="grow"
+      height="grow"
+      data:role="dock-body">
+    <host-children>
+      <dispatch
+          if="{content-tag}"
+          component="{content-tag}"
+          id="{id}::content"/>
+    </host-children>
+  </container>
+</container>

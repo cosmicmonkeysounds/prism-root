@@ -97,6 +97,8 @@ pub use kernel::atom::{select, select_memo, select_ref, Atom, AtomSubscription};
 #[cfg(feature = "crdt")]
 pub use kernel::crdt_sync::{CrdtSync, SyncEvent, SyncSubscription};
 pub use kernel::{Action, Store, Subscription};
-pub use reactive::{DirtyQueue, Effect, Memo, Owner, ReactiveContext, Signal};
+pub use reactive::{
+    DirtyQueue, Effect, Memo, Owner, ReactiveContext, Resource, ResourceState, Signal,
+};
 pub use registry::{Catalog, HasId};
 pub use shell_mode::{Permission, ShellMode, ShellModeContext};

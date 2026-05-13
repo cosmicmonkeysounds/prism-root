@@ -288,6 +288,16 @@ impl LowerScope {
         self
     }
 
+    /// Wave 11.3 — install an already-`Arc<HashMap>`-wrapped emissions
+    /// table. Used by the DSL loader to forward the snapshot it
+    /// received from its `LowerCtx` without cloning the underlying
+    /// map. Caller relinquishes ownership; subsequent reads share the
+    /// installed `Arc`.
+    pub fn with_tag_emissions_arc(mut self, map: Arc<HashMap<String, TagEmission>>) -> Self {
+        self.tag_emissions = map;
+        self
+    }
+
     pub fn binding(&self, name: &str) -> Option<&serde_json::Value> {
         self.bindings.get(name)
     }

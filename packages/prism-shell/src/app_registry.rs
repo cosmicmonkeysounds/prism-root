@@ -222,6 +222,26 @@ pub fn install_components_with_runtime(
     count
 }
 
+/// Hot-reload sibling of [`install_components_with_runtime`].
+/// Replaces any existing registration under the same component id so
+/// a re-run of `main.luau` against the live runtime overwrites both
+/// the registry entry and the retained `render` closure (the
+/// callback store already replaces on insert). Used by
+/// `Shell::install_app_script` for the dev-loop file watcher.
+#[cfg(feature = "native")]
+pub fn install_components_replace(
+    registrar: &ShellAppRegistrar,
+    registry: &mut crate::components::ShellComponentRegistry,
+) -> usize {
+    let mut count = 0;
+    for spec in registrar.drain_components() {
+        let block = Arc::new(LuauComponentBlock::new(spec));
+        registry.register_or_replace(block);
+        count += 1;
+    }
+    count
+}
+
 /// Drain queued service registrations and add each as an
 /// [`App`-scoped](crate::services::ServiceScope::App)
 /// [`ServiceFactory`](crate::services::ServiceFactory). Returns the
@@ -334,6 +354,11 @@ pub struct LuauComponentBlock {
     /// on the rendered semantic for both runtime-backed and
     /// placeholder outputs — hot-reload + SSR correlate against this.
     render_key: String,
+    /// Schema declared by the script's
+    /// `register_component({ schema = { ... } })` table. Empty when
+    /// the script didn't declare one — property panel falls through
+    /// to the catch-all editor.
+    schema: Vec<FieldSpec>,
 }
 
 impl LuauComponentBlock {
@@ -341,6 +366,7 @@ impl LuauComponentBlock {
         Self {
             id: spec.id,
             render_key: spec.render_key,
+            schema: spec.schema,
         }
     }
 }
@@ -351,10 +377,10 @@ impl Block for LuauComponentBlock {
     }
 
     fn schema(&self) -> Vec<FieldSpec> {
-        // Luau-defined components declare their schema through the
-        // script today; until a `schema` table opt-in lands, expose
-        // an empty schema so the property panel renders the catch-all.
-        vec![]
+        // Script-declared schema flows through verbatim. Empty when no
+        // `schema = {...}` table was provided — property panel renders
+        // the catch-all.
+        self.schema.clone()
     }
 
     fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -691,11 +717,13 @@ mod tests {
         reg.register_component(ComponentRegistration {
             id: "lattice.card".into(),
             render_key: "lattice.scripts.card.render".into(),
+            ..Default::default()
         })
         .unwrap();
         reg.register_component(ComponentRegistration {
             id: "lattice.list".into(),
             render_key: "lattice.scripts.list.render".into(),
+            ..Default::default()
         })
         .unwrap();
         assert_eq!(reg.pending_component_count(), 2);
@@ -748,6 +776,7 @@ mod tests {
         reg.register_component(ComponentRegistration {
             id: "my.app.card".into(),
             render_key: "my.app.card.render".into(),
+            ..Default::default()
         })
         .unwrap();
         let mut registry = ShellComponentRegistry::new();
@@ -961,6 +990,7 @@ mod tests {
         let block = LuauComponentBlock::new(ComponentRegistration {
             id: "my.card".into(),
             render_key: "my.scripts.card.render".into(),
+            ..Default::default()
         });
         let node = Node {
             id: "inst".into(),

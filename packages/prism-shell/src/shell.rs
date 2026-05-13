@@ -517,6 +517,61 @@ impl Shell {
         self.inner.borrow().state.workspace.active_app.clone()
     }
 
+    /// Persistent-Luau hot-reload entry. Re-runs `source` against the
+    /// shell's long-lived `LuauRuntime`. Registrations from the prior
+    /// run are overwritten — both the [`LuauCallbackStore`]'s retained
+    /// closures (insert-replaces semantics) and the
+    /// [`ShellComponentRegistry`] (via `register_or_replace`). The
+    /// runtime's module-level `local`s do *not* survive re-execution;
+    /// per-script-author state belongs in the shared `prism.objects`
+    /// or in atom-backed module globals.
+    ///
+    /// Returns `Ok(())` when the script ran cleanly. Errors come back
+    /// as the script's diagnostic message; the watcher logs + retains
+    /// the previous state on the registries (the failed run never
+    /// drains the registrar queues, so nothing gets clobbered).
+    ///
+    /// Frame is marked dirty whenever `app_id` matches the active
+    /// app so the watcher sees an immediate redraw with the new
+    /// renders in effect.
+    #[cfg(feature = "native")]
+    pub fn install_app_script(&self, app_id: &str, source: &str) -> Result<(), String> {
+        let inner = self.inner.borrow();
+        let Some(rt) = inner.luau_runtime.as_ref() else {
+            return Err("no LuauRuntime — shell booted without script support".into());
+        };
+        let rt = std::rc::Rc::clone(rt);
+        let registrar = inner.app_registrar.clone();
+        drop(inner);
+        // Run the script first against a tentative-state error path:
+        // if it parses + executes cleanly, drain into the registry.
+        rt.load_script(source, app_id)?;
+        let mut inner = self.inner.borrow_mut();
+        // Drain newly-queued components into the registry with
+        // replace semantics so a redefined `my.card` overwrites the
+        // prior one.
+        let _replaced =
+            crate::app_registry::install_components_replace(&registrar, &mut inner.registry);
+        // Re-resolve the tag resolver so newly-introduced tags become
+        // dispatchable. (The existing resolver was a snapshot.)
+        inner.resolver = inner.registry.tag_resolver();
+        // Drain services. Each registration becomes an App-scoped
+        // factory via the standard install path — re-runs add new
+        // factories; existing ones with the same id keep their prior
+        // factory until `rebuild_app_services` fires.
+        let _ = crate::app_registry::install_services_with_runtime(
+            &registrar,
+            &mut inner.services,
+            Some(std::rc::Rc::clone(&rt)),
+        );
+        if inner.state.workspace.active_app.as_deref() == Some(app_id) {
+            inner
+                .render_scope
+                .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+        }
+        Ok(())
+    }
+
     /// Install (or replace) the active PRSS stylesheet. Subsequent
     /// `render` calls thread the new sheet into the lowering scope so
     /// every container with a `class="..."` attribute resolves through

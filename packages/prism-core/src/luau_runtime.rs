@@ -25,7 +25,9 @@ use mlua::{Function, Lua, LuaSerdeExt, Value};
 use serde_json::Value as JsonValue;
 
 use crate::app_registry::AppRegistrar;
+use crate::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use crate::luau_bindings::{LuauCallbackStore, RegistrarHandle};
+use crate::shell_mode::{Permission, ShellMode};
 
 /// What every Luau-script-author returns from a `render(props, children)`
 /// body, translated by the runtime into a tree the shell can lower
@@ -105,6 +107,19 @@ impl LuauRuntime {
     /// only depends on the Lua state being alive, not on the globals
     /// being final.
     pub fn new(registrar: Arc<dyn AppRegistrar>) -> Result<Self, String> {
+        Self::new_with_tokens(registrar, DEFAULT_TOKENS, ShellMode::Build, Permission::Dev)
+    }
+
+    /// Variant that lets the host supply non-default design tokens /
+    /// shell-mode / permission tags. The shell calls this with its
+    /// live boot configuration so scripts see the same theme + mode
+    /// the chrome renders against.
+    pub fn new_with_tokens(
+        registrar: Arc<dyn AppRegistrar>,
+        tokens: DesignTokens,
+        shell_mode: ShellMode,
+        permission: Permission,
+    ) -> Result<Self, String> {
         let lua = Lua::new();
         let callbacks = LuauCallbackStore::new();
         let app = RegistrarHandle::new(registrar).with_callbacks(callbacks.clone());
@@ -115,6 +130,15 @@ impl LuauRuntime {
         prism_tbl
             .set("app", app)
             .map_err(|e| format!("install prism.app: {e}"))?;
+        prism_tbl
+            .set("tokens", tokens)
+            .map_err(|e| format!("install prism.tokens: {e}"))?;
+        prism_tbl
+            .set("shell_mode", shell_mode)
+            .map_err(|e| format!("install prism.shell_mode: {e}"))?;
+        prism_tbl
+            .set("permission", permission)
+            .map_err(|e| format!("install prism.permission: {e}"))?;
 
         // `prism.element` builder — purely syntactic sugar around the
         // virtual-node shape. Wraps positional args into the
@@ -417,6 +441,34 @@ mod tests {
                 "asserts",
             )
             .unwrap();
+    }
+
+    #[test]
+    fn new_exposes_design_tokens_shell_mode_permission() {
+        let runtime = LuauRuntime::new(Arc::new(NoopAppRegistrar)).unwrap();
+        // Default `ShellMode::Build` / `Permission::Dev` / default
+        // tokens — the runtime mirrors the daemon's PrismContext
+        // shape so scripts authored against either run unchanged.
+        let r: i64 = runtime
+            .exec("return prism.tokens.colors.accent.r", &json!({}))
+            .unwrap()
+            .as_i64()
+            .unwrap();
+        assert_eq!(r, 110);
+        let mode: String = runtime
+            .exec("return prism.shell_mode", &json!({}))
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(mode, "Build");
+        let perm: String = runtime
+            .exec("return prism.permission", &json!({}))
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(perm, "Dev");
     }
 
     #[test]

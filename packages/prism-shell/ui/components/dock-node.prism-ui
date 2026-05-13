@@ -1,0 +1,41 @@
+<!--
+  shell.dock-node — one node of the dock tree. Recurses through the
+  resolver: a `split`-kind node dispatches `<shell.dock-node>` again
+  for its two children; a `tab-group` leaf dispatches
+  `<shell.dock-panel>` for the active tab's content.
+
+  Wave 11.3 substrate for the dock_workspace migration. The
+  binding (`state::enrich_dock_node`) pre-computes the leaf's
+  `panel-id`, `content-tag`, and `tabs` array (with labels) so
+  this DSL block never has to consult the dock catalog or array-
+  index into `tabs[active]`.
+
+  Sizing: a `split`'s outer container picks `direction` from
+  `axis`; each child gets `width` or `height` set to the
+  ratio-derived percentage so Taffy's percent sizing fills the
+  parent rect (mirrors the legacy `Sizing::Percent` path).
+-->
+<container
+    if="{node.type == 'split'}"
+    direction="{node.axis == 'horizontal' ? 'row' : 'column'}"
+    width="grow"
+    height="grow"
+    data:role="dock-split">
+  <container
+      width="{node.axis == 'horizontal' ? (node.ratio * 100) + '%' : 'grow'}"
+      height="{node.axis == 'horizontal' ? 'grow' : (node.ratio * 100) + '%'}">
+    <shell.dock-node
+        node="{node.first}"/>
+  </container>
+  <container
+      width="{node.axis == 'horizontal' ? ((1 - node.ratio) * 100) + '%' : 'grow'}"
+      height="{node.axis == 'horizontal' ? 'grow' : ((1 - node.ratio) * 100) + '%'}">
+    <shell.dock-node
+        node="{node.second}"/>
+  </container>
+</container>
+<shell.dock-panel
+    else
+    panel-id="{node.panel-id}"
+    content-tag="{node.content-tag}"
+    tabs="{node.tabs}"/>

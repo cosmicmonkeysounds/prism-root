@@ -113,6 +113,16 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream
         /// Server-side registration helper emitted by `#[daemon_fn]`.
         /// Wires `#fn_ident` into the daemon command registry with
         /// the configured permission tier.
+        ///
+        /// The handler body runs inside
+        /// [`::prism_core::reactive::ReactiveContext::batch`] so any
+        /// `Signal::set` / `Signal::write` the body performs collapses
+        /// into one wave of subscriber notifications. Phase 8 open-Q
+        /// resolution from `docs/dev/dioxus-inspiration.md` — IPC
+        /// handlers are the natural transaction boundary, the
+        /// per-handler batch keeps every dependent `Effect` / `Memo`
+        /// from re-running mid-call when the daemon writes to several
+        /// containers.
         #[allow(non_snake_case)]
         #fn_vis fn #register_ident(
             registry: &::prism_daemon::registry::CommandRegistry,
@@ -121,7 +131,9 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream
             registry.register_typed_with_permission(
                 #id_lit,
                 ::prism_daemon::permission::Permission::#perm_ident,
-                |req: #req_ty| #fn_ident(req),
+                |req: #req_ty| {
+                    ::prism_core::reactive::ReactiveContext::batch(|| #fn_ident(req))
+                },
             )
         }
     };

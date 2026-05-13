@@ -743,6 +743,181 @@ impl Drop for Effect {
 }
 
 // ---------------------------------------------------------------
+// Resource
+// ---------------------------------------------------------------
+
+/// The state of a [`Resource`]'s async-fetched value at a given moment.
+///
+/// Distinct from [`crate::reactive::ipc::RemoteState`] — that carrier
+/// describes a *transport-aware* connection lifecycle (Loading / Live
+/// / Stale / Errored over IPC). `ResourceState` describes the *fetch*
+/// lifecycle for any async-resolving value, network or not (a heavy
+/// CPU memo, a file read, a daemon RPC, …).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResourceState<T> {
+    /// The resource has not been fetched yet — no value exists.
+    Pending,
+    /// The resource is currently being refetched. `last` carries the
+    /// previous value (if any) so subscribers wanting "show the stale
+    /// value with a spinner" can read it.
+    Loading { last: Option<T> },
+    /// The resource resolved successfully.
+    Ready(T),
+    /// The resource resolved with an error. `last` carries the last
+    /// successful value (if any).
+    Errored { last: Option<T>, err: String },
+}
+
+impl<T> ResourceState<T> {
+    /// The "if you don't care about lifecycle, just give me the value"
+    /// accessor. `None` only in `Pending` or `Errored-without-history`.
+    pub fn last_known(&self) -> Option<&T> {
+        match self {
+            Self::Ready(v) => Some(v),
+            Self::Loading { last } => last.as_ref(),
+            Self::Errored { last, .. } => last.as_ref(),
+            Self::Pending => None,
+        }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready(_))
+    }
+
+    pub fn is_loading(&self) -> bool {
+        matches!(self, Self::Loading { .. })
+    }
+}
+
+/// A reactive cell whose value resolves *asynchronously* through a
+/// caller-driven fetcher. Phase 8 follow-up from
+/// `docs/dev/dioxus-inspiration.md`:
+///
+/// > Build later, after the synchronous core is solid. `Resource` is
+/// > `Memo` + a spawned future.
+///
+/// The substrate is intentionally **executor-agnostic**: `Resource`
+/// owns a `Signal<ResourceState<T>>` (the read side) plus a fetcher
+/// closure (the write side). Callers drive resolution by handing a
+/// `(state.set_loading(); compute(); state.set_ready(result);)` triple
+/// to whatever runtime they have — `tokio::spawn`, `wasm-bindgen-futures`,
+/// or a synchronous block-on. The reactive substrate stays leaf;
+/// every host wires its own executor.
+///
+/// Typical shape:
+///
+/// ```ignore
+/// let r = Resource::new(&owner);
+/// // host-side executor invokes:
+/// r.start_load();
+/// match heavy_fetch(req).await {
+///     Ok(v)  => r.resolve(v),
+///     Err(e) => r.fail(e.to_string()),
+/// }
+/// // anywhere reactive:
+/// let live = r.read(|s| s.is_ready());
+/// ```
+pub struct Resource<T: 'static> {
+    inner: Signal<ResourceState<T>>,
+}
+
+impl<T: 'static> Copy for Resource<T> {}
+impl<T: 'static> Clone for Resource<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: 'static> Resource<T> {
+    /// Allocate a fresh resource against `owner`. Initial state is
+    /// `Pending` — call [`Self::start_load`] before the first fetch
+    /// kicks off, or seed directly via [`Self::resolve`] when a
+    /// preloaded snapshot is available.
+    pub fn new(owner: &Owner) -> Self {
+        Self {
+            inner: owner.insert(ResourceState::Pending),
+        }
+    }
+
+    /// Build a resource seeded with an already-resolved value. Useful
+    /// for SSR hydration paths where the server's render delivers the
+    /// initial value alongside the markup.
+    pub fn seeded(owner: &Owner, value: T) -> Self {
+        Self {
+            inner: owner.insert(ResourceState::Ready(value)),
+        }
+    }
+
+    /// Transition into `Loading { last }`. Preserves the previous
+    /// `Ready` value so subscribers can keep painting it under a
+    /// spinner overlay.
+    pub fn start_load(&self)
+    where
+        T: Clone,
+    {
+        let last = self.inner.peek(|s| match s {
+            ResourceState::Ready(v) => Some(v.clone()),
+            ResourceState::Loading { last } | ResourceState::Errored { last, .. } => last.clone(),
+            ResourceState::Pending => None,
+        });
+        self.inner.set(ResourceState::Loading { last });
+    }
+
+    /// Settle the resource with a successful value.
+    pub fn resolve(&self, value: T) {
+        self.inner.set(ResourceState::Ready(value));
+    }
+
+    /// Settle the resource with an error message. Carries the last
+    /// `Ready` value forward so the UI can keep showing the stale
+    /// success state with an error indicator.
+    pub fn fail(&self, err: String)
+    where
+        T: Clone,
+    {
+        let last = self.inner.peek(|s| match s {
+            ResourceState::Ready(v) => Some(v.clone()),
+            ResourceState::Loading { last } | ResourceState::Errored { last, .. } => last.clone(),
+            ResourceState::Pending => None,
+        });
+        self.inner.set(ResourceState::Errored { last, err });
+    }
+
+    /// Subscribing scoped read of the lifecycle carrier.
+    pub fn read<R>(&self, f: impl FnOnce(&ResourceState<T>) -> R) -> R {
+        self.inner.read(f)
+    }
+
+    /// Non-subscribing scoped read.
+    pub fn peek<R>(&self, f: impl FnOnce(&ResourceState<T>) -> R) -> R {
+        self.inner.peek(f)
+    }
+
+    /// Subscribing snapshot of the lifecycle carrier (clone of inner T
+    /// implied by `ResourceState`'s shape).
+    pub fn get(&self) -> ResourceState<T>
+    where
+        T: Clone,
+    {
+        self.inner.get()
+    }
+
+    /// Subscribing "just give me a Ready value or None" accessor.
+    pub fn last_known(&self) -> Option<T>
+    where
+        T: Clone,
+    {
+        self.inner.read(|s| s.last_known().cloned())
+    }
+
+    /// Direct handle to the inner signal. Advanced consumers may want
+    /// to derive a `Memo` from the state for projection.
+    pub fn signal(&self) -> Signal<ResourceState<T>> {
+        self.inner
+    }
+}
+
+// ---------------------------------------------------------------
 // DirtyQueue
 // ---------------------------------------------------------------
 
@@ -1373,6 +1548,68 @@ mod tests {
     fn batch_returns_callback_value() {
         let n = ReactiveContext::batch(|| 7_i32 + 3);
         assert_eq!(n, 10);
+    }
+
+    #[test]
+    fn resource_starts_pending_with_no_last_known() {
+        let owner = Owner::new();
+        let r: Resource<String> = Resource::new(&owner);
+        assert!(r.peek(|s| matches!(s, ResourceState::Pending)));
+        assert!(r.last_known().is_none());
+    }
+
+    #[test]
+    fn resource_seeded_starts_ready() {
+        let owner = Owner::new();
+        let r = Resource::seeded(&owner, 42_i32);
+        assert!(r.peek(|s| s.is_ready()));
+        assert_eq!(r.last_known(), Some(42));
+    }
+
+    #[test]
+    fn resource_load_then_resolve_carries_last_through_loading() {
+        let owner = Owner::new();
+        let r = Resource::seeded(&owner, String::from("v1"));
+        r.start_load();
+        assert!(r.peek(|s| matches!(s, ResourceState::Loading { last: Some(_) })));
+        assert_eq!(r.last_known(), Some("v1".into()));
+        r.resolve("v2".into());
+        assert!(r.peek(|s| s.is_ready()));
+        assert_eq!(r.last_known(), Some("v2".into()));
+    }
+
+    #[test]
+    fn resource_fail_preserves_last_ready_value() {
+        let owner = Owner::new();
+        let r = Resource::seeded(&owner, 7_i32);
+        r.fail("boom".into());
+        match r.get() {
+            ResourceState::Errored { last, err } => {
+                assert_eq!(last, Some(7));
+                assert_eq!(err, "boom");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(r.last_known(), Some(7));
+    }
+
+    #[test]
+    fn resource_subscribers_wake_on_lifecycle_transitions() {
+        let owner = Owner::new();
+        let r: Resource<i32> = Resource::new(&owner);
+        let runs = Rc::new(Cell::new(0));
+        let runs_for = runs.clone();
+        let _e = Effect::new(move || {
+            r.read(|_| {});
+            runs_for.set(runs_for.get() + 1);
+        });
+        assert_eq!(runs.get(), 1);
+        r.start_load();
+        assert_eq!(runs.get(), 2);
+        r.resolve(99);
+        assert_eq!(runs.get(), 3);
+        r.fail("x".into());
+        assert_eq!(runs.get(), 4);
     }
 
     #[test]
