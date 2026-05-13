@@ -1266,13 +1266,15 @@ fn resolve_for_iteration(
         return Vec::new();
     }
     // Resolve the source as an arbitrary expression so a dotted-path
-    // (`item.children`) resolves through scope. Bare identifiers go
-    // through `lookup_expression`'s cheap path first.
+    // (`item.children`) and functional-helper calls (`map(rows,
+    // 'label')`, `filter(rows, 'status', 'active')`, `slice(rows, 0,
+    // 5)`) resolve through the same owned-value vocabulary as
+    // attribute / text interpolations. Bare identifiers and virtual
+    // segments still hit the cheap path inside `lookup_path_owned`.
     //
     // Note: `step` is range-only; arrays and objects always emit every
     // entry. `reverse` flips the final order for either shape.
-    let resolved = lookup_expression(trimmed, scope)
-        .cloned()
+    let resolved = lookup_path_owned(trimmed, scope)
         .or_else(|| evaluate_expression(trimmed, scope));
     let mut entries: Vec<(serde_json::Value, serde_json::Value)> = match resolved {
         Some(serde_json::Value::Object(map)) => map
@@ -1433,12 +1435,19 @@ fn parse_for_clause(body: &str) -> Option<ForClause> {
         return None;
     }
     // RHS shape: `<source> [step N] [reverse]` in either order. The
-    // source is one whitespace-delimited token; trailing modifiers
-    // are recognised in any order so authors can write
-    // `0..100 step 10 reverse` or `0..100 reverse step 10`. Anything
-    // unrecognised returns `None`.
-    let mut tokens = rhs.split_whitespace();
-    let source = tokens.next()?.to_string();
+    // source can be a bare identifier, a dotted-path, a numeric range
+    // (`0..n` / `0..=n`), OR a functional-helper call (`map(rows,
+    // 'label')`, `slice(filter(rows, …), 0, 5)`) that may itself
+    // contain whitespace inside its argument list. Modifiers are
+    // recognised at the tail; the source extends from the start of
+    // the RHS to the boundary before the first `step N` / `reverse`
+    // token at paren-depth 0.
+    let (source, after) = split_for_source(rhs)?;
+    let source = source.trim().to_string();
+    if source.is_empty() {
+        return None;
+    }
+    let mut tokens = after.split_whitespace();
     let mut step: Option<i64> = None;
     let mut reverse = false;
     while let Some(tok) = tokens.next() {
@@ -1469,6 +1478,56 @@ fn parse_for_clause(body: &str) -> Option<ForClause> {
         step,
         reverse,
     })
+}
+
+/// Split a `for=` right-hand-side into the source expression and the
+/// trailing-modifier slice. Walks left-to-right tracking paren / quote
+/// depth so a call-form source (`map(rows, 'label') reverse step 2`)
+/// extends through the comma + nested parens cleanly. The boundary
+/// fires when we see a whitespace-delimited `step` or `reverse` token
+/// at paren-depth 0 outside any quoted string.
+fn split_for_source(rhs: &str) -> Option<(String, String)> {
+    let bytes = rhs.as_bytes();
+    let mut depth = 0i32;
+    let mut in_str: Option<u8> = None;
+    let mut i = 0usize;
+    let mut last_ws_end: Option<usize> = None;
+    while i < bytes.len() {
+        let ch = bytes[i];
+        match (in_str, ch) {
+            (Some(q), c) if c == q => in_str = None,
+            (Some(_), _) => {}
+            (None, b'\'' | b'"') => in_str = Some(ch),
+            (None, b'(' | b'[') => depth += 1,
+            (None, b')' | b']') => depth -= 1,
+            (None, b' ' | b'\t') if depth == 0 => {
+                // We're between tokens at depth 0. Peek the next
+                // non-whitespace word and check whether it's a
+                // modifier. If yes, this whitespace is the boundary.
+                let mut j = i + 1;
+                while j < bytes.len() && matches!(bytes[j], b' ' | b'\t') {
+                    j += 1;
+                }
+                let mut k = j;
+                while k < bytes.len() && !matches!(bytes[k], b' ' | b'\t') {
+                    k += 1;
+                }
+                let tok = &rhs[j..k];
+                if matches!(tok, "step" | "reverse") {
+                    let source = rhs[..i].to_string();
+                    let tail = rhs[j..].to_string();
+                    return Some((source, tail));
+                }
+                last_ws_end = Some(k);
+                i = k;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let _ = last_ws_end;
+    Some((rhs.to_string(), String::new()))
 }
 
 // ---------------------------------------------------------------------------
@@ -2246,10 +2305,7 @@ pub fn lookup_expression_in_scope<'a>(
 /// resolution (`<shell.foo prop="{items.length}"/>`) reads through
 /// the same vocabulary the runtime's own attribute paths use.
 #[doc(hidden)]
-pub fn lookup_path_owned_in_scope(
-    body: &str,
-    scope: &LowerScope,
-) -> Option<serde_json::Value> {
+pub fn lookup_path_owned_in_scope(body: &str, scope: &LowerScope) -> Option<serde_json::Value> {
     lookup_path_owned(body, scope)
 }
 
@@ -2303,13 +2359,21 @@ fn lookup_path_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value
         return Some(v.clone());
     }
     let body = body.trim();
+    // **Functional helpers** — `map`, `reduce`, `filter`, `find`,
+    // `slice`, `sort_by`, `unique`, `reverse`, `keys`, `values`,
+    // `entries`, `includes`, `index_of`, `join`. These operate on
+    // typed JSON values (arrays/objects) which the expression layer's
+    // `ExprValue::{Number,String,Boolean}` can't carry, so the owned
+    // lookup surface is the natural seam. Authors compose them inside
+    // for-sources, attribute interpolations, and text bodies through
+    // the same `{call(arr, …)}` shape.
+    if let Some(v) = try_call_owned(body, scope) {
+        return Some(v);
+    }
     let (head, virtual_seg) = body.rsplit_once('.')?;
     let head = head.trim();
     let virtual_seg = virtual_seg.trim();
-    if !matches!(
-        virtual_seg,
-        "length" | "size" | "count" | "first" | "last"
-    ) {
+    if !matches!(virtual_seg, "length" | "size" | "count" | "first" | "last") {
         return None;
     }
     let parent = lookup_expression(head, scope)?;
@@ -2341,6 +2405,497 @@ fn lookup_path_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value
             .unwrap_or(serde_json::Value::Null),
         _ => return None,
     })
+}
+
+/// Recognised functional builtin names that operate on typed JSON
+/// values (arrays / objects / strings). Used by [`try_call_owned`]
+/// to gate the cheap call-form parse — anything else falls through
+/// to the full expression evaluator. Listed here as a single seam so
+/// every consumer (call resolver, parse helper, future LSP
+/// completion) reads from the same table.
+const ARRAY_CALL_NAMES: &[&str] = &[
+    "map",
+    "reduce",
+    "filter",
+    "find",
+    "slice",
+    "sort_by",
+    "unique",
+    "reverse",
+    "keys",
+    "values",
+    "entries",
+    "includes",
+    "index_of",
+    "join",
+    "concat_arr",
+];
+
+/// Try to resolve `body` as a functional-builtin call — optionally
+/// followed by a dotted access path: `map(arr, "field")`,
+/// `slice(rows, 0, 5)`, `find(rows, 'id', 2).label`, etc. Returns
+/// `Some(value)` on a successful evaluation; `None` when the body
+/// isn't a recognised call shape, so the caller falls through to
+/// virtual segments and then the expression evaluator. Args are
+/// parsed as one of: number literal, single- or double-quoted
+/// string, `true`/`false`/`null`, or a bare path resolved via
+/// [`lookup_path_owned`] (so calls nest).
+fn try_call_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value> {
+    let body = body.trim();
+    let open = body.find('(')?;
+    let name = body[..open].trim();
+    if !ARRAY_CALL_NAMES.contains(&name) {
+        return None;
+    }
+    // Match the closing paren that pairs with `open`, respecting
+    // nested parens and quoted strings so `find(rows, 'id', 2)` and
+    // `slice(filter(rows, 'k', 'v'), 0, 2)` both find their right
+    // boundary cleanly.
+    let close = matching_close_paren(body, open)?;
+    let inside = &body[open + 1..close];
+    let args = parse_call_args(inside, scope)?;
+    let call_value = eval_array_call(name, &args)?;
+    let tail = body[close + 1..].trim_start();
+    if tail.is_empty() {
+        return Some(call_value);
+    }
+    // Trailing chain: must begin with `.` for the dotted-access
+    // shape. Anything else (`(`, `[`, operator) is unsupported here —
+    // the caller falls back to the full expression evaluator.
+    let rest = tail.strip_prefix('.')?;
+    walk_dotted_path(&call_value, rest)
+}
+
+/// Find the matching `)` for an opening paren at `open` in `body`.
+/// Returns `None` when the body has unbalanced parens or unterminated
+/// quoted strings — same defensive shape `parse_call_args` uses.
+fn matching_close_paren(body: &str, open: usize) -> Option<usize> {
+    let bytes = body.as_bytes();
+    let mut depth = 0i32;
+    let mut in_str: Option<u8> = None;
+    let mut i = open;
+    while i < bytes.len() {
+        let ch = bytes[i];
+        match (in_str, ch) {
+            (Some(q), c) if c == q => in_str = None,
+            (Some(_), _) => {}
+            (None, b'\'' | b'"') => in_str = Some(ch),
+            (None, b'(') => depth += 1,
+            (None, b')') => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+                if depth < 0 {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Walk a dotted-path expression (`label`, `user.email`, `tabs.0`)
+/// against an owned JSON value. Returns `Some(child)` on a successful
+/// walk; `None` on a missing segment / type mismatch. Virtual
+/// trailing segments (`.length`, `.first`, `.last`) are recognised
+/// terminally so `slice(rows, 0, 5).length` reads as expected.
+fn walk_dotted_path(root: &serde_json::Value, path: &str) -> Option<serde_json::Value> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Some(root.clone());
+    }
+    let mut cursor: serde_json::Value = root.clone();
+    let segments: Vec<&str> = path.split('.').map(str::trim).collect();
+    for (i, seg) in segments.iter().enumerate() {
+        if seg.is_empty() {
+            return None;
+        }
+        // Recognise a terminal virtual segment on the last position.
+        if i == segments.len() - 1 {
+            match (&cursor, *seg) {
+                (serde_json::Value::Array(a), "length" | "size" | "count") => {
+                    return Some(serde_json::Value::from(a.len() as i64));
+                }
+                (serde_json::Value::Object(m), "length" | "size" | "count") => {
+                    return Some(serde_json::Value::from(m.len() as i64));
+                }
+                (serde_json::Value::String(s), "length" | "size" | "count") => {
+                    return Some(serde_json::Value::from(s.chars().count() as i64));
+                }
+                (serde_json::Value::Array(a), "first") => {
+                    return Some(a.first().cloned().unwrap_or(serde_json::Value::Null));
+                }
+                (serde_json::Value::Array(a), "last") => {
+                    return Some(a.last().cloned().unwrap_or(serde_json::Value::Null));
+                }
+                _ => {}
+            }
+        }
+        cursor = match cursor {
+            serde_json::Value::Object(mut map) => map.remove(*seg)?,
+            serde_json::Value::Array(arr) => {
+                let idx: usize = seg.parse().ok()?;
+                arr.into_iter().nth(idx)?
+            }
+            _ => return None,
+        };
+    }
+    Some(cursor)
+}
+
+/// Split a call argument list on top-level commas (parens-depth
+/// aware) and resolve each argument through the owned-value lookup
+/// surface. Returns `None` when any unbalanced parens / quotes
+/// surface, so a malformed call falls through to the next
+/// resolution layer rather than silently producing wrong data.
+fn parse_call_args(s: &str, scope: &LowerScope) -> Option<Vec<serde_json::Value>> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Some(Vec::new());
+    }
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i32;
+    let mut in_str: Option<char> = None;
+    for ch in trimmed.chars() {
+        match (in_str, ch) {
+            (Some(q), c) if c == q => {
+                in_str = None;
+                current.push(c);
+            }
+            (Some(_), c) => current.push(c),
+            (None, '\'') | (None, '"') => {
+                in_str = Some(ch);
+                current.push(ch);
+            }
+            (None, '(' | '[') => {
+                depth += 1;
+                current.push(ch);
+            }
+            (None, ')' | ']') => {
+                depth -= 1;
+                if depth < 0 {
+                    return None;
+                }
+                current.push(ch);
+            }
+            (None, ',') if depth == 0 => {
+                args.push(eval_call_arg(current.trim(), scope)?);
+                current.clear();
+            }
+            (None, c) => current.push(c),
+        }
+    }
+    if depth != 0 || in_str.is_some() {
+        return None;
+    }
+    if !current.trim().is_empty() {
+        args.push(eval_call_arg(current.trim(), scope)?);
+    }
+    Some(args)
+}
+
+/// Resolve a single call argument to a typed JSON value. Tries, in
+/// order: number literal, string literal (`'…'` / `"…"`),
+/// `true`/`false`/`null`, then bare path / nested call via
+/// [`lookup_path_owned`]. Returns `None` when nothing matches so
+/// the caller fails the whole call cleanly.
+fn eval_call_arg(s: &str, scope: &LowerScope) -> Option<serde_json::Value> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(n) = s.parse::<i64>() {
+        return Some(serde_json::Value::from(n));
+    }
+    if let Ok(f) = s.parse::<f64>() {
+        return Some(serde_json::Value::from(f));
+    }
+    if let (Some('\''), Some('\'')) = (s.chars().next(), s.chars().last()) {
+        if s.len() >= 2 {
+            return Some(serde_json::Value::from(&s[1..s.len() - 1]));
+        }
+    }
+    if let (Some('"'), Some('"')) = (s.chars().next(), s.chars().last()) {
+        if s.len() >= 2 {
+            return Some(serde_json::Value::from(&s[1..s.len() - 1]));
+        }
+    }
+    match s {
+        "true" => return Some(serde_json::Value::Bool(true)),
+        "false" => return Some(serde_json::Value::Bool(false)),
+        "null" => return Some(serde_json::Value::Null),
+        _ => {}
+    }
+    lookup_path_owned(s, scope)
+}
+
+/// Dispatch a parsed call to its implementation. Pure transformation
+/// over `Vec<Value>` — no scope access here; everything resolves at
+/// arg-parse time so the implementations stay test-friendly.
+fn eval_array_call(name: &str, args: &[serde_json::Value]) -> Option<serde_json::Value> {
+    use serde_json::Value;
+    let arr_arg = |i: usize| match args.get(i) {
+        Some(Value::Array(a)) => Some(a),
+        _ => None,
+    };
+    let str_arg = |i: usize| match args.get(i) {
+        Some(Value::String(s)) => Some(s.as_str()),
+        _ => None,
+    };
+    let i64_arg = |i: usize| match args.get(i) {
+        Some(Value::Number(n)) => n.as_i64(),
+        _ => None,
+    };
+    match name {
+        "map" => {
+            let arr = arr_arg(0)?;
+            let field = str_arg(1)?;
+            Some(Value::Array(
+                arr.iter()
+                    .map(|item| match item {
+                        Value::Object(map) => map.get(field).cloned().unwrap_or(Value::Null),
+                        _ => Value::Null,
+                    })
+                    .collect(),
+            ))
+        }
+        "filter" => {
+            let arr = arr_arg(0)?;
+            let field = str_arg(1)?;
+            let needle = args.get(2)?;
+            let out: Vec<Value> = arr
+                .iter()
+                .filter(|item| match item {
+                    Value::Object(map) => map
+                        .get(field)
+                        .map(|v| values_loose_eq(v, needle))
+                        .unwrap_or(false),
+                    _ => false,
+                })
+                .cloned()
+                .collect();
+            Some(Value::Array(out))
+        }
+        "find" => {
+            let arr = arr_arg(0)?;
+            let field = str_arg(1)?;
+            let needle = args.get(2)?;
+            for item in arr {
+                if let Value::Object(map) = item {
+                    if let Some(v) = map.get(field) {
+                        if values_loose_eq(v, needle) {
+                            return Some(item.clone());
+                        }
+                    }
+                }
+            }
+            Some(Value::Null)
+        }
+        "reduce" => {
+            // `reduce(arr, "op" [, "field"])` — op is one of:
+            //   sum, product, min, max, count, avg.
+            // Optional third arg names a field on object items; absent
+            // means treat each item as a number directly.
+            let arr = arr_arg(0)?;
+            let op = str_arg(1)?;
+            let field = str_arg(2);
+            let extract = |item: &Value| -> Option<f64> {
+                let target = match field {
+                    Some(f) => match item {
+                        Value::Object(map) => map.get(f)?,
+                        _ => return None,
+                    },
+                    None => item,
+                };
+                match target {
+                    Value::Number(n) => n.as_f64(),
+                    Value::String(s) => s.parse::<f64>().ok(),
+                    Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+                    _ => None,
+                }
+            };
+            let nums: Vec<f64> = arr.iter().filter_map(extract).collect();
+            let n = match op {
+                "sum" => nums.iter().sum::<f64>(),
+                "product" => nums.iter().product::<f64>(),
+                "min" => nums.iter().copied().fold(f64::INFINITY, f64::min),
+                "max" => nums.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+                "count" => nums.len() as f64,
+                "avg" => {
+                    if nums.is_empty() {
+                        0.0
+                    } else {
+                        nums.iter().sum::<f64>() / nums.len() as f64
+                    }
+                }
+                _ => return None,
+            };
+            if n.is_finite() && n.fract() == 0.0 && n.abs() <= i64::MAX as f64 {
+                Some(Value::from(n as i64))
+            } else {
+                serde_json::Number::from_f64(n).map(Value::Number)
+            }
+        }
+        "slice" => {
+            let arr = arr_arg(0)?;
+            let len = arr.len() as i64;
+            let normalize = |n: i64| -> usize {
+                if n < 0 {
+                    ((len + n).max(0)) as usize
+                } else {
+                    (n.min(len)) as usize
+                }
+            };
+            let start = normalize(i64_arg(1).unwrap_or(0));
+            let end = normalize(i64_arg(2).unwrap_or(len));
+            if start >= end {
+                return Some(Value::Array(Vec::new()));
+            }
+            Some(Value::Array(arr[start..end].to_vec()))
+        }
+        "sort_by" => {
+            let arr = arr_arg(0)?;
+            let field = str_arg(1)?;
+            let order = str_arg(2).unwrap_or("asc");
+            let mut out: Vec<Value> = arr.clone();
+            out.sort_by(|a, b| {
+                let av = a.get(field);
+                let bv = b.get(field);
+                compare_values(av, bv)
+            });
+            if order == "desc" {
+                out.reverse();
+            }
+            Some(Value::Array(out))
+        }
+        "unique" => {
+            let arr = arr_arg(0)?;
+            let mut seen: Vec<Value> = Vec::with_capacity(arr.len());
+            for item in arr {
+                if !seen.iter().any(|s| values_loose_eq(s, item)) {
+                    seen.push(item.clone());
+                }
+            }
+            Some(Value::Array(seen))
+        }
+        "reverse" => {
+            // Single-arg array reverse — distinct from `reverse_arr`
+            // and the `for=` `reverse` modifier; this returns a new
+            // typed array suitable for downstream consumers (`{ first
+            // = reverse(items).first }`).
+            let arr = arr_arg(0)?;
+            let mut out = arr.clone();
+            out.reverse();
+            Some(Value::Array(out))
+        }
+        "keys" => match args.first()? {
+            Value::Object(map) => Some(Value::Array(
+                map.keys().map(|k| Value::String(k.clone())).collect(),
+            )),
+            _ => None,
+        },
+        "values" => match args.first()? {
+            Value::Object(map) => Some(Value::Array(map.values().cloned().collect())),
+            _ => None,
+        },
+        "entries" => match args.first()? {
+            Value::Object(map) => Some(Value::Array(
+                map.iter()
+                    .map(|(k, v)| {
+                        let mut entry = serde_json::Map::new();
+                        entry.insert("key".to_string(), Value::String(k.clone()));
+                        entry.insert("value".to_string(), v.clone());
+                        Value::Object(entry)
+                    })
+                    .collect(),
+            )),
+            _ => None,
+        },
+        "includes" => {
+            let arr = arr_arg(0)?;
+            let needle = args.get(1)?;
+            Some(Value::Bool(arr.iter().any(|v| values_loose_eq(v, needle))))
+        }
+        "index_of" => {
+            let arr = arr_arg(0)?;
+            let needle = args.get(1)?;
+            Some(Value::from(
+                arr.iter()
+                    .position(|v| values_loose_eq(v, needle))
+                    .map(|i| i as i64)
+                    .unwrap_or(-1),
+            ))
+        }
+        "join" => {
+            let arr = arr_arg(0)?;
+            let sep = str_arg(1).unwrap_or(",");
+            let s = arr
+                .iter()
+                .map(stringify_value)
+                .collect::<Vec<_>>()
+                .join(sep);
+            Some(Value::String(s))
+        }
+        "concat_arr" => {
+            let mut out: Vec<Value> = Vec::new();
+            for a in args {
+                if let Value::Array(items) = a {
+                    out.extend(items.iter().cloned());
+                }
+            }
+            Some(Value::Array(out))
+        }
+        _ => None,
+    }
+}
+
+/// Loose equality for typed JSON values — matches the expression
+/// evaluator's `loose_eq` shape so `filter(rows, "id", "x")` reads
+/// strings, `filter(rows, "count", 3)` reads numbers, and bool↔int
+/// coercion stays consistent.
+fn values_loose_eq(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match (a, b) {
+        (Value::Null, Value::Null) => true,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+        (Value::String(x), Value::String(y)) => x == y,
+        (Value::String(s), Value::Number(n)) | (Value::Number(n), Value::String(s)) => {
+            s.parse::<f64>().ok() == n.as_f64()
+        }
+        (Value::Bool(b), Value::Number(n)) | (Value::Number(n), Value::Bool(b)) => {
+            (if *b { 1.0 } else { 0.0 }) == n.as_f64().unwrap_or(0.0)
+        }
+        _ => stringify_value(a) == stringify_value(b),
+    }
+}
+
+/// Order JSON values for `sort_by`. Numbers / strings sort naturally;
+/// missing fields (`None`) sort last; mixed kinds fall back to
+/// stringified comparison so iteration stays total.
+fn compare_values(
+    a: Option<&serde_json::Value>,
+    b: Option<&serde_json::Value>,
+) -> std::cmp::Ordering {
+    use serde_json::Value;
+    use std::cmp::Ordering;
+    match (a, b) {
+        (None, None) => Ordering::Equal,
+        (None, _) => Ordering::Greater,
+        (_, None) => Ordering::Less,
+        (Some(Value::Number(x)), Some(Value::Number(y))) => x
+            .as_f64()
+            .unwrap_or(0.0)
+            .partial_cmp(&y.as_f64().unwrap_or(0.0))
+            .unwrap_or(Ordering::Equal),
+        (Some(Value::String(x)), Some(Value::String(y))) => x.cmp(y),
+        (Some(Value::Bool(x)), Some(Value::Bool(y))) => x.cmp(y),
+        (Some(x), Some(y)) => stringify_value(x).cmp(&stringify_value(y)),
+    }
 }
 
 /// Truthy evaluator for `if=` / `else-if=`. Routes through the full
@@ -6137,10 +6692,9 @@ mod tests {
     /// the synthesised element verbatim.
     #[test]
     fn dispatch_tag_literal_routes_to_primitive_container() {
-        let nodes = interpret(
-            r##"<dispatch tag="container" gap="12" style:background="#aabbcc"/>"##,
-        )
-        .unwrap();
+        let nodes =
+            interpret(r##"<dispatch tag="container" gap="12" style:background="#aabbcc"/>"##)
+                .unwrap();
         assert_eq!(nodes.len(), 1);
         let Node::Container { props, .. } = &nodes[0] else {
             panic!("expected container, got {:?}", nodes[0]);
@@ -6155,13 +6709,9 @@ mod tests {
     /// primitive vocabulary.
     #[test]
     fn dispatch_tag_resolves_through_scope_binding() {
-        let scope = LowerScope::default()
-            .with_binding("kind", json!("text"));
-        let nodes = interpret_with_scope(
-            r#"<dispatch tag="{kind}">hello</dispatch>"#,
-            &scope,
-        )
-        .unwrap();
+        let scope = LowerScope::default().with_binding("kind", json!("text"));
+        let nodes =
+            interpret_with_scope(r#"<dispatch tag="{kind}">hello</dispatch>"#, &scope).unwrap();
         let Node::Text { content, .. } = &nodes[0] else {
             panic!("expected text");
         };
@@ -6173,8 +6723,8 @@ mod tests {
     /// as for any author-written unknown tag.
     #[test]
     fn dispatch_tag_unknown_falls_through_to_default_unknown_tag() {
-        let nodes = interpret(r#"<dispatch tag="my.widget"><text>inner</text></dispatch>"#)
-            .unwrap();
+        let nodes =
+            interpret(r#"<dispatch tag="my.widget"><text>inner</text></dispatch>"#).unwrap();
         assert_eq!(nodes.len(), 1);
         let Node::Text { content, .. } = &nodes[0] else {
             panic!()
@@ -6187,10 +6737,7 @@ mod tests {
     /// form). Without a resolver, the unknown-tag default fires.
     #[test]
     fn dispatch_with_empty_tag_attribute_falls_through() {
-        let nodes = interpret(
-            r#"<dispatch tag=""><text>fallback</text></dispatch>"#,
-        )
-        .unwrap();
+        let nodes = interpret(r#"<dispatch tag=""><text>fallback</text></dispatch>"#).unwrap();
         let Node::Text { content, .. } = &nodes[0] else {
             panic!()
         };
@@ -6202,10 +6749,9 @@ mod tests {
     /// element would.
     #[test]
     fn dispatch_tag_drops_tag_attribute_but_keeps_others() {
-        let nodes = interpret(
-            r##"<dispatch tag="text" font-size="22" id="dyn-title">Title</dispatch>"##,
-        )
-        .unwrap();
+        let nodes =
+            interpret(r##"<dispatch tag="text" font-size="22" id="dyn-title">Title</dispatch>"##)
+                .unwrap();
         let Node::Text { id, content, props } = &nodes[0] else {
             panic!()
         };
@@ -6249,8 +6795,7 @@ mod tests {
     /// gap the PRUI reference promises.
     #[test]
     fn array_length_virtual_segment_reads_as_count() {
-        let scope = LowerScope::default()
-            .with_binding("rows", json!(["a", "b", "c", "d"]));
+        let scope = LowerScope::default().with_binding("rows", json!(["a", "b", "c", "d"]));
         let nodes = interpret_with_scope(
             r#"<container>
                 <text for="i in 0..rows.length">{i}</text>
@@ -6267,15 +6812,9 @@ mod tests {
     /// `obj.length` reads as the number of keys.
     #[test]
     fn object_length_virtual_segment_reads_as_key_count() {
-        let scope = LowerScope::default().with_binding(
-            "form",
-            json!({"name": "x", "email": "y", "age": 1}),
-        );
-        let nodes = interpret_with_scope(
-            r#"<text>{form.length}</text>"#,
-            &scope,
-        )
-        .unwrap();
+        let scope = LowerScope::default()
+            .with_binding("form", json!({"name": "x", "email": "y", "age": 1}));
+        let nodes = interpret_with_scope(r#"<text>{form.length}</text>"#, &scope).unwrap();
         let Node::Text { content, .. } = &nodes[0] else {
             panic!()
         };
@@ -6286,8 +6825,7 @@ mod tests {
     /// element value.
     #[test]
     fn array_first_and_last_virtual_segments_resolve_to_endpoints() {
-        let scope = LowerScope::default()
-            .with_binding("rows", json!(["alpha", "beta", "gamma"]));
+        let scope = LowerScope::default().with_binding("rows", json!(["alpha", "beta", "gamma"]));
         let nodes = interpret_with_scope(
             r#"<container>
                 <text>{rows.first}</text>
@@ -6314,11 +6852,7 @@ mod tests {
     #[test]
     fn empty_array_first_returns_empty_string() {
         let scope = LowerScope::default().with_binding("rows", json!([]));
-        let nodes = interpret_with_scope(
-            r#"<text>{rows.first}</text>"#,
-            &scope,
-        )
-        .unwrap();
+        let nodes = interpret_with_scope(r#"<text>{rows.first}</text>"#, &scope).unwrap();
         let Node::Text { content, .. } = &nodes[0] else {
             panic!()
         };
@@ -6330,11 +6864,8 @@ mod tests {
     #[test]
     fn if_with_length_is_falsy_on_empty_array() {
         let scope = LowerScope::default().with_binding("rows", json!([]));
-        let nodes = interpret_with_scope(
-            r#"<text if="{rows.length}">visible</text>"#,
-            &scope,
-        )
-        .unwrap();
+        let nodes =
+            interpret_with_scope(r#"<text if="{rows.length}">visible</text>"#, &scope).unwrap();
         assert!(nodes.is_empty());
     }
 
@@ -6342,8 +6873,7 @@ mod tests {
     /// sees the same synthesized length value.
     #[test]
     fn comparison_against_length_in_evaluator_works() {
-        let scope = LowerScope::default()
-            .with_binding("rows", json!(["a", "b", "c"]));
+        let scope = LowerScope::default().with_binding("rows", json!(["a", "b", "c"]));
         let nodes = interpret_with_scope(
             r#"<container>
                 <text if="{rows.length > 2}">many</text>
@@ -6366,8 +6896,7 @@ mod tests {
     /// every container-shape.
     #[test]
     fn string_length_first_last_resolve_through_virtual_segments() {
-        let scope = LowerScope::default()
-            .with_binding("word", json!("hello"));
+        let scope = LowerScope::default().with_binding("word", json!("hello"));
         let nodes = interpret_with_scope(
             r#"<container>
                 <text>{word.length}</text>
@@ -6387,7 +6916,10 @@ mod tests {
                 _ => String::new(),
             })
             .collect();
-        assert_eq!(texts, vec!["5".to_string(), "h".to_string(), "o".to_string()]);
+        assert_eq!(
+            texts,
+            vec!["5".to_string(), "h".to_string(), "o".to_string()]
+        );
     }
 
     // ---------- on:event empty-string filter + modifier flattening ----------
@@ -6412,10 +6944,7 @@ mod tests {
     /// dash-joined wire form.
     #[test]
     fn on_event_modifier_dot_suffix_flattens_to_dash_in_data_attr() {
-        let nodes = interpret(
-            r#"<container on:click.once.stop="cmd save"/>"#,
-        )
-        .unwrap();
+        let nodes = interpret(r#"<container on:click.once.stop="cmd save"/>"#).unwrap();
         let Node::Container { props, .. } = &nodes[0] else {
             panic!()
         };

@@ -532,7 +532,8 @@ skeleton = "does-not-exist.prism-ui"
 "#,
     )];
     with_apps_dir("skeleton_missing", manifests, || {
-        let shell = prism_shell::Shell::new().expect("Shell::new should succeed despite missing skel");
+        let shell =
+            prism_shell::Shell::new().expect("Shell::new should succeed despite missing skel");
         let inner = shell.inner.borrow();
         assert!(
             !inner.app_skeletons.contains_key("broken"),

@@ -252,8 +252,7 @@ pub struct ServiceContext<'a> {
 /// [`ServiceRegistry::rebuild_app_services`]). Returns a
 /// fully-constructed `Arc<dyn ShellService>` ready to participate in
 /// `fan_out`.
-pub type ServiceFactory =
-    Box<dyn Fn(&ServiceContext<'_>) -> Arc<dyn ShellService> + Send + Sync>;
+pub type ServiceFactory = Box<dyn Fn(&ServiceContext<'_>) -> Arc<dyn ShellService> + Send + Sync>;
 
 struct RegisteredService {
     scope: ServiceScope,
@@ -729,9 +728,7 @@ mod tests {
             ServiceScope::App,
             Box::new(move |ctx| {
                 cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                seen.lock()
-                    .unwrap()
-                    .push(ctx.app_id.map(str::to_string));
+                seen.lock().unwrap().push(ctx.app_id.map(str::to_string));
                 Arc::new(Counted { id: "test.context" })
             }),
         );
@@ -785,7 +782,9 @@ mod tests {
             ServiceScope::Universal,
             Box::new(move |_| {
                 cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                Arc::new(Counted { id: "test.universal" })
+                Arc::new(Counted {
+                    id: "test.universal",
+                })
             }),
         );
         assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 1);

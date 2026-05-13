@@ -184,19 +184,23 @@ Each step lands with:
 
 ## Out of scope (intentional)
 
-- **Per-app skeletons.** The doc framing mentioned splitting
-  `app.prism-ui` into per-app `<app>/shell.prism-ui` files. That's a
-  natural follow-on, but it's structural — it changes how the shell
-  parses + which `app-name` it shows in chrome — and is decoupled from
-  the four loops here. Defer to a separate doc when we tackle it.
+- ~~**Per-app skeletons.**~~ Promoted to **ADR-009**, landed.
+  `apps/<id>/manifest.toml`'s `[entry] skeleton` field points at a
+  `.prism-ui` file; `AppLoader` parses it; `ShellInner.app_skeletons`
+  caches; `Shell::render` grafts the active app's body into the host
+  skeleton's `<shell.app-window>` via `Skeleton::with_app_body`.
+  Default app skeleton (`<shell.dock-workspace/>`) preserves
+  existing behaviour for apps that declare no skeleton.
 - **Hot-swappable apps.** Today the shell loads apps at boot; a
   running app can't be replaced. The manifest format is forward-
   compatible with hot-swap but we don't implement the swap path yet.
-- **Service factories.** Services are currently registered by direct
-  `reg.add(FooService)` calls. A factory-based scheme (`Box<dyn Fn() -> Box<dyn ShellService>>`)
-  would let Luau register services too, but Loop 4 wires only the
-  *declaration* path through Luau — the actual service body still
-  has to be Rust until we land an mlua-backed service shim.
+- ~~**Service factories.**~~ Promoted to **ADR-010**, landed.
+  `ServiceRegistry::add_factory_scoped` registers a closure that
+  builds a service from a `ServiceContext`; `rebuild_app_services`
+  re-runs every `App`-scoped factory with a fresh context (drops
+  prior commands, re-installs new ones, asserts service-id
+  stability). Eager `add_scoped` still works byte-compatibly —
+  factories are additive.
 
 ## Decision log
 
@@ -255,6 +259,40 @@ Each step lands with:
   (`tests/dsl_self_bootstrap.rs`). Workspace total: **3603 tests
   passing**, zero failures, `cargo clippy --workspace --all-targets
   -D warnings` clean.
+
+- 2026-05-13: **Per-app skeletons + service factories landed.**
+  Closes the two original out-of-scope items.
+  - **ADR-009** (`docs/adr/009-per-app-skeletons.md`): host skeleton
+    declares an empty `<shell.app-window>` body; `Skeleton::with_app_body`
+    grafts the active app's skeleton into that body each frame.
+    `AppLoader::discover` reads `[entry] skeleton` from each
+    manifest, parses the file, surfaces it as
+    `LoadedApp.skeleton`. `ShellInner.app_skeletons` caches every
+    parsed app skeleton; `Shell::render` picks the active one via
+    `inner.active_app_skeleton()` (falls back to the default
+    `<shell.dock-workspace/>`).
+    - Tests: 4 new render-side unit tests + 4 new e2e tests in
+      `tests/dsl_self_bootstrap.rs`. Includes
+      `shell_render_composes_host_with_active_app_body` which
+      drives the full chain and asserts the composed tree contains
+      the app skeleton's id.
+    - `apps/lattice/shell.prism-ui` ships as a proof-of-concept
+      app skeleton.
+  - **ADR-010** (`docs/adr/010-service-factories.md`):
+    `ServiceRegistry::add_factory_scoped` registers a closure
+    `Fn(&ServiceContext) -> Arc<dyn ShellService>`. Eager `add` /
+    `add_scoped` keep working unchanged (they store `factory:
+    None`). `rebuild_app_services` re-runs every `App`-scoped
+    factory with a fresh context, dropping the prior instance's
+    commands and installing the new instance's commands; asserts
+    the factory must preserve service id between rebuilds.
+    - Tests: 7 new service-registry unit tests covering eager-back-
+      compat, factory registration, rebuild semantics (rerun with
+      new context, skip eager, skip universal, swap commands), and
+      the id-stability panic.
+
+  **Workspace total: 3646 tests passing**, zero failures,
+  `cargo clippy --workspace --all-targets -- -D warnings` clean.
 
   **Residual follow-up:** binding `prism.register_panel` /
   `prism.register_component` / `prism.register_service` as Luau

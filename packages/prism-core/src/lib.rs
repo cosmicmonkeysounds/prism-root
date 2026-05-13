@@ -78,6 +78,7 @@ pub mod luau_reactive;
 pub mod luau_types;
 pub mod network;
 pub mod reactive;
+pub mod registry;
 pub mod shell_mode;
 pub mod widget;
 
@@ -95,4 +96,5 @@ pub use kernel::atom::{select, select_memo, select_ref, Atom, AtomSubscription};
 pub use kernel::crdt_sync::{CrdtSync, SyncEvent, SyncSubscription};
 pub use kernel::{Action, Store, Subscription};
 pub use reactive::{DirtyQueue, Effect, Memo, Owner, ReactiveContext, Signal};
+pub use registry::{Catalog, HasId};
 pub use shell_mode::{Permission, ShellMode, ShellModeContext};

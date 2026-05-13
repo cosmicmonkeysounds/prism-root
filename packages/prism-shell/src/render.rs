@@ -573,10 +573,8 @@ mod tests {
             "host skeleton must declare empty `<shell.app-window>` element body"
         );
 
-        let app = Skeleton::from_source(
-            r#"<shell.dock-workspace id="my-dock"/>"#,
-        )
-        .expect("app parse");
+        let app =
+            Skeleton::from_source(r#"<shell.dock-workspace id="my-dock"/>"#).expect("app parse");
         let merged = host.with_app_body(&app);
         let app_window_after = find_app_window(&merged.doc.nodes).expect("app-window present");
         let merged_elements: Vec<&prism_ui_ast::Node> = app_window_after

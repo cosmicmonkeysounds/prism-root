@@ -46,8 +46,7 @@ use prism_core::language::prism_ui::{
     ast::TemplatePart, AttributeNamespace, AttributeValue, Element, Node as AstNode,
 };
 use prism_ui_runtime::interpret::{
-    apply_style_override, evaluate_expression, lookup_path_owned_in_scope,
-    lower_ast_children,
+    apply_style_override, evaluate_expression, lookup_path_owned_in_scope, lower_ast_children,
     stringify_value_for_template, LowerScope, TagResolver,
 };
 use prism_ui_runtime::layout::Node as UiNode;
@@ -1072,8 +1071,7 @@ mod tests {
         let scope = LowerScope::default()
             .with_resolver(resolver)
             .with_binding("kind", serde_json::json!("demo.box"));
-        let (doc, errs) =
-            parse(r##"<dispatch tag="{kind}" id="b" tint="#0000ff"/>"##);
+        let (doc, errs) = parse(r##"<dispatch tag="{kind}" id="b" tint="#0000ff"/>"##);
         assert!(errs.is_empty(), "parse errors: {errs:?}");
         let nodes = lower_document_with_scope(&doc, &scope);
         let UiNode::Container { id, props, .. } = &nodes[0] else {
@@ -1092,9 +1090,8 @@ mod tests {
         // the primitive arm, not a registered-component fallback.
         let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
         let scope = LowerScope::default().with_resolver(resolver);
-        let (doc, errs) = parse(
-            r##"<dispatch tag="container" id="root" gap="4" style:background="#112233"/>"##,
-        );
+        let (doc, errs) =
+            parse(r##"<dispatch tag="container" id="root" gap="4" style:background="#112233"/>"##);
         assert!(errs.is_empty(), "parse errors: {errs:?}");
         let nodes = lower_document_with_scope(&doc, &scope);
         let UiNode::Container { id, props, .. } = &nodes[0] else {
