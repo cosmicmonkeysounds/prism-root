@@ -1862,6 +1862,127 @@ script = "main.luau"
 }
 
 #[test]
+fn luau_script_watcher_drives_install_app_script_end_to_end() {
+    // The dev-loop hot-reload contract: a file watcher (real impl
+    // ships in `app_loader::LuauScriptWatcher`) sees `main.luau`
+    // change on disk and hands the new source to
+    // `Shell::install_app_script`. The next render reflects the
+    // re-run script's body. Drives both the watcher and the shell
+    // through one tick to prove the contract end-to-end.
+    use prism_shell::app_loader::{LuauScriptChange, LuauScriptWatcher};
+
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+skeleton = "shell.prism-ui"
+script = "main.luau"
+"#,
+    )];
+    with_apps_dir("watcher_e2e", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let dir = std::path::Path::new(&root).join("lattice");
+        let script_path = dir.join("main.luau");
+        std::fs::write(dir.join("shell.prism-ui"), r#"<my.greet id="g-1"/>"#).unwrap();
+        std::fs::write(
+            &script_path,
+            r#"
+                prism.app:register_component({
+                    id = "my.greet",
+                    render = function(_p, _c)
+                        return prism.element("section",
+                            { ["data-version"] = "boot" },
+                            { "boot" })
+                    end,
+                })
+            "#,
+        )
+        .unwrap();
+
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        {
+            let mut inner = shell.inner.borrow_mut();
+            inner.state.workspace.active_app = Some("lattice".to_string());
+        }
+        let boot = shell.render();
+        fn walk(
+            nodes: &[prism_ui_runtime::layout::Node],
+            attr: &str,
+            value: &str,
+            seen: &mut bool,
+        ) {
+            use prism_ui_runtime::layout::Node as UiNode;
+            for n in nodes {
+                if *seen {
+                    return;
+                }
+                if let UiNode::Container {
+                    props, children, ..
+                } = n
+                {
+                    for (k, v) in &props.semantic.attrs {
+                        if k == attr && v == value {
+                            *seen = true;
+                            return;
+                        }
+                    }
+                    walk(children, attr, value, seen);
+                }
+            }
+        }
+        let mut boot_seen = false;
+        walk(&boot, "data-version", "boot", &mut boot_seen);
+        assert!(boot_seen, "boot version should render");
+
+        // Prime the watcher (matches the dev-loop boot seam: it
+        // catches up to the on-disk state once before entering its
+        // poll loop, so the first poll is a FirstSighting).
+        let mut watcher = LuauScriptWatcher::new();
+        match watcher.observe("lattice", &script_path) {
+            LuauScriptChange::FirstSighting { .. } => {}
+            other => panic!("expected FirstSighting, got {other:?}"),
+        }
+
+        // Edit the file as a developer would.
+        std::fs::write(
+            &script_path,
+            r#"
+                prism.app:register_component({
+                    id = "my.greet",
+                    render = function(_p, _c)
+                        return prism.element("section",
+                            { ["data-version"] = "hotreload" },
+                            { "hotreload" })
+                    end,
+                })
+            "#,
+        )
+        .unwrap();
+
+        // Dev-loop tick: watcher detects change; host hands the new
+        // source to the shell.
+        let new_source = match watcher.observe("lattice", &script_path) {
+            LuauScriptChange::Changed { source } => source,
+            other => panic!("expected Changed, got {other:?}"),
+        };
+        shell
+            .install_app_script("lattice", &new_source)
+            .expect("install_app_script");
+        let hot = shell.render();
+        let mut hot_seen = false;
+        walk(&hot, "data-version", "hotreload", &mut hot_seen);
+        assert!(hot_seen, "hot-reloaded version should render");
+        // Steady-state poll: no further change.
+        assert!(matches!(
+            watcher.observe("lattice", &script_path),
+            LuauScriptChange::NoChange
+        ));
+    });
+}
+
+#[test]
 fn install_app_script_hot_swaps_service_without_duplicate_id_panic() {
     // The persistent-Luau hot-reload chain has to survive re-installs
     // of the same service id. ServiceRegistry's standard install

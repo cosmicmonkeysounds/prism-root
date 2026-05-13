@@ -387,6 +387,16 @@ const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
     ("color-swatch", handle_color_swatch_click),
     ("color-preset-select", handle_color_preset_select_click),
     ("color-picker-close", handle_color_picker_close_click),
+    // Wave 2.3 — select-dropdown overlay. Option rows commit through
+    // `set_node_prop` and dismiss the overlay; the close button is
+    // explicit so a future "click-outside dismisses" wiring (a Wave
+    // 11 follow-up around `OverlaySlot::dismiss_all_on_outside_click`)
+    // can sit alongside without touching the dropdown's own routes.
+    (
+        "select-dropdown-option",
+        handle_select_dropdown_option_click,
+    ),
+    ("select-dropdown-close", handle_select_dropdown_close_click),
     // Wave 2.4 HSL — the slider press path is routed *before*
     // `route_pointer_down` because the channel commit needs the
     // exact pointer-x coordinate (the in-table handler signature
@@ -443,28 +453,44 @@ fn handle_field_edit_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bo
         return false;
     };
     let kind = attr_value(hit, "data-kind").unwrap_or("");
-    // Kinds that flip a value on every click — boolean toggle and
-    // select cycle. The mutation runs through `set_node_prop`.
+    // Wave 2.3 — `select` kind opens an anchored dropdown overlay
+    // instead of cycling on click. The cycle behaviour stays
+    // available through the keyboard path (arrow keys via field-
+    // focus session) for the same dropdown's open state. Falls
+    // through cleanly when no options are bound.
+    if kind == "select" {
+        let Some(options) = attr_value(hit, "data-options") else {
+            return false;
+        };
+        let pairs: Vec<&str> = options.split(',').filter(|s| !s.is_empty()).collect();
+        if pairs.is_empty() {
+            return false;
+        }
+        let current = attr_value(hit, "data-value").unwrap_or("").to_string();
+        // Each comma-separated entry is `<value>:<label>` (the
+        // field-editor's `data-options` shape). When the colon is
+        // missing we treat the bare token as both value and label.
+        let opts: Vec<serde_json::Value> = pairs
+            .iter()
+            .map(|tok| {
+                let (val, label) = match tok.find(':') {
+                    Some(idx) => (&tok[..idx], &tok[idx + 1..]),
+                    None => (*tok, *tok),
+                };
+                serde_json::json!({ "value": val, "label": label })
+            })
+            .collect();
+        let mut guard = inner.borrow_mut();
+        return guard
+            .state
+            .open_select_dropdown(target, key, &current, opts);
+    }
+    // Kind: boolean — flip on every click. The mutation runs
+    // through `set_node_prop`.
     let toggle_value: Option<serde_json::Value> = match kind {
         "boolean" => {
             let cur = attr_value(hit, "data-value").unwrap_or("false") == "true";
             Some(serde_json::Value::Bool(!cur))
-        }
-        "select" => {
-            let Some(options) = attr_value(hit, "data-options") else {
-                return false;
-            };
-            let opts: Vec<&str> = options.split(',').filter(|s| !s.is_empty()).collect();
-            if opts.is_empty() {
-                return false;
-            }
-            let current = attr_value(hit, "data-value").unwrap_or("");
-            let next = opts
-                .iter()
-                .position(|o| *o == current)
-                .map(|i| (i + 1) % opts.len())
-                .unwrap_or(0);
-            Some(serde_json::Value::String(opts[next].to_string()))
         }
         _ => None,
     };
@@ -1178,6 +1204,26 @@ fn handle_color_picker_close_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRe
     inner.borrow_mut().state.close_color_picker()
 }
 
+/// Wave 2.3 — option row inside `shell.select-dropdown`. Reads
+/// `data-value` (the option's value) and commits through
+/// `commit_select_dropdown_value`, which writes via `set_node_prop`
+/// and closes the overlay. Idempotent against the currently-selected
+/// option (no mutation, no resync, but still consumes the click).
+fn handle_select_dropdown_option_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(value) = attr_value(hit, "data-value") else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let registry = g.registry.as_component_registry();
+    g.state.commit_select_dropdown_value(value, Some(registry))
+}
+
+/// Wave 2.3 — explicit close button on the select dropdown.
+fn handle_select_dropdown_close_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRect) -> bool {
+    inner.borrow_mut().state.close_select_dropdown()
+}
+
 /// Wave 2.4 HSL — `data-role="color-hsl-slider"` press. Reads
 /// `data-channel` (one of `h` / `s` / `l`), computes the normalised
 /// position the click landed at `(event.x - bounds.x) / bounds.width`,
@@ -1533,8 +1579,13 @@ mod tests {
         assert_eq!(visible, serde_json::Value::Bool(false));
     }
 
+    /// Wave 2.3 — pointer-down on a `data-role="field-edit"` hit
+    /// whose kind is `select` opens the anchored dropdown overlay
+    /// (replaces the legacy click-to-cycle behaviour). The dropdown's
+    /// option rows route through `select-dropdown-option` for the
+    /// actual commit (see the next test for that contract).
     #[test]
-    fn pointer_down_on_select_field_edit_cycles_to_next_option() {
+    fn pointer_down_on_select_field_edit_opens_dropdown_overlay() {
         use prism_ui_runtime::event::PointerButton;
         let shell = Shell::new().expect("boot");
         let hit = hit_with(
@@ -1557,9 +1608,56 @@ mod tests {
             Some(hit),
         );
         assert!(dirty);
-        let level = shell
-            .inner
-            .borrow()
+        let dropdown = shell.inner.borrow().state.overlay.select_dropdown.clone();
+        assert!(dropdown.open);
+        assert_eq!(dropdown.target_id, "demo-heading");
+        assert_eq!(dropdown.key, "level");
+        assert_eq!(dropdown.value, "h1");
+        assert_eq!(dropdown.options.len(), 3);
+        // Verify the bare-value parsing branch (no `:label`) — when
+        // `data-options` carries plain values they round-trip with
+        // `value == label`.
+        let first = dropdown.options[0]
+            .get("value")
+            .and_then(|v| v.as_str())
+            .unwrap();
+        assert_eq!(first, "h1");
+    }
+
+    /// Wave 2.3 — pointer-down on a `data-role="select-dropdown-option"`
+    /// commits the option's `data-value` through `set_node_prop` and
+    /// closes the dropdown.
+    #[test]
+    fn pointer_down_on_select_dropdown_option_commits_and_closes() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        shell.inner.borrow_mut().state.open_select_dropdown(
+            "demo-heading",
+            "level",
+            "h1",
+            vec![
+                serde_json::json!({ "value": "h1", "label": "H1" }),
+                serde_json::json!({ "value": "h2", "label": "H2" }),
+            ],
+        );
+        let hit = hit_with(
+            "select-dropdown-option",
+            "ignored-target",
+            &[("data-value", "h2")],
+        );
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty);
+        let guard = shell.inner.borrow();
+        assert!(!guard.state.overlay.select_dropdown.open);
+        let level = guard
             .state
             .canvas
             .document
@@ -1571,21 +1669,20 @@ mod tests {
         assert_eq!(level, serde_json::Value::String("h2".into()));
     }
 
+    /// Wave 2.3 — pointer-down on `data-role="select-dropdown-close"`
+    /// dismisses the overlay without committing.
     #[test]
-    fn pointer_down_on_select_field_edit_wraps_at_end_of_options() {
+    fn pointer_down_on_select_dropdown_close_dismisses_overlay() {
         use prism_ui_runtime::event::PointerButton;
         let shell = Shell::new().expect("boot");
-        let hit = hit_with(
-            "field-edit",
+        shell.inner.borrow_mut().state.open_select_dropdown(
             "demo-heading",
-            &[
-                ("data-key", "level"),
-                ("data-kind", "select"),
-                ("data-value", "h3"),
-                ("data-options", "h1,h2,h3"),
-            ],
+            "level",
+            "h1",
+            vec![serde_json::json!({ "value": "h1", "label": "H1" })],
         );
-        let _ = dispatch_event(
+        let hit = hit_with("select-dropdown-close", "", &[]);
+        let dirty = dispatch_event(
             &shell.inner,
             &Event::PointerDown {
                 x: 5.0,
@@ -1594,18 +1691,8 @@ mod tests {
             },
             Some(hit),
         );
-        let level = shell
-            .inner
-            .borrow()
-            .state
-            .canvas
-            .document
-            .root
-            .as_ref()
-            .and_then(|r| r.find("demo-heading"))
-            .and_then(|n| n.props.get("level").cloned())
-            .expect("level prop set");
-        assert_eq!(level, serde_json::Value::String("h1".into()));
+        assert!(dirty);
+        assert!(!shell.inner.borrow().state.overlay.select_dropdown.open);
     }
 
     /// Wave 2.4 — pointer-down on a `data-role="color-swatch"` hit

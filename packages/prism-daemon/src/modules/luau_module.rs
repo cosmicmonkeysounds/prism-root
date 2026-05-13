@@ -99,6 +99,14 @@ where
 
     prism_context::install(&lua, ctx).map_err(|e| e.to_string())?;
 
+    // Phase 5 completion of `docs/dev/dioxus-inspiration.md`: every
+    // Luau script runs with `prism.reactive.signal` /
+    // `.memo` / `.effect` / `.batch` constructors installed against a
+    // per-state `Owner`. The owner drops with the Lua state at the
+    // end of `exec_with_setup`, so a script's reactive scopes never
+    // leak past its VM lifetime.
+    crate::modules::luau_reactive::install(&lua).map_err(|e| e.to_string())?;
+
     setup(&lua).map_err(|e| e.to_string())?;
 
     if let Some(args) = args {

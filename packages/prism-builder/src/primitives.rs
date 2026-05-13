@@ -35,44 +35,11 @@ use crate::registry::{FieldSpec, NumericBounds};
 use crate::style::StyleProperties;
 use crate::ui_lower::{bare_container, LowerCtx};
 
-// Every primitive's lower body shares the same shape: a single
-// container with a `data-role` semantic attribute matching the
-// primitive's id (minus the `prism.` namespace) so:
-//
-// - the hit-test cache can find it by role
-// - the SSR / HTML backends can surface a typed tag
-// - the inspector recognises the kind without a separate registry
-//
-// `primitive_lower(id, role)` is the shared constructor — adding a
-// new primitive is one `BlockSpec` row, no per-primitive `lower_fn`
-// boilerplate.
-fn primitive_lower(
-    role: &'static str,
-) -> impl Fn(&LowerCtx<'_>, &Node, &StyleProperties) -> UiNode {
-    move |_ctx, node, _style| {
-        bare_container(node.id.clone(), Vec::new(), |p| {
-            p.width = Sizing::Fit;
-            p.height = Sizing::Fit;
-            p.semantic = Semantic::tag("div")
-                .with_attr("role", "group")
-                .with_attr("data-role", role);
-        })
-    }
-}
-
-// Each primitive's `lower_fn` is a closure today. `BlockSpec` takes a
-// `fn` pointer, not an `Fn`, so we hand-write a free function per
-// primitive that calls the shared shape. The closures avoid the
-// per-primitive impl-block boilerplate the explicit fn-shape would
-// add (mirror of `synthetic_container` in `ui_lower::block`).
-
-macro_rules! primitive_block {
-    ($name:ident, $id:literal, $role:literal, $schema:ident) => {
-        fn $name(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-            (primitive_lower($role))(ctx, node, style)
-        }
-    };
-}
+// Wave 10.4-10.17 — every primitive ships a real `lower_fn` body
+// (see the per-fn bodies below). The pre-Wave-10.4 shared
+// `primitive_lower(role)` stub + `primitive_block!` macro retired
+// once each primitive had something more meaningful than a bare
+// `<div data-role="…"/>` to emit.
 
 /// Wave 10.4 interactive body for `prism.text-input` — lowers to a
 /// real `Node::TextInput` (not the generic `Container` placeholder)
@@ -144,74 +111,477 @@ fn text_input_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -
         focused: false,
     }
 }
-primitive_block!(
-    drag_scrub_lower,
-    "prism.drag-scrub",
-    "drag-scrub",
-    drag_scrub_schema
-);
-primitive_block!(popover_lower, "prism.popover", "popover", popover_schema);
-primitive_block!(
-    list_picker_lower,
-    "prism.list-picker",
-    "list-picker",
-    list_picker_schema
-);
-primitive_block!(
-    collapsible_lower,
-    "prism.collapsible",
-    "collapsible",
-    collapsible_schema
-);
-primitive_block!(
-    split_handle_lower,
-    "prism.split-handle",
-    "split-handle",
-    split_handle_schema
-);
-primitive_block!(
-    timed_overlay_lower,
-    "prism.timed-overlay",
-    "timed-overlay",
-    timed_overlay_schema
-);
-primitive_block!(
-    focus_trap_lower,
-    "prism.focus-trap",
-    "focus-trap",
-    focus_trap_schema
-);
-primitive_block!(select_lower, "prism.select", "select", select_schema);
-primitive_block!(
-    color_picker_lower,
-    "prism.color-picker",
-    "color-picker",
-    color_picker_schema
-);
-primitive_block!(
-    file_button_lower,
-    "prism.file-button",
-    "file-button",
-    file_button_schema
-);
-primitive_block!(
-    resize_edge_lower,
-    "prism.resize-edge",
-    "resize-edge",
-    resize_edge_schema
-);
-primitive_block!(
-    canvas_paint_lower,
-    "prism.canvas-paint",
-    "canvas-paint",
-    canvas_paint_schema
-);
-primitive_block!(
-    text_buffer_lower,
-    "prism.text-buffer",
-    "text-buffer",
-    text_buffer_schema
-);
+/// Wave 10.5 — `prism.drag-scrub`. The runtime emits a styled
+/// container carrying `data-role="drag-scrub"` plus `data-value`
+/// (current), `data-step`, `data-min` / `data-max` (when bounded),
+/// and `data-bind-value` (when bound). The shell's pointer-routing
+/// table recognises `drag-scrub` and routes drag deltas through
+/// `nudge_focused_number` / `set_node_prop`. Multi-line scrubbing,
+/// keyboard arrow handling, and shift-modifier coarse step all flow
+/// through the existing `FieldFocusService` once focused.
+fn drag_scrub_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let value = ctx.prop(node, "value");
+    let step = ctx.prop(node, "step");
+    let min = ctx.prop(node, "min");
+    let max = ctx.prop(node, "max");
+    let bind = {
+        let v = ctx.prop_str(node, "bind-value");
+        if v.is_empty() {
+            ctx.prop_str(node, "bind")
+        } else {
+            v
+        }
+    };
+    bare_container(node.id.clone(), Vec::new(), |p| {
+        p.width = Sizing::Fit;
+        p.height = Sizing::Fit;
+        let mut s = Semantic::tag("div")
+            .with_attr("role", "slider")
+            .with_attr("data-role", "drag-scrub");
+        if let Some(n) = value.as_f64() {
+            s = s.with_attr("data-value", format_number(n));
+        }
+        if let Some(n) = step.as_f64() {
+            s = s.with_attr("data-step", format_number(n));
+        }
+        if let Some(n) = min.as_f64() {
+            s = s.with_attr("data-min", format_number(n));
+            s = s.with_attr("aria-valuemin", format_number(n));
+        }
+        if let Some(n) = max.as_f64() {
+            s = s.with_attr("data-max", format_number(n));
+            s = s.with_attr("aria-valuemax", format_number(n));
+        }
+        if !bind.is_empty() {
+            s = s.with_attr("data-bind-value", bind);
+        }
+        p.semantic = s;
+    })
+}
+
+/// Wave 10.6 — `prism.popover`. Anchored overlay: when `open=true`,
+/// emits the body with `data-role="popover"`, `data-placement` from
+/// the prop, and `data-anchor-id` if set. The host paints the
+/// arrow + positions the rect relative to the anchor's hit-test rect
+/// at the next frame. When closed, the body collapses to a 0×0
+/// `aria-hidden="true"` placeholder (matching the established
+/// closed-overlay shape from §43 A2).
+fn popover_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let open = ctx.prop_bool(node, "open", false);
+    let anchor_id = ctx.prop_str(node, "anchor-id");
+    let placement = {
+        let raw = ctx.prop_str(node, "placement");
+        if raw.is_empty() {
+            "bottom".to_string()
+        } else {
+            raw
+        }
+    };
+    let children = ctx.lower_children(&node.children);
+    bare_container(node.id.clone(), children, |p| {
+        if open {
+            p.width = Sizing::Fit;
+            p.height = Sizing::Fit;
+        } else {
+            p.width = Sizing::Fixed(0.0);
+            p.height = Sizing::Fixed(0.0);
+        }
+        let mut s = Semantic::tag("div")
+            .with_attr("role", "dialog")
+            .with_attr("data-role", "popover")
+            .with_attr("data-placement", placement)
+            .with_attr("data-open", if open { "true" } else { "false" });
+        if !anchor_id.is_empty() {
+            s = s.with_attr("data-anchor-id", anchor_id);
+        }
+        if !open {
+            s = s.with_attr("aria-hidden", "true");
+        }
+        p.semantic = s;
+    })
+}
+
+/// Wave 10.7 — `prism.list-picker`. Emits a `data-role="list-picker"`
+/// container with `data-options` (the raw JSON array string) +
+/// `data-selected-id` so the shell's list-picker route can paint
+/// rows + dispatch row-click. Children pass through verbatim so an
+/// author can decorate the picker with a header / footer.
+fn list_picker_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let options = ctx.prop(node, "options");
+    let selected_id = ctx.prop_str(node, "selected-id");
+    let children = ctx.lower_children(&node.children);
+    bare_container(node.id.clone(), children, |p| {
+        p.width = Sizing::Grow;
+        p.height = Sizing::Fit;
+        let mut s = Semantic::tag("div")
+            .with_attr("role", "listbox")
+            .with_attr("data-role", "list-picker");
+        let opts_str = match &options {
+            Value::String(s) if !s.is_empty() => s.clone(),
+            Value::Array(_) => options.to_string(),
+            _ => String::new(),
+        };
+        if !opts_str.is_empty() {
+            s = s.with_attr("data-options", opts_str);
+        }
+        if !selected_id.is_empty() {
+            s = s.with_attr("data-selected-id", selected_id);
+            s = s.with_attr("aria-activedescendant", String::new());
+        }
+        p.semantic = s;
+    })
+}
+
+/// Wave 10.8 — `prism.collapsible`. When `open=true`, children are
+/// emitted; when closed, the body collapses to a header-only stub
+/// with `data-open="false"`. The `data-role="collapsible"` lets a
+/// host route header clicks to a toggle handler. The current title
+/// rides as `aria-label` so screen readers carry the disclosure
+/// identity even when the body is hidden.
+fn collapsible_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let open = ctx.prop_bool(node, "open", true);
+    let title = ctx.prop_str(node, "title");
+    let children = if open {
+        ctx.lower_children(&node.children)
+    } else {
+        Vec::new()
+    };
+    bare_container(node.id.clone(), children, |p| {
+        p.width = Sizing::Grow;
+        p.height = Sizing::Fit;
+        let mut s = Semantic::tag("div")
+            .with_attr("role", "group")
+            .with_attr("data-role", "collapsible")
+            .with_attr("data-open", if open { "true" } else { "false" })
+            .with_attr("aria-expanded", if open { "true" } else { "false" });
+        if !title.is_empty() {
+            s = s.with_attr("aria-label", title);
+        }
+        p.semantic = s;
+    })
+}
+
+/// Wave 10.9 — `prism.split-handle`. Emits a thin draggable strip
+/// carrying `data-role="split-handle"` + `data-orientation` +
+/// `data-position` (0..1 fraction). The shell routes drag deltas
+/// through a panel-resize service so adjacent panes adopt the new
+/// split ratio.
+fn split_handle_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let orientation = {
+        let raw = ctx.prop_str(node, "orientation");
+        if raw.is_empty() {
+            "horizontal".to_string()
+        } else {
+            raw
+        }
+    };
+    let position = ctx.prop(node, "position").as_f64().unwrap_or(0.5);
+    let bind = {
+        let v = ctx.prop_str(node, "bind-value");
+        if v.is_empty() {
+            ctx.prop_str(node, "bind")
+        } else {
+            v
+        }
+    };
+    bare_container(node.id.clone(), Vec::new(), |p| {
+        if orientation == "vertical" {
+            p.width = Sizing::Fixed(6.0);
+            p.height = Sizing::Grow;
+        } else {
+            p.width = Sizing::Grow;
+            p.height = Sizing::Fixed(6.0);
+        }
+        let mut s = Semantic::tag("div")
+            .with_attr("role", "separator")
+            .with_attr("data-role", "split-handle")
+            .with_attr("data-orientation", orientation)
+            .with_attr("data-position", format_number(position));
+        if !bind.is_empty() {
+            s = s.with_attr("data-bind-value", bind);
+        }
+        p.semantic = s;
+    })
+}
+
+/// Wave 10.10 — `prism.timed-overlay`. Toast-style overlay that lives
+/// for `duration-ms` then dismisses itself. The runtime body just
+/// emits the data + a hidden/visible container; the auto-dismiss
+/// timer is driven by an `Effect` an author wires up alongside the
+/// usage site. Same `open` semantics as `popover`.
+fn timed_overlay_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let open = ctx.prop_bool(node, "open", false);
+    let duration = ctx.prop(node, "duration-ms").as_f64().unwrap_or(3000.0);
+    let children = if open {
+        ctx.lower_children(&node.children)
+    } else {
+        Vec::new()
+    };
+    bare_container(node.id.clone(), children, |p| {
+        if open {
+            p.width = Sizing::Fit;
+            p.height = Sizing::Fit;
+        } else {
+            p.width = Sizing::Fixed(0.0);
+            p.height = Sizing::Fixed(0.0);
+        }
+        let mut s = Semantic::tag("div")
+            .with_attr("role", "status")
+            .with_attr("data-role", "timed-overlay")
+            .with_attr("data-open", if open { "true" } else { "false" })
+            .with_attr("data-duration-ms", format_number(duration));
+        if !open {
+            s = s.with_attr("aria-hidden", "true");
+        }
+        p.semantic = s;
+    })
+}
+
+/// Wave 10.11 — `prism.focus-trap`. Marks a subtree as a focus trap
+/// boundary. The shell's focus-routing service keeps tab order within
+/// the children when `active=true`. Lowers transparently — children
+/// pass through; only the semantic attrs change.
+fn focus_trap_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let active = ctx.prop_bool(node, "active", false);
+    let children = ctx.lower_children(&node.children);
+    bare_container(node.id.clone(), children, |p| {
+        p.width = Sizing::Fit;
+        p.height = Sizing::Fit;
+        p.semantic = Semantic::tag("div")
+            .with_attr("role", "group")
+            .with_attr("data-role", "focus-trap")
+            .with_attr("data-active", if active { "true" } else { "false" });
+    })
+}
+
+/// Wave 10.12 — `prism.select`. Emits a `<select>` shape with
+/// `data-options` (JSON array string) + `data-value` (current) +
+/// `data-bind-value` (when bound). The shell routes click to cycle
+/// or open an anchored list-picker overlay (already wired).
+fn select_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let options = ctx.prop(node, "options");
+    let value = ctx.prop_str(node, "value");
+    let placeholder = ctx.prop_str(node, "placeholder");
+    let bind = {
+        let v = ctx.prop_str(node, "bind-value");
+        if v.is_empty() {
+            ctx.prop_str(node, "bind")
+        } else {
+            v
+        }
+    };
+    bare_container(node.id.clone(), Vec::new(), |p| {
+        p.width = Sizing::Fit;
+        p.height = Sizing::Fit;
+        let mut s = Semantic::tag("select")
+            .with_attr("role", "combobox")
+            .with_attr("data-role", "select");
+        let opts_str = match &options {
+            Value::String(s) if !s.is_empty() => s.clone(),
+            Value::Array(_) => options.to_string(),
+            _ => String::new(),
+        };
+        if !opts_str.is_empty() {
+            s = s.with_attr("data-options", opts_str);
+        }
+        if !value.is_empty() {
+            s = s.with_attr("data-value", value);
+        }
+        if !placeholder.is_empty() {
+            s = s.with_attr("placeholder", placeholder);
+        }
+        if !bind.is_empty() {
+            s = s.with_attr("data-bind-value", bind);
+        }
+        p.semantic = s;
+    })
+}
+
+/// Wave 10.13 — `prism.color-picker`. Emits a swatch + hex carrier
+/// with `data-role="color-picker"`, `data-value` (the CSS hex/rgba),
+/// `data-alpha` flag, and `data-bind-value` when bound. The shell's
+/// color-picker overlay (already wired for `shell.color-picker`)
+/// recognises the role and presents the HSL slider rig.
+fn color_picker_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let value = ctx.prop_str(node, "value");
+    let alpha = ctx.prop_bool(node, "alpha", true);
+    let bind = {
+        let v = ctx.prop_str(node, "bind-value");
+        if v.is_empty() {
+            ctx.prop_str(node, "bind")
+        } else {
+            v
+        }
+    };
+    bare_container(node.id.clone(), Vec::new(), |p| {
+        p.width = Sizing::Fit;
+        p.height = Sizing::Fit;
+        let mut s = Semantic::tag("div")
+            .with_attr("role", "button")
+            .with_attr("data-role", "color-picker")
+            .with_attr("data-alpha", if alpha { "true" } else { "false" });
+        if !value.is_empty() {
+            s = s.with_attr("data-value", value);
+        }
+        if !bind.is_empty() {
+            s = s.with_attr("data-bind-value", bind);
+        }
+        p.semantic = s;
+    })
+}
+
+/// Wave 10.14 — `prism.file-button`. Emits a button labelled by
+/// `label`, with `data-role="file-button"`, `data-accept` (MIME
+/// filter), `data-multiple`. The shell's pointer-down routes it
+/// through `handle_file_browse_click` which calls `Vfs::pick_file`
+/// (already wired for the field-editor's File kind).
+fn file_button_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let label = {
+        let raw = ctx.prop_str(node, "label");
+        if raw.is_empty() {
+            "Browse…".to_string()
+        } else {
+            raw
+        }
+    };
+    let accept = ctx.prop_str(node, "accept");
+    let multiple = ctx.prop_bool(node, "multiple", false);
+    let bind = {
+        let v = ctx.prop_str(node, "bind-value");
+        if v.is_empty() {
+            ctx.prop_str(node, "bind")
+        } else {
+            v
+        }
+    };
+    bare_container(node.id.clone(), Vec::new(), |p| {
+        p.width = Sizing::Fit;
+        p.height = Sizing::Fit;
+        let mut s = Semantic::tag("button")
+            .with_attr("role", "button")
+            .with_attr("data-role", "file-button")
+            .with_attr("data-label", label);
+        if !accept.is_empty() {
+            s = s.with_attr("data-accept", accept);
+        }
+        if multiple {
+            s = s.with_attr("data-multiple", "true");
+        }
+        if !bind.is_empty() {
+            s = s.with_attr("data-bind-value", bind);
+        }
+        p.semantic = s;
+    })
+}
+
+/// Wave 10.15 — `prism.resize-edge`. Emits a thin grab-handle with
+/// `data-role="resize-edge"` + `data-direction` (whitelisted to
+/// 8 octants) + `data-target-id`. Already wired into the shell's
+/// `POINTER_ROUTES("resize-handle")` via the existing canvas gizmo
+/// routing — Wave 10.15 adds the primitive-level surface so DSL
+/// authors can compose resize affordances without hand-rolling the
+/// data ladder.
+fn resize_edge_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let direction = ctx.prop_str(node, "direction");
+    let target_id = ctx.prop_str(node, "target-id");
+    bare_container(node.id.clone(), Vec::new(), |p| {
+        p.width = Sizing::Fit;
+        p.height = Sizing::Fit;
+        let mut s = Semantic::tag("div")
+            .with_attr("role", "separator")
+            .with_attr("data-role", "resize-handle")
+            .with_attr("data-direction", direction);
+        if !target_id.is_empty() {
+            s = s.with_attr("data-target-id", target_id);
+        }
+        p.semantic = s;
+    })
+}
+
+/// Wave 10.16 — `prism.canvas-paint`. Reserves a fixed-size paintable
+/// rect. The host wires up an `Effect` that calls back into a custom
+/// paint pass keyed off `data-canvas-paint-id` (matches the node's
+/// id). Used for color-picker HSL gradient strips, gizmo arrow
+/// arrowheads, etc.
+fn canvas_paint_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let w = ctx.prop(node, "width").as_f64().unwrap_or(0.0);
+    let h = ctx.prop(node, "height").as_f64().unwrap_or(0.0);
+    bare_container(node.id.clone(), Vec::new(), |p| {
+        if w > 0.0 {
+            p.width = Sizing::Fixed(w as f32);
+        }
+        if h > 0.0 {
+            p.height = Sizing::Fixed(h as f32);
+        }
+        let mut s = Semantic::tag("canvas")
+            .with_attr("role", "img")
+            .with_attr("data-role", "canvas-paint");
+        if !node.id.is_empty() {
+            s = s.with_attr("data-canvas-paint-id", node.id.clone());
+        }
+        if w > 0.0 {
+            s = s.with_attr("width", format_number(w));
+        }
+        if h > 0.0 {
+            s = s.with_attr("height", format_number(h));
+        }
+        p.semantic = s;
+    })
+}
+
+/// Wave 10.17 — `prism.text-buffer`. Multi-line text buffer with line
+/// and caret reporting. The runtime currently lowers it as a
+/// `TextInput` with `multiline=true` so keystroke routing reuses the
+/// single-line path; richer features (selection, IME, scroll) land
+/// alongside the future textarea body.
+fn text_buffer_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let value = ctx.prop_str(node, "value");
+    let placeholder = ctx.prop_str(node, "placeholder");
+    let bind = {
+        let v = ctx.prop_str(node, "bind-value");
+        if v.is_empty() {
+            ctx.prop_str(node, "bind")
+        } else {
+            v
+        }
+    };
+    let mut semantic = Semantic::tag("textarea")
+        .with_attr("data-role", "text-buffer")
+        .with_attr("data-multiline", "true");
+    if !bind.is_empty() {
+        semantic = semantic.with_attr("data-bind-value", bind);
+    }
+    if !placeholder.is_empty() {
+        semantic = semantic.with_attr("placeholder", placeholder.clone());
+    }
+    UiNode::TextInput {
+        id: node.id.clone(),
+        value,
+        placeholder,
+        props: TextProps::default(),
+        width: Sizing::Grow,
+        height: Sizing::Grow,
+        radius: CornerRadius {
+            tl: 4.0,
+            tr: 4.0,
+            br: 4.0,
+            bl: 4.0,
+        },
+        semantic,
+        focused: false,
+    }
+}
+
+/// Format an `f64` for round-trip into a semantic attribute value.
+/// Integer-valued doubles serialise without a trailing `.0` so authors
+/// reading `data-step="1"` don't see `data-step="1.0"`.
+fn format_number(n: f64) -> String {
+    if n.is_finite() && n.fract() == 0.0 && n.abs() < 1e16 {
+        format!("{}", n as i64)
+    } else {
+        format!("{n}")
+    }
+}
 /// Wave 11.4 — `<prism.builder-host/>` ships a real lower body, not
 /// the shared `primitive_lower` stub. It takes the caller's
 /// pre-lowered `host_children` (the `BuilderDocument` preview tree),
@@ -674,5 +1044,283 @@ mod tests {
         assert!(!has("aria-disabled"));
         assert!(!has("data-max-length"));
         assert!(!has("placeholder"));
+    }
+
+    fn lower(
+        component: &str,
+        lower_fn: fn(&LowerCtx, &Node, &StyleProperties) -> UiNode,
+        props: serde_json::Value,
+    ) -> UiNode {
+        let node = Node {
+            id: "n1".into(),
+            component: component.into(),
+            props,
+            ..Default::default()
+        };
+        let cascade = StyleProperties::default();
+        let ctx = LowerCtx::new(None, &cascade);
+        lower_fn(&ctx, &node, &cascade)
+    }
+
+    fn semantic_attr(node: &UiNode, key: &str) -> Option<String> {
+        match node {
+            UiNode::Container { props, .. } => props
+                .semantic
+                .attrs
+                .iter()
+                .find_map(|(k, v)| (k == key).then(|| v.clone())),
+            UiNode::TextInput { semantic, .. } => semantic
+                .attrs
+                .iter()
+                .find_map(|(k, v)| (k == key).then(|| v.clone())),
+            _ => None,
+        }
+    }
+
+    /// Wave 10.5 — drag-scrub fold of value / step / min / max + bind.
+    #[test]
+    fn drag_scrub_lower_emits_value_step_bounds_and_bind() {
+        let n = lower(
+            "prism.drag-scrub",
+            drag_scrub_lower,
+            serde_json::json!({
+                "value": 5.5, "step": 0.25, "min": 0, "max": 10, "bind-value": "form.amount",
+            }),
+        );
+        assert_eq!(
+            semantic_attr(&n, "data-role").as_deref(),
+            Some("drag-scrub")
+        );
+        assert_eq!(semantic_attr(&n, "data-value").as_deref(), Some("5.5"));
+        assert_eq!(semantic_attr(&n, "data-step").as_deref(), Some("0.25"));
+        assert_eq!(semantic_attr(&n, "data-min").as_deref(), Some("0"));
+        assert_eq!(semantic_attr(&n, "data-max").as_deref(), Some("10"));
+        assert_eq!(semantic_attr(&n, "aria-valuemin").as_deref(), Some("0"));
+        assert_eq!(
+            semantic_attr(&n, "data-bind-value").as_deref(),
+            Some("form.amount")
+        );
+    }
+
+    /// Wave 10.6 — popover collapses when closed, expands when open.
+    #[test]
+    fn popover_lower_open_emits_data_attrs() {
+        let n = lower(
+            "prism.popover",
+            popover_lower,
+            serde_json::json!({
+                "open": true, "anchor-id": "swatch-1", "placement": "top",
+            }),
+        );
+        assert_eq!(semantic_attr(&n, "data-role").as_deref(), Some("popover"));
+        assert_eq!(semantic_attr(&n, "data-open").as_deref(), Some("true"));
+        assert_eq!(semantic_attr(&n, "data-placement").as_deref(), Some("top"));
+        assert_eq!(
+            semantic_attr(&n, "data-anchor-id").as_deref(),
+            Some("swatch-1")
+        );
+        assert!(semantic_attr(&n, "aria-hidden").is_none());
+    }
+
+    #[test]
+    fn popover_lower_closed_collapses_and_marks_hidden() {
+        let n = lower(
+            "prism.popover",
+            popover_lower,
+            serde_json::json!({ "open": false }),
+        );
+        let UiNode::Container { props, .. } = &n else {
+            panic!()
+        };
+        assert!(matches!(props.width, Sizing::Fixed(0.0)));
+        assert_eq!(semantic_attr(&n, "data-open").as_deref(), Some("false"));
+        assert_eq!(semantic_attr(&n, "aria-hidden").as_deref(), Some("true"));
+    }
+
+    /// Wave 10.7 — list-picker carries options + selected-id.
+    #[test]
+    fn list_picker_lower_emits_options_and_selected_id() {
+        let n = lower(
+            "prism.list-picker",
+            list_picker_lower,
+            serde_json::json!({
+                "options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+                "selected-id": "b",
+            }),
+        );
+        assert_eq!(
+            semantic_attr(&n, "data-role").as_deref(),
+            Some("list-picker")
+        );
+        assert_eq!(semantic_attr(&n, "data-selected-id").as_deref(), Some("b"));
+        assert!(semantic_attr(&n, "data-options")
+            .unwrap()
+            .contains("\"id\":\"a\""));
+    }
+
+    /// Wave 10.8 — collapsible swallows children when closed.
+    #[test]
+    fn collapsible_lower_open_includes_aria_attrs() {
+        let n = lower(
+            "prism.collapsible",
+            collapsible_lower,
+            serde_json::json!({
+                "open": true, "title": "Details",
+            }),
+        );
+        assert_eq!(semantic_attr(&n, "data-open").as_deref(), Some("true"));
+        assert_eq!(semantic_attr(&n, "aria-expanded").as_deref(), Some("true"));
+        assert_eq!(semantic_attr(&n, "aria-label").as_deref(), Some("Details"));
+    }
+
+    /// Wave 10.9 — split-handle orientation toggles sizing axes.
+    #[test]
+    fn split_handle_lower_vertical_picks_fixed_width_and_grow_height() {
+        let n = lower(
+            "prism.split-handle",
+            split_handle_lower,
+            serde_json::json!({
+                "orientation": "vertical", "position": 0.6,
+            }),
+        );
+        let UiNode::Container { props, .. } = &n else {
+            panic!()
+        };
+        assert!(matches!(props.width, Sizing::Fixed(6.0)));
+        assert!(matches!(props.height, Sizing::Grow));
+        assert_eq!(
+            semantic_attr(&n, "data-orientation").as_deref(),
+            Some("vertical")
+        );
+        assert_eq!(semantic_attr(&n, "data-position").as_deref(), Some("0.6"));
+    }
+
+    /// Wave 10.12 — select carries options + value + bind.
+    #[test]
+    fn select_lower_emits_combobox_data_attrs() {
+        let n = lower(
+            "prism.select",
+            select_lower,
+            serde_json::json!({
+                "options": [{"id": "x", "label": "X"}],
+                "value": "x",
+                "bind-value": "form.choice",
+            }),
+        );
+        assert_eq!(semantic_attr(&n, "data-role").as_deref(), Some("select"));
+        assert_eq!(semantic_attr(&n, "data-value").as_deref(), Some("x"));
+        assert_eq!(
+            semantic_attr(&n, "data-bind-value").as_deref(),
+            Some("form.choice")
+        );
+    }
+
+    /// Wave 10.13 — color-picker swatch carries value + alpha flag.
+    #[test]
+    fn color_picker_lower_emits_value_and_alpha() {
+        let n = lower(
+            "prism.color-picker",
+            color_picker_lower,
+            serde_json::json!({
+                "value": "#ff0080", "alpha": false,
+            }),
+        );
+        assert_eq!(
+            semantic_attr(&n, "data-role").as_deref(),
+            Some("color-picker")
+        );
+        assert_eq!(semantic_attr(&n, "data-value").as_deref(), Some("#ff0080"));
+        assert_eq!(semantic_attr(&n, "data-alpha").as_deref(), Some("false"));
+    }
+
+    /// Wave 10.14 — file-button has default label + carries accept.
+    #[test]
+    fn file_button_lower_emits_default_label_and_accept() {
+        let n = lower(
+            "prism.file-button",
+            file_button_lower,
+            serde_json::json!({
+                "accept": "image/png", "multiple": true,
+            }),
+        );
+        assert_eq!(
+            semantic_attr(&n, "data-role").as_deref(),
+            Some("file-button")
+        );
+        assert_eq!(semantic_attr(&n, "data-label").as_deref(), Some("Browse…"));
+        assert_eq!(
+            semantic_attr(&n, "data-accept").as_deref(),
+            Some("image/png")
+        );
+        assert_eq!(semantic_attr(&n, "data-multiple").as_deref(), Some("true"));
+    }
+
+    /// Wave 10.15 — resize-edge carries direction + target-id.
+    #[test]
+    fn resize_edge_lower_emits_direction_and_target() {
+        let n = lower(
+            "prism.resize-edge",
+            resize_edge_lower,
+            serde_json::json!({
+                "direction": "br", "target-id": "n42",
+            }),
+        );
+        assert_eq!(
+            semantic_attr(&n, "data-role").as_deref(),
+            Some("resize-handle")
+        );
+        assert_eq!(semantic_attr(&n, "data-direction").as_deref(), Some("br"));
+        assert_eq!(semantic_attr(&n, "data-target-id").as_deref(), Some("n42"));
+    }
+
+    /// Wave 10.16 — canvas-paint reserves a fixed-size rect carrying
+    /// the node id so paint callbacks can target it.
+    #[test]
+    fn canvas_paint_lower_emits_canvas_id_and_dimensions() {
+        let n = lower(
+            "prism.canvas-paint",
+            canvas_paint_lower,
+            serde_json::json!({
+                "width": 200, "height": 16,
+            }),
+        );
+        let UiNode::Container { props, .. } = &n else {
+            panic!()
+        };
+        assert!(matches!(props.width, Sizing::Fixed(200.0)));
+        assert!(matches!(props.height, Sizing::Fixed(16.0)));
+        assert_eq!(
+            semantic_attr(&n, "data-canvas-paint-id").as_deref(),
+            Some("n1")
+        );
+        assert_eq!(semantic_attr(&n, "width").as_deref(), Some("200"));
+    }
+
+    /// Wave 10.17 — text-buffer lowers as a multi-line TextInput.
+    #[test]
+    fn text_buffer_lower_emits_multiline_text_input() {
+        let n = lower(
+            "prism.text-buffer",
+            text_buffer_lower,
+            serde_json::json!({
+                "value": "line1\nline2", "bind-value": "doc.body",
+            }),
+        );
+        let UiNode::TextInput {
+            value, semantic, ..
+        } = &n
+        else {
+            panic!()
+        };
+        assert_eq!(value, "line1\nline2");
+        let attr = |k: &str| {
+            semantic
+                .attrs
+                .iter()
+                .find_map(|(name, v)| (name == k).then(|| v.clone()))
+        };
+        assert_eq!(attr("data-role").as_deref(), Some("text-buffer"));
+        assert_eq!(attr("data-multiline").as_deref(), Some("true"));
+        assert_eq!(attr("data-bind-value").as_deref(), Some("doc.body"));
     }
 }

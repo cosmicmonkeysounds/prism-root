@@ -566,6 +566,71 @@ Each step lands with:
   `install_app_script_hot_swaps_render_body`,
   `install_app_script_errors_surface_without_corrupting_state`)
   → 31 in `dsl_self_bootstrap`.
+
+- 2026-05-13: **Closing wave — children projection, service
+  hot-reload, ShellMode plumbing, watcher, cleanup.** Closes every
+  remaining gap from the prior wave.
+
+  1. **Children projection in render dispatch.** Scripts that emit
+     `prism.slot(i)` now compose against the skeleton-authored
+     children verbatim. The new `prism_core::luau_runtime::SLOT_TAG`
+     constant marks the reserved tag emitted by the helper; the
+     shell's `virtual_node_to_ui` recognises it and substitutes the
+     i'th pre-lowered child from `ctx.host_children()`. Out-of-range
+     indices fall through to a `data-role="luau-slot-oob"` labelled
+     empty so debug builds surface the bad index. Scripts also see
+     a `children` array of `{tag, component}` descriptors so they
+     can branch on child kind before deciding which slots to render.
+     **+1 unit test** in `luau_runtime::tests` plus **+2 integration
+     tests** in `tests/dsl_self_bootstrap` covering happy path +
+     OOB defensive contract.
+  2. **Service hot-reload safety.** `ServiceRegistry::add_or_replace_factory_scoped`
+     drops the prior same-id entry (including its command-table
+     contributions) before installing a new factory. `Shell::install_app_script`
+     drives services through the new `install_services_replace`
+     helper so re-running a script with `register_service({id="x"})`
+     doesn't panic on the duplicate-id assert. **+1 integration
+     test** drives a Wheel→Handled→PointerDown→Handled inversion
+     through two script generations.
+  3. **`Shell::new` threads tokens + shell mode through `LuauRuntime`.**
+     Switched from `LuauRuntime::new` to `new_with_tokens`, passing
+     `DEFAULT_TOKENS` + `ShellMode::Build` + `Permission::Dev` so
+     `prism.tokens.colors.accent.r` and `prism.shell_mode` mirror
+     the daemon-side `PrismContext` shape. Real per-host overrides
+     flow through this seam once they exist.
+  4. **Luau script watcher.** `prism_shell::app_loader::LuauScriptWatcher`
+     mirrors `StylesheetWatcher` for `.luau` files. Per-app cache
+     classifies each `observe(app_id, path)` as
+     `FirstSighting / NoChange / Changed / Missing / ReadError`,
+     handing the new source back on `Changed` so the dev-loop calls
+     `Shell::install_app_script(app_id, source)`. **+6 unit tests**
+     in `app_loader::tests` + **+1 end-to-end integration** in
+     `dsl_self_bootstrap` driving the watcher + `install_app_script`
+     through a boot → edit → re-render cycle.
+  5. **Dead code + stale comments cleanup.** Module-level docs on
+     `prism-shell::app_registry` and `prism-shell::services::luau`
+     no longer claim the runtime is unwired. `ShellInner.luau`
+     docstring now reflects the distinction between the persistent
+     `LuauRuntime` (component / service dispatch) and the
+     `LuauHost` seam (`MutCtx`-bound one-shot scripts).
+  6. **ADR-009 Phase 2 doc note** — per-app skeletons can now
+     reference scripted tags end-to-end with the persistent
+     runtime; Musica/Flux skeletons cite their `main.luau`
+     registrations.
+
+  **Test deltas:** prism-core 2107 lib tests (+ `prism_slot_emits_reserved_tag_marker`).
+  prism-shell 349 lib tests (+ 6 watcher tests; +5 unrelated to this
+  wave from other in-flight work). prism-shell integration suite
+  35 tests in `dsl_self_bootstrap`
+  (+ `luau_component_children_render_through_prism_slot`,
+  + `luau_slot_out_of_range_renders_oob_placeholder`,
+  + `install_app_script_hot_swaps_service_without_duplicate_id_panic`,
+  + `luau_script_watcher_drives_install_app_script_end_to_end`).
+
+  All gaps from the persistent-Luau substrate are now closed.
+  Future work tracks naturally as follow-ups to specific apps
+  (Musica's real audio engine, Flux's canvas widget) rather than
+  as framework primitives.
 - 2026-05-13: **All four loops landed.** Final shape:
   - **Loop 1** — `prism_core::AppManifest` (TOML, 5 tests),
     `prism_shell::app_loader::discover` (4 tests),

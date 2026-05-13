@@ -523,6 +523,65 @@ impl AppState {
         )
     }
 
+    /// Wave 2.3 — open the select-dropdown overlay against a
+    /// `(target_id, key)` pair. Idempotent against an already-open
+    /// dropdown pinned to the same target. Returns `true` when the
+    /// state actually changed. Options are passed verbatim from the
+    /// field-editor row's `data-options-json` attr so the dropdown
+    /// renders the same labelled rows the schema declared.
+    pub fn open_select_dropdown(
+        &mut self,
+        target_id: &str,
+        key: &str,
+        value: &str,
+        options: Vec<Value>,
+    ) -> bool {
+        let p = &self.overlay.select_dropdown;
+        if p.open && p.target_id == target_id && p.key == key {
+            return false;
+        }
+        self.overlay.select_dropdown = SelectDropdown {
+            open: true,
+            target_id: target_id.to_string(),
+            key: key.to_string(),
+            value: value.to_string(),
+            options,
+        };
+        true
+    }
+
+    /// Wave 2.3 — close the dropdown without committing. Used by
+    /// Esc, the close button, clicking outside, and post-commit.
+    /// Returns `true` when it was actually open.
+    pub fn close_select_dropdown(&mut self) -> bool {
+        if !self.overlay.select_dropdown.open {
+            return false;
+        }
+        self.overlay.select_dropdown = SelectDropdown::default();
+        true
+    }
+
+    /// Wave 2.3 — commit a select option value through `set_node_prop`
+    /// and close the dropdown. Returns `true` when the bound prop
+    /// actually moved (closing happens regardless).
+    pub fn commit_select_dropdown_value(
+        &mut self,
+        value: &str,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        let picker = self.overlay.select_dropdown.clone();
+        self.overlay.select_dropdown = SelectDropdown::default();
+        if picker.target_id.is_empty() || picker.key.is_empty() {
+            return false;
+        }
+        self.set_node_prop(
+            &picker.target_id,
+            &picker.key,
+            Value::String(value.to_string()),
+            registry,
+        )
+    }
+
     pub fn open_connection_picker(&mut self) -> bool {
         if self.overlay.connection_picker.open {
             return false;
@@ -1315,9 +1374,21 @@ fn property_row_from_spec(
                     .map(|o| json!({ "value": o.value, "label": o.label }))
                     .collect(),
             );
+            // Wave 2.3 — pack as `value:label,value:label,…` so the
+            // dropdown's `open_select_dropdown` handler can recover
+            // both halves from the `data-options` attr without a
+            // second binding pass. Bare values (no `:label`) round
+            // through unchanged, with the value doubling as label —
+            // matches the legacy click-to-cycle behaviour.
             let joined = options
                 .iter()
-                .map(|o| o.value.clone())
+                .map(|o| {
+                    if o.label == o.value {
+                        o.value.clone()
+                    } else {
+                        format!("{}:{}", o.value, o.label)
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join(",");
             row_props["options-joined"] = json!(joined);
@@ -1947,6 +2018,28 @@ pub struct OverlaySlot {
     /// the picker hex input + preset palette commit through
     /// `set_node_prop` against `(target_id, key)`.
     pub color_picker: ColorPicker,
+    /// Wave 2.3 of `docs/dev/composable-builder-plan.md` — select
+    /// dropdown overlay. `open = true` after a `select`-kind
+    /// field-edit row is clicked; option rows commit through
+    /// `set_node_prop` against `(target_id, key)` and close the
+    /// overlay. Replaces the legacy click-to-cycle behaviour for
+    /// the select kind.
+    pub select_dropdown: SelectDropdown,
+}
+
+/// Wave 2.3 — open/closed state of `shell.select-dropdown`. The
+/// dropdown is anchored under the select-kind field-edit row that
+/// opened it; `target_id` + `key` are seeded at open time and
+/// consumed by the option-click commit path. `options` carries
+/// the `{value, label}` row list verbatim from the field-editor
+/// row so the DSL block can iterate via `for=`.
+#[derive(Clone, Debug, Default)]
+pub struct SelectDropdown {
+    pub open: bool,
+    pub target_id: String,
+    pub key: String,
+    pub value: String,
+    pub options: Vec<Value>,
 }
 
 /// Wave 2.4 — open/closed state of `shell.color-picker`. The picker
@@ -2207,6 +2300,45 @@ impl OverlaySlot {
             "h-pct": (h / 360.0) * 100.0,
             "s-pct": s,
             "l-pct": l,
+        })
+    }
+
+    /// Wave 2.3 — JSON for `shell.select-dropdown`. Closed →
+    /// collapses to a 0×0 hidden overlay (Wave 11.2 batch-5 pattern).
+    /// Open → renders one option row per entry in `options`, each
+    /// marked `selected` when its value matches the current bound
+    /// value. The DSL block iterates via `for=` and emits a
+    /// `data-role="select-dropdown-option"` row per entry that the
+    /// pointer router commits through `commit_select_dropdown_value`.
+    pub fn select_dropdown_props(&self) -> Value {
+        let dropdown = &self.select_dropdown;
+        let options: Vec<Value> = dropdown
+            .options
+            .iter()
+            .map(|o| {
+                let val = o
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let label = o
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(val.as_str())
+                    .to_string();
+                json!({
+                    "value": val,
+                    "label": label,
+                    "selected": dropdown.value == val,
+                })
+            })
+            .collect();
+        json!({
+            "open": dropdown.open,
+            "target-id": dropdown.target_id,
+            "key": dropdown.key,
+            "value": dropdown.value,
+            "options": options,
         })
     }
 

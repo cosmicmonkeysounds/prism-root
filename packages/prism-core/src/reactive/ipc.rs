@@ -455,6 +455,99 @@ impl<E: std::fmt::Display> std::fmt::Display for RelayFnError<E> {
 
 impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for RelayFnError<E> {}
 
+// ───── PeerInvoker — completes the §3.4 macro family ──────────────
+
+/// Sync transport seam for **peer-routed** RPCs over WebRTC data
+/// channels. The third leg of §3.4 of `docs/dev/dioxus-inspiration.md`
+/// — completes the
+/// `(DaemonInvoker, RelayInvoker, PeerInvoker)` triple so the macro
+/// family covers every transport tier the scope ladder (§2.1) walks:
+/// daemon sidecar → relay (server) → peer (P2P).
+///
+/// The `#[peer_fn]` proc-macro emits client stubs that take a
+/// `&dyn PeerInvoker`. Distinct from [`RelayInvoker`] because the
+/// destinations are operationally different: a relay call is
+/// authenticated against the relay's capability registry and may serve
+/// many peers; a peer call is routed through `signaling` + a
+/// per-connection data channel, with the `signaling::PeerId` of the
+/// callee implicit in the invoker impl.
+pub trait PeerInvoker {
+    /// Send a request to the configured peer for the function
+    /// identified by `id` with the JSON-encoded `payload`, and return
+    /// the JSON-encoded response (or a transport error).
+    fn invoke(&self, id: &str, payload: IpcPayload) -> Result<IpcPayload, RemoteError>;
+}
+
+/// Test invoker for the peer transport. Same shape as
+/// [`MockInvoker`] / [`MockRelayInvoker`].
+pub struct MockPeerInvoker {
+    handlers: std::collections::HashMap<String, MockHandler>,
+}
+
+impl MockPeerInvoker {
+    pub fn new() -> Self {
+        Self {
+            handlers: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn on<F>(mut self, id: impl Into<String>, handler: F) -> Self
+    where
+        F: Fn(IpcPayload) -> Result<IpcPayload, RemoteError> + 'static,
+    {
+        self.handlers.insert(id.into(), Box::new(handler));
+        self
+    }
+}
+
+impl Default for MockPeerInvoker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PeerInvoker for MockPeerInvoker {
+    fn invoke(&self, id: &str, payload: IpcPayload) -> Result<IpcPayload, RemoteError> {
+        match self.handlers.get(id) {
+            Some(h) => h(payload),
+            None => Err(RemoteError::Remote(format!("no handler for '{id}'"))),
+        }
+    }
+}
+
+/// Error type returned by the `<name>_client` stubs emitted by
+/// `#[peer_fn]`. Sister of [`DaemonFnError`] / [`RelayFnError`] —
+/// separate type so the three call-site categories stay
+/// type-distinct (a peer call returning `Err(Transport(_))` is a
+/// different incident than a daemon call returning the same arm —
+/// "peer offline" vs. "sidecar crashed").
+#[derive(Debug)]
+pub enum PeerFnError<E> {
+    Encode(String),
+    Decode(String),
+    Transport(RemoteError),
+    Remote(E),
+}
+
+impl<E> PeerFnError<E> {
+    pub fn from_remote(err: RemoteError) -> Self {
+        Self::Transport(err)
+    }
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for PeerFnError<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Encode(msg) => write!(f, "encode: {msg}"),
+            Self::Decode(msg) => write!(f, "decode: {msg}"),
+            Self::Transport(err) => write!(f, "transport: {err}"),
+            Self::Remote(err) => write!(f, "remote: {err}"),
+        }
+    }
+}
+
+impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for PeerFnError<E> {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

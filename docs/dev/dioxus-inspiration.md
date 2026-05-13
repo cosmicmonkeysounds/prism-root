@@ -16,7 +16,7 @@
 | 3b | Per-block `lower_ui` reactive contexts | ✅ done — `BlockInvalidator` + per-NodeId cache |
 | 4a | `ActionKind::Bind` → `Effect` install on document load | ✅ done — `DocumentBindings::install_for` |
 | 4b | `Node::props` → `ReactiveProps` migration | ✅ done — `LowerCtx::with_bindings` + `ctx.prop_*` reactive accessors + `NodeMutator` single-seam write path |
-| 5 | Luau `Signal::read`/`write` UserData surface | ✅ done — `prism-core::luau_reactive` |
+| 5 | Luau `Signal::read`/`write` UserData surface | ✅ done — `prism-core::luau_reactive` + Lua-side construction landed 2026-05-13 via `prism-daemon::modules::luau_reactive` (`prism.reactive.signal` / `.memo` / `.effect` / `.batch`). Per-state `Owner` lives in `Lua::set_app_data`; reactive scopes drop with the VM. |
 | 6 | `#[daemon_fn]` + `RemoteSignal<T>` + IpcInvoker | ✅ done — `prism-daemon::IpcInvoker` over postcard-on-interprocess |
 | 7 | `FederatedSignal` / `PeerSignal` / `RelaySignal` + `LocalHub` | ✅ done (trait seam + production-shape fan-out hub; per-transport wire integration is host-side) |
 | 8 | `SsrCache` wired into prism-relay routes | ✅ done — `SsrWorker` single-threaded worker + `portal_detail` cache hit/miss path |
@@ -286,7 +286,18 @@ verbatim — but **generalize the target**:
 |---|---|---|---|
 | `#[daemon_fn]` | the daemon sidecar | shell, studio host | ✅ shipped (Phase 6) |
 | `#[relay_fn]` | the relay (axum) | shell, studio, any peer | ✅ shipped 2026-05-13 — `prism_core::reactive::ipc::{RelayInvoker, MockRelayInvoker, RelayFnError}` + the proc-macro in `prism-luau-derive`. Pinned by `tests/relay_fn_macro.rs` (4 tests). Auto-registration into the relay's per-module install is intentionally NOT emitted — the relay's `RelayBuilder` is module-shaped, so the body is left for the host to wire. |
-| `#[peer_fn]` | another peer | relay-routed RPC | pending — same shape as `#[relay_fn]` with a `PeerInvoker` carrier (sister of `RelayInvoker` pointed at the WebRTC data-channel signalling path). |
+| `#[peer_fn]` | another peer | relay-routed RPC | ✅ shipped 2026-05-13 — `prism_core::reactive::ipc::{PeerInvoker, MockPeerInvoker, PeerFnError}` + the proc-macro completes the §3.4 macro family. Pinned by `tests/peer_fn_macro.rs` (4 tests). Same shape as `#[relay_fn]`; the destination is a per-connection WebRTC data channel rather than the relay's capability-gated routing path. |
+
+**All three §3.4 macro variants now ship.** The macro family is the
+end-to-end implementation of "user-authored intent crosses machine
+boundaries without changing shape" (§2): one `Result<T, E>`-returning
+signature emits one of three typed client stubs depending on which
+attribute is applied, and the call site reads the same way at every
+scope tier (daemon sidecar → relay → peer). The three transports'
+`RemoteError` carrier is shared so a call-site that wraps a stub in
+a `Resource<T>` (Phase 8 sibling) gets uniform offline / timeout /
+permission-denied handling regardless of which macro produced the
+stub.
 
 All three are the same codegen pattern with different
 serialization (`postcard` over `interprocess`, `postcard` over

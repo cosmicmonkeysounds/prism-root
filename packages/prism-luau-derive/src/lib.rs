@@ -50,6 +50,7 @@ mod daemon_command;
 mod daemon_fn;
 mod daemon_module;
 mod editable;
+mod peer_fn;
 mod prism_block;
 mod prism_field;
 mod relay_fn;
@@ -144,6 +145,23 @@ pub fn relay_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr2: TokenStream2 = attr.into();
     let item2: TokenStream2 = item.into();
     match relay_fn::expand(attr2, item2) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// `#[peer_fn(id = "…")]` — completes the §3.4 macro family pointed at
+/// the WebRTC data-channel transport. One declaration emits the original
+/// function plus a `<name>_client(invoker: &dyn PeerInvoker, args)` stub
+/// that returns `Result<T, PeerFnError<E>>`. Distinct from `#[relay_fn]`
+/// because the destinations are operationally different — a peer call
+/// reaches one specific peer over a data channel, a relay call traverses
+/// the relay's capability-gated routing path.
+#[proc_macro_attribute]
+pub fn peer_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr2: TokenStream2 = attr.into();
+    let item2: TokenStream2 = item.into();
+    match peer_fn::expand(attr2, item2) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }

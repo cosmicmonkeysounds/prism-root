@@ -45,3 +45,4 @@
 <shell.component-picker id="picker"/>
 <shell.connection-picker id="conn-picker"/>
 <shell.color-picker id="color-picker"/>
+<shell.select-dropdown id="select-dropdown"/>

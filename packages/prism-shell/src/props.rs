@@ -299,6 +299,15 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         Box::new(|ctx| PropEmission::from_props(ctx.state.overlay.color_picker_props())),
     );
 
+    // Wave 2.3 — `shell.select-dropdown` binding. Options come from
+    // the `data-options` attr the field-editor row carried; the
+    // dropdown renders one selectable row per option and writes the
+    // chosen value through `commit_select_dropdown_value`.
+    reg.register(
+        "shell.select-dropdown",
+        Box::new(|ctx| PropEmission::from_props(ctx.state.overlay.select_dropdown_props())),
+    );
+
     // DSL self-bootstrap Loop 2 / 4 — `shell.dock-workspace` emits the
     // dock tree plus `labels` and `tags` sidecar maps resolved from
     // the live `DockCatalog`. Falls back to the catalog-less variant

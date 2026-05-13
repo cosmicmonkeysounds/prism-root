@@ -9,6 +9,9 @@ pub mod crdt_module;
 pub mod luau_module;
 
 #[cfg(feature = "luau")]
+pub mod luau_reactive;
+
+#[cfg(feature = "luau")]
 pub mod prism_context;
 
 #[cfg(feature = "luau")]

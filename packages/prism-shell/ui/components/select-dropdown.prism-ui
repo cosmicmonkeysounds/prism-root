@@ -1,0 +1,80 @@
+<!--
+  shell.select-dropdown — anchored dropdown for the inspector's
+  `select`-kind field rows. Wave 2.3 closure — replaces the legacy
+  click-to-cycle interaction with an explicit option list.
+
+  Closed → 0×0 hidden overlay (Wave 11.2 batch-5 pattern).
+  Open  → 220px column with one row per `options` entry. The
+          row carrying the current `value` paints the selection
+          tint and an `aria-selected="true"` marker; all rows
+          dispatch through `data-role="select-dropdown-option"`
+          + `data-value="<option-value>"` on pointer-down.
+
+  Bindings (`state::select_dropdown_props`):
+   * `open`, `target-id`, `key`, `value` — overlay anchor + commit
+     target seeded when the dropdown opened.
+   * `options` — `[{value, label, selected}]` rows.
+-->
+<container
+    if="{!open}"
+    tag="div"
+    width="0"
+    height="0"
+    data:role="select-dropdown"
+    data:visible="false"
+    aria:hidden="true"/>
+<container
+    else
+    tag="div"
+    direction="column"
+    padding-left="4"
+    padding-right="4"
+    padding-top="4"
+    padding-bottom="4"
+    gap="2"
+    width="220"
+    style:background="#f0ffffff"
+    style:radius="6"
+    role="listbox"
+    aria-label="Select option"
+    data:role="select-dropdown"
+    data:visible="true">
+  <container
+      for="opt in options"
+      id="{id}::option::{opt.value}"
+      tag="button"
+      direction="row"
+      gap="6"
+      padding-left="8"
+      padding-right="8"
+      padding-top="6"
+      padding-bottom="6"
+      height="28"
+      style:radius="4"
+      style:background="{opt.selected ? '#330060c0' : ''}"
+      style:background:hovered="{opt.selected ? '' : '#0f000000'}"
+      role="option"
+      data:role="select-dropdown-option"
+      data:value="{opt.value}"
+      aria:selected="{opt.selected ? 'true' : ''}">
+    <text font-size="12" style:color="#000000">{opt.label}</text>
+  </container>
+  <container
+      id="{id}::close-row"
+      direction="row"
+      padding-top="4">
+    <container
+        id="{id}::close"
+        tag="button"
+        direction="row"
+        padding-left="10"
+        padding-right="10"
+        height="24"
+        style:background="#11000000"
+        style:radius="4"
+        aria-label="Close"
+        data:role="select-dropdown-close">
+      <text font-size="10" style:color="#80000000">Close</text>
+    </container>
+  </container>
+</container>

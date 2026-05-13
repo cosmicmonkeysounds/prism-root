@@ -166,6 +166,93 @@ pub fn default_apps_root() -> PathBuf {
     PathBuf::new()
 }
 
+// ── Luau hot-reload watcher ──────────────────────────────────────
+
+/// Sibling of [`crate::render::StylesheetWatcher`] for app
+/// `main.luau` scripts. Each `observe(app_id, path)` call reads the
+/// file, classifies the change relative to the watcher's last
+/// snapshot, and on a real change returns the new source so the host
+/// can call `Shell::install_app_script(app_id, source)`.
+///
+/// "Change" is detected by content equality — fingerprint hashing
+/// would be marginally faster but the per-app scripts are small,
+/// and we already pay the read either way (the new contents are the
+/// payload the host wants).
+#[derive(Default)]
+pub struct LuauScriptWatcher {
+    /// Last successfully-read source per app id. `None` per-app key
+    /// means the watcher has never seen that file (`FirstSighting`
+    /// path).
+    last: std::collections::HashMap<String, String>,
+}
+
+/// What [`LuauScriptWatcher::observe`] saw on a single tick.
+#[derive(Debug, Clone)]
+pub enum LuauScriptChange {
+    /// File doesn't exist (or was deleted since the last observe).
+    /// Hosts may drop the app's registrations on this signal — the
+    /// caller decides; the watcher itself never mutates remote state.
+    Missing,
+    /// File read failed for a reason other than `not found`. Watcher
+    /// keeps its prior cached contents so a transient `EBUSY` /
+    /// permission glitch doesn't lose the last known good build.
+    ReadError(String),
+    /// First time we've seen this app's script — the host should
+    /// install it just like a boot run would.
+    FirstSighting { source: String },
+    /// Source bytes changed since the last observe.
+    Changed { source: String },
+    /// No change since the last observe. The watcher returns this
+    /// for steady-state polls so the dev-loop spends zero work in
+    /// the no-op case.
+    NoChange,
+}
+
+impl LuauScriptWatcher {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Observe `path` once. `app_id` keys the per-app cache so a
+    /// single watcher can serve any number of apps.
+    pub fn observe(&mut self, app_id: &str, path: impl AsRef<Path>) -> LuauScriptChange {
+        let path = path.as_ref();
+        match std::fs::read_to_string(path) {
+            Ok(source) => {
+                let prior = self.last.get(app_id);
+                match prior {
+                    None => {
+                        self.last.insert(app_id.to_string(), source.clone());
+                        LuauScriptChange::FirstSighting { source }
+                    }
+                    Some(p) if p == &source => LuauScriptChange::NoChange,
+                    Some(_) => {
+                        self.last.insert(app_id.to_string(), source.clone());
+                        LuauScriptChange::Changed { source }
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.last.remove(app_id);
+                LuauScriptChange::Missing
+            }
+            Err(e) => LuauScriptChange::ReadError(e.to_string()),
+        }
+    }
+
+    /// Number of apps the watcher has seen so far. Test introspection.
+    pub fn tracked_count(&self) -> usize {
+        self.last.len()
+    }
+
+    /// Drop the cached source for `app_id`. Next `observe` against
+    /// that id will surface as `FirstSighting`. Used by hosts that
+    /// reset an app's state (uninstall + reinstall).
+    pub fn forget(&mut self, app_id: &str) -> bool {
+        self.last.remove(app_id).is_some()
+    }
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
@@ -239,6 +326,115 @@ mod tests {
             }
             other => panic!("expected Manifest error, got {other:?}"),
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── LuauScriptWatcher ────────────────────────────────────────
+
+    #[test]
+    fn luau_watcher_first_sighting_returns_source() {
+        let root = tempdir("luau_watcher_first");
+        let script = root.join("main.luau");
+        std::fs::write(&script, "return 1").unwrap();
+        let mut w = LuauScriptWatcher::new();
+        let change = w.observe("lattice", &script);
+        match change {
+            LuauScriptChange::FirstSighting { source } => assert_eq!(source, "return 1"),
+            other => panic!("expected FirstSighting, got {other:?}"),
+        }
+        assert_eq!(w.tracked_count(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn luau_watcher_no_change_on_identical_observe() {
+        let root = tempdir("luau_watcher_nochange");
+        let script = root.join("main.luau");
+        std::fs::write(&script, "return 1").unwrap();
+        let mut w = LuauScriptWatcher::new();
+        let _ = w.observe("lattice", &script);
+        assert!(matches!(
+            w.observe("lattice", &script),
+            LuauScriptChange::NoChange
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn luau_watcher_changed_returns_new_source() {
+        let root = tempdir("luau_watcher_changed");
+        let script = root.join("main.luau");
+        std::fs::write(&script, "return 1").unwrap();
+        let mut w = LuauScriptWatcher::new();
+        let _ = w.observe("lattice", &script);
+        std::fs::write(&script, "return 2").unwrap();
+        match w.observe("lattice", &script) {
+            LuauScriptChange::Changed { source } => assert_eq!(source, "return 2"),
+            other => panic!("expected Changed, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn luau_watcher_missing_after_delete() {
+        let root = tempdir("luau_watcher_missing");
+        let script = root.join("main.luau");
+        std::fs::write(&script, "return 1").unwrap();
+        let mut w = LuauScriptWatcher::new();
+        let _ = w.observe("lattice", &script);
+        std::fs::remove_file(&script).unwrap();
+        assert!(matches!(
+            w.observe("lattice", &script),
+            LuauScriptChange::Missing
+        ));
+        assert_eq!(w.tracked_count(), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn luau_watcher_keys_per_app() {
+        // The watcher tracks each app independently — a change to
+        // app A's script must not classify app B's identical-source
+        // observe as a change.
+        let root = tempdir("luau_watcher_per_app");
+        let a = root.join("a.luau");
+        let b = root.join("b.luau");
+        std::fs::write(&a, "return 1").unwrap();
+        std::fs::write(&b, "return 1").unwrap();
+        let mut w = LuauScriptWatcher::new();
+        assert!(matches!(
+            w.observe("a", &a),
+            LuauScriptChange::FirstSighting { .. }
+        ));
+        assert!(matches!(
+            w.observe("b", &b),
+            LuauScriptChange::FirstSighting { .. }
+        ));
+        // Both apps now cached; re-observing each is NoChange.
+        assert!(matches!(w.observe("a", &a), LuauScriptChange::NoChange));
+        assert!(matches!(w.observe("b", &b), LuauScriptChange::NoChange));
+        // A change to a doesn't affect b.
+        std::fs::write(&a, "return 99").unwrap();
+        assert!(matches!(
+            w.observe("a", &a),
+            LuauScriptChange::Changed { .. }
+        ));
+        assert!(matches!(w.observe("b", &b), LuauScriptChange::NoChange));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn luau_watcher_forget_resets_to_first_sighting() {
+        let root = tempdir("luau_watcher_forget");
+        let script = root.join("main.luau");
+        std::fs::write(&script, "return 1").unwrap();
+        let mut w = LuauScriptWatcher::new();
+        let _ = w.observe("lattice", &script);
+        assert!(w.forget("lattice"));
+        assert!(matches!(
+            w.observe("lattice", &script),
+            LuauScriptChange::FirstSighting { .. }
+        ));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

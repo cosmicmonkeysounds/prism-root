@@ -979,6 +979,23 @@ fn connection_picker_schema() -> Vec<FieldSpec> {
     ]
 }
 
+/// Wave 2.3 — schema for `shell.select-dropdown`. The binding
+/// (`state::select_dropdown_props`) emits `open`, `target-id`,
+/// `key`, `value`, and an `options` array of `{value, label,
+/// selected}` rows.
+fn select_dropdown_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::boolean("open", "Open").with_default(Value::Bool(false)),
+        FieldSpec::text("target-id", "Target doc-node id"),
+        FieldSpec::text("key", "Bound prop key"),
+        FieldSpec::text("value", "Current selected value"),
+        FieldSpec::text(
+            "options",
+            "Options (JSON array of {value, label, selected})",
+        ),
+    ]
+}
+
 /// Wave 2.4 — schema for `shell.color-picker`. `presets` is the
 /// preset-swatch array; each entry is an object with `value` (hex
 /// string) and `selected` (bool). `h` / `s` / `l` + the matching
@@ -1492,6 +1509,15 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
         include_str!("../../ui/components/color-picker.prism-ui"),
     )
     .schema(color_picker_schema),
+    // Wave 2.3 — anchored dropdown opened by a select-kind field-edit
+    // row. Renders one row per option (label + selection tint),
+    // commits through `commit_select_dropdown_value` and closes.
+    // Replaces the legacy click-to-cycle interaction.
+    PrismUiSpec::new(
+        "shell.select-dropdown",
+        include_str!("../../ui/components/select-dropdown.prism-ui"),
+    )
+    .schema(select_dropdown_schema),
     PrismUiSpec::new(
         "shell.component-picker",
         include_str!("../../ui/components/component-picker.prism-ui"),
