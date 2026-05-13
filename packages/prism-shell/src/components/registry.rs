@@ -144,9 +144,19 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     // `content-tag` / `tabs`, so the DSL block does no catalog
     // lookups and walks the tree via resolver self-dispatch on
     // `shell.dock-node`.
-    &super::nav_graph::NAV_GRAPH_SPEC,
-    &super::code_editor::CODE_EDITOR_SPEC,
-    &super::builder_canvas::BUILDER_CANVAS_SPEC,
+    // `shell.nav-graph` migrated to DSL 2026-05-13 (Wave 11.4).
+    // Already-declarative body — two for-loops over `edges` and
+    // `pages`. No substrate work required.
+    // `shell.code-editor` migrated to DSL 2026-05-13 (Wave 11.4).
+    // The whole body was declarative (gutter + line rows + status
+    // strip); the binding now pre-derives `lines` / `cursor-line` /
+    // `cursor-column` / `status-label` from the underlying
+    // `code_buffer.source` + `caret`.
+    // `shell.builder-canvas` migrated to DSL 2026-05-13 (Wave 11.4)
+    // — see `SHELL_PRISM_UI_COMPONENTS` in `prism_ui_loader.rs`.
+    // The imperative `tag_canvas_subtree` walk moved to the
+    // `prism.builder-host` primitive body; the chrome (toolbar,
+    // grid, selection ring, palette ghost) is now declarative.
     // Wave 1 — `docs/dev/composable-builder-plan.md`. The composable-
     // inspector trio (header / add-button / picker) all live as DSL
     // rows now — see prism_ui_loader::SHELL_PRISM_UI_COMPONENTS.
@@ -258,9 +268,15 @@ mod tests {
 
     #[test]
     fn rejects_double_registration() {
+        // Wave 11.4 — SHELL_BUILTINS is now empty (every Rust-authored
+        // shell block migrated to DSL). The double-registration
+        // contract still matters; we exercise it through the full
+        // chrome registrar (which registers DSL + primitive + builder
+        // catalog and so always has at least one row that would
+        // collide on re-register).
         let mut reg = ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("first");
-        let err = register_shell_builtins(&mut reg).expect_err("dup");
+        register_full_shell_chrome(&mut reg).expect("first");
+        let err = register_full_shell_chrome(&mut reg).expect_err("dup");
         assert!(matches!(err, RegistryError::AlreadyRegistered(_)));
     }
 

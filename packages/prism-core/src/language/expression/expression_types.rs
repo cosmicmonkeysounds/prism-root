@@ -15,13 +15,20 @@ pub enum ExprType {
     Unknown,
 }
 
-/// Runtime value produced by an expression. Mirrors the legacy
-/// `ExprValue = number | boolean | string` union.
+/// Runtime value produced by an expression.
+///
+/// `Null` was added 2026-05-13 to close the field-editor DSL gap
+/// (Wave 11.3 of `docs/dev/composable-builder-plan.md`): the
+/// JSON-prop reader returns `Null` for missing keys, and DSL authors
+/// write `value == null` / `value != null` against it. Coerces to
+/// `0` / `false` / `""` for the other type ladders so arithmetic and
+/// truthiness round-trip safely against missing data.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprValue {
     Number(f64),
     Boolean(bool),
     String(String),
+    Null,
 }
 
 impl ExprValue {
@@ -36,6 +43,7 @@ impl ExprValue {
                 }
             }
             Self::String(s) => s.parse::<f64>().unwrap_or(0.0),
+            Self::Null => 0.0,
         }
     }
 
@@ -44,6 +52,10 @@ impl ExprValue {
             Self::Boolean(b) => *b,
             Self::Number(n) => *n != 0.0,
             Self::String(s) => !s.is_empty(),
+            // Null is falsy — matches JS / Lua's `if value then` shape
+            // so DSL `value ? "x" : "y"` without an explicit null
+            // check picks the "y" branch on missing data.
+            Self::Null => false,
         }
     }
 
@@ -52,13 +64,23 @@ impl ExprValue {
             Self::String(s) => s.clone(),
             Self::Number(n) => format_number(*n),
             Self::Boolean(b) => b.to_string(),
+            // Empty string keeps interpolation-into-attributes
+            // (`<input value="{value}"/>`) clean when the source is
+            // missing — no literal "null" leaks into rendered HTML.
+            Self::Null => String::new(),
         }
     }
 
     /// JS-style loose equality used by `==` / `!=`: `true == 1`,
-    /// `"42" == 42`, etc. Matches legacy `lv == rv` semantics.
+    /// `"42" == 42`, etc. Matches legacy `lv == rv` semantics, with
+    /// the addition that `null == null` (only) — `null != 0`,
+    /// `null != ""`, `null != false`. The asymmetry is deliberate:
+    /// authors writing `value == null` want to distinguish "key
+    /// missing" from "key present but falsy."
     pub fn loose_eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (Self::Null, Self::Null) => true,
+            (Self::Null, _) | (_, Self::Null) => false,
             (Self::Number(a), Self::Number(b)) => a == b,
             (Self::Boolean(a), Self::Boolean(b)) => a == b,
             (Self::String(a), Self::String(b)) => a == b,

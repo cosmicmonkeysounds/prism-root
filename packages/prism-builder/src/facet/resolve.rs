@@ -277,6 +277,7 @@ pub fn evaluate_calculations(items: &mut [Value], schema: &FacetSchema) {
                 ExprValue::Number(n) => Value::from(n),
                 ExprValue::Boolean(b) => Value::Bool(b),
                 ExprValue::String(s) => Value::String(s),
+                ExprValue::Null => Value::Null,
             };
             obj.insert((*key).to_string(), json_val);
         }

@@ -261,6 +261,13 @@ impl Parser {
                 expr_type: ExprType::Boolean,
             };
         }
+        if self.check(TokenKind::Null) {
+            self.advance();
+            return AnyExprNode::Literal {
+                value: ExprValue::Null,
+                expr_type: ExprType::Unknown,
+            };
+        }
         if self.check(TokenKind::Operand) {
             let t = self.advance();
             let d = t.operand_data.unwrap();

@@ -756,6 +756,107 @@ fn field_editor_signals() -> Vec<prism_builder::signal::SignalDef> {
     ])
 }
 
+/// Wave 11.4 — schema for the DSL-migrated `shell.builder-canvas`.
+/// Pairs with `state::builder_canvas_props`, which pre-computes
+/// `handle-directions` / `gizmo-tag` / `show-gizmo` so the DSL
+/// block can iterate handles and dispatch gizmos through one
+/// `<dispatch>` element without a per-tool match in the binding.
+fn builder_canvas_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::number("page-width", "Page width (px)", NumericBounds::min(1.0))
+            .with_default(Value::from(1280.0)),
+        FieldSpec::number("page-height", "Page height (px)", NumericBounds::min(1.0))
+            .with_default(Value::from(800.0)),
+        FieldSpec::number("zoom", "Canvas zoom", NumericBounds::min_max(0.1, 8.0))
+            .with_default(Value::from(1.0)),
+        FieldSpec::text("device", "Device hint").with_default(Value::String("desktop".into())),
+        FieldSpec::number(
+            "node-count",
+            "Document node count",
+            NumericBounds::default(),
+        )
+        .with_default(Value::from(0.0)),
+        FieldSpec::text("tool", "Active tool"),
+        FieldSpec::text("gizmo-tag", "Gizmo block id (pre-resolved by binding)"),
+        FieldSpec::boolean("show-gizmo", "Show gizmo overlay").with_default(Value::Bool(false)),
+        FieldSpec::text("selection-id", "Selected canvas-document node id"),
+        FieldSpec::text(
+            "selection-rect",
+            "Selection rect JSON {x, y, width, height} for handles",
+        ),
+        FieldSpec::text(
+            "grid-cells",
+            "Grid cells JSON array of {x, y, width, height, occupied}",
+        ),
+        FieldSpec::text(
+            "palette-drag",
+            "Palette-drag ghost JSON {active, kind, x, y, drop-target}",
+        ),
+        FieldSpec::text(
+            "handle-directions",
+            "Resize-handle direction list (JSON array)",
+        ),
+    ]
+}
+
+fn builder_canvas_signals() -> Vec<prism_builder::signal::SignalDef> {
+    use prism_builder::signal::SignalDef;
+    prism_builder::with_common_signals(vec![
+        SignalDef::new("canvas-clicked", "Canvas background clicked."),
+        SignalDef::new("cell-clicked", "Grid cell clicked."),
+        SignalDef::new("selection-dragged", "Selection drag delta."),
+    ])
+}
+
+/// Wave 11.4 — schema for the DSL-migrated `shell.code-editor`.
+/// Pairs with `state::code_editor_props`, which derives `lines` /
+/// `cursor-line` / `cursor-column` / `status-label` from the
+/// underlying `code_buffer.source` + `caret` so the DSL stays
+/// expression-light.
+fn code_editor_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("language", "Language"),
+        FieldSpec::text("source", "Source text"),
+        FieldSpec::number("caret", "Caret byte offset", NumericBounds::min(0.0))
+            .with_default(Value::from(0.0)),
+        FieldSpec::text("lines", "Lines (JSON array of {number, text})"),
+        FieldSpec::number(
+            "cursor-line",
+            "Cursor line (1-based)",
+            NumericBounds::min(0.0),
+        )
+        .with_default(Value::from(0.0)),
+        FieldSpec::number(
+            "cursor-column",
+            "Cursor column (1-based)",
+            NumericBounds::min(0.0),
+        )
+        .with_default(Value::from(0.0)),
+        FieldSpec::text("status-label", "Status strip label")
+            .with_default(Value::String("".into())),
+    ]
+}
+
+fn code_editor_signals() -> Vec<prism_builder::signal::SignalDef> {
+    use prism_builder::signal::SignalDef;
+    prism_builder::with_common_signals(vec![
+        SignalDef::new("line-clicked", "Line clicked."),
+        SignalDef::new("fold-toggled", "Fold caret pressed."),
+    ])
+}
+
+/// Wave 11.4 — schema for the DSL-migrated `shell.nav-graph`.
+fn nav_graph_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("title", "Section title"),
+        FieldSpec::text(
+            "pages",
+            "Pages (JSON array of {x, y, label, route, is-active})",
+        ),
+        FieldSpec::text("edges", "Edges (JSON array of {x1, y1, x2, y2, kind})"),
+    ]
+}
+
 /// Wave 11.3 — schema for `shell.dock-workspace`. The binding
 /// (`state::dock_workspace_props_with_catalog`) emits a single
 /// `dock` value — the recursively-enriched [`prism_dock::DockNode`]
@@ -1446,6 +1547,43 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     )
     .schema(field_editor_schema)
     .signals(field_editor_signals),
+    // Wave 11.4 — Tier-3 migration of builder_canvas.rs. The
+    // imperative `tag_canvas_subtree` walk lives in the
+    // `prism.builder-host` primitive body; the chrome (toolbar,
+    // grid overlay, selection ring + handles, palette ghost,
+    // gizmo dispatch) composes around it through this DSL.
+    // `state::builder_canvas_props` pre-computes
+    // `handle-directions` / `gizmo-tag` / `show-gizmo` so the
+    // 8-handle `for=` loop and the dynamic-gizmo `<dispatch>`
+    // never need a runtime match.
+    PrismUiSpec::new(
+        "shell.builder-canvas",
+        include_str!("../../ui/components/builder-canvas.prism-ui"),
+    )
+    .schema(builder_canvas_schema)
+    .signals(builder_canvas_signals),
+    // Wave 11.4 — Tier-3 migration of code_editor.rs. The whole
+    // body was declarative (gutter + line rows + status strip);
+    // the binding pre-computes `lines` / `cursor-line` /
+    // `cursor-column` / `status-label` so the DSL is one for-loop
+    // per column plus the strip. The Tier-3 designation was about
+    // future keystroke handling — that lands on the
+    // `prism.text-buffer` primitive when a Luau-authored editor
+    // calls into it.
+    PrismUiSpec::new(
+        "shell.code-editor",
+        include_str!("../../ui/components/code-editor.prism-ui"),
+    )
+    .schema(code_editor_schema)
+    .signals(code_editor_signals),
+    // Wave 11.4 — Tier-3 migration of nav_graph.rs. The whole body
+    // was already declarative (one `for=` over edges, one over
+    // pages); no substrate change required.
+    PrismUiSpec::new(
+        "shell.nav-graph",
+        include_str!("../../ui/components/nav-graph.prism-ui"),
+    )
+    .schema(nav_graph_schema),
     // Wave 11.3 — Tier-2 migration of schema_designer.rs.
     PrismUiSpec::new(
         "shell.schema-designer",

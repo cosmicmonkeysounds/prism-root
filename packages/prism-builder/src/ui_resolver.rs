@@ -403,9 +403,22 @@ fn element_to_builder_node(element: &Element, scope: &LowerScope) -> BuilderNode
                     resolved_attribute_value(&attr.value, scope),
                 );
             }
-            // Styling, signals, bindings, facets, control-flow keywords
+            // Wave 10.4 / Wave 13.4: forward `bind:KEY="X"` through
+            // registered component tags as `props["bind-KEY"] = "X"`,
+            // mirroring the `Bind` arm in
+            // `dispatch_element_to_builder_node`. The receiving block
+            // (e.g. `prism.text-input`) then re-emits the carrier as a
+            // `data-bind-value` semantic attr that the shell's
+            // input-focus route consumes for two-way writeback.
+            AttributeNamespace::Bind => {
+                props.insert(
+                    format!("bind-{local}"),
+                    resolved_attribute_value(&attr.value, scope),
+                );
+            }
+            // Styling, signals, facets, control-flow keywords
             // are not block-prop carriers — the cascade handles styles,
-            // signals/bindings flow through their own dispatch paths,
+            // signals flow through their own dispatch paths,
             // and control-flow attrs were consumed by the runtime's
             // pre-pass before the resolver was called.
             _ => {}
@@ -587,6 +600,24 @@ fn dispatch_element_to_builder_node(
             AttributeNamespace::Aria => {
                 props.insert(
                     format!("aria-{local}"),
+                    resolved_attribute_value(&attr.value, scope),
+                );
+            }
+            // Wave 10.4 / Wave 13.4 two-way `bind:value="<src>"` —
+            // forward bind-namespaced attrs through dispatched
+            // component tags as `props["bind-<key>"]` so the resolved
+            // block reads them via the same `ctx.prop_str` path it
+            // uses for any other prop. `<prism.text-input bind:value="form.email"/>`
+            // lands as `props["bind-value"] = "form.email"`; the
+            // text-input lower body then forwards it as a
+            // `data-bind-value` semantic attr on the emitted input
+            // so the shell's `route_bind_input_focus` opens a
+            // field-focus session and keystrokes write back through
+            // `set_node_prop`. Closes the deferred Wave 13.4 /
+            // 14.13 gap (two-way `v-model`-style binding).
+            AttributeNamespace::Bind => {
+                props.insert(
+                    format!("bind-{local}"),
                     resolved_attribute_value(&attr.value, scope),
                 );
             }

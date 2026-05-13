@@ -1677,6 +1677,292 @@ script = "main.luau"
 }
 
 #[test]
+fn luau_component_children_render_through_prism_slot() {
+    // The persistent-Luau children-projection chain:
+    //   1. The skeleton authors `<my.box><my.inner ... /></my.box>`
+    //   2. `my.box`'s render reads `children` (descriptors) + emits
+    //      `prism.slot(0)` for each child it wants laid out.
+    //   3. The shell pre-lowers each skeleton-authored child and
+    //      substitutes them for the slot markers during VirtualNode →
+    //      UiNode translation.
+    // The rendered tree therefore carries *both* `my.box`'s own attrs
+    // and the inner component's `data-luau-key` — proving the
+    // pre-lowered child flowed through.
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+skeleton = "shell.prism-ui"
+script = "main.luau"
+"#,
+    )];
+    with_apps_dir("children_projection", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let dir = std::path::Path::new(&root).join("lattice");
+        std::fs::write(
+            dir.join("shell.prism-ui"),
+            r#"<my.box id="b1">
+                <my.inner id="i1" label="alpha"/>
+                <my.inner id="i2" label="beta"/>
+            </my.box>"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("main.luau"),
+            r#"
+                prism.app:register_component({
+                    id = "my.box",
+                    render = function(_props, children)
+                        -- Emit one slot per declared child.
+                        local slots = {}
+                        for i = 1, #children do
+                            table.insert(slots, prism.slot(i - 1))
+                        end
+                        return prism.element("section",
+                            { ["data-role-extra"] = "box" },
+                            slots)
+                    end,
+                })
+                prism.app:register_component({
+                    id = "my.inner",
+                    render = function(props, _)
+                        return prism.element("article",
+                            { ["data-inner-label"] = props.label or "" },
+                            { props.label or "" })
+                    end,
+                })
+            "#,
+        )
+        .unwrap();
+
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        {
+            let mut inner = shell.inner.borrow_mut();
+            inner.state.workspace.active_app = Some("lattice".to_string());
+        }
+        let tree = shell.render();
+
+        // The box's data-role-extra and both inner labels survive
+        // through the slot substitution.
+        fn walk_for_attr_value(
+            nodes: &[prism_ui_runtime::layout::Node],
+            attr: &str,
+            value: &str,
+            seen: &mut bool,
+        ) {
+            use prism_ui_runtime::layout::Node as UiNode;
+            for n in nodes {
+                if *seen {
+                    return;
+                }
+                if let UiNode::Container {
+                    props, children, ..
+                } = n
+                {
+                    for (k, v) in &props.semantic.attrs {
+                        if k == attr && v == value {
+                            *seen = true;
+                            return;
+                        }
+                    }
+                    walk_for_attr_value(children, attr, value, seen);
+                }
+            }
+        }
+        let mut box_seen = false;
+        walk_for_attr_value(&tree, "data-role-extra", "box", &mut box_seen);
+        assert!(box_seen, "expected my.box render to surface");
+        let mut alpha_seen = false;
+        walk_for_attr_value(&tree, "data-inner-label", "alpha", &mut alpha_seen);
+        assert!(
+            alpha_seen,
+            "expected first child slot to render with label=alpha"
+        );
+        let mut beta_seen = false;
+        walk_for_attr_value(&tree, "data-inner-label", "beta", &mut beta_seen);
+        assert!(
+            beta_seen,
+            "expected second child slot to render with label=beta"
+        );
+    });
+}
+
+#[test]
+fn luau_slot_out_of_range_renders_oob_placeholder() {
+    // Defensive contract: a script asking for `prism.slot(99)` when
+    // only one child was authored shouldn't panic — the renderer
+    // emits a labelled `data-role="luau-slot-oob"` empty container
+    // so authors can spot + fix the bad index.
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+skeleton = "shell.prism-ui"
+script = "main.luau"
+"#,
+    )];
+    with_apps_dir("slot_oob", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let dir = std::path::Path::new(&root).join("lattice");
+        std::fs::write(dir.join("shell.prism-ui"), r#"<my.box id="b1"/>"#).unwrap();
+        std::fs::write(
+            dir.join("main.luau"),
+            r#"
+                prism.app:register_component({
+                    id = "my.box",
+                    render = function(_p, _c)
+                        return prism.element("section", nil, { prism.slot(99) })
+                    end,
+                })
+            "#,
+        )
+        .unwrap();
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        {
+            let mut inner = shell.inner.borrow_mut();
+            inner.state.workspace.active_app = Some("lattice".to_string());
+        }
+        let tree = shell.render();
+        fn walk_for_attr_value(
+            nodes: &[prism_ui_runtime::layout::Node],
+            attr: &str,
+            value: &str,
+            seen: &mut bool,
+        ) {
+            use prism_ui_runtime::layout::Node as UiNode;
+            for n in nodes {
+                if *seen {
+                    return;
+                }
+                if let UiNode::Container {
+                    props, children, ..
+                } = n
+                {
+                    for (k, v) in &props.semantic.attrs {
+                        if k == attr && v == value {
+                            *seen = true;
+                            return;
+                        }
+                    }
+                    walk_for_attr_value(children, attr, value, seen);
+                }
+            }
+        }
+        let mut oob_seen = false;
+        walk_for_attr_value(&tree, "data-role", "luau-slot-oob", &mut oob_seen);
+        assert!(
+            oob_seen,
+            "out-of-range slot should produce a labelled empty"
+        );
+    });
+}
+
+#[test]
+fn install_app_script_hot_swaps_service_without_duplicate_id_panic() {
+    // The persistent-Luau hot-reload chain has to survive re-installs
+    // of the same service id. ServiceRegistry's standard install
+    // asserts no duplicates — `install_services_replace` drops the
+    // prior entry before re-installing. This test runs the same
+    // script twice and reads the post-install service to confirm
+    // it's the new instance.
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+script = "main.luau"
+"#,
+    )];
+    with_apps_dir("svc_hot_reload", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let dir = std::path::Path::new(&root).join("lattice");
+        std::fs::write(
+            dir.join("main.luau"),
+            r#"
+                prism.app:register_service({
+                    id = "lattice.svc",
+                    on_event = function(event)
+                        if event.kind == "Wheel" then return "Handled" end
+                        return "Pass"
+                    end,
+                })
+            "#,
+        )
+        .unwrap();
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        // Boot installed the v1 body: Wheel → Handled.
+        {
+            let inner = shell.inner.borrow();
+            assert!(
+                inner.services.get("lattice.svc").is_some(),
+                "v1 service should be installed at boot"
+            );
+        }
+        // Re-install with the inverse policy: Wheel → Pass, PointerDown → Handled.
+        let v2 = r#"
+            prism.app:register_service({
+                id = "lattice.svc",
+                on_event = function(event)
+                    if event.kind == "PointerDown" then return "Handled" end
+                    return "Pass"
+                end,
+            })
+        "#;
+        shell.install_app_script("lattice", v2).expect("hot-reload");
+        // Service still present (with same id) and dispatches v2 body.
+        let inner = shell.inner.borrow();
+        let svc = inner.services.get("lattice.svc").expect("v2 service");
+        drop(inner);
+        let mut bind = shell.inner.borrow_mut();
+        let mut state = std::mem::take(&mut bind.state);
+        let mut undo = std::mem::take(&mut bind.undo);
+        let mut vfs: Box<dyn prism_shell::services::Vfs> =
+            std::mem::replace(&mut bind.vfs, Box::new(prism_shell::services::OsVfs));
+        let mut luau: Box<dyn prism_shell::services::LuauHost> = std::mem::replace(
+            &mut bind.luau,
+            Box::new(prism_shell::services::NoopLuauHost::default()),
+        );
+        let mut clipboard = std::mem::take(&mut bind.clipboard);
+        let cmds = bind.services.commands();
+        let mut ctx = prism_shell::services::MutCtx {
+            state: &mut state,
+            viewport: prism_ui_runtime::layout::Viewport {
+                width: 1.0,
+                height: 1.0,
+            },
+            undo: &mut undo,
+            vfs: vfs.as_mut(),
+            luau: luau.as_mut(),
+            clipboard: &mut clipboard,
+            registry: None,
+            modifier_registry: None,
+        };
+        // v2 contract: PointerDown→Handled, Wheel→Pass (inverse of v1).
+        let p_outcome = svc.on_event(
+            &prism_ui_runtime::event::Event::PointerDown {
+                x: 0.0,
+                y: 0.0,
+                button: prism_ui_runtime::event::PointerButton::Primary,
+            },
+            &mut ctx,
+            cmds,
+        );
+        assert_eq!(p_outcome, prism_shell::services::EventOutcome::Handled);
+        let w_outcome = svc.on_event(
+            &prism_ui_runtime::event::Event::Wheel { dx: 0.0, dy: 0.0 },
+            &mut ctx,
+            cmds,
+        );
+        assert_eq!(w_outcome, prism_shell::services::EventOutcome::Pass);
+    });
+}
+
+#[test]
 fn no_apps_directory_falls_back_to_hardcoded_launchpad() {
     // Sanity check: clear PRISM_APPS_DIR + point at a path that
     // doesn't exist; Shell::new still constructs without panic and

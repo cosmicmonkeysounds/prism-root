@@ -25,7 +25,8 @@
 //! `prism-ui` parser sees the right field set today, and the
 //! Inspector populates the matching prop rows on selection.
 
-use prism_ui_runtime::layout::{Node as UiNode, Semantic, Sizing};
+use prism_ui_runtime::command::CornerRadius;
+use prism_ui_runtime::layout::{Node as UiNode, Semantic, Sizing, TextProps};
 use serde_json::Value;
 
 use crate::block::BlockSpec;
@@ -73,12 +74,76 @@ macro_rules! primitive_block {
     };
 }
 
-primitive_block!(
-    text_input_lower,
-    "prism.text-input",
-    "text-input",
-    text_input_schema
-);
+/// Wave 10.4 interactive body for `prism.text-input` — lowers to a
+/// real `Node::TextInput` (not the generic `Container` placeholder)
+/// with the `value` / `placeholder` props folded into the runtime
+/// node + `data-role="text-input"` + an optional `data-bind-value`
+/// semantic attr forwarded from the `bind` prop. When `bind` is set,
+/// the shell's `route_bind_input_focus` opens a field-focus session
+/// on pointer-down and the existing `FieldFocusService` routes
+/// subsequent keystrokes into `set_node_prop` — closing the
+/// Vue/Svelte `v-model` / `bind:value` two-way gap noted as Wave
+/// 13.4 / 14.13 of `docs/dev/composable-builder-plan.md`.
+///
+/// The `disabled` prop adds `aria-disabled="true"`; the SSR walker
+/// inherits both attrs verbatim. `multiline` is reserved (round-trips
+/// as `data-multiline="true"` for the future textarea body) and
+/// `max-length` rounds as `data-max-length` — both are author intent
+/// carriers today, no runtime change.
+fn text_input_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let value = ctx.prop_str(node, "value");
+    let placeholder = ctx.prop_str(node, "placeholder");
+    // Accept both `bind` (imperative / prefab author) and `bind-value`
+    // (the DSL `bind:value="…"` form, forwarded by the resolver's
+    // `AttributeNamespace::Bind` arm). Same destination data-attr.
+    let bind = {
+        let v = ctx.prop_str(node, "bind-value");
+        if v.is_empty() {
+            ctx.prop_str(node, "bind")
+        } else {
+            v
+        }
+    };
+    let disabled = ctx.prop_bool(node, "disabled", false);
+    let multiline = ctx.prop_bool(node, "multiline", false);
+    let max_length = ctx.prop(node, "max-length");
+    let mut semantic = Semantic::tag("input")
+        .with_attr("type", "text")
+        .with_attr("data-role", "text-input");
+    if !bind.is_empty() {
+        semantic = semantic.with_attr("data-bind-value", bind);
+    }
+    if !placeholder.is_empty() {
+        semantic = semantic.with_attr("placeholder", placeholder.clone());
+    }
+    if disabled {
+        semantic = semantic.with_attr("aria-disabled", "true");
+    }
+    if multiline {
+        semantic = semantic.with_attr("data-multiline", "true");
+    }
+    if let Some(n) = max_length.as_f64() {
+        if n > 0.0 {
+            semantic = semantic.with_attr("data-max-length", (n as i64).to_string());
+        }
+    }
+    UiNode::TextInput {
+        id: node.id.clone(),
+        value,
+        placeholder,
+        props: TextProps::default(),
+        width: Sizing::Grow,
+        height: Sizing::Fit,
+        radius: CornerRadius {
+            tl: 4.0,
+            tr: 4.0,
+            br: 4.0,
+            bl: 4.0,
+        },
+        semantic,
+        focused: false,
+    }
+}
 primitive_block!(
     drag_scrub_lower,
     "prism.drag-scrub",
@@ -147,12 +212,88 @@ primitive_block!(
     "text-buffer",
     text_buffer_schema
 );
-primitive_block!(
-    builder_host_lower,
-    "prism.builder-host",
-    "builder-host",
-    builder_host_schema
-);
+/// Wave 11.4 — `<prism.builder-host/>` ships a real lower body, not
+/// the shared `primitive_lower` stub. It takes the caller's
+/// pre-lowered `host_children` (the `BuilderDocument` preview tree),
+/// recursively annotates every container with `data-canvas-node="<id>"`,
+/// the default hover tint, and (when the id matches `selection-id`)
+/// a selection background. The output is one
+/// `<container data-role="canvas-preview">` carrying the tagged tree.
+/// Chrome (toolbar, grid overlay, selection outline, handles,
+/// palette ghost) composes around it via the shell's
+/// `shell.builder-canvas` DSL wrapper.
+fn builder_host_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let selection_id_owned = ctx.prop_str(node, "selection-id");
+    let selection_id = if selection_id_owned.is_empty() {
+        None
+    } else {
+        Some(selection_id_owned.as_str())
+    };
+    let mut preview = ctx
+        .host_children()
+        .map(|s| s.to_vec())
+        .unwrap_or_else(|| ctx.lower_children(&node.children));
+    tag_canvas_subtree(&mut preview, selection_id);
+    bare_container(node.id.clone(), preview, |p| {
+        p.width = Sizing::Grow;
+        p.height = Sizing::Grow;
+        p.semantic = Semantic::tag("div")
+            .with_attr("role", "presentation")
+            .with_attr("data-role", "canvas-preview");
+    })
+}
+
+/// Resting hover tint painted on every canvas-document container so
+/// the cursor passing over a preview node flashes the same
+/// affordance every chrome surface uses.
+const CANVAS_NODE_HOVER_BG: &str = "#1a0060c0";
+/// Translucent blue tint painted as the background of the currently
+/// selected canvas-document node.
+const CANVAS_SELECTION_TINT: &str = "#330060c0";
+
+/// Walk the host_children subtree (recursively) and apply the three
+/// canvas-preview affordances:
+///   1. `data-canvas-node="<id>"` on every container with a non-empty
+///      id — the pointer-down router distinguishes canvas-doc clicks
+///      from chrome clicks via this attr.
+///   2. A default hover-bg tint when none was authored.
+///   3. The selection background + `data-selected="true"` when the
+///      container's id matches `selection_id`.
+///
+/// Mirrors the legacy `builder_canvas::tag_canvas_subtree` body
+/// verbatim. Lifted here so the imperative walk lives with the
+/// primitive that needs it, not the shell-side chrome.
+fn tag_canvas_subtree(nodes: &mut [UiNode], selection_id: Option<&str>) {
+    use crate::ui_lower::{hover_bg, parse_color};
+    for n in nodes {
+        if let UiNode::Container {
+            id,
+            props,
+            children,
+        } = n
+        {
+            if !id.is_empty() {
+                props
+                    .semantic
+                    .attrs
+                    .push(("data-canvas-node".into(), id.clone()));
+                if props.hover.is_none() {
+                    props.hover = hover_bg(CANVAS_NODE_HOVER_BG);
+                }
+                if selection_id == Some(id.as_str()) {
+                    if let Some(c) = parse_color(CANVAS_SELECTION_TINT) {
+                        props.background = Some(c);
+                    }
+                    props
+                        .semantic
+                        .attrs
+                        .push(("data-selected".into(), "true".into()));
+                }
+            }
+            tag_canvas_subtree(children, selection_id);
+        }
+    }
+}
 
 // ── schemas ─────────────────────────────────────────────────────────
 
@@ -160,6 +301,15 @@ fn text_input_schema() -> Vec<FieldSpec> {
     vec![
         FieldSpec::text("value", "Value").required(),
         FieldSpec::text("placeholder", "Placeholder"),
+        // Wave 10.4: when set, lowers to `data-bind-value="..."` on
+        // the emitted input so the shell's bind-input-focus route
+        // opens a field-focus session on pointer-down and subsequent
+        // keystrokes write back to the bound `<node-id>.<key>`.
+        // Authors typically write `bind:value="form.email"` in DSL,
+        // which already lowers to this same data-attr via the
+        // `AttributeNamespace::Bind` arm — the prop here is the
+        // imperative-author counterpart for prefab / facet builds.
+        FieldSpec::text("bind", "Bind to"),
         FieldSpec::boolean("multiline", "Multi-line").with_default(Value::Bool(false)),
         FieldSpec::boolean("disabled", "Disabled").with_default(Value::Bool(false)),
         FieldSpec::number("max-length", "Max length", NumericBounds::min(0.0)),
@@ -294,6 +444,12 @@ fn builder_host_schema() -> Vec<FieldSpec> {
         FieldSpec::boolean("show-selection", "Show selection overlay")
             .with_default(Value::Bool(true)),
         FieldSpec::boolean("read-only", "Read-only").with_default(Value::Bool(false)),
+        // Wave 11.4 — the id of the currently selected canvas
+        // document node. The lower body walks host_children and
+        // paints the selection tint on the container with this id.
+        // Empty / unset → no selection paint (cursor still hovers
+        // through the default tint).
+        FieldSpec::text("selection-id", "Selected canvas-document node id"),
     ]
 }
 
@@ -449,5 +605,74 @@ mod tests {
             .attrs
             .iter()
             .any(|(k, v)| k == "data-role" && v == "popover"));
+    }
+
+    /// Wave 10.4: `prism.text-input` lowers to a real `TextInput`
+    /// node carrying every prop the schema declares. The `bind`
+    /// prop forwards as `data-bind-value` so the shell's
+    /// `route_bind_input_focus` opens a field-focus session on
+    /// pointer-down (closing the two-way `bind:value` deferral).
+    #[test]
+    fn text_input_lower_emits_typed_node_with_props_folded_in() {
+        let node = Node {
+            id: "in1".into(),
+            component: "prism.text-input".into(),
+            props: serde_json::json!({
+                "value": "hello",
+                "placeholder": "type…",
+                "bind": "form.email",
+                "disabled": true,
+                "max-length": 80,
+            }),
+            ..Default::default()
+        };
+        let cascade = StyleProperties::default();
+        let ctx = LowerCtx::new(None, &cascade);
+        let lowered = text_input_lower(&ctx, &node, &cascade);
+        let UiNode::TextInput {
+            id,
+            value,
+            placeholder,
+            semantic,
+            ..
+        } = lowered
+        else {
+            panic!("expected TextInput, got {lowered:?}");
+        };
+        assert_eq!(id, "in1");
+        assert_eq!(value, "hello");
+        assert_eq!(placeholder, "type…");
+        let attr = |k: &str| {
+            semantic
+                .attrs
+                .iter()
+                .find_map(|(name, v)| (name == k).then(|| v.clone()))
+        };
+        assert_eq!(attr("data-role"), Some("text-input".into()));
+        assert_eq!(attr("data-bind-value"), Some("form.email".into()));
+        assert_eq!(attr("aria-disabled"), Some("true".into()));
+        assert_eq!(attr("data-max-length"), Some("80".into()));
+        assert_eq!(attr("placeholder"), Some("type…".into()));
+    }
+
+    #[test]
+    fn text_input_lower_skips_optional_attrs_when_unset() {
+        let node = Node {
+            id: "in1".into(),
+            component: "prism.text-input".into(),
+            props: serde_json::json!({ "value": "" }),
+            ..Default::default()
+        };
+        let cascade = StyleProperties::default();
+        let ctx = LowerCtx::new(None, &cascade);
+        let UiNode::TextInput { semantic, .. } = text_input_lower(&ctx, &node, &cascade) else {
+            panic!();
+        };
+        let has = |k: &str| semantic.attrs.iter().any(|(n, _)| n == k);
+        assert!(has("data-role"));
+        assert!(!has("data-bind-value"));
+        assert!(!has("aria-disabled"));
+        assert!(!has("data-max-length"));
+        assert!(!has("placeholder"));
     }
 }

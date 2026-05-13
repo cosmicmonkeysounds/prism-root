@@ -1,0 +1,134 @@
+<!--
+  shell.builder-canvas — the WYSIWYG editing surface. Wave 11.4
+  migration of builder_canvas.rs.
+
+  Composition:
+   * `<shell.builder-toolbar/>` — top strip (device pill, zoom,
+     node count, tool buttons). Already DSL-authored.
+   * `<container data-role="canvas-page">` — the page rect, sized
+     by `page-width * zoom` / `page-height * zoom`.
+     * `<prism.builder-host/>` — the Tier-3 primitive whose body
+       walks `host_children` and applies `data-canvas-node` /
+       hover-tint / selection-tint tagging. The shell's
+       `BuilderDocument` preview tree is the caller's
+       `host_children`; the binding (`builder_canvas_props`)
+       supplies `selection-id` so the primitive paints the right
+       tint.
+     * `<container data-role="canvas-grid">` — iterates `grid-cells`
+       and emits one absolutely-positioned `canvas-cell` per
+       entry.
+     * `<container data-role="canvas-overlay">` — selection
+       outline + 8-handle ring + optional gizmo + optional
+       palette-drag ghost.
+
+  Imperative tagging walk (`data-canvas-node` / hover / selection
+  tints) lives in the `prism.builder-host` primitive body — it
+  can't be expressed in DSL. Everything else (chrome, iteration,
+  overlay composition) is declarative.
+-->
+<container
+    tag="section"
+    direction="column"
+    gap="12"
+    padding-left="24"
+    padding-right="24"
+    padding-top="24"
+    padding-bottom="24"
+    width="grow"
+    height="grow"
+    style:background="#040000"
+    aria-label="Builder canvas"
+    data:role="builder-canvas">
+  <shell.builder-toolbar
+      id="{id}::toolbar"
+      device="{device ? device : 'desktop'}"
+      zoom="{zoom * 1}"
+      node-count="{node-count}"
+      tool="{tool ? tool : 'move'}"/>
+  <container
+      id="{id}::page"
+      tag="div"
+      width="{(page-width ? page-width : 1280) * (zoom ? zoom : 1)}"
+      height="{(page-height ? page-height : 800) * (zoom ? zoom : 1)}"
+      style:background="#ffffff"
+      style:radius="2"
+      role="img"
+      aria-label="Page surface"
+      data:role="canvas-page">
+    <prism.builder-host
+        id="{id}::preview"
+        selection-id="{selection-id}">
+      <host-children/>
+    </prism.builder-host>
+    <container
+        id="{id}::grid"
+        data:role="canvas-grid"
+        role="grid"
+        aria-label="Page grid">
+      <container
+          for="cell, idx in grid-cells"
+          id="{id}::cell::{idx}"
+          tag="div"
+          width="{cell.width}"
+          height="{cell.height}"
+          style:radius="1"
+          style:background="{cell.occupied ? '#0c0060c0' : '#04000000'}"
+          style:background:hovered="#0a0060c0"
+          role="gridcell"
+          data:role="canvas-cell"
+          data:x="{cell.x}"
+          data:y="{cell.y}"
+          data:occupied="{cell.occupied ? 'true' : ''}"/>
+    </container>
+    <container
+        id="{id}::overlay"
+        role="presentation"
+        data:role="canvas-overlay">
+      <!-- Selection outline rect — present when selection-rect
+           is set, absent otherwise. The renderer paints the stroke
+           against `data-stroke`; we only emit the AABB + the
+           position attrs. -->
+      <container
+          if="{selection-rect}"
+          id="{id}::sel-outline"
+          width="{selection-rect.width}"
+          height="{selection-rect.height}"
+          role="presentation"
+          data:role="selection-outline"
+          data:x="{selection-rect.x}"
+          data:y="{selection-rect.y}"
+          data:stroke="#0060c0"/>
+      <!-- 8-handle resize ring. Dispatches `shell.resize-handle`
+           via Wave 11.3 dynamic dispatch for each direction. -->
+      <shell.resize-handle
+          if="{selection-rect}"
+          for="dir in handle-directions"
+          id="{id}::handle::{dir}"
+          direction="{dir}"/>
+      <!-- Gizmo overlay — dispatches one of three gizmo blocks
+           by `tool`. Empty `gizmo-tag` collapses the dispatch via
+           the `if=` predicate. -->
+      <dispatch
+          if="{show-gizmo && gizmo-tag}"
+          component="{gizmo-tag}"
+          id="{id}::gizmo"/>
+      <!-- Palette-drag ghost — translucent pill at the cursor
+           while a palette item is being dragged across the canvas
+           (Wave 3.2). -->
+      <container
+          if="{palette-drag.active}"
+          id="{id}::palette-ghost"
+          width="96"
+          height="28"
+          style:background="#660060c0"
+          style:radius="4"
+          role="presentation"
+          data:role="palette-ghost"
+          data:kind="{palette-drag.kind}"
+          data:x="{palette-drag.x}"
+          data:y="{palette-drag.y}"
+          data:stroke="#0060c0"
+          data:drop-target="{palette-drag.drop-target}"/>
+    </container>
+  </container>
+</container>

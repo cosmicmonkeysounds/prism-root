@@ -304,7 +304,7 @@ fn builtin_names() -> &'static [&'static str] {
 }
 
 fn is_keyword(lower: &str) -> bool {
-    matches!(lower, "true" | "false" | "and" | "or" | "not")
+    matches!(lower, "true" | "false" | "null" | "and" | "or" | "not")
 }
 
 fn is_builtin(lower: &str) -> bool {
@@ -396,7 +396,7 @@ impl<'a> ContextStore<'a> {
 
 impl<'a> ValueStore for ContextStore<'a> {
     fn resolve(&self, _operand_type: &str, id: &str, _subfield: Option<&str>) -> ExprValue {
-        self.ctx.get(id).cloned().unwrap_or(ExprValue::Number(0.0))
+        self.ctx.get(id).cloned().unwrap_or(ExprValue::Null)
     }
 }
 
@@ -579,5 +579,57 @@ mod tests {
             evaluate_expression("avg(2, 4, 6)", &ctx(&[])).result,
             num(4.0)
         );
+    }
+
+    /// Wave 11.3 DSL substrate: `null` literal + `== null` /
+    /// `!= null` comparison closes the field-editor migration gap
+    /// (the `min == null` / `max == null` branches). Composable
+    /// builder plan, 2026-05-13.
+    #[test]
+    fn null_literal_round_trips_through_evaluator() {
+        let r = evaluate_expression("null", &ctx(&[]));
+        assert_eq!(r.result, ExprValue::Null);
+    }
+
+    #[test]
+    fn null_eq_null_is_true_and_null_eq_zero_is_false() {
+        let r = evaluate_expression("null == null", &ctx(&[]));
+        assert_eq!(r.result, ExprValue::Boolean(true));
+        // The deliberate asymmetry — authors expect to distinguish
+        // "key missing" from "key present and 0" / "key present and
+        // empty" / "key present and false".
+        let r = evaluate_expression("null == 0", &ctx(&[]));
+        assert_eq!(r.result, ExprValue::Boolean(false));
+        let r = evaluate_expression("null == \"\"", &ctx(&[]));
+        assert_eq!(r.result, ExprValue::Boolean(false));
+        let r = evaluate_expression("null == false", &ctx(&[]));
+        assert_eq!(r.result, ExprValue::Boolean(false));
+    }
+
+    #[test]
+    fn null_inequality_complements_eq() {
+        let r = evaluate_expression("null != 0", &ctx(&[]));
+        assert_eq!(r.result, ExprValue::Boolean(true));
+        let r = evaluate_expression("null != null", &ctx(&[]));
+        assert_eq!(r.result, ExprValue::Boolean(false));
+    }
+
+    #[test]
+    fn null_is_falsy_in_ternary_condition() {
+        // `null ? a : b` picks the else branch — falsy in boolean
+        // context so `value ? value : "(none)"` short-circuits without
+        // an explicit null check.
+        let r = evaluate_expression("null ? \"yes\" : \"no\"", &ctx(&[]));
+        assert_eq!(r.result, ExprValue::String("no".into()));
+    }
+
+    #[test]
+    fn null_in_logical_operators_short_circuits_as_falsy() {
+        let r = evaluate_expression("null || \"fallback\"", &ctx(&[]));
+        assert_eq!(r.result, ExprValue::String("fallback".into()));
+        // `&&` short-circuits and returns the falsy left operand
+        // verbatim — same shape `false && x` already had.
+        let r = evaluate_expression("null && \"unreachable\"", &ctx(&[]));
+        assert_eq!(r.result, ExprValue::Null);
     }
 }

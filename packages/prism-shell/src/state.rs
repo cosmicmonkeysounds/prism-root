@@ -1358,6 +1358,30 @@ fn property_row_from_spec(
     }
 }
 
+/// Wave 11.4 — convert a byte-offset caret position to a
+/// `(line, column)` pair (both 1-based) for the code-editor
+/// status strip. Walks the source counting `\n` boundaries; the
+/// column is the number of chars since the last newline + 1.
+/// Returns `(0, 0)` when `caret == 0` so the binding can elide
+/// the cursor line from the status label.
+fn byte_offset_to_line_col(source: &str, caret: usize) -> (usize, usize) {
+    if caret == 0 {
+        return (0, 0);
+    }
+    let mut line = 1usize;
+    let mut last_break = 0usize;
+    let bytes = source.as_bytes();
+    let end = caret.min(bytes.len());
+    for (i, b) in bytes.iter().enumerate().take(end) {
+        if *b == b'\n' {
+            line += 1;
+            last_break = i + 1;
+        }
+    }
+    let column = source[last_break..end].chars().count() + 1;
+    (line, column)
+}
+
 /// Wave 11.3 — `chrome::format_drag_value` lifted out of the
 /// `chrome` module so `property_row_from_spec` can pre-compute
 /// `drag-display-value` without the field-editor migration
@@ -3334,17 +3358,43 @@ struct DragState {
 impl CanvasSlot {
     // ── read side ─────────────────────────────────────────────────
 
-    /// JSON for `shell.code-editor`. Source text + caret offset + the
-    /// language the syntax provider speaks.
+    /// JSON for `shell.code-editor`. Wave 11.4 migration to DSL —
+    /// the binding pre-derives `lines` (one row per `\n`-split line
+    /// of `source` carrying `{number, text}`), the cursor position
+    /// (`cursor-line` / `cursor-column`, both 1-based, computed from
+    /// the byte-offset `caret`), and `status-label` (the pre-
+    /// formatted "lang · Ln X, Col Y" string the status strip
+    /// renders). The DSL block iterates `lines` with a `for=` loop
+    /// and renders the status strip as a single `<text>{status-label}</text>`.
     pub fn code_editor_props(&self) -> Value {
+        let source = &self.code_buffer.source;
+        let caret = self.code_buffer.caret.min(source.len());
+        let language = if self.code_buffer.language.is_empty() {
+            "slint"
+        } else {
+            self.code_buffer.language.as_str()
+        };
+        let mut lines: Vec<Value> = Vec::new();
+        for (idx, line) in source.split('\n').enumerate() {
+            lines.push(json!({
+                "number": (idx + 1) as i64,
+                "text": line,
+            }));
+        }
+        let (cursor_line, cursor_column) = byte_offset_to_line_col(source, caret);
+        let status_label = if cursor_line > 0 {
+            format!("{language} · Ln {cursor_line}, Col {cursor_column}")
+        } else {
+            language.to_string()
+        };
         json!({
-            "source": self.code_buffer.source,
-            "caret": self.code_buffer.caret,
-            "language": if self.code_buffer.language.is_empty() {
-                "slint"
-            } else {
-                self.code_buffer.language.as_str()
-            },
+            "source": source,
+            "caret": caret,
+            "language": language,
+            "lines": lines,
+            "cursor-line": cursor_line,
+            "cursor-column": cursor_column,
+            "status-label": status_label,
         })
     }
 
@@ -3391,6 +3441,26 @@ impl CanvasSlot {
                 "height": bbox.height,
             });
         }
+        // Wave 11.4 — substrate fields the DSL `shell.builder-canvas`
+        // consumes alongside the geometry props above.
+        //
+        // * `handle-directions` — the closed 8-row direction list the
+        //   resize-handle ring iterates. The DSL block uses it via
+        //   `for="dir in handle-directions"` so adding a 9th handle
+        //   (e.g. a center pivot) is one row here, no DSL change.
+        // * `gizmo-tag` — pre-resolved tag dispatched into the
+        //   `<dispatch component="{gizmo-tag}"/>` element. Empty
+        //   when the tool is something other than move/rotate/scale.
+        // * `show-gizmo` — boolean visibility flag mirroring the
+        //   selection presence. The previous Rust block read this
+        //   prop verbatim.
+        props["handle-directions"] = json!(["tl", "t", "tr", "r", "br", "b", "bl", "l"]);
+        props["gizmo-tag"] = json!(match self.tool {
+            ToolMode::Move => "shell.gizmo-move",
+            ToolMode::Rotate => "shell.gizmo-rotate",
+            ToolMode::Scale => "shell.gizmo-scale",
+        });
+        props["show-gizmo"] = json!(self.selection.is_some() && self.selection_bbox.is_some());
         props
     }
 

@@ -14,10 +14,17 @@
 //! glue.
 //!
 //! The Luau-backed shims (`LuauComponentBlock`, `LuauScriptedService`)
-//! are intentionally minimal today — their `lower_ui` / `on_event`
-//! bodies surface a placeholder labelled with the component / service
-//! id. When the in-process Luau runtime lands, the shim bodies grow
-//! to dispatch through the script's `render_key` / `on_event_key`.
+//! dispatch through the host's persistent
+//! [`prism_core::luau_runtime::LuauRuntime`] when one is installed
+//! (see [`set_active_runtime`]). `lower_ui` translates the script's
+//! [`VirtualNode`](prism_core::luau_runtime::VirtualNode) return into
+//! a real [`UiNode`] tree — including `prism.slot(i)` substitution
+//! against the resolver's pre-lowered `host_children`. `on_event`
+//! projects the runtime event onto JSON and decodes the script's
+//! `"Handled"`/`"Pass"` return into [`EventOutcome`]. Without an
+//! active runtime, both fall through to a labelled placeholder /
+//! `EventOutcome::Pass` so headless tests + SSR consumers still
+//! observe the component / service.
 
 use std::sync::{Arc, Mutex};
 
@@ -242,6 +249,28 @@ pub fn install_components_replace(
     count
 }
 
+/// Hot-reload sibling of [`install_services_with_runtime`]. Replaces
+/// any existing service registration under the same id — required for
+/// `Shell::install_app_script` because the registry's eager-install
+/// duplicate-id assert would otherwise panic on a re-run.
+#[cfg(feature = "native")]
+pub fn install_services_replace(
+    registrar: &ShellAppRegistrar,
+    services: &mut crate::services::ServiceRegistry,
+) -> usize {
+    let mut count = 0;
+    for spec in registrar.drain_services() {
+        services.add_or_replace_factory_scoped(
+            crate::services::ServiceScope::App,
+            Box::new(move |ctx| {
+                std::sync::Arc::new(LuauScriptedService::new_with_context(spec.clone(), ctx))
+            }),
+        );
+        count += 1;
+    }
+    count
+}
+
 /// Drain queued service registrations and add each as an
 /// [`App`-scoped](crate::services::ServiceScope::App)
 /// [`ServiceFactory`](crate::services::ServiceFactory). Returns the
@@ -383,23 +412,53 @@ impl Block for LuauComponentBlock {
         self.schema.clone()
     }
 
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
         // Persistent-Luau path: if the host installed an active
         // runtime and the script retained a `render` closure under
         // our key, dispatch and translate. The runtime lookup goes
         // through `with_active_runtime` because `Block: Send + Sync`
         // forbids carrying `Rc<LuauRuntime>` on the block itself.
+        //
+        // Skeleton-authored children flow through two channels:
+        //   1. Descriptors `{tag, props}` go into the script's
+        //      `children` parameter so the body can decide layout /
+        //      ordering / which slots to render.
+        //   2. Pre-lowered `UiNode`s are stashed for substitution
+        //      when the script's return contains `prism.slot(i)`
+        //      markers. The script returning `{prism.slot(0)}` thus
+        //      composes against the real child render verbatim.
         #[cfg(feature = "native")]
         {
+            // Components dispatched through the tag resolver get their
+            // AST children pre-lowered into `ctx.host_children()`. Use
+            // that as the slot-substitution source. For scripts that
+            // iterate via `#children`, build a parallel descriptor
+            // array — one entry per pre-lowered child, carrying the
+            // tag the resolver labeled it with so authors can branch
+            // on child kind without losing the slot-render path.
+            let pre_lowered: Vec<UiNode> = ctx
+                .host_children()
+                .map(|cs| cs.to_vec())
+                .unwrap_or_default();
+            let child_descriptors: Vec<serde_json::Value> = pre_lowered
+                .iter()
+                .map(child_descriptor_from_ui_node)
+                .collect();
             let dispatched = with_active_runtime(|rt| {
                 let props = node_props_to_json(node);
-                rt.call_render(&self.render_key, &props, &[])
+                rt.call_render(&self.render_key, &props, &child_descriptors)
             })
             .flatten();
             if let Some(result) = dispatched {
                 match result {
                     Ok(vnode) => {
-                        return virtual_node_to_ui(&vnode, &node.id, &self.id, &self.render_key);
+                        return virtual_node_to_ui(
+                            &vnode,
+                            &node.id,
+                            &self.id,
+                            &self.render_key,
+                            &pre_lowered,
+                        );
                     }
                     Err(e) => {
                         eprintln!(
@@ -442,11 +501,37 @@ fn node_props_to_json(node: &Node) -> serde_json::Value {
 }
 
 #[cfg(feature = "native")]
+fn child_descriptor_from_ui_node(child: &UiNode) -> serde_json::Value {
+    // Build the lua-side `children[i]` shape from a pre-lowered child.
+    // Carry the resolver-stamped `data-component` so scripts can
+    // branch on child kind; carry the leaf tag so authors can detect
+    // primitives. Anything else is opaque — the *real* child is the
+    // pre-lowered UiNode the slot substitution path replaces in.
+    if let UiNode::Container { props, .. } = child {
+        let tag = props.semantic.tag.clone();
+        let mut component_id: Option<String> = None;
+        for (k, v) in &props.semantic.attrs {
+            if k == "data-component" {
+                component_id = Some(v.clone());
+                break;
+            }
+        }
+        serde_json::json!({
+            "tag": tag,
+            "component": component_id,
+        })
+    } else {
+        serde_json::json!({ "tag": "text", "component": serde_json::Value::Null })
+    }
+}
+
+#[cfg(feature = "native")]
 fn virtual_node_to_ui(
     vnode: &prism_core::luau_runtime::VirtualNode,
     node_id: &str,
     component_id: &str,
     render_key: &str,
+    child_slots: &[UiNode],
 ) -> UiNode {
     use prism_core::luau_runtime::VirtualNode as VN;
     match vnode {
@@ -466,6 +551,36 @@ fn virtual_node_to_ui(
             },
             children: Vec::new(),
         },
+        // Slot marker — substitute the pre-lowered child at the
+        // declared index. Out-of-range indices fall back to an empty
+        // placeholder so authors see *something* (and can fix the
+        // index) rather than the renderer panicking. The reserved
+        // tag survives in the metadata for SSR observability.
+        VN::Element { tag, attrs, .. } if tag == prism_core::luau_runtime::SLOT_TAG => {
+            let index = attrs
+                .iter()
+                .find(|(k, _)| k == "index")
+                .and_then(|(_, v)| v.parse::<usize>().ok())
+                .unwrap_or(usize::MAX);
+            if let Some(child) = child_slots.get(index) {
+                return child.clone();
+            }
+            // Out-of-range slot — emit a tagged empty container so
+            // the error surface is renderable and inspectable.
+            UiNode::Container {
+                id: format!("{node_id}.slot.oob.{index}"),
+                props: prism_ui_runtime::layout::ContainerProps {
+                    width: Sizing::Grow,
+                    height: Sizing::Grow,
+                    semantic: Semantic::tag("div")
+                        .with_attr("data-role", "luau-slot-oob")
+                        .with_attr("data-component", component_id.to_string())
+                        .with_attr("data-slot-index", index.to_string()),
+                    ..Default::default()
+                },
+                children: Vec::new(),
+            }
+        }
         VN::Element {
             tag,
             attrs,
@@ -487,7 +602,7 @@ fn virtual_node_to_ui(
                 .enumerate()
                 .map(|(i, child)| {
                     let child_id = format!("{node_id}.child.{i}");
-                    virtual_node_to_ui(child, &child_id, component_id, render_key)
+                    virtual_node_to_ui(child, &child_id, component_id, render_key, child_slots)
                 })
                 .collect();
             UiNode::Container {
@@ -1022,10 +1137,14 @@ mod tests {
     }
 
     #[test]
-    fn luau_scripted_service_passes_events_today() {
-        // ShellService impl returns `Pass` until the Luau runtime is
-        // wired; this pins the contract so a future fan-out change
-        // doesn't silently start swallowing events.
+    fn luau_scripted_service_passes_events_without_runtime() {
+        // Without an active LuauRuntime (no `set_active_runtime` call),
+        // ShellService::on_event falls through to `Pass` — the
+        // degradation contract that keeps headless tests + SSR
+        // consumers renderable. The integration tests cover the
+        // dispatch path with a real runtime; this pins the no-runtime
+        // contract so a future fan-out change doesn't silently start
+        // swallowing events.
         use prism_ui_runtime::event::Event;
         use prism_ui_runtime::layout::Viewport;
         let svc = LuauScriptedService::new(ServiceRegistration {

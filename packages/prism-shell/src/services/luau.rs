@@ -8,9 +8,16 @@
 //! lookup, no downcasting, type-safe at the call site.
 //!
 //! The trait is a shape; the implementation is feature-gated.
-//! `NoopLuauHost` is the always-on fallback (returns `Null`); the
-//! `mlua` feature plugs in the real `LuauRuntime` later through
-//! `ShellInner::luau`. The service surface is identical either way.
+//! `NoopLuauHost` is the always-on fallback (returns `Null`). The
+//! persistent script runtime — `prism_core::luau_runtime::LuauRuntime`
+//! installed under `feature = "native"` — is a sibling of this trait:
+//! it owns the long-lived `mlua::Lua` state and dispatches
+//! component / service callbacks, while this `LuauHost` trait carries
+//! one-shot script invocations from `&mut MutCtx` consumers
+//! (`LuauService::run-selection`, custom signal handlers). A future
+//! pass will bridge them so `ctx.luau.exec(...)` runs against the
+//! same `Lua` state app `main.luau` bodies ran in; today they're
+//! distinct seams.
 
 use serde_json::Value;
 

@@ -352,6 +352,109 @@ impl<E: std::fmt::Display> std::fmt::Display for DaemonFnError<E> {
 
 impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for DaemonFnError<E> {}
 
+// ───── RelayInvoker — §3.4 of dioxus-inspiration.md ───────────────
+
+/// Sync transport seam for **relay-routed** RPCs.
+///
+/// Mirrors [`DaemonInvoker`] but pointed at the WebSocket relay
+/// (`prism_core::network::relay`) rather than the local daemon
+/// sidecar. The `#[relay_fn]` proc-macro (Phase 7 of
+/// `docs/dev/dioxus-inspiration.md` §3.4) emits client stubs that
+/// take a `&dyn RelayInvoker` so test/host hookups stay
+/// interchangeable.
+///
+/// **Boundary** with `DaemonInvoker`: same JSON-shaped payload, same
+/// `RemoteError` carrier, different *destination*. A daemon call
+/// reaches the sidecar on the same machine; a relay call traverses
+/// a WebSocket envelope and may serve a remote peer. Two traits
+/// rather than one so the macro family makes the destination
+/// explicit at the call site — `read_file_client(&inv, …)` reads
+/// type-locally as a daemon call, `query_portal_client(&rel, …)`
+/// reads as a relay call.
+pub trait RelayInvoker {
+    /// Send a request to the relay for the function identified by
+    /// `id` with the JSON-encoded `payload`, and return the
+    /// JSON-encoded response (or a transport error).
+    fn invoke(&self, id: &str, payload: IpcPayload) -> Result<IpcPayload, RemoteError>;
+}
+
+/// Test invoker: stores a static `id → handler` map. Sister of
+/// [`MockInvoker`] for the relay transport. Used by `#[relay_fn]`
+/// macro tests and host-side unit tests that exercise client stubs
+/// without booting a relay.
+pub struct MockRelayInvoker {
+    handlers: std::collections::HashMap<String, MockHandler>,
+}
+
+impl MockRelayInvoker {
+    pub fn new() -> Self {
+        Self {
+            handlers: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn on<F>(mut self, id: impl Into<String>, handler: F) -> Self
+    where
+        F: Fn(IpcPayload) -> Result<IpcPayload, RemoteError> + 'static,
+    {
+        self.handlers.insert(id.into(), Box::new(handler));
+        self
+    }
+}
+
+impl Default for MockRelayInvoker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RelayInvoker for MockRelayInvoker {
+    fn invoke(&self, id: &str, payload: IpcPayload) -> Result<IpcPayload, RemoteError> {
+        match self.handlers.get(id) {
+            Some(h) => h(payload),
+            None => Err(RemoteError::Remote(format!("no handler for '{id}'"))),
+        }
+    }
+}
+
+/// Error type returned by the `<name>_client` stubs emitted by
+/// `#[relay_fn]`. Same shape as [`DaemonFnError`] — kept as a
+/// separate type so a function emitted by `#[relay_fn]` cannot be
+/// accidentally consumed by code expecting a daemon-side error
+/// (the two travel different transports and the call sites should
+/// have to be explicit about which).
+#[derive(Debug)]
+pub enum RelayFnError<E> {
+    /// Args serialisation failed on the client side.
+    Encode(String),
+    /// Response deserialisation failed on the client side.
+    Decode(String),
+    /// Underlying transport reported a failure (offline / timeout /
+    /// permission denied).
+    Transport(RemoteError),
+    /// The relay handler returned a typed `Err(_)`.
+    Remote(E),
+}
+
+impl<E> RelayFnError<E> {
+    pub fn from_remote(err: RemoteError) -> Self {
+        Self::Transport(err)
+    }
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for RelayFnError<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Encode(msg) => write!(f, "encode: {msg}"),
+            Self::Decode(msg) => write!(f, "decode: {msg}"),
+            Self::Transport(err) => write!(f, "transport: {err}"),
+            Self::Remote(err) => write!(f, "remote: {err}"),
+        }
+    }
+}
+
+impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for RelayFnError<E> {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

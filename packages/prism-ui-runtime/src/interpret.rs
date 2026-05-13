@@ -3182,7 +3182,12 @@ pub fn evaluate_expression(body: &str, scope: &LowerScope) -> Option<serde_json:
             };
             match lookup_path_owned(&full_path, self.scope) {
                 Some(v) => json_to_expr_value(&v),
-                None => ExprValue::String(String::new()),
+                // Missing path → Null. Authors write `value == null`
+                // to detect missing-key absence (Wave 11.3 of
+                // composable-builder-plan.md). Falsy in boolean
+                // ladders, empty in string ladders, zero in numeric
+                // ladders — same coercion table the JS `null` has.
+                None => ExprValue::Null,
             }
         }
     }
@@ -3196,7 +3201,7 @@ fn json_to_expr_value(v: &serde_json::Value) -> prism_core::language::expression
         serde_json::Value::Bool(b) => ExprValue::Boolean(*b),
         serde_json::Value::Number(n) => ExprValue::Number(n.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(s) => ExprValue::String(s.clone()),
-        serde_json::Value::Null => ExprValue::String(String::new()),
+        serde_json::Value::Null => ExprValue::Null,
         // Arrays and objects don't participate in arithmetic / comparison
         // — fall through as their JSON-stringified form so authors who
         // accidentally compare an object stringify-compare instead of
@@ -3226,6 +3231,7 @@ fn expr_value_to_json(v: prism_core::language::expression::ExprValue) -> serde_j
             }
         }
         ExprValue::String(s) => serde_json::Value::String(s),
+        ExprValue::Null => serde_json::Value::Null,
     }
 }
 

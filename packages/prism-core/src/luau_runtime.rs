@@ -29,6 +29,14 @@ use crate::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use crate::luau_bindings::{LuauCallbackStore, RegistrarHandle};
 use crate::shell_mode::{Permission, ShellMode};
 
+/// Reserved tag emitted by [`prism.slot(i)`](LuauRuntime::new) — the
+/// host's `VirtualNode → UiNode` translator recognises this tag and
+/// substitutes the i'th skeleton-authored child of the current
+/// component in its place. Exposed for hosts that want to walk a
+/// `VirtualNode` tree directly without going through the shell's
+/// `LuauComponentBlock` (e.g. relay SSR + tests).
+pub const SLOT_TAG: &str = "prism:slot";
+
 /// What every Luau-script-author returns from a `render(props, children)`
 /// body, translated by the runtime into a tree the shell can lower
 /// directly. Three shapes:
@@ -162,6 +170,27 @@ impl LuauRuntime {
         prism_tbl
             .set("element", element_fn)
             .map_err(|e| format!("install prism.element: {e}"))?;
+
+        // `prism.slot(i)` — placeholder element that the host
+        // substitutes with the i'th skeleton-authored child of the
+        // current component during `VirtualNode → UiNode` translation.
+        // Lua-side it's a regular element table with a reserved
+        // `tag = "prism:slot"` + an `index` attr; downstream consumers
+        // that don't know about slots see an empty container with the
+        // reserved tag, so emitting one is never a hard error.
+        let slot_fn = lua
+            .create_function(|lua, index: i64| {
+                let t = lua.create_table()?;
+                t.set("tag", SLOT_TAG)?;
+                let attrs = lua.create_table()?;
+                attrs.set("index", index.to_string())?;
+                t.set("attrs", attrs)?;
+                Ok(t)
+            })
+            .map_err(|e| format!("create prism.slot: {e}"))?;
+        prism_tbl
+            .set("slot", slot_fn)
+            .map_err(|e| format!("install prism.slot: {e}"))?;
 
         lua.globals()
             .set("prism", prism_tbl)
@@ -720,6 +749,54 @@ mod tests {
         let obj = result.as_object().expect("object");
         assert_eq!(obj.get("name").unwrap().as_str(), Some("x"));
         assert_eq!(obj.get("count").unwrap().as_i64(), Some(7));
+    }
+
+    #[test]
+    fn prism_slot_emits_reserved_tag_marker() {
+        // `prism.slot(i)` produces a table with the reserved
+        // `prism:slot` tag + an `index` attr; downstream renders read
+        // the attr to substitute pre-lowered children. The runtime
+        // itself doesn't perform the substitution — that's the host's
+        // job (the shell's `LuauComponentBlock::lower_ui` does it),
+        // but `value_to_virtual_node` treats the result as a regular
+        // Element so the marker survives the translation.
+        let runtime = LuauRuntime::new(Arc::new(NoopAppRegistrar)).unwrap();
+        runtime
+            .load_script(
+                r#"
+                    prism.app:register_component({
+                        id = "wrap.outer",
+                        render = function(_p, _c)
+                            return prism.element("section", nil, {
+                                prism.slot(0),
+                                prism.slot(1),
+                            })
+                        end,
+                    })
+                "#,
+                "wrap.luau",
+            )
+            .unwrap();
+        let result = runtime
+            .call_render("wrap.outer.render", &json!({}), &[])
+            .unwrap()
+            .unwrap();
+        let VirtualNode::Element { tag, children, .. } = result else {
+            panic!("expected element");
+        };
+        assert_eq!(tag, "section");
+        assert_eq!(children.len(), 2);
+        for (i, child) in children.iter().enumerate() {
+            let VirtualNode::Element { tag, attrs, .. } = child else {
+                panic!("expected slot element");
+            };
+            assert_eq!(tag, SLOT_TAG);
+            let idx = attrs
+                .iter()
+                .find(|(k, _)| k == "index")
+                .map(|(_, v)| v.as_str());
+            assert_eq!(idx, Some(i.to_string().as_str()));
+        }
     }
 
     #[test]

@@ -282,11 +282,11 @@ the loop is the *type-equal contract*: the call site sees one
 function, the macro generates the two bodies. Worth lifting
 verbatim — but **generalize the target**:
 
-| Macro variant | Server side runs in | Client stub for |
-|---|---|---|
-| `#[daemon_fn]` | the daemon sidecar | shell, studio host |
-| `#[relay_fn]` | the relay (axum) | shell, studio, any peer |
-| `#[peer_fn]` | another peer | relay-routed RPC |
+| Macro variant | Server side runs in | Client stub for | Status |
+|---|---|---|---|
+| `#[daemon_fn]` | the daemon sidecar | shell, studio host | ✅ shipped (Phase 6) |
+| `#[relay_fn]` | the relay (axum) | shell, studio, any peer | ✅ shipped 2026-05-13 — `prism_core::reactive::ipc::{RelayInvoker, MockRelayInvoker, RelayFnError}` + the proc-macro in `prism-luau-derive`. Pinned by `tests/relay_fn_macro.rs` (4 tests). Auto-registration into the relay's per-module install is intentionally NOT emitted — the relay's `RelayBuilder` is module-shaped, so the body is left for the host to wire. |
+| `#[peer_fn]` | another peer | relay-routed RPC | pending — same shape as `#[relay_fn]` with a `PeerInvoker` carrier (sister of `RelayInvoker` pointed at the WebRTC data-channel signalling path). |
 
 All three are the same codegen pattern with different
 serialization (`postcard` over `interprocess`, `postcard` over

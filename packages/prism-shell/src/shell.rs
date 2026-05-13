@@ -89,9 +89,15 @@ pub struct ShellInner {
     /// `&mut` into every `MutCtx` so `PersistenceService` /
     /// `ProjectService` can read/write without owning a fs handle.
     pub vfs: Box<dyn Vfs>,
-    /// Luau seam — `NoopLuauHost` until the `mlua`-backed runtime
-    /// lands. `SignalsService::Custom` and `LuauService::run-selection`
-    /// reach Luau through this single resource.
+    /// `LuauHost` seam — used by ad-hoc script execution
+    /// (`LuauService::run-selection`, `SignalsService::Custom`).
+    /// Distinct from [`Self::luau_runtime`]: the persistent runtime
+    /// drives app `main.luau` boot + render/event dispatch through
+    /// the long-lived `Lua` state; this `Box<dyn LuauHost>` is a
+    /// `Send + Sync` carrier for one-shot script invocations that
+    /// take `&mut MutCtx`. Today defaults to `NoopLuauHost`
+    /// (records calls, returns `Null`); the daemon wires a real
+    /// `LuauHost` impl in once the in-process bridge lands.
     pub luau: Box<dyn LuauHost>,
     /// In-memory clipboard cell — `ClipboardService` (§25) is the
     /// only consumer.
@@ -290,7 +296,18 @@ impl Shell {
             if any_script {
                 let registrar_arc: std::sync::Arc<dyn prism_core::AppRegistrar> =
                     std::sync::Arc::new(app_registrar.clone());
-                match prism_core::luau_runtime::LuauRuntime::new(registrar_arc) {
+                // Pass live host context — design tokens + shell mode +
+                // permission — so scripts read `prism.tokens.*` and
+                // `prism.shell_mode` against the values the chrome
+                // renders with. Shell-level overrides for these
+                // (per-host theming, mode swaps) flow through here
+                // once they exist; today we install the defaults.
+                match prism_core::luau_runtime::LuauRuntime::new_with_tokens(
+                    registrar_arc,
+                    prism_core::design_tokens::DEFAULT_TOKENS,
+                    prism_core::shell_mode::ShellMode::Build,
+                    prism_core::shell_mode::Permission::Dev,
+                ) {
                     Ok(rt) => {
                         for app in &loaded_apps {
                             if let Some(src) = &app.script_source {
@@ -555,15 +572,13 @@ impl Shell {
         // Re-resolve the tag resolver so newly-introduced tags become
         // dispatchable. (The existing resolver was a snapshot.)
         inner.resolver = inner.registry.tag_resolver();
-        // Drain services. Each registration becomes an App-scoped
-        // factory via the standard install path — re-runs add new
-        // factories; existing ones with the same id keep their prior
-        // factory until `rebuild_app_services` fires.
-        let _ = crate::app_registry::install_services_with_runtime(
-            &registrar,
-            &mut inner.services,
-            Some(std::rc::Rc::clone(&rt)),
-        );
+        // Drain services with replace semantics — re-running a
+        // `register_service({id = "x", ...})` on top of an existing
+        // registration drops the prior entry (and its command-table
+        // contributions) before installing the new factory. Without
+        // replace, the standard `add_factory_scoped` install path's
+        // duplicate-id assert would panic on the second hot-reload.
+        let _ = crate::app_registry::install_services_replace(&registrar, &mut inner.services);
         if inner.state.workspace.active_app.as_deref() == Some(app_id) {
             inner
                 .render_scope

@@ -12,6 +12,11 @@ pub enum TokenKind {
     Number,
     String,
     Bool,
+    /// `null` keyword — the missing-value literal. Closes the
+    /// field-editor migration gap (`value == null` / `value != null`
+    /// branches) noted in Wave 11.3 of
+    /// `docs/dev/composable-builder-plan.md`.
+    Null,
     Operand,
     Ident,
     Plus,
@@ -225,6 +230,8 @@ pub fn tokenize(source: &str) -> Vec<Token> {
                     bool_value: Some(lower == "true"),
                     operand_data: None,
                 }
+            } else if lower == "null" {
+                Token::plain(TokenKind::Null, ident, start)
             } else if lower == "and" {
                 Token::plain(TokenKind::And, ident, start)
             } else if lower == "or" {

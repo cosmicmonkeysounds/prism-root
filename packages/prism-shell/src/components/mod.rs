@@ -6,7 +6,12 @@
 //! `SHELL_BUILTINS` table in `registry.rs`. The strategy and rationale
 //! are documented in `docs/dev/clay-migration-plan.md` §12 + §33.
 
-pub mod builder_canvas;
+// `builder_canvas` migrated to `ui/components/builder-canvas.prism-ui`
+// 2026-05-13 (Wave 11.4 / Tier-3). The imperative `tag_canvas_subtree`
+// walk (the only non-declarative piece) lives in the
+// `prism.builder-host` primitive body in `prism-builder/src/primitives.rs`;
+// the chrome (toolbar, grid overlay, selection ring + handles, palette
+// ghost, gizmo dispatch) is now declarative.
 // `chrome` retired 2026-05-13 (Wave 11.3) — the last consumer was
 // `field_editor::build_number_body`, which migrated to DSL alongside
 // the rest of the field editor. Pre-migration helpers
@@ -16,7 +21,13 @@ pub mod builder_canvas;
 // `state::format_drag_value` for `drag-display-value`) or became
 // unused as the DSL overlay-gate pattern (Wave 11.2 batch 5)
 // replaced `hidden_overlay`.
-pub mod code_editor;
+// `code_editor` migrated to `ui/components/code-editor.prism-ui`
+// 2026-05-13 (Wave 11.4 / Tier-3). The body was already declarative;
+// the binding (`state::code_editor_props`) now pre-derives `lines` /
+// `cursor-line` / `cursor-column` / `status-label` so the DSL is one
+// for-loop over the gutter + body columns. Keystroke handling lands
+// on the `prism.text-buffer` primitive when a Luau-authored editor
+// dispatches against it.
 // `dock_panel` migrated to `ui/components/dock-panel.prism-ui`
 // 2026-05-13 (Wave 11.3). `prism_ui_loader::SHELL_PRISM_UI_COMPONENTS`
 // owns the contract; the dock-workspace binding pre-resolves
@@ -33,7 +44,13 @@ pub mod code_editor;
 // 2026-05-13 (Wave 11.3). The kind-dispatch table collapsed to an
 // `if`/`else-if` chain; substrate fields are pre-computed by
 // `state::property_row_from_spec`.
-pub mod nav_graph;
+// `nav_graph` migrated to `ui/components/nav-graph.prism-ui`
+// 2026-05-13 (Wave 11.4 / Tier-3). Body was already declarative —
+// the Tier-3 designation was nominal pending the
+// `prism.canvas-paint` primitive landing. The edges + cards
+// now iterate via `for=` and the renderer paints the strokes
+// against `data-x1`/`data-y1`/`data-x2`/`data-y2` exactly as
+// before.
 pub mod prism_ui_loader;
 pub mod registry;
 
@@ -54,15 +71,25 @@ pub(crate) mod testing {
     use prism_ui_runtime::layout::Node as UiNode;
     use serde_json::Value;
 
+    // Wave 11.4 — every Rust-authored shell block migrated to DSL,
+    // so these helpers have no live consumers in-tree today. Kept
+    // as test infrastructure for any future Rust-side block that
+    // needs to round-trip `lower_ui` against a synthetic
+    // `BuilderNode`. Tagged `dead_code`-allowed at the module
+    // boundary so future consumers don't need any registration
+    // ceremony to pick them back up.
+
     /// Synthesise a `BuilderNode` for a single shell block under test.
     /// Children empty, default cascade, default transform.
+    #[allow(dead_code)]
     pub fn test_node(id: &str, component: &str, props: Value) -> BuilderNode {
         test_node_with_children(id, component, props, vec![])
     }
 
-    /// Variant with explicit children — used by the handful of blocks
-    /// (`shell.dock-panel`, `shell.app-window`) whose tests need to
-    /// drive nested AST shapes through the resolver.
+    /// Variant with explicit children — used historically by blocks
+    /// (`shell.dock-panel`, `shell.app-window`) whose tests drove
+    /// nested AST shapes through the resolver.
+    #[allow(dead_code)]
     pub fn test_node_with_children(
         id: &str,
         component: &str,
@@ -82,8 +109,8 @@ pub(crate) mod testing {
     }
 
     /// Run a block's `lower_ui`-style free function against a default
-    /// cascade with no resolver. Most shell-block tests want exactly
-    /// this shape.
+    /// cascade with no resolver.
+    #[allow(dead_code)]
     pub fn lower_with<F>(node: &BuilderNode, f: F) -> UiNode
     where
         F: FnOnce(&LowerCtx<'_>, &BuilderNode, &StyleProperties) -> UiNode,

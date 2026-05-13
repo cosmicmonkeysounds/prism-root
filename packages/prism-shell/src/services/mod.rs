@@ -324,6 +324,38 @@ impl ServiceRegistry {
         self.install(scope, instance, Some(factory));
     }
 
+    /// Hot-reload variant of [`Self::add_factory_scoped`]. If a service
+    /// with the same id is already registered, drop it (along with the
+    /// commands it contributed) before installing the new factory.
+    /// Used by `Shell::install_app_script` so re-running a `main.luau`
+    /// that calls `register_service({id="x", ...})` doesn't panic on
+    /// the second-run duplicate-id assertion.
+    pub fn add_or_replace_factory_scoped(&mut self, scope: ServiceScope, factory: ServiceFactory) {
+        // Build the new instance first so we can grab its id (we need
+        // to remove the prior registration before `install` runs its
+        // duplicate-id assert).
+        let ctx = ServiceContext::default();
+        let instance = factory(&ctx);
+        let id = instance.id();
+        if self.by_id.contains_key(id) {
+            // Drop the prior entry + its command-table contributions
+            // before re-installing — same teardown shape as
+            // `activate_app_services`.
+            self.services.retain(|r| {
+                if r.service.id() == id {
+                    for cmd_id in &r.command_ids {
+                        self.commands.map.remove(cmd_id);
+                    }
+                    self.by_id.remove(r.service.id());
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        self.install(scope, instance, Some(factory));
+    }
+
     /// Internal: install an already-built `Arc<dyn ShellService>` into
     /// the registry, recording the optional factory for future
     /// rebuild passes. Used by both [`Self::add_scoped`] (factory =

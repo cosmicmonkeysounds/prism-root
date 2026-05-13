@@ -52,6 +52,7 @@ mod daemon_module;
 mod editable;
 mod prism_block;
 mod prism_field;
+mod relay_fn;
 mod visual_node;
 
 /// Derive a `prism_builder::Block` impl from a struct exposing
@@ -121,6 +122,28 @@ pub fn daemon_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr2: TokenStream2 = attr.into();
     let item2: TokenStream2 = item.into();
     match daemon_fn::expand(attr2, item2) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// `#[relay_fn(id = "…")]` — sister of `#[daemon_fn]` pointed at the
+/// WebSocket relay transport. §3.4 of `docs/dev/dioxus-inspiration.md`.
+///
+/// Same shape: a sync function returning `Result<T, E>` becomes an
+/// in-place handler + a `<name>_client(invoker: &dyn RelayInvoker, args)`
+/// stub that serialises args, calls
+/// `RelayInvoker::invoke`, and deserialises the response into
+/// `Result<T, RelayFnError<E>>`. Different destination (relay vs.
+/// daemon sidecar), same call-site ergonomics. The macro is intentionally
+/// transport-agnostic — pair it with a concrete `RelayInvoker` impl
+/// (the relay client's WebSocket transport in production,
+/// `MockRelayInvoker` in tests) at the call site.
+#[proc_macro_attribute]
+pub fn relay_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr2: TokenStream2 = attr.into();
+    let item2: TokenStream2 = item.into();
+    match relay_fn::expand(attr2, item2) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }

@@ -806,7 +806,44 @@ the upgraded
     `drag_number_field_node`, `format_drag_value`, and
     `DRAG_NUMBER_LABEL_COLOR`. Delete-pending alongside the
     field-editor migration.
-- [x] **11.4** Tier-3 primitives shipped as runtime entries.
+- [x] **11.4** Tier-3 primitives shipped as runtime entries + **all
+  three Tier-3 shell consumers migrated to DSL 2026-05-13.**
+  - `shell.builder-canvas` → `ui/components/builder-canvas.prism-ui`
+    + `prism.builder-host` primitive carries the imperative
+    `tag_canvas_subtree` walk (the only non-declarative bit) over
+    the caller's `host_children`. The chrome (toolbar, grid,
+    selection ring + handles, palette ghost, gizmo dispatch) is
+    declarative. Binding (`state::builder_canvas_props`) pre-
+    computes `handle-directions` / `gizmo-tag` / `show-gizmo` so
+    the 8-handle `for=` loop and the dynamic-gizmo `<dispatch>`
+    work without a per-tool match. `builder_host_schema` grew
+    `selection-id`; the primitive's body uses it to paint the
+    selection tint on the matching container.
+  - `shell.code-editor` → `ui/components/code-editor.prism-ui`.
+    Already-declarative body; the binding (`state::code_editor_props`)
+    pre-derives `lines` / `cursor-line` / `cursor-column` /
+    `status-label` from `code_buffer.source` + `caret` via a new
+    `byte_offset_to_line_col` helper. Keystroke handling lands on
+    the `prism.text-buffer` primitive when a Luau-authored editor
+    dispatches against it (deferred — no consumer waiting today).
+  - `shell.nav-graph` → `ui/components/nav-graph.prism-ui`.
+    Already-declarative body — the Tier-3 designation was nominal
+    pending the `prism.canvas-paint` primitive's landing. Two
+    `for=` loops over `edges` and `pages`, edge strokes painted by
+    the renderer against `data-x1`/`data-y1`/`data-x2`/`data-y2`.
+    No substrate work required.
+
+  Net effect: ~1450 LoC of Rust deleted (`builder_canvas.rs` +
+  `code_editor.rs` + `nav_graph.rs`); ~280 LoC of `.prism-ui`
+  added; the imperative `tag_canvas_subtree` walk moves to
+  ~50 LoC inside `prism-builder/src/primitives.rs`. SHELL_BUILTINS
+  is now empty — every Rust-authored shell block migrated.
+  `packages/prism-shell/src/components/` contains only
+  `prism_ui_loader`, `registry`, and the (allow-`dead_code`)
+  testing helpers. Verified: 344 prism-shell lib tests + 7
+  production-click + 34 dsl-bootstrap + 9 click-route + 2 prss +
+  1 dump-tree green; `cargo fmt --all --check` clean;
+  `cargo clippy --workspace --all-targets -- -D warnings` clean.
   `prism.canvas-paint`, `prism.text-buffer`, `prism.resize-edge`,
   and now `prism.builder-host` land as `BlockSpec` rows in the
   primitive registry. `prism.builder-host` carries the
@@ -947,7 +984,7 @@ deferred. Wave 13 implements the three with consumers waiting.
 | **Named slots** `<slot name="X"/>` + `slot="X"` attr | Vue, Web Components, Svelte | `shell.app-window` (menu/body/status seams) | **13.1 — implement** |
 | **`on:event` namespace** | Vue `@click`, Svelte `on:click` | Ergonomic alias for `data:on-click="cmd …"` | **13.2 — implement** |
 | **`use:` directives** | Vue `v-X`, Svelte `use:X` | Attach `ModifierBehaviour` from DSL — closes Wave 1 ergonomic gap | **13.3 — implement** |
-| **Two-way `bind:value`** | Vue `v-model`, Svelte `bind:value` | `prism.text-input` writeback | Defer — blocked on text-input body (Wave 11.4) |
+| **Two-way `bind:value`** | Vue `v-model`, Svelte `bind:value` | `prism.text-input` writeback | ✅ **13.4 — landed 2026-05-13.** `prism.text-input` now emits a real `TextInput` node carrying `data-bind-value` (forwarded from `bind:value="<src>"` via the resolver's `AttributeNamespace::Bind` arm, which lifts it into `props["bind-value"]` on dispatched component tags). The shell's existing `route_bind_input_focus` opens a field-focus session on pointer-down; subsequent keystrokes write back through `set_node_prop`. Pinned by `primitives::tests::text_input_lower_emits_typed_node_with_props_folded_in` and the existing `events::tests::pointer_down_on_input_with_bind_value_opens_field_focus`. |
 | **Reconciliation `key="…"`** | Svelte `(key)`, Vue `:key` | List diff across re-renders | Defer — no incremental tree diff yet |
 | **Explicit `<fragment/>`** | React `<>`, Vue `<template>` | Multi-root without wrapper | Defer — loader's `collapse_to_single_root` handles this |
 | **`v-show` / `hidden:"…"`** | Vue | Hide without unmount | Defer — overlay-gate `if`/`else` already covers this |
@@ -1020,7 +1057,7 @@ deferred.
 | **Lifetime / unmount animations (`animate:in` / `animate:out`)** | Svelte transitions, Framer Motion | `shell.toast` fade-out, picker overlay enter | Defer — `transition:` namespace already round-trips author intent; effect-driven animator is the follow-up |
 | **Reflected boolean attrs (`?disabled`)** | Lit | Author shortcut for conditionally-present attrs | Skip — the `data:` / `aria:` empty-string filter already covers this |
 | **`v-memo` / `:key` reactive memoisation hint** | Vue 3, Solid | Skip re-render when dependencies stable | Defer — no incremental tree-diff substrate yet |
-| **Two-way `bind:value` on inputs** | Svelte `bind:value`, Vue `v-model` | `prism.text-input` writeback | Defer — blocked on `prim.text-input` body (Wave 10) |
+| **Two-way `bind:value` on inputs** | Svelte `bind:value`, Vue `v-model` | `prism.text-input` writeback | ✅ landed 2026-05-13 (see Wave 13.4 row above) |
 
 - [x] **14.1** **Design tokens as scope binding.** Inject a
   `tokens` binding (the snapshot of [`prism_core::design_tokens::DEFAULT_TOKENS`]

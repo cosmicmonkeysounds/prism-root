@@ -1,0 +1,88 @@
+<!--
+  shell.nav-graph — visual graph of pages + navigation edges.
+  Wave 11.4 migration of nav_graph.rs. The whole body was
+  declarative (one for-loop over `edges`, one over `pages`); the
+  Tier-3 designation was nominal — no real imperative work.
+
+  Reads:
+   * `title`        — optional section header.
+   * `pages`        — `[{x, y, label, route, is-active}]` cards.
+   * `edges`        — `[{x1, y1, x2, y2, kind}]` edges (the
+                      renderer paints the stroke against
+                      `data-x1`/`data-y1`/`data-x2`/`data-y2`).
+-->
+<container
+    tag="section"
+    direction="column"
+    gap="8"
+    padding-left="12"
+    padding-right="12"
+    padding-top="12"
+    padding-bottom="12"
+    width="grow"
+    height="grow"
+    aria-label="Navigation graph"
+    data:role="nav-graph">
+  <text
+      if="{title}"
+      id="{id}::title"
+      font-size="12"
+      style:color="#80000000">{title}</text>
+  <container
+      id="{id}::canvas"
+      width="grow"
+      height="grow"
+      style:background="#06000000"
+      style:radius="6"
+      role="img"
+      aria-label="Page navigation graph"
+      data:role="nav-graph-canvas">
+    <container
+        id="{id}::edges"
+        width="grow"
+        height="grow"
+        role="presentation"
+        data:role="nav-graph-edges">
+      <container
+          for="edge, idx in edges"
+          id="{id}::edge::{idx}"
+          tag="span"
+          role="presentation"
+          data:role="nav-graph-edge"
+          data:kind="{edge.kind ? edge.kind : 'href'}"
+          data:x1="{edge.x1}"
+          data:y1="{edge.y1}"
+          data:x2="{edge.x2}"
+          data:y2="{edge.y2}"/>
+    </container>
+    <container
+        for="page, idx in pages"
+        id="{id}::card::{idx}"
+        direction="column"
+        gap="2"
+        padding-left="10"
+        padding-right="10"
+        padding-top="8"
+        padding-bottom="8"
+        width="140"
+        height="56"
+        style:radius="6"
+        style:background="{page.is-active ? '#160060c0' : '#0a000000'}"
+        style:background:hovered="#0f000000"
+        role="button"
+        data:role="nav-graph-page"
+        data:x="{page.x}"
+        data:y="{page.y}"
+        aria:current="{page.is-active ? 'page' : ''}">
+      <text
+          id="{id}::card::{idx}::label"
+          font-size="12"
+          style:color="#000000">{page.label}</text>
+      <text
+          if="{page.route}"
+          id="{id}::card::{idx}::route"
+          font-size="10"
+          style:color="#80000000">{page.route}</text>
+    </container>
+  </container>
+</container>
