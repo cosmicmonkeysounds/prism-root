@@ -1,7 +1,8 @@
 <!--
   shell.inspector-row — 30px-tall row used by the inspector / outline
   panel. One row per node-tree entry. Wave 12 migration of
-  inspector_row.rs.
+  inspector_row.rs; Wave 14.2 DRYed via `<let>` so the three kind
+  checks each appear once instead of seven times.
 
   Three `kind` variants drive every visual:
     - `node`  (default): white bg, selected→#26000000 tint, treeitem role,
@@ -14,6 +15,10 @@
   Left = indent dot + label (+ optional id text). Right = chevrons or trash.
   depth multiplies into padding-left for tree indent.
 -->
+<let name="is-row" value="{kind == 'row'}"/>
+<let name="is-empty" value="{kind == 'empty'}"/>
+<let name="is-node-row" value="{!is-row && !is-empty}"/>
+<let name="active-chevrons" value="{selected && is-node-row}"/>
 <container
     tag="div"
     direction="row"
@@ -21,47 +26,47 @@
     padding-left="{12 + depth * 16}"
     padding-right="8"
     style:radius="4"
-    style:background="{kind == 'row' ? '#0a000000' : (selected && kind != 'empty' && kind != 'row' ? '#26000000' : '')}"
+    style:background="{is-row ? '#0a000000' : (active-chevrons ? '#26000000' : '')}"
     style:background:hovered="#1a0060c0"
-    role="{kind == 'row' ? 'group' : (kind == 'empty' ? 'none' : 'treeitem')}"
+    role="{is-row ? 'group' : (is-empty ? 'none' : 'treeitem')}"
     data:role="inspector-row"
     data:target-id="{node-id}"
-    aria:selected="{selected && kind != 'row' && kind != 'empty' ? 'true' : ''}"
+    aria:selected="{active-chevrons ? 'true' : ''}"
     aria:level="{depth > 0 ? depth + 1 : ''}">
   <container direction="row" gap="6" height="grow">
     <container
         id="{id}::dot"
         width="6"
         height="6"
-        style:radius="{kind == 'row' ? 1 : 3}"
-        style:background="{kind == 'empty' ? '#33000000' : (selected && kind != 'row' ? '#000000ff' : '#99000000')}"/>
+        style:radius="{is-row ? 1 : 3}"
+        style:background="{is-empty ? '#33000000' : (selected && !is-row ? '#000000ff' : '#99000000')}"/>
     <text
-        font-size="{kind == 'row' ? 11 : 12}"
-        style:color="{kind == 'empty' ? '#99000000' : (kind == 'row' ? '#cc000000' : '#000000')}">{component-id}</text>
+        font-size="{is-row ? 11 : 12}"
+        style:color="{is-empty ? '#99000000' : (is-row ? '#cc000000' : '#000000')}">{component-id}</text>
     <text
-        if="{kind != 'row' && kind != 'empty' && node-id}"
+        if="{is-node-row && node-id}"
         font-size="10"
         style:color="#80000000">{node-id}</text>
   </container>
   <container
-      if="{(selected && kind != 'row' && kind != 'empty') || (show-delete && kind == 'row')}"
+      if="{active-chevrons || (show-delete && is-row)}"
       direction="row"
       gap="2"
       height="grow">
     <shell.icon-button
-        if="{selected && kind != 'row' && kind != 'empty'}"
+        if="{active-chevrons}"
         id="{id}::move-up"
         icon="icons/chevron-up.svg"
         tooltip-text="Move up"
         command="builder.move-selected-up"/>
     <shell.icon-button
-        if="{selected && kind != 'row' && kind != 'empty'}"
+        if="{active-chevrons}"
         id="{id}::move-down"
         icon="icons/chevron-down.svg"
         tooltip-text="Move down"
         command="builder.move-selected-down"/>
     <shell.icon-button
-        if="{show-delete && kind == 'row'}"
+        if="{show-delete && is-row}"
         id="{id}::delete"
         icon="icons/trash.svg"
         tooltip-text="Delete"

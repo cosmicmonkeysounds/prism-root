@@ -86,7 +86,13 @@ pub fn render_tree(
     let scope = LowerScope::default()
         .with_resolver(resolver)
         .with_host_children_by_tag(host_children)
-        .with_tag_emissions(tag_emissions);
+        .with_tag_emissions(tag_emissions)
+        // **Wave 14.1** — design tokens as a global binding. Mirrors
+        // the `PrismUiBlock::lower_ui` injection so every DSL surface
+        // (skeleton + per-block) resolves `tokens.*` uniformly. Boot
+        // tokens are the workspace default; later waves swap for a
+        // user-customised palette through a settings hook.
+        .with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
     lower_document_with_scope(&doc, &scope)
 }
 

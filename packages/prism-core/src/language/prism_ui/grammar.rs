@@ -352,9 +352,15 @@ impl<'s> Parser<'s> {
             let name_start = self.scanner.position();
             let name_start_offset = self.scanner.offset();
             // Attribute name: identifiers + `:` + `-` are all valid.
+            // **Wave 14.3** — `.` is allowed too so `on:click.once`
+            // / `on:click.stop` parses cleanly; the dot becomes a
+            // dash at the `data-on-<key>` lowering step so the
+            // hit-test cache reads it uniformly.
             let name_raw = self
                 .scanner
-                .scan_while(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':')
+                .scan_while(|c| {
+                    c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':' || c == '.'
+                })
                 .to_string();
             if name_raw.is_empty() {
                 // Couldn't make progress — bail to avoid an infinite

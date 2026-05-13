@@ -288,6 +288,73 @@ impl LowerScope {
     pub fn host_children_by_slot_arc(&self) -> Arc<HashMap<String, Vec<Node>>> {
         Arc::clone(&self.host_children_by_slot)
     }
+
+    /// **Wave 14.1** — seed the design-token table as a `tokens`
+    /// binding. Every migrated `.prism-ui` file authors visual
+    /// constants today as hardcoded hex / px — `style:background="#161a22ff"`,
+    /// `padding="12"`. With the token binding in scope, the same
+    /// authoring surface reads `style:background="{tokens.colors.surface}"`
+    /// / `padding="{tokens.spacing.md}"` and resolves through the
+    /// existing dotted-path lookup. One source of truth for visual
+    /// constants across the shell; one binding seed.
+    ///
+    /// The shape mirrors [`prism_core::design_tokens::DesignTokens`]
+    /// exactly — `colors.<name>` returns a hex string suitable for
+    /// `style:background` / `style:color`; `spacing.<size>`,
+    /// `radius.<size>`, `typography.<key>` return numeric pixel
+    /// values suitable for any numeric prop.
+    pub fn with_design_tokens(mut self, tokens: &prism_core::design_tokens::DesignTokens) -> Self {
+        self.bindings
+            .insert("tokens".to_string(), design_tokens_to_json(tokens));
+        self
+    }
+}
+
+/// **Wave 14.1** — serialise [`DesignTokens`](prism_core::design_tokens::DesignTokens)
+/// into the DSL-readable shape. Colours emit as `#rrggbbaa` strings
+/// (the same shape `parse_color` consumes); spacing / radius / type
+/// emit as raw integers (the same shape `parse_f32` consumes). Kept
+/// pub so the prism-shell can mirror the binding into its
+/// non-loader paths (skeleton render, scene tests) without a fresh
+/// helper per call site.
+pub fn design_tokens_to_json(
+    tokens: &prism_core::design_tokens::DesignTokens,
+) -> serde_json::Value {
+    let c = &tokens.colors;
+    let s = &tokens.spacing;
+    let r = &tokens.radius;
+    let t = &tokens.typography;
+    serde_json::json!({
+        "colors": {
+            "background": rgba_to_hex(&c.background),
+            "surface": rgba_to_hex(&c.surface),
+            "surface-elevated": rgba_to_hex(&c.surface_elevated),
+            "border": rgba_to_hex(&c.border),
+            "text-primary": rgba_to_hex(&c.text_primary),
+            "text-secondary": rgba_to_hex(&c.text_secondary),
+            "accent": rgba_to_hex(&c.accent),
+            "accent-muted": rgba_to_hex(&c.accent_muted),
+            "danger": rgba_to_hex(&c.danger),
+            "success": rgba_to_hex(&c.success),
+        },
+        "spacing": {
+            "xs": s.xs, "sm": s.sm, "md": s.md, "lg": s.lg, "xl": s.xl,
+        },
+        "radius": {
+            "sm": r.sm, "md": r.md, "lg": r.lg, "pill": r.pill,
+        },
+        "typography": {
+            "font-size-sm": t.font_size_sm,
+            "font-size-md": t.font_size_md,
+            "font-size-lg": t.font_size_lg,
+            "font-size-xl": t.font_size_xl,
+            "line-height-md": t.line_height_md,
+        },
+    })
+}
+
+fn rgba_to_hex(c: &prism_core::design_tokens::Rgba) -> String {
+    format!("#{:02x}{:02x}{:02x}{:02x}", c.r, c.g, c.b, c.a)
 }
 
 /// Slot content the caller of a component injected. Default-only is
@@ -540,6 +607,14 @@ fn expand_control_flow(
     // already taken a branch. A non-element sibling resets the chain
     // — same rule HTMX / Svelte use.
     let mut chain_taken: Option<bool> = None;
+    // **Wave 14.2** — accumulating scope for sibling-level `<let
+    // name="X" value="{…}"/>` bindings. Starts as `None` (subsequent
+    // siblings see the parent scope unchanged); each `<let/>` clones
+    // the running scope, evaluates its expression, and seeds the
+    // binding so every subsequent sibling inherits it. Matches
+    // Svelte's `{@const}` lexical scope: declaration onward, within
+    // the same sibling list.
+    let mut let_scope: Option<LowerScope> = None;
 
     for node in nodes {
         let AstNode::Element(el) = node else {
@@ -556,36 +631,64 @@ fn expand_control_flow(
             if breaks_chain {
                 chain_taken = None;
             }
-            out.push((node.clone(), None));
+            out.push((node.clone(), let_scope.clone()));
             continue;
         };
+        // **Wave 14.2** — `<let name="X" value="{expr}"/>` evaluated
+        // and bound into the running let_scope; doesn't render. Lives
+        // before `control_flow_attr` so a `<let if="…"/>` doesn't
+        // accidentally fire when the predicate is false (let-bindings
+        // are unconditional by design — guard with a sibling `<if/>`
+        // wrapper if conditional state is wanted). Typed resolution
+        // through [`evaluate_bare_attr_typed`] preserves number /
+        // bool / object shape, so a downstream `padding="{total}"`
+        // reads through `parse_f32` cleanly.
+        if el.tag == "let" {
+            let active = let_scope.as_ref().unwrap_or(scope);
+            let name = bare_attr_value(el, "name", active);
+            let value = evaluate_bare_attr_typed(el, "value", active);
+            if let (Some(name), Some(value)) = (name, value) {
+                let next = let_scope
+                    .clone()
+                    .unwrap_or_else(|| scope.clone())
+                    .with_binding(name, value);
+                let_scope = Some(next);
+            }
+            continue;
+        }
+        // **Wave 14.2** — every code path that reads bindings now
+        // consults the running `let_scope` first (sibling-level
+        // shadowing of the parent scope). The original `scope`
+        // parameter is the fallback when no `<let/>` preceded this
+        // sibling.
+        let active = let_scope.as_ref().unwrap_or(scope);
         let cf = control_flow_attr(el);
         match cf {
             None => {
                 chain_taken = None;
-                out.push((node.clone(), None));
+                out.push((node.clone(), let_scope.clone()));
             }
             Some(ControlFlow::If(cond)) => {
-                let take = eval_truthy(&cond, scope);
+                let take = eval_truthy(&cond, active);
                 chain_taken = Some(take);
                 if take {
-                    out.push((node.clone(), None));
+                    out.push((node.clone(), let_scope.clone()));
                 }
             }
             Some(ControlFlow::ElseIf(cond)) => {
-                let take = matches!(chain_taken, Some(false)) && eval_truthy(&cond, scope);
+                let take = matches!(chain_taken, Some(false)) && eval_truthy(&cond, active);
                 if let Some(prev) = chain_taken.as_mut() {
                     *prev = *prev || take;
                 }
                 if take {
-                    out.push((node.clone(), None));
+                    out.push((node.clone(), let_scope.clone()));
                 }
             }
             Some(ControlFlow::Else) => {
                 let take = matches!(chain_taken, Some(false));
                 chain_taken = None;
                 if take {
-                    out.push((node.clone(), None));
+                    out.push((node.clone(), let_scope.clone()));
                 }
             }
             Some(ControlFlow::For {
@@ -594,12 +697,12 @@ fn expand_control_flow(
                 source,
             }) => {
                 chain_taken = None;
-                let items = scope
+                let items = active
                     .binding(&source)
                     .and_then(|v| v.as_array().cloned())
                     .unwrap_or_default();
                 for (idx, item) in items.into_iter().enumerate() {
-                    let mut child_scope = scope.clone().with_binding(var.clone(), item);
+                    let mut child_scope = active.clone().with_binding(var.clone(), item);
                     // Optional iteration-index binding — `for="row, idx
                     // in rows"` exposes the index as a typed integer.
                     // Authors use it to build stable per-row ids
@@ -966,12 +1069,24 @@ fn apply_container_attributes(
             // so attaching handlers to text / spacer leaves is a
             // separate follow-up (every leaf with author-driven
             // events lives inside a container today).
+            // **Wave 14.3** — recognise dotted event-modifier suffixes
+            // (Vue `@click.once`, Svelte `on:click|once`, HTMX
+            // `hx-trigger="click delay:500ms"`). The author writes
+            // `on:click.once="cmd foo"` / `on:click.stop` and the
+            // runtime round-trips it as a `data-on-click-once`
+            // semantic attr — the dot becomes a dash so the existing
+            // `data-on-<key>` hit-test cache picks it up uniformly.
+            // Today no consumer reads the modifier suffix; data carries
+            // author intent and the resolver-side handler integration
+            // follows (same pattern as Wave 9.4 transitions + Wave
+            // 13.3 use directives).
             AttributeNamespace::On => {
                 if let Some(action) = raw {
+                    let local_key = local.replace('.', "-");
                     props
                         .semantic
                         .attrs
-                        .push((format!("data-on-{}", local), action));
+                        .push((format!("data-on-{}", local_key), action));
                 }
             }
             // Wave 9.1: `route:<key>="<value>"` lowers to a
@@ -1176,6 +1291,37 @@ fn bare_attr_value(el: &Element, name: &str, scope: &LowerScope) -> Option<Strin
         .iter()
         .find(|a| matches!(a.name.namespace, AttributeNamespace::Bare) && a.name.local == name)
         .and_then(|a| resolved_attribute_string(&a.value, scope))
+}
+
+/// **Wave 14.2** — typed-aware bare-attribute reader for `<let>`.
+/// For a pure `{expr}` body, returns the underlying
+/// [`serde_json::Value`] (number / bool / object preserved). For a
+/// templated `"prefix-{expr}"`, returns a resolved [`Value::String`]
+/// — mixing literal text with interpolation can only land as a
+/// string. Plain string attributes (`value="lit"`) land as
+/// [`Value::String`] verbatim.
+fn evaluate_bare_attr_typed(
+    el: &Element,
+    name: &str,
+    scope: &LowerScope,
+) -> Option<serde_json::Value> {
+    let attr = el
+        .attributes
+        .iter()
+        .find(|a| matches!(a.name.namespace, AttributeNamespace::Bare) && a.name.local == name)?;
+    match &attr.value {
+        AttributeValue::String { value, .. } => Some(serde_json::Value::String(value.clone())),
+        AttributeValue::Empty => None,
+        AttributeValue::Expression(expr) => {
+            if let Some(v) = lookup_expression(&expr.body, scope) {
+                return Some(v.clone());
+            }
+            evaluate_expression(&expr.body, scope)
+        }
+        AttributeValue::Template { .. } => {
+            resolved_attribute_string(&attr.value, scope).map(serde_json::Value::String)
+        }
+    }
 }
 
 /// Plain attribute reader — returns the raw text without resolving
@@ -2589,6 +2735,142 @@ mod tests {
         assert_eq!(
             evaluate_expression("row.kind == 'error' ? row.label : 'fallback'", &scope),
             Some(serde_json::Value::String("Hi".to_string()))
+        );
+    }
+
+    // ── Wave 14 — substrate from HTMX / CSS / SwiftUI / Compose ──
+
+    /// **Wave 14.1** — the `tokens` scope binding round-trips
+    /// the design-token table through the existing dotted-path
+    /// resolver, so an author can write
+    /// `style:background="{tokens.colors.accent}"` and get the same
+    /// `ContainerProps.background` the equivalent hex literal would
+    /// produce. The colour serialisation uses the standard `#rrggbbaa`
+    /// shape `parse_color` consumes.
+    #[test]
+    fn tokens_binding_resolves_color_in_style_namespace() {
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes = interpret_with_scope(
+            r#"<container id="t" style:background="{tokens.colors.accent}"/>"#,
+            &scope,
+        )
+        .unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!("expected container, got {:?}", nodes[0]);
+        };
+        let accent = &prism_core::design_tokens::DEFAULT_TOKENS.colors.accent;
+        let bg = props.background.expect("background should resolve");
+        assert_eq!(bg.r, accent.r);
+        assert_eq!(bg.g, accent.g);
+        assert_eq!(bg.b, accent.b);
+        assert_eq!(bg.a, accent.a);
+    }
+
+    /// **Wave 14.1** — numeric tokens (spacing / radius / typography)
+    /// resolve through the same dotted-path lookup; `parse_f32` reads
+    /// the number verbatim through the JSON-number value.
+    #[test]
+    fn tokens_binding_resolves_nested_path_through_style() {
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes = interpret_with_scope(
+            r#"<container id="t" padding="{tokens.spacing.md}" style:radius="{tokens.radius.lg}"/>"#,
+            &scope,
+        )
+        .unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!("expected container, got {:?}", nodes[0]);
+        };
+        let md = prism_core::design_tokens::DEFAULT_TOKENS.spacing.md as f32;
+        let lg = prism_core::design_tokens::DEFAULT_TOKENS.radius.lg as f32;
+        assert!((props.padding.left - md).abs() < f32::EPSILON);
+        assert!((props.padding.top - md).abs() < f32::EPSILON);
+        assert!((props.radius.tl - lg).abs() < f32::EPSILON);
+        assert!((props.radius.br - lg).abs() < f32::EPSILON);
+    }
+
+    /// **Wave 14.2** — a sibling `<let name="total" value="{items.length}"/>`
+    /// seeds a `total` binding into every subsequent sibling's scope
+    /// without consuming a render slot. Today no `items.length`
+    /// built-in exists, so the test uses a primitive value pulled
+    /// from the parent scope to exercise the propagation rule.
+    #[test]
+    fn let_binding_propagates_to_subsequent_siblings() {
+        use serde_json::json;
+        let scope = LowerScope::default().with_binding("base", json!(8));
+        let source = r#"
+            <let name="doubled" value="{base * 2}"/>
+            <container id="t" padding="{doubled}"/>
+        "#;
+        let nodes = interpret_with_scope(source, &scope).unwrap();
+        // Single rendered sibling — the `<let/>` should not emit.
+        assert_eq!(nodes.len(), 1, "let should not render: {nodes:?}");
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!("expected container, got {:?}", nodes[0]);
+        };
+        assert!((props.padding.left - 16.0).abs() < f32::EPSILON);
+    }
+
+    /// **Wave 14.2** — a `<let/>` binding overrides a same-named
+    /// parent-scope binding in subsequent siblings (lexical
+    /// shadowing); the parent-scope value remains untouched outside
+    /// the let-scope. Matches Svelte `{@const}` semantics.
+    #[test]
+    fn let_binding_shadows_parent_scope_for_subsequent_siblings() {
+        use serde_json::json;
+        let scope = LowerScope::default().with_binding("size", json!(4));
+        let source = r#"
+            <container id="a" padding="{size}"/>
+            <let name="size" value="{20}"/>
+            <container id="b" padding="{size}"/>
+        "#;
+        let nodes = interpret_with_scope(source, &scope).unwrap();
+        assert_eq!(nodes.len(), 2);
+        let crate::layout::Node::Container {
+            id: id_a, props: a, ..
+        } = &nodes[0]
+        else {
+            panic!()
+        };
+        let crate::layout::Node::Container {
+            id: id_b, props: b, ..
+        } = &nodes[1]
+        else {
+            panic!()
+        };
+        assert_eq!(id_a, "a");
+        assert_eq!(id_b, "b");
+        assert!((a.padding.left - 4.0).abs() < f32::EPSILON);
+        assert!((b.padding.left - 20.0).abs() < f32::EPSILON);
+    }
+
+    /// **Wave 14.3** — `on:click.once` lowers to `data-on-click-once`
+    /// so the modifier suffix round-trips through the same `data-on-*`
+    /// hit-test cache. Today no consumer reads the suffix; data
+    /// carries author intent for future runtime wiring.
+    #[test]
+    fn on_namespace_modifier_suffix_round_trips_as_data_attr() {
+        let nodes = interpret(
+            r#"<container id="b" on:click.once="cmd confirm" on:click.stop="cmd noop"/>"#,
+        )
+        .unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!("expected container, got {:?}", nodes[0]);
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            attrs.get("data-on-click-once").map(String::as_str),
+            Some("cmd confirm")
+        );
+        assert_eq!(
+            attrs.get("data-on-click-stop").map(String::as_str),
+            Some("cmd noop")
         );
     }
 }

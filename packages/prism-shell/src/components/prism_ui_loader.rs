@@ -151,6 +151,13 @@ impl Block for PrismUiBlock {
             scope = scope.with_resolver(Arc::new(RegistryTagResolver::new(arc)));
         }
 
+        // **Wave 14.1** — seed the design-token table as a global
+        // `tokens` binding so every migrated `.prism-ui` file can
+        // read visual constants through one source of truth. Layered
+        // before schema defaults / `node.props` so a caller-supplied
+        // prop named `tokens` wins (unlikely but principled).
+        scope = scope.with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+
         // Seed schema defaults first so `{title}` / `{enabled}`
         // interpolations have a sensible fallback when the caller
         // didn't pass the prop. Authored `.prism-ui` source treats a
@@ -1430,6 +1437,41 @@ mod tests {
             roles.iter().any(|r| r == "workflow-page-button"),
             "no child carries data-role=workflow-page-button; got {roles:?}"
         );
+    }
+
+    /// **Wave 14.1** — every DSL-authored shell component sees the
+    /// `tokens` binding through the loader-side seam. The pin
+    /// registers a one-off `shell.token-probe` spec that reads
+    /// `tokens.colors.accent` through `style:background` and asserts
+    /// the lowered container picks up the matching colour. Catches
+    /// the case where the loader's `with_design_tokens` injection
+    /// regresses or moves into a later phase.
+    #[test]
+    fn tokens_binding_resolves_in_loader_dispatched_block() {
+        const TOKEN_PROBE_SOURCE: &str =
+            r#"<container id="probe" style:background="{tokens.colors.accent}"/>"#;
+        const TOKEN_PROBE_SPEC: PrismUiSpec =
+            PrismUiSpec::new("shell.token-probe", TOKEN_PROBE_SOURCE);
+
+        let mut reg = ShellComponentRegistry::new();
+        register_shell_builtins(&mut reg).expect("native shell builtins register");
+        let resolver = make_shared_resolver();
+        register_prism_ui_components(&mut reg, &[TOKEN_PROBE_SPEC], &resolver)
+            .expect("token-probe registers");
+        finalize_prism_ui_resolver(&resolver, &reg);
+
+        let ui = lower_from_registry(&reg, "shell.token-probe", json!({}));
+        let UiNode::Container { props, .. } = ui else {
+            panic!("token-probe did not lower to a container")
+        };
+        let accent = &prism_core::design_tokens::DEFAULT_TOKENS.colors.accent;
+        let bg = props
+            .background
+            .expect("background should resolve via tokens");
+        assert_eq!(bg.r, accent.r);
+        assert_eq!(bg.g, accent.g);
+        assert_eq!(bg.b, accent.b);
+        assert_eq!(bg.a, accent.a);
     }
 
     #[test]

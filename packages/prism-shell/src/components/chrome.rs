@@ -15,68 +15,10 @@
 
 use prism_builder::style::StyleProperties;
 use prism_builder::ui_lower::{
-    bare_container, colored_text_node, hover_bg, image_node, parse_color, uniform_radius,
+    bare_container, colored_text_node, hover_bg, parse_color, uniform_radius,
 };
 use prism_ui_runtime::command::Color;
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
-
-/// 28×28 fixed-size, 6px-radius button frame holding a 16×16 icon
-/// glyph. Resting background transparent; hover swaps to a translucent
-/// foreground tint when `enabled` is true. Disabled buttons stay
-/// static under the pointer.
-///
-/// SSR semantic: `<button type="button">` with optional
-/// `aria-label` and a `disabled` attr when not enabled.
-///
-/// Used by [`super::IconButton`] (the standalone Block) and embedded
-/// inside [`super::InspectorRow`] for the move-up / move-down / trash
-/// chevrons. Future button-shaped chrome primitives (Tab pills,
-/// MenuBar items) compose through the same call.
-pub const ICON_BUTTON_SIZE: f32 = 28.0;
-pub const ICON_BUTTON_RADIUS: f32 = 6.0;
-pub const ICON_GLYPH_SIZE: f32 = 16.0;
-/// Hover background — `Palette.control-background` in the original
-/// Slint. Hard-coded until the design-tokens cascade resolves the
-/// value at lower-time.
-pub const ICON_BUTTON_HOVER_BG: &str = "#1f000000";
-
-pub fn icon_button_node(
-    id: impl Into<String>,
-    icon: impl Into<String>,
-    enabled: bool,
-    aria_label: Option<&str>,
-    command: Option<&str>,
-) -> UiNode {
-    let id = id.into();
-    let glyph_style = StyleProperties::default();
-    let glyph = image_node(
-        format!("{id}::glyph"),
-        icon.into(),
-        &glyph_style,
-        Sizing::Fixed(ICON_GLYPH_SIZE),
-        Sizing::Fixed(ICON_GLYPH_SIZE),
-    );
-
-    let command = command
-        .filter(|s| !s.is_empty() && enabled)
-        .map(String::from);
-
-    bare_container(id, vec![glyph], |props| {
-        props.width = Sizing::Fixed(ICON_BUTTON_SIZE);
-        props.height = Sizing::Fixed(ICON_BUTTON_SIZE);
-        props.radius = uniform_radius(ICON_BUTTON_RADIUS);
-        if enabled {
-            props.hover = hover_bg(ICON_BUTTON_HOVER_BG);
-        }
-        let mut s = Semantic::button()
-            .with_aria_label_opt(aria_label)
-            .with_attr_if(!enabled, "disabled", "disabled");
-        if let Some(cmd) = command {
-            s = s.with_attr("data-on-click", format!("cmd {cmd}"));
-        }
-        props.semantic = s;
-    })
-}
 
 /// Zero-size placeholder used by overlay blocks (command palette,
 /// menu dropdown, context menu, component picker, help tooltip) when
@@ -214,56 +156,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_button_node_has_28x28_frame_and_16x16_glyph() {
-        let n = icon_button_node("ib", "icons/x.svg", true, None, None);
-        let UiNode::Container {
-            props, children, ..
-        } = n
-        else {
-            panic!("not a container")
-        };
-        assert_eq!(props.width, Sizing::Fixed(28.0));
-        assert_eq!(props.height, Sizing::Fixed(28.0));
-        assert_eq!(props.radius.tl, 6.0);
-        assert!(props.hover.is_some());
-        let UiNode::Image { width, height, .. } = &children[0] else {
-            panic!("expected glyph image")
-        };
-        assert_eq!(*width, Sizing::Fixed(16.0));
-        assert_eq!(*height, Sizing::Fixed(16.0));
-    }
-
-    #[test]
-    fn icon_button_disabled_omits_hover_and_propagates_attr() {
-        let n = icon_button_node("ib", "icons/x.svg", false, Some("Close"), None);
-        let UiNode::Container { props, .. } = n else {
-            panic!()
-        };
-        assert!(props.hover.is_none());
-        assert_eq!(props.semantic.aria_label.as_deref(), Some("Close"));
-        assert!(props
-            .semantic
-            .attrs
-            .iter()
-            .any(|(k, v)| k == "disabled" && v == "disabled"));
-    }
-
-    #[test]
     fn color_or_transparent_falls_back_when_parse_fails() {
         let c = color_or_transparent("not-a-color");
         assert_eq!(c.a, 0);
     }
 
     #[test]
-    fn icon_button_node_command_arg_emits_data_on_click() {
-        let n = icon_button_node("ib", "icons/x.svg", true, Some("Save"), Some("file.save"));
+    fn hidden_overlay_emits_zero_size_container_with_role_attr() {
+        let n = hidden_overlay("ov", "modifier-picker");
         let UiNode::Container { props, .. } = n else {
             panic!()
         };
+        assert_eq!(props.width, Sizing::Fixed(0.0));
+        assert_eq!(props.height, Sizing::Fixed(0.0));
         assert!(props
             .semantic
             .attrs
             .iter()
-            .any(|(k, v)| k == "data-on-click" && v == "cmd file.save"));
+            .any(|(k, v)| k == "data-role" && v == "modifier-picker"));
     }
 }
