@@ -25,7 +25,7 @@
 
 use prism_builder::{BuilderDocument, NodeId};
 use prism_core::foundation::spatial::Transform2D;
-use prism_dock::DockWorkspace;
+use prism_dock::{DockCatalog, DockNode, DockWorkspace};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -1604,6 +1604,27 @@ impl WorkspaceSlot {
         json!({ "dock": self.workspace.active_dock().root })
     }
 
+    /// Catalog-enriched variant: emits the same `dock` tree plus two
+    /// sidecar maps `labels` (panel-id → friendly label) and `tags`
+    /// (panel-id → shell content tag). The lower fn reads from these
+    /// instead of consulting a catalog at lower time, so app-registered
+    /// panels surface in the dock with no further plumbing. See
+    /// `docs/dev/dsl-self-bootstrap.md` Loop 2 / Loop 4.
+    pub fn dock_workspace_props_with_catalog(&self, catalog: &DockCatalog) -> Value {
+        let dock = json!(self.workspace.active_dock().root);
+        let mut labels = serde_json::Map::new();
+        let mut tags = serde_json::Map::new();
+        for panel_id in collect_panel_ids(&self.workspace.active_dock().root) {
+            if let Some(p) = catalog.get(&panel_id) {
+                labels.insert(panel_id.clone(), Value::String(p.label.to_string()));
+                if let Some(t) = p.tag {
+                    tags.insert(panel_id, Value::String(t.to_string()));
+                }
+            }
+        }
+        json!({ "dock": dock, "labels": labels, "tags": tags })
+    }
+
     /// Tab list shape consumed by both `shell.menu-bar-row` and
     /// `shell.app-window` (top-bar tabs). Crate-public so the chrome
     /// slot's composition methods can borrow it without duplicating
@@ -1643,6 +1664,32 @@ impl WorkspaceSlot {
                 })
                 .collect(),
         )
+    }
+}
+
+/// Walk a `DockNode` tree and return every panel id reachable from
+/// it. Used by [`WorkspaceSlot::dock_workspace_props_with_catalog`] to
+/// build the labels / tags sidecar maps without scanning the full
+/// catalog.
+fn collect_panel_ids(root: &DockNode) -> Vec<String> {
+    let mut out = Vec::new();
+    walk_panel_ids(root, &mut out);
+    out
+}
+
+fn walk_panel_ids(node: &DockNode, out: &mut Vec<String>) {
+    match node {
+        DockNode::Split { first, second, .. } => {
+            walk_panel_ids(first, out);
+            walk_panel_ids(second, out);
+        }
+        DockNode::TabGroup { tabs, .. } => {
+            for t in tabs {
+                if !out.contains(t) {
+                    out.push(t.clone());
+                }
+            }
+        }
     }
 }
 

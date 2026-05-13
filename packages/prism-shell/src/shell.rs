@@ -54,6 +54,16 @@ pub struct ShellInner {
     pub resolver: Arc<dyn TagResolver>,
     pub bindings: ShellPropBindings,
     pub services: ServiceRegistry,
+    /// DSL self-bootstrap Loop 4: the production `AppRegistrar` impl.
+    /// Owns the shared dock catalog; mutated during boot by
+    /// `install_panels_from_manifests` and frozen into
+    /// [`Self::dock_catalog`] before rendering starts.
+    pub app_registrar: crate::app_registry::ShellAppRegistrar,
+    /// Frozen snapshot of the dock catalog after every manifest's
+    /// `panels.add` rows have been installed. Threaded into
+    /// [`PropCtx`] so the dock-workspace binding can resolve labels
+    /// + content tags for every reachable panel id.
+    pub dock_catalog: Arc<prism_dock::DockCatalog>,
     pub state: crate::AppState,
     pub viewport: Viewport,
     pub undo: UndoStack,
@@ -117,6 +127,10 @@ impl ShellInner {
             // builder's `LowerCtx::with_modifier_registry` so attached
             // `node.modifiers` fold over each block's output.
             modifier_registry: Some(self.modifier_registry.as_ref()),
+            // DSL self-bootstrap Loop 4: the dock-workspace binding
+            // reads labels + content tags from the frozen catalog
+            // so manifest-registered panels surface in the live dock.
+            dock_catalog: Some(self.dock_catalog.as_ref()),
         }
     }
 
@@ -182,6 +196,13 @@ impl Shell {
         // `crate::seed::fallback_app_tiles`.
         let loaded_apps =
             crate::app_loader::discover(crate::app_loader::default_apps_root()).unwrap_or_default();
+        // DSL self-bootstrap Loop 4: build the production
+        // `AppRegistrar`, install every manifest's `panels.add` row
+        // into its catalog, and freeze the snapshot for the read side.
+        let app_registrar = crate::app_registry::ShellAppRegistrar::with_builtin_panels();
+        let _panel_count =
+            crate::app_registry::install_panels_from_manifests(&app_registrar, &loaded_apps);
+        let dock_catalog = Arc::new(app_registrar.snapshot_catalog());
         // DSL self-bootstrap Loop 3: if any manifest declares service
         // preferences, filter `App`-scoped services to the declared
         // allowlist. Permissive default — manifests that omit
@@ -217,6 +238,8 @@ impl Shell {
             resolver,
             bindings,
             services,
+            app_registrar,
+            dock_catalog,
             // §43 A1 + Wave 1: hydrated boot state with the modifier
             // registry installed. `AppState::default()` is the
             // zero-data shape for tests and headless renders;

@@ -1450,6 +1450,7 @@ mod tests {
             registry: None,
             block_invalidator: None,
             modifier_registry: None,
+            dock_catalog: None,
         };
         let nodes = render_tree(&skel, &bindings, reg.tag_resolver(), &ctx);
         let UiNode::Container { children, .. } = &nodes[0] else {

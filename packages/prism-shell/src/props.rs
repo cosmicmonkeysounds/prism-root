@@ -45,6 +45,13 @@ pub struct PropCtx<'a> {
     /// so attached `node.modifiers` fold over each block's lowered
     /// output. `None` on headless / pure-slot-accessor paths.
     pub modifier_registry: Option<&'a prism_builder::ModifierRegistry>,
+    /// DSL self-bootstrap Loop 2: frozen `DockCatalog` snapshot built
+    /// during `Shell::new` from built-ins + every loaded app's
+    /// `panels.add`. Bindings that emit dock metadata
+    /// (`shell.dock-workspace`) read labels + content tags from here
+    /// so the lower fns stay catalog-free. `None` in headless / test
+    /// paths that don't construct a registrar.
+    pub dock_catalog: Option<&'a prism_dock::DockCatalog>,
 }
 
 /// What a single binding emits for one frame:
@@ -152,9 +159,9 @@ const SLOT_BINDINGS: &[(&str, SlotAccessor)] = &[
     ("shell.workflow-page-bar", |s| {
         s.workspace.workflow_page_bar_props()
     }),
-    ("shell.dock-workspace", |s| {
-        s.workspace.dock_workspace_props()
-    }),
+    // `shell.dock-workspace` moved to the closure-style registration
+    // below — it needs the live `DockCatalog` from `PropCtx` to emit
+    // labels + tags sidecar maps (DSL self-bootstrap Loop 2 / 4).
     // Overlay slot — toasts, command palette, help tooltip. Floating
     // chrome that paints over the app-window via the skeleton's
     // overlay siblings.
@@ -284,18 +291,35 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         Box::new(|ctx| PropEmission::from_props(ctx.state.overlay.connection_picker_props())),
     );
 
+    // DSL self-bootstrap Loop 2 / 4 — `shell.dock-workspace` emits the
+    // dock tree plus `labels` and `tags` sidecar maps resolved from
+    // the live `DockCatalog`. Falls back to the catalog-less variant
+    // in headless tests where no registrar was constructed.
+    reg.register(
+        "shell.dock-workspace",
+        Box::new(|ctx| {
+            let props = match ctx.dock_catalog {
+                Some(cat) => ctx.state.workspace.dock_workspace_props_with_catalog(cat),
+                None => ctx.state.workspace.dock_workspace_props(),
+            };
+            PropEmission::from_props(props)
+        }),
+    );
+
     // Stub bindings — derived, not maintained. Every id in
-    // `SHELL_BUILTINS` that doesn't appear in `SLOT_BINDINGS` is a
-    // *per-row* block (`shell.dock-tab`, `shell.menu-item`,
+    // `SHELL_BUILTINS` that doesn't appear in `SLOT_BINDINGS` (or in
+    // the explicit closure-style registrations above) is a *per-row*
+    // block (`shell.dock-tab`, `shell.menu-item`,
     // `shell.signal-connection-row`, …) whose data flows down inside
     // a parent JSON array. Authoring such a block needs no second
     // edit here: registering it in `SHELL_BUILTINS` automatically
     // gives it an empty stub binding, and the row's parent slot owns
     // the actual JSON shape. Promoting a stub to live data is one
-    // row added to `SLOT_BINDINGS` plus one method on the owning
-    // slot; the auto-stub vanishes because the id is now claimed.
+    // row added to `SLOT_BINDINGS` (or one closure-style block above)
+    // plus one method on the owning slot; the auto-stub vanishes
+    // because the id is now claimed.
     for spec in SHELL_BUILTINS {
-        if SLOT_BINDINGS.iter().any(|(id, _)| *id == spec.id) {
+        if SLOT_BINDINGS.iter().any(|(id, _)| *id == spec.id) || reg.get(spec.id).is_some() {
             continue;
         }
         reg.register(
@@ -312,7 +336,7 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
     // never fires). Same rule as native: a row in `SLOT_BINDINGS`
     // wins over the stub.
     for spec in SHELL_PRISM_UI_COMPONENTS {
-        if SLOT_BINDINGS.iter().any(|(id, _)| *id == spec.id) {
+        if SLOT_BINDINGS.iter().any(|(id, _)| *id == spec.id) || reg.get(spec.id).is_some() {
             continue;
         }
         if SHELL_BUILTINS.iter().any(|s| s.id == spec.id) {
@@ -348,6 +372,7 @@ mod tests {
             registry: None,
             block_invalidator: None,
             modifier_registry: None,
+            dock_catalog: None,
         }
     }
 
@@ -505,6 +530,7 @@ mod tests {
             registry: Some(&reg),
             block_invalidator: None,
             modifier_registry: None,
+            dock_catalog: None,
         };
         let snap_l = bindings.snapshot(&ctx_live);
         let canvas_l = snap_l

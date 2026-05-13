@@ -459,6 +459,7 @@ mod tests {
             registry: None,
             block_invalidator: None,
             modifier_registry: None,
+            dock_catalog: None,
         }
     }
 
@@ -745,6 +746,7 @@ mod tests {
             registry: Some(&live_reg),
             block_invalidator: None,
             modifier_registry: None,
+            dock_catalog: None,
         };
         let emissions = bindings.snapshot(&ctx);
         let canvas = emissions
@@ -782,6 +784,7 @@ mod tests {
             registry: None,
             block_invalidator: None,
             modifier_registry: None,
+            dock_catalog: None,
         };
         let emissions = bindings.snapshot(&ctx);
         let canvas = emissions

@@ -1,35 +1,54 @@
 //! `ShellAppRegistrar` — concrete `prism_core::AppRegistrar` impl that
-//! routes registrations into the shell's live dock catalog (and, in
-//! follow-up work, the builder's `ComponentRegistry` + the shell's
-//! `ServiceRegistry`).
+//! routes registrations into the shell's live registries:
+//!
+//! - **Panels** flow directly into a shared `DockCatalog`.
+//! - **Components** are queued; [`install_components`] drains the queue
+//!   and registers a [`LuauComponentBlock`] per spec into the
+//!   shell's component registry.
+//! - **Services** are queued; [`install_services`] drains and registers
+//!   a [`LuauScriptedService`] per spec with `ServiceScope::App`.
 //!
 //! Loop 4 of `docs/dev/dsl-self-bootstrap.md`. The trait surface lives
 //! in `prism_core::app_registry` because `prism-core` is the leaf
 //! crate Luau bindings call into. This module supplies the production
-//! glue — `Arc<Mutex<DockCatalog>>` is the runtime-mutable shared
-//! handle the shell hands to each Luau-script-loading step.
+//! glue.
+//!
+//! The Luau-backed shims (`LuauComponentBlock`, `LuauScriptedService`)
+//! are intentionally minimal today — their `lower_ui` / `on_event`
+//! bodies surface a placeholder labelled with the component / service
+//! id. When the in-process Luau runtime lands, the shim bodies grow
+//! to dispatch through the script's `render_key` / `on_event_key`.
 
 use std::sync::{Arc, Mutex};
 
+use prism_builder::block::Block;
+use prism_builder::component::ComponentId;
+use prism_builder::document::Node;
+use prism_builder::registry::FieldSpec;
+use prism_builder::style::StyleProperties;
+use prism_builder::ui_lower::LowerCtx;
 use prism_core::{
     AppRegistrar, ComponentRegistration, PanelRegistration, RegistrationError, ServiceRegistration,
 };
 use prism_dock::{DockCatalog, PanelKind};
+use prism_ui_runtime::layout::{Node as UiNode, Semantic, Sizing};
 
-/// Production `AppRegistrar` impl. Wraps a shared `DockCatalog` so
-/// registrations made during app load are visible to every subsequent
-/// dock lookup.
+use crate::services::{CommandSpec, CommandTable, EventOutcome, MutCtx, ShellService};
+
+/// Production `AppRegistrar` impl. Wraps:
+/// - a shared `DockCatalog` for panel registrations,
+/// - a `Vec<ComponentRegistration>` queue for component registrations,
+/// - a `Vec<ServiceRegistration>` queue for service registrations.
 ///
-/// The catalog is wrapped in `Arc<Mutex<...>>` because:
-/// 1. Multiple apps may register concurrently in the future.
-/// 2. The shell consumes the catalog from many sites (dock-panel
-///    lower, dock-workspace lower, tab-bar lower); cloning the `Arc`
-///    is cheap.
-/// 3. Built-ins seed the catalog at construction; per-app additions
-///    layer on without losing them.
+/// Panels apply immediately; components and services are queued so
+/// they can be drained at a point in the shell boot sequence where
+/// the matching registries are mutable. See `Shell::new` for the
+/// drain points.
 #[derive(Clone)]
 pub struct ShellAppRegistrar {
     panels: Arc<Mutex<DockCatalog>>,
+    components: Arc<Mutex<Vec<ComponentRegistration>>>,
+    services: Arc<Mutex<Vec<ServiceRegistration>>>,
 }
 
 impl ShellAppRegistrar {
@@ -39,6 +58,8 @@ impl ShellAppRegistrar {
     pub fn with_builtin_panels() -> Self {
         Self {
             panels: Arc::new(Mutex::new(DockCatalog::with_builtins())),
+            components: Arc::new(Mutex::new(Vec::new())),
+            services: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -53,6 +74,29 @@ impl ShellAppRegistrar {
     /// callers that need a `Send`-friendly read-only view (e.g. SSR).
     pub fn snapshot_catalog(&self) -> DockCatalog {
         self.panels.lock().unwrap().clone()
+    }
+
+    /// Drain every queued [`ComponentRegistration`]. Called by
+    /// [`install_components`] which then registers a
+    /// [`LuauComponentBlock`] per row into the shell's registry.
+    pub fn drain_components(&self) -> Vec<ComponentRegistration> {
+        std::mem::take(&mut *self.components.lock().unwrap())
+    }
+
+    /// Drain every queued [`ServiceRegistration`]. Called by
+    /// [`install_services`].
+    pub fn drain_services(&self) -> Vec<ServiceRegistration> {
+        std::mem::take(&mut *self.services.lock().unwrap())
+    }
+
+    /// How many components are currently queued (test introspection).
+    pub fn pending_component_count(&self) -> usize {
+        self.components.lock().unwrap().len()
+    }
+
+    /// How many services are currently queued (test introspection).
+    pub fn pending_service_count(&self) -> usize {
+        self.services.lock().unwrap().len()
     }
 }
 
@@ -87,26 +131,25 @@ impl AppRegistrar for ShellAppRegistrar {
 
     fn register_component(
         &self,
-        _component: ComponentRegistration,
+        component: ComponentRegistration,
     ) -> Result<(), RegistrationError> {
-        // Wiring `register_component` requires:
-        // - a `Luau-backed `Block` impl that calls the script's
-        //   render function during `lower_ui`;
-        // - mutable shared access to `prism_builder::ComponentRegistry`
-        //   (today the registry is owned by `ShellInner` and not
-        //   wrapped in a `Mutex`).
-        // Both are tracked as follow-up — see
-        // `docs/dev/dsl-self-bootstrap.md` Loop 4 "Remaining work".
-        Err(RegistrationError::Unsupported("register_component"))
+        if component.id.trim().is_empty() {
+            return Err(RegistrationError::Invalid("component id empty".into()));
+        }
+        self.components.lock().unwrap().push(component);
+        Ok(())
     }
 
-    fn register_service(&self, _service: ServiceRegistration) -> Result<(), RegistrationError> {
-        // Wiring `register_service` requires a Luau-backed
-        // `ShellService` shim that routes `on_event` calls through
-        // the script's handler. Same follow-up as `register_component`.
-        Err(RegistrationError::Unsupported("register_service"))
+    fn register_service(&self, service: ServiceRegistration) -> Result<(), RegistrationError> {
+        if service.id.trim().is_empty() {
+            return Err(RegistrationError::Invalid("service id empty".into()));
+        }
+        self.services.lock().unwrap().push(service);
+        Ok(())
     }
 }
+
+// ── Manifest fan-out helpers ───────────────────────────────────────
 
 /// Walk the discovered apps' manifests and push every `panels.add`
 /// entry through `registrar.register_panel`. Returns the count of
@@ -133,6 +176,154 @@ pub fn install_panels_from_manifests(
         }
     }
     count
+}
+
+/// Drain queued component registrations and register a
+/// [`LuauComponentBlock`] per row into the shell's component
+/// registry. Returns the number successfully installed.
+///
+/// Call after every Luau-script load step but before the registry's
+/// tag resolver is finalised, so the registry has the new blocks
+/// when the resolver builds its dispatch table.
+pub fn install_components(
+    registrar: &ShellAppRegistrar,
+    registry: &mut crate::components::ShellComponentRegistry,
+) -> usize {
+    let mut count = 0;
+    for spec in registrar.drain_components() {
+        let block = Arc::new(LuauComponentBlock::new(spec));
+        match registry.register(block) {
+            Ok(()) => count += 1,
+            Err(e) => {
+                eprintln!("prism-shell: failed to register component: {e}");
+            }
+        }
+    }
+    count
+}
+
+/// Drain queued service registrations and add a
+/// [`LuauScriptedService`] per row to the shell's service registry
+/// with [`crate::services::ServiceScope::App`]. Returns the number
+/// installed.
+pub fn install_services(
+    registrar: &ShellAppRegistrar,
+    services: &mut crate::services::ServiceRegistry,
+) -> usize {
+    let mut count = 0;
+    for spec in registrar.drain_services() {
+        services.add_scoped(
+            crate::services::ServiceScope::App,
+            LuauScriptedService::new(spec),
+        );
+        count += 1;
+    }
+    count
+}
+
+// ── Luau-backed shims ─────────────────────────────────────────────
+
+/// `Block` impl that renders a labelled placeholder for an
+/// app-registered component. Today the placeholder is a static
+/// container with a `data-component` semantic attribute; when the
+/// Luau runtime lands, the placeholder body grows into a real
+/// `script.render(props, children)` dispatch keyed on `render_key`.
+pub struct LuauComponentBlock {
+    id: ComponentId,
+    /// Opaque Luau render dispatch key. Surfaced via
+    /// `data-luau-key` on the rendered semantic so the eventual
+    /// runtime can correlate placeholders to scripts during
+    /// hot-reload.
+    render_key: String,
+}
+
+impl LuauComponentBlock {
+    pub fn new(spec: ComponentRegistration) -> Self {
+        Self {
+            // `ComponentId` is a `String` type alias in prism-builder.
+            id: spec.id,
+            render_key: spec.render_key,
+        }
+    }
+}
+
+impl Block for LuauComponentBlock {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+
+    fn schema(&self) -> Vec<FieldSpec> {
+        // Luau-defined components declare their schema through the
+        // script today; until the runtime is wired, expose an empty
+        // schema so the property panel renders the catch-all.
+        vec![]
+    }
+
+    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+        let component_id = self.id.clone();
+        let render_key = self.render_key.clone();
+        // Build a minimal container with semantic markers — the live
+        // dock + relay SSR both render this as a labelled placeholder
+        // until the Luau runtime supplies a real body.
+        UiNode::Container {
+            id: node.id.clone(),
+            props: prism_ui_runtime::layout::ContainerProps {
+                width: Sizing::Grow,
+                height: Sizing::Grow,
+                semantic: Semantic::tag("div")
+                    .with_attr("data-role", "luau-component")
+                    .with_attr("data-component", component_id)
+                    .with_attr("data-luau-key", render_key),
+                ..Default::default()
+            },
+            children: Vec::new(),
+        }
+    }
+}
+
+/// `ShellService` shim for a Luau-registered service. Today's
+/// `on_event` always returns `Pass` — the Luau dispatch lands when
+/// the in-process runtime is wired (Loop 4 follow-up).
+pub struct LuauScriptedService {
+    id: &'static str,
+    /// Opaque Luau handler dispatch key. Stored for future runtime
+    /// dispatch; surfaced via [`Self::on_event_key`] for tests.
+    on_event_key: String,
+}
+
+impl LuauScriptedService {
+    pub fn new(spec: ServiceRegistration) -> Self {
+        // ShellService::id returns `&'static str`. Promote the owned
+        // string via `Box::leak` — registrations happen at app load,
+        // never per-frame, so the leak is bounded.
+        Self {
+            id: Box::leak(spec.id.into_boxed_str()),
+            on_event_key: spec.on_event_key,
+        }
+    }
+
+    pub fn on_event_key(&self) -> &str {
+        &self.on_event_key
+    }
+}
+
+impl ShellService for LuauScriptedService {
+    fn id(&self) -> &'static str {
+        self.id
+    }
+
+    fn on_event(
+        &self,
+        _event: &prism_ui_runtime::event::Event,
+        _ctx: &mut MutCtx<'_>,
+        _cmds: &CommandTable,
+    ) -> EventOutcome {
+        EventOutcome::Pass
+    }
+
+    fn commands(&self) -> Vec<CommandSpec> {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
@@ -184,16 +375,98 @@ mod tests {
     }
 
     #[test]
-    fn register_component_and_service_are_explicit_unsupported_today() {
+    fn register_component_queues_and_drains() {
         let reg = ShellAppRegistrar::with_builtin_panels();
-        assert!(matches!(
-            reg.register_component(ComponentRegistration::default()),
-            Err(RegistrationError::Unsupported("register_component"))
-        ));
-        assert!(matches!(
-            reg.register_service(ServiceRegistration::default()),
-            Err(RegistrationError::Unsupported("register_service"))
-        ));
+        reg.register_component(ComponentRegistration {
+            id: "lattice.card".into(),
+            render_key: "lattice.scripts.card.render".into(),
+        })
+        .unwrap();
+        reg.register_component(ComponentRegistration {
+            id: "lattice.list".into(),
+            render_key: "lattice.scripts.list.render".into(),
+        })
+        .unwrap();
+        assert_eq!(reg.pending_component_count(), 2);
+        let drained = reg.drain_components();
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained[0].id, "lattice.card");
+        assert_eq!(drained[1].render_key, "lattice.scripts.list.render");
+        // Queue is empty after drain.
+        assert_eq!(reg.pending_component_count(), 0);
+    }
+
+    #[test]
+    fn register_service_queues_and_drains() {
+        let reg = ShellAppRegistrar::with_builtin_panels();
+        reg.register_service(ServiceRegistration {
+            id: "lattice.peers-sync".into(),
+            on_event_key: "lattice.scripts.peers_sync.on_event".into(),
+        })
+        .unwrap();
+        assert_eq!(reg.pending_service_count(), 1);
+        let drained = reg.drain_services();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].id, "lattice.peers-sync");
+        assert_eq!(reg.pending_service_count(), 0);
+    }
+
+    #[test]
+    fn register_component_rejects_empty_id() {
+        let reg = ShellAppRegistrar::with_builtin_panels();
+        let err = reg
+            .register_component(ComponentRegistration::default())
+            .unwrap_err();
+        assert!(matches!(err, RegistrationError::Invalid(_)));
+    }
+
+    #[test]
+    fn register_service_rejects_empty_id() {
+        let reg = ShellAppRegistrar::with_builtin_panels();
+        let err = reg
+            .register_service(ServiceRegistration::default())
+            .unwrap_err();
+        assert!(matches!(err, RegistrationError::Invalid(_)));
+    }
+
+    #[test]
+    fn install_components_drains_into_shell_registry() {
+        use crate::components::registry::{register_full_shell_chrome, ShellComponentRegistry};
+
+        let reg = ShellAppRegistrar::with_builtin_panels();
+        reg.register_component(ComponentRegistration {
+            id: "my.app.card".into(),
+            render_key: "my.app.card.render".into(),
+        })
+        .unwrap();
+        let mut registry = ShellComponentRegistry::new();
+        register_full_shell_chrome(&mut registry).unwrap();
+        let installed = install_components(&reg, &mut registry);
+        assert_eq!(installed, 1);
+        assert!(registry
+            .as_component_registry()
+            .get("my.app.card")
+            .is_some());
+    }
+
+    #[test]
+    fn install_services_drains_into_service_registry() {
+        use crate::services::{ServiceRegistry, ServiceScope};
+        let reg = ShellAppRegistrar::with_builtin_panels();
+        reg.register_service(ServiceRegistration {
+            id: "my.app.metronome".into(),
+            on_event_key: "my.app.metronome.tick".into(),
+        })
+        .unwrap();
+        let mut services = ServiceRegistry::new();
+        let count = install_services(&reg, &mut services);
+        assert_eq!(count, 1);
+        assert!(services.get("my.app.metronome").is_some());
+        assert_eq!(
+            services.scope_of("my.app.metronome"),
+            Some(ServiceScope::App),
+            "Luau-registered services should land as App-scoped"
+        );
     }
 
     #[test]
@@ -276,5 +549,81 @@ mod tests {
         let count = install_panels_from_manifests(&reg, &apps);
         assert_eq!(count, 1, "only the valid row should land");
         assert!(reg.snapshot_catalog().get("broken.good").is_some());
+    }
+
+    #[test]
+    fn luau_component_block_renders_labelled_placeholder() {
+        // The Luau-backed shim's `lower_ui` produces a container with
+        // semantic markers identifying the component + render key.
+        // Until the Luau runtime is wired, this is the contract every
+        // app-registered component renders against — tests and SSR
+        // both see the same placeholder.
+        let block = LuauComponentBlock::new(ComponentRegistration {
+            id: "my.card".into(),
+            render_key: "my.scripts.card.render".into(),
+        });
+        let node = Node {
+            id: "inst".into(),
+            component: "my.card".into(),
+            ..Default::default()
+        };
+        let cascade = StyleProperties::default();
+        let ctx = LowerCtx::new(None, &cascade);
+        let ui = block.lower_ui(&ctx, &node, &cascade);
+        let UiNode::Container { id, props, .. } = ui else {
+            panic!("expected container, got {ui:?}");
+        };
+        assert_eq!(id, "inst");
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "luau-component"));
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-component" && v == "my.card"));
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-luau-key" && v == "my.scripts.card.render"));
+    }
+
+    #[test]
+    fn luau_scripted_service_passes_events_today() {
+        // ShellService impl returns `Pass` until the Luau runtime is
+        // wired; this pins the contract so a future fan-out change
+        // doesn't silently start swallowing events.
+        use prism_ui_runtime::event::Event;
+        use prism_ui_runtime::layout::Viewport;
+        let svc = LuauScriptedService::new(ServiceRegistration {
+            id: "my.service".into(),
+            on_event_key: "my.scripts.service.on_event".into(),
+        });
+        let mut state = crate::AppState::default();
+        let mut undo = crate::services::UndoStack::default();
+        let mut vfs = crate::services::OsVfs;
+        let mut luau = crate::services::NoopLuauHost::default();
+        let mut clipboard = crate::services::Clipboard::default();
+        let mut ctx = MutCtx {
+            state: &mut state,
+            viewport: Viewport {
+                width: 1.0,
+                height: 1.0,
+            },
+            undo: &mut undo,
+            vfs: &mut vfs,
+            luau: &mut luau,
+            clipboard: &mut clipboard,
+            registry: None,
+            modifier_registry: None,
+        };
+        let table = CommandTable::default();
+        let outcome = svc.on_event(&Event::Wheel { dx: 0.0, dy: 0.0 }, &mut ctx, &table);
+        assert_eq!(outcome, EventOutcome::Pass);
+        assert_eq!(svc.id(), "my.service");
+        assert_eq!(svc.on_event_key(), "my.scripts.service.on_event");
     }
 }

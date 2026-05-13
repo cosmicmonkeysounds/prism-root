@@ -201,6 +201,68 @@ Each step lands with:
 ## Decision log
 
 - 2026-05-13: Doc drafted; implementation kicks off with Loop 1.
+- 2026-05-13: **Follow-on wave landed.** Closes the four "remaining
+  work" bullets from the prior wave:
+
+  1. **Catalog plumbed through to live rendering.** `ShellInner`
+     now owns `app_registrar: ShellAppRegistrar` plus a frozen
+     `dock_catalog: Arc<DockCatalog>` snapshot. `PropCtx` gained
+     `dock_catalog: Option<&'a DockCatalog>`. The `shell.dock-workspace`
+     binding moved from the `SLOT_BINDINGS` table to a closure-style
+     registration; it now emits `dock` + `labels` (panel-id →
+     friendly label) + `tags` (panel-id → content tag) sidecar
+     maps. `dock_workspace_lower` reads from those sidecars instead
+     of consulting a catalog at lower time, and passes
+     `content-tag` through to `dock_panel_lower`, so
+     app-registered panels surface in the live dock end-to-end.
+
+  2. **`register_component` implemented** via a queue +
+     `LuauComponentBlock` shim. The block impls
+     `prism_builder::Block` so the existing blanket `Component`
+     impl picks it up; today's `lower_ui` produces a labelled
+     placeholder (`data-role="luau-component"`,
+     `data-component=...`, `data-luau-key=...`) — the contract
+     every Luau-defined component renders against until the
+     in-process runtime supplies a real `script.render` body.
+
+  3. **`register_service` implemented** via a queue +
+     `LuauScriptedService` shim. `install_services` drains the
+     queue into the live `ServiceRegistry` with
+     `ServiceScope::App` so manifest-declared filtering applies
+     uniformly. Today's `on_event` returns `EventOutcome::Pass`;
+     the dispatch grows when Luau lands.
+
+  4. **End-to-end integration tests.**
+     `packages/prism-shell/tests/dsl_self_bootstrap.rs` (13 tests)
+     drives the full chain from `apps/<id>/manifest.toml` on disk
+     through `PRISM_APPS_DIR` → `app_loader::discover` →
+     `ShellAppRegistrar` → `Shell::new`. Coverage:
+     - launchpad tile resolution from manifests (override + card
+       metadata),
+     - manifest `panels.add` rows reaching `ShellInner.dock_catalog`,
+     - service filtering respecting `services.{required, optional}`
+       declarations,
+     - permissive default keeping every service when no manifest
+       opts in,
+     - `AppRegistrar` trait used polymorphically against
+       `ShellAppRegistrar` and `NoopAppRegistrar`,
+     - queue-based component / service registration end-to-end,
+     - `LuauComponentBlock` rendering the expected placeholder,
+     - fallback launchpad when no `apps/` dir exists.
+
+  **Test deltas:** prism-core 2129 (unchanged), prism-dock 86
+  (unchanged), prism-shell 338 → 347 lib + 13 new integration tests
+  (`tests/dsl_self_bootstrap.rs`). Workspace total: **3603 tests
+  passing**, zero failures, `cargo clippy --workspace --all-targets
+  -D warnings` clean.
+
+  **Residual follow-up:** binding `prism.register_panel` /
+  `prism.register_component` / `prism.register_service` as Luau
+  `UserData` methods on a `Arc<dyn AppRegistrar>` handle, threaded
+  into the in-process mlua state owned by `prism-daemon`. The
+  registrar trait surface is finalised; what remains is the
+  `mlua`-side glue and the in-process script lifecycle in
+  `prism-daemon::modules::luau_module`.
 - 2026-05-13: **All four loops landed.** Final shape:
   - **Loop 1** — `prism_core::AppManifest` (TOML, 5 tests),
     `prism_shell::app_loader::discover` (4 tests),

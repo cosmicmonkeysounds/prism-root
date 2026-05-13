@@ -71,17 +71,34 @@ fn dock_panel_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -
     } else if !node.children.is_empty() {
         ctx.lower_children(&node.children)
     } else if !panel_id.is_empty() {
-        // DSL self-bootstrap Loop 2: runtime `DockCatalog` replaces
-        // the static `PanelKind::tag_for` lookup. App-pushed panel
-        // kinds will be visible once the catalog is threaded through
-        // `LowerCtx` (Loop 4 follow-up); for now built-ins suffice.
-        prism_dock::DockCatalog::with_builtins()
-            .tag_for(&panel_id)
-            .and_then(|tag| {
-                ctx.lower_as(tag, format!("{}::content", node.id), serde_json::json!({}))
-            })
+        // DSL self-bootstrap Loop 4: prefer the pre-resolved
+        // `content-tag` prop from `shell.dock-workspace` (which has
+        // the live `DockCatalog`). Fall back to built-ins for
+        // directly-authored `<shell.dock-panel panel-id="...">`
+        // outside a workspace context.
+        let resolved_tag = ctx.prop_str(node, "content-tag");
+        let tag_owned: String = if !resolved_tag.is_empty() {
+            resolved_tag.to_string()
+        } else {
+            // Fallback: built-in catalog only — app-registered panels
+            // won't surface through direct authoring without a
+            // workspace wrapper, but every built-in still does.
+            prism_dock::DockCatalog::with_builtins()
+                .tag_for(&panel_id)
+                .map(str::to_string)
+                .unwrap_or_default()
+        };
+        if tag_owned.is_empty() {
+            Vec::new()
+        } else {
+            ctx.lower_as(
+                &tag_owned,
+                format!("{}::content", node.id),
+                serde_json::json!({}),
+            )
             .map(|child| vec![child])
             .unwrap_or_default()
+        }
     } else {
         Vec::new()
     };

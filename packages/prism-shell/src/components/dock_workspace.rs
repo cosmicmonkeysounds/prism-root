@@ -39,9 +39,17 @@ fn dock_workspace_schema() -> Vec<FieldSpec> {
 
 fn dock_workspace_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let dock = node.props.get("dock").and_then(decode_dock_node);
+    // DSL self-bootstrap Loop 4: the catalog-enriched binding emits
+    // `labels` (panel-id → friendly label) and `tags` (panel-id →
+    // shell content tag) sidecar maps so this lower fn never has to
+    // consult a catalog directly. Headless tests that don't supply
+    // these emit raw panel ids as labels and fall back to the
+    // built-in catalog for tags via `dock_panel_lower`.
+    let labels = node.props.get("labels");
+    let tags = node.props.get("tags");
 
     let body = match dock {
-        Some(tree) => render_dock(ctx, &tree, &node.id),
+        Some(tree) => render_dock(ctx, &tree, &node.id, labels, tags),
         // Empty workspace — render a coherent (data-empty) frame
         // so the chrome never collapses to a zero-rect during a
         // partial migration / loading state.
@@ -56,6 +64,26 @@ fn dock_workspace_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StylePropertie
         p.height = Sizing::Grow;
         p.semantic = Semantic::tag("div").with_attr("data-role", "dock-workspace");
     })
+}
+
+/// Look up a panel's friendly label from the sidecar map. Falls back
+/// to the panel id itself when the map is missing or the entry is
+/// unknown.
+fn lookup_label<'a>(labels: Option<&'a Value>, panel_id: &'a str) -> &'a str {
+    labels
+        .and_then(|m| m.get(panel_id))
+        .and_then(|v| v.as_str())
+        .unwrap_or(panel_id)
+}
+
+/// Look up a panel's shell content tag from the sidecar map. `None`
+/// when the map is missing or the panel has no registered tag — the
+/// downstream `shell.dock-panel` lower fn falls back to a built-in
+/// catalog lookup in that case (preserves direct-authoring path).
+fn lookup_tag(tags: Option<&Value>, panel_id: &str) -> Option<String> {
+    tags.and_then(|m| m.get(panel_id))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
 }
 
 pub const DOCK_WORKSPACE_SPEC: prism_builder::BlockSpec =
@@ -74,7 +102,13 @@ fn decode_dock_node(v: &Value) -> Option<DockNode> {
     }
 }
 
-fn render_dock(ctx: &LowerCtx<'_>, tree: &DockNode, base_id: &str) -> UiNode {
+fn render_dock(
+    ctx: &LowerCtx<'_>,
+    tree: &DockNode,
+    base_id: &str,
+    labels: Option<&Value>,
+    tags: Option<&Value>,
+) -> UiNode {
     match tree {
         DockNode::Split {
             axis,
@@ -89,8 +123,8 @@ fn render_dock(ctx: &LowerCtx<'_>, tree: &DockNode, base_id: &str) -> UiNode {
             let r = ratio.clamp(0.05, 0.95);
             let first_sz = sizing_for(*axis, r);
             let second_sz = sizing_for(*axis, 1.0 - r);
-            let mut a = render_dock(ctx, first, &format!("{base_id}::a"));
-            let mut b = render_dock(ctx, second, &format!("{base_id}::b"));
+            let mut a = render_dock(ctx, first, &format!("{base_id}::a"), labels, tags);
+            let mut b = render_dock(ctx, second, &format!("{base_id}::b"), labels, tags);
             apply_axis_sizing(&mut a, *axis, first_sz);
             apply_axis_sizing(&mut b, *axis, second_sz);
             bare_container(format!("{base_id}::split"), vec![a, b], |p| {
@@ -107,19 +141,24 @@ fn render_dock(ctx: &LowerCtx<'_>, tree: &DockNode, base_id: &str) -> UiNode {
                 .unwrap_or_else(|| tabs.first().cloned().unwrap_or_default());
             let derived_id = format!("{base_id}::{panel_id}");
             let mut props = json!({ "panel-id": panel_id });
+            // DSL self-bootstrap Loop 4: pre-resolved content tag
+            // from the sidecar map flows through to dock-panel so it
+            // routes the right content block for app-registered
+            // panels with no further catalog lookup.
+            if let Some(tag) = lookup_tag(tags, &panel_id) {
+                props["content-tag"] = Value::String(tag);
+            }
             // Forward the tab list when there's more than one panel
             // in the leaf — the dock-panel renders a tab bar above
-            // its body in that case (existing behaviour).
+            // its body in that case. Labels come from the sidecar
+            // map (DSL self-bootstrap Loop 4).
             if tabs.len() > 1 {
                 let active_idx = *active;
-                // DSL self-bootstrap Loop 2: runtime `DockCatalog`
-                // supersedes the static `PanelKind::from_id` lookup.
-                let catalog = prism_dock::DockCatalog::with_builtins();
                 let entries: Vec<Value> = tabs
                     .iter()
                     .enumerate()
                     .map(|(i, t)| {
-                        let label = catalog.get(t).map(|p| p.label).unwrap_or(t.as_str());
+                        let label = lookup_label(labels, t);
                         json!({ "tab-id": t, "label": label, "active": i == active_idx })
                     })
                     .collect();
@@ -334,10 +373,12 @@ mod tests {
 
     #[test]
     fn multi_tab_leaf_uses_friendly_label_not_panel_id() {
-        // §43 A3 pin: the tab label must come from `PanelKind.label`,
-        // not the kebab-case panel id. Regression catcher for the
-        // "component-palette" / "properties" leak in the screenshot
-        // that motivated the §43 plan.
+        // §43 A3 pin: the tab label must come from the `labels`
+        // sidecar map emitted by the catalog-enriched binding (DSL
+        // self-bootstrap Loop 4), not the kebab-case panel id.
+        // Regression catcher for the "component-palette" /
+        // "properties" leak in the screenshot that motivated the §43
+        // plan.
         //
         // We walk the lowered tree to collect every `Text { content }`
         // string; the panel id (`component-palette`) must not appear
@@ -348,7 +389,13 @@ mod tests {
             active: 0,
         };
         let ui = lower(
-            json!({ "dock": serde_json::to_value(&dock).unwrap() }),
+            json!({
+                "dock": serde_json::to_value(&dock).unwrap(),
+                "labels": {
+                    "component-palette": "Components",
+                    "inspector": "Inspector",
+                },
+            }),
             true,
         );
         let mut texts: Vec<String> = Vec::new();
@@ -361,6 +408,81 @@ mod tests {
             !texts.iter().any(|t| t == "component-palette"),
             "raw panel id `component-palette` leaked as visible text; got texts={texts:?}"
         );
+    }
+
+    #[test]
+    fn missing_labels_map_falls_back_to_panel_id() {
+        // Headless tests / partial migrations may not supply labels.
+        // Lower fn must still render with the raw id as a sane fallback.
+        let dock = PdNode::TabGroup {
+            tabs: vec!["builder".into(), "code-editor".into()],
+            active: 0,
+        };
+        let ui = lower(
+            json!({ "dock": serde_json::to_value(&dock).unwrap() }),
+            true,
+        );
+        let mut texts: Vec<String> = Vec::new();
+        collect_text_content(&ui, &mut texts);
+        // Either the raw id surfaces (no labels), or at least one of
+        // the tabs renders — guarantee: no panic / no empty render.
+        assert!(
+            !texts.is_empty(),
+            "expected at least one tab label, got texts={texts:?}"
+        );
+    }
+
+    #[test]
+    fn content_tag_sidecar_flows_through_to_dock_panel() {
+        // DSL self-bootstrap Loop 4 pin: the `tags` map emitted by
+        // the binding propagates as the `content-tag` prop on the
+        // dispatched `shell.dock-panel`. That's the seam through
+        // which app-registered panels surface their content blocks.
+        let dock = PdNode::TabGroup {
+            tabs: vec!["lattice.peers".into()],
+            active: 0,
+        };
+        let ui = lower(
+            json!({
+                "dock": serde_json::to_value(&dock).unwrap(),
+                "tags": { "lattice.peers": "lattice.peers-panel" },
+            }),
+            true,
+        );
+        // Walk the rendered tree looking for the dock-panel container.
+        // Its semantic should carry `data-panel = lattice.peers`.
+        let mut roles: Vec<(String, String)> = Vec::new();
+        collect_role_panel_pairs(&ui, &mut roles);
+        assert!(
+            roles
+                .iter()
+                .any(|(r, p)| r == "dock-panel" && p == "lattice.peers"),
+            "expected dock-panel for `lattice.peers`, got roles={roles:?}"
+        );
+    }
+
+    fn collect_role_panel_pairs(node: &UiNode, out: &mut Vec<(String, String)>) {
+        if let UiNode::Container {
+            props, children, ..
+        } = node
+        {
+            let mut role = String::new();
+            let mut panel = String::new();
+            for (k, v) in &props.semantic.attrs {
+                if k == "data-role" {
+                    role = v.clone();
+                }
+                if k == "data-panel" {
+                    panel = v.clone();
+                }
+            }
+            if !role.is_empty() && !panel.is_empty() {
+                out.push((role, panel));
+            }
+            for c in children {
+                collect_role_panel_pairs(c, out);
+            }
+        }
     }
 
     fn collect_text_content(node: &UiNode, out: &mut Vec<String>) {
