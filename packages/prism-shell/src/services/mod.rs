@@ -232,10 +232,41 @@ pub enum ServiceScope {
     App,
 }
 
+/// ADR-010: carrier handed to a [`ServiceFactory`] at construction
+/// time. Holds references to the resources the factory may need to
+/// capture (the active app's id, shared registries, etc.) without
+/// forcing the factory closure to take ten parameters.
+///
+/// Today's body carries one field; new fields land here as the
+/// factory path grows (Luau handle, app registrar reference, etc.).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ServiceContext<'a> {
+    /// The active app's id when the factory is constructing a service
+    /// for a specific app. `None` for universal services and for the
+    /// initial boot pass where no app has been activated yet.
+    pub app_id: Option<&'a str>,
+}
+
+/// ADR-010: build a service on demand. Run once per registration
+/// (eager) or once per activation (lazy, via
+/// [`ServiceRegistry::rebuild_app_services`]). Returns a
+/// fully-constructed `Arc<dyn ShellService>` ready to participate in
+/// `fan_out`.
+pub type ServiceFactory =
+    Box<dyn Fn(&ServiceContext<'_>) -> Arc<dyn ShellService> + Send + Sync>;
+
 struct RegisteredService {
     scope: ServiceScope,
     service: Arc<dyn ShellService>,
     command_ids: Vec<&'static str>,
+    /// ADR-010: optional factory that knows how to rebuild this
+    /// service from a fresh [`ServiceContext`]. Populated when the
+    /// caller used [`ServiceRegistry::add_factory_scoped`]; `None` for
+    /// services registered via the legacy eager
+    /// [`ServiceRegistry::add`] / [`ServiceRegistry::add_scoped`]
+    /// path (those services skip the
+    /// [`ServiceRegistry::rebuild_app_services`] pass).
+    factory: Option<ServiceFactory>,
 }
 
 /// One row per service, fan-out in declared order.
@@ -272,10 +303,41 @@ impl ServiceRegistry {
     /// register through this method with `ServiceScope::App` so
     /// [`Self::activate_app_services`] can filter them.
     pub fn add_scoped<S: ShellService + 'static>(&mut self, scope: ServiceScope, service: S) {
-        let arc: Arc<dyn ShellService> = Arc::new(service);
-        let id = arc.id();
+        // ADR-010: eager registration installs no factory — the
+        // service is fixed by construction. `rebuild_app_services`
+        // skips entries with `factory: None`.
+        self.install(scope, Arc::new(service), None);
+    }
+
+    /// ADR-010: register a service via a factory closure. The factory
+    /// runs immediately to produce the initial instance (eager
+    /// instantiation matches today's contract — see ADR-010 §"When
+    /// the factory runs"). The factory is kept alongside the instance
+    /// so [`Self::rebuild_app_services`] can re-run it with a fresh
+    /// [`ServiceContext`].
+    ///
+    /// Apps that push Luau-backed services pay for this path so
+    /// the runtime can re-bind the script handle when the active
+    /// app changes.
+    pub fn add_factory_scoped(&mut self, scope: ServiceScope, factory: ServiceFactory) {
+        let ctx = ServiceContext::default();
+        let instance = factory(&ctx);
+        self.install(scope, instance, Some(factory));
+    }
+
+    /// Internal: install an already-built `Arc<dyn ShellService>` into
+    /// the registry, recording the optional factory for future
+    /// rebuild passes. Used by both [`Self::add_scoped`] (factory =
+    /// `None`) and [`Self::add_factory_scoped`] (factory = `Some`).
+    fn install(
+        &mut self,
+        scope: ServiceScope,
+        service: Arc<dyn ShellService>,
+        factory: Option<ServiceFactory>,
+    ) {
+        let id = service.id();
         let mut command_ids = Vec::new();
-        for spec in arc.commands() {
+        for spec in service.commands() {
             assert!(
                 !self.commands.map.contains_key(spec.id),
                 "duplicate command id `{}` (declared by service `{}`)",
@@ -286,12 +348,79 @@ impl ServiceRegistry {
             self.commands.map.insert(spec.id, spec);
         }
         assert!(!self.by_id.contains_key(id), "duplicate service id `{id}`");
-        self.by_id.insert(id, Arc::clone(&arc));
+        self.by_id.insert(id, Arc::clone(&service));
         self.services.push(RegisteredService {
             scope,
-            service: arc,
+            service,
             command_ids,
+            factory,
         });
+    }
+
+    /// ADR-010: re-run every [`ServiceScope::App`] factory with a
+    /// fresh [`ServiceContext`]. Drops the prior instance, replaces
+    /// it with the factory's output, and rebuilds the command table
+    /// entries those services contributed. Used by the active-app
+    /// cursor swap (Phase 1 follow-up) and by hot-reload.
+    ///
+    /// Services registered through the eager
+    /// [`Self::add`] / [`Self::add_scoped`] path have no factory and
+    /// are left untouched — only factory-backed services rebuild.
+    pub fn rebuild_app_services(&mut self, ctx: &ServiceContext<'_>) {
+        // Walk the registered services, rebuilding any `App`-scoped
+        // entry whose `factory` is `Some`. Collect updates after the
+        // loop so the borrow checker doesn't fight us — we need both
+        // the existing service's command_ids (to drop) and the new
+        // service's commands (to install).
+        struct Rebuild {
+            idx: usize,
+            new_instance: Arc<dyn ShellService>,
+            new_command_ids: Vec<&'static str>,
+            new_command_specs: Vec<CommandSpec>,
+            old_command_ids: Vec<&'static str>,
+        }
+        let mut updates: Vec<Rebuild> = Vec::new();
+        for (idx, r) in self.services.iter().enumerate() {
+            if !matches!(r.scope, ServiceScope::App) {
+                continue;
+            }
+            let Some(factory) = r.factory.as_ref() else {
+                continue;
+            };
+            let new_instance = factory(ctx);
+            let new_command_specs = new_instance.commands();
+            let new_command_ids: Vec<&'static str> =
+                new_command_specs.iter().map(|s| s.id).collect();
+            updates.push(Rebuild {
+                idx,
+                new_instance,
+                new_command_ids,
+                new_command_specs,
+                old_command_ids: r.command_ids.clone(),
+            });
+        }
+        // Apply updates: drop old commands, swap instances, install
+        // new commands. The `by_id` map keys on the service id, which
+        // a factory must not change between rebuilds (that would
+        // break cross-service lookups). We assert this invariant.
+        for u in updates {
+            let r = &mut self.services[u.idx];
+            let old_id = r.service.id();
+            let new_id = u.new_instance.id();
+            assert_eq!(
+                old_id, new_id,
+                "ADR-010: factory rebuild must preserve service id (was `{old_id}`, now `{new_id}`)"
+            );
+            for cmd_id in &u.old_command_ids {
+                self.commands.map.remove(cmd_id);
+            }
+            for spec in u.new_command_specs {
+                self.commands.map.insert(spec.id, spec);
+            }
+            self.by_id.insert(new_id, Arc::clone(&u.new_instance));
+            r.service = u.new_instance;
+            r.command_ids = u.new_command_ids;
+        }
     }
 
     /// Filter `App`-scoped services against an allowlist. `Universal`
@@ -549,6 +678,243 @@ mod tests {
         for app in ["builder", "signals", "luau", "project"] {
             assert!(reg.get(app).is_none(), "`{app}` should be dropped");
         }
+    }
+
+    // ── ADR-010 — service factories ──────────────────────────────
+
+    /// Tiny `ShellService` impl whose construction we can count.
+    /// The factory closure captures an `AtomicUsize` and increments
+    /// it; this struct just satisfies the `ShellService` shape.
+    struct Counted {
+        id: &'static str,
+    }
+    impl ShellService for Counted {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+    }
+
+    #[test]
+    fn add_factory_scoped_runs_factory_immediately_and_lands_in_registry() {
+        let mut reg = ServiceRegistry::new();
+        let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cc = Arc::clone(&call_count);
+        reg.add_factory_scoped(
+            ServiceScope::App,
+            Box::new(move |_ctx| {
+                cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Arc::new(Counted { id: "test.factory" })
+            }),
+        );
+        // Factory ran exactly once at registration.
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // The instance is present in the registry.
+        assert!(reg.get("test.factory").is_some());
+        // Scope is recorded.
+        assert_eq!(reg.scope_of("test.factory"), Some(ServiceScope::App));
+    }
+
+    #[test]
+    fn rebuild_app_services_reruns_factories_with_new_context() {
+        let mut reg = ServiceRegistry::new();
+        let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        // Record every `ctx.app_id` the factory observed, so the
+        // test can assert the rebuild path actually flowed a fresh
+        // context through.
+        let seen_app_ids: Arc<std::sync::Mutex<Vec<Option<String>>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let cc = Arc::clone(&call_count);
+        let seen = Arc::clone(&seen_app_ids);
+        reg.add_factory_scoped(
+            ServiceScope::App,
+            Box::new(move |ctx| {
+                cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                seen.lock()
+                    .unwrap()
+                    .push(ctx.app_id.map(str::to_string));
+                Arc::new(Counted { id: "test.context" })
+            }),
+        );
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(seen_app_ids.lock().unwrap().as_slice(), &[None]);
+
+        // Rebuild with a populated app_id; factory runs again.
+        reg.rebuild_app_services(&ServiceContext {
+            app_id: Some("lattice"),
+        });
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(
+            seen_app_ids.lock().unwrap().as_slice(),
+            &[None, Some("lattice".to_string())],
+        );
+        assert!(reg.get("test.context").is_some());
+    }
+
+    #[test]
+    fn rebuild_app_services_skips_eager_services() {
+        // Services registered via the eager `add_scoped` path have no
+        // factory; rebuild must leave them untouched.
+        struct Fixed;
+        impl ShellService for Fixed {
+            fn id(&self) -> &'static str {
+                "test.fixed"
+            }
+        }
+        let mut reg = ServiceRegistry::new();
+        reg.add_scoped(ServiceScope::App, Fixed);
+        let before_len = reg.len();
+        let before_ptr = Arc::as_ptr(&reg.get("test.fixed").unwrap());
+        reg.rebuild_app_services(&ServiceContext::default());
+        let after_len = reg.len();
+        let after_ptr = Arc::as_ptr(&reg.get("test.fixed").unwrap());
+        assert_eq!(before_len, after_len);
+        assert!(
+            std::ptr::eq(before_ptr, after_ptr),
+            "rebuild must leave eager services untouched"
+        );
+    }
+
+    #[test]
+    fn rebuild_app_services_skips_universal_services() {
+        // Universal services should never be rebuilt — they're the
+        // shell chrome, not app concerns.
+        let mut reg = ServiceRegistry::new();
+        let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cc = Arc::clone(&call_count);
+        reg.add_factory_scoped(
+            ServiceScope::Universal,
+            Box::new(move |_| {
+                cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Arc::new(Counted { id: "test.universal" })
+            }),
+        );
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        reg.rebuild_app_services(&ServiceContext::default());
+        // Universal-scoped factory only ran once (during initial
+        // registration), even though the registry's app-services
+        // rebuild was triggered.
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn rebuild_app_services_swaps_command_table_entries() {
+        // Services that emit commands need their CommandTable rows
+        // to track factory rebuilds. Otherwise the command palette
+        // surfaces stale handlers.
+        struct V1;
+        impl ShellService for V1 {
+            fn id(&self) -> &'static str {
+                "test.cmds"
+            }
+            fn commands(&self) -> Vec<CommandSpec> {
+                vec![CommandSpec {
+                    id: "test.cmd.v1",
+                    label: "V1",
+                    category: "Test",
+                    shortcut: None,
+                    handler: Arc::new(|_| {}),
+                }]
+            }
+        }
+        struct V2;
+        impl ShellService for V2 {
+            fn id(&self) -> &'static str {
+                "test.cmds"
+            }
+            fn commands(&self) -> Vec<CommandSpec> {
+                vec![CommandSpec {
+                    id: "test.cmd.v2",
+                    label: "V2",
+                    category: "Test",
+                    shortcut: None,
+                    handler: Arc::new(|_| {}),
+                }]
+            }
+        }
+        let mut reg = ServiceRegistry::new();
+        let toggle = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let tg = Arc::clone(&toggle);
+        reg.add_factory_scoped(
+            ServiceScope::App,
+            Box::new(move |_| {
+                if tg.load(std::sync::atomic::Ordering::SeqCst) {
+                    Arc::new(V2)
+                } else {
+                    Arc::new(V1)
+                }
+            }),
+        );
+        // V1 command present, V2 absent.
+        assert!(reg.commands().get("test.cmd.v1").is_some());
+        assert!(reg.commands().get("test.cmd.v2").is_none());
+
+        // Flip the toggle and rebuild — V1 command drops, V2 surfaces.
+        toggle.store(true, std::sync::atomic::Ordering::SeqCst);
+        reg.rebuild_app_services(&ServiceContext::default());
+        assert!(reg.commands().get("test.cmd.v1").is_none());
+        assert!(reg.commands().get("test.cmd.v2").is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "factory rebuild must preserve service id")]
+    fn factory_changing_service_id_between_rebuilds_panics() {
+        // ADR-010 invariant: a factory must return the same id every
+        // time it runs. Otherwise the `by_id` lookup table grows
+        // ghost entries and cross-service reach breaks.
+        let mut reg = ServiceRegistry::new();
+        let toggle = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let tg = Arc::clone(&toggle);
+        struct A;
+        impl ShellService for A {
+            fn id(&self) -> &'static str {
+                "test.id-a"
+            }
+        }
+        struct B;
+        impl ShellService for B {
+            fn id(&self) -> &'static str {
+                "test.id-b"
+            }
+        }
+        reg.add_factory_scoped(
+            ServiceScope::App,
+            Box::new(move |_| {
+                if tg.load(std::sync::atomic::Ordering::SeqCst) {
+                    Arc::new(B) as Arc<dyn ShellService>
+                } else {
+                    Arc::new(A) as Arc<dyn ShellService>
+                }
+            }),
+        );
+        toggle.store(true, std::sync::atomic::Ordering::SeqCst);
+        reg.rebuild_app_services(&ServiceContext::default());
+    }
+
+    #[test]
+    fn eager_add_paths_remain_byte_compatible() {
+        // ADR-010 backwards-compat pin: existing `add` / `add_scoped`
+        // call sites must keep working identically. Both delegate
+        // through `install` with `factory: None`, so the only
+        // observable change is that `rebuild_app_services` skips them.
+        struct One;
+        impl ShellService for One {
+            fn id(&self) -> &'static str {
+                "test.one"
+            }
+        }
+        struct Two;
+        impl ShellService for Two {
+            fn id(&self) -> &'static str {
+                "test.two"
+            }
+        }
+        let mut reg = ServiceRegistry::new();
+        reg.add(One);
+        reg.add_scoped(ServiceScope::App, Two);
+        assert_eq!(reg.scope_of("test.one"), Some(ServiceScope::Universal));
+        assert_eq!(reg.scope_of("test.two"), Some(ServiceScope::App));
+        assert!(reg.get("test.one").is_some());
+        assert!(reg.get("test.two").is_some());
     }
 
     #[test]

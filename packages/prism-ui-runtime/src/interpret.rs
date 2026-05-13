@@ -643,6 +643,18 @@ impl SlotBindings {
 /// Parse + lower in one shot. Recoverable parse errors abort the
 /// lowering — callers (build script, live-edit loop) surface them to
 /// the editor.
+/// Canonical attribute-key form for an `on:<event>[.modifier]` local
+/// part. The DSL author writes `on:click.once`; consumers downstream
+/// (hit-test cache, resolver-side handler attach) read a flattened
+/// dash-joined key (`click-once`). One seam, two callers — the
+/// runtime's `apply_container_attributes` and the resolver's
+/// `attach_on_handlers` both route through here so the wire shape
+/// stays in sync.
+#[doc(hidden)]
+pub fn on_event_attr_key(local: &str) -> String {
+    local.replace('.', "-")
+}
+
 pub fn interpret(source: &str) -> Result<Vec<Node>, Vec<ParseError>> {
     interpret_with_scope(source, &LowerScope::default())
 }
@@ -692,6 +704,31 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
 /// payload is appended at the outer target and lowered through the
 /// same `lower_document_with_scope` recursion — see the teleport
 /// handler in `lower_element`).
+/// Build a synthetic `Element` whose tag is `new_tag` and whose
+/// attributes are `el`'s minus the `tag=` slot the runtime consumed
+/// for dispatch routing. Used by `<dispatch tag="{expr}"/>` so the
+/// rewritten element flows through the same lowering path an authored
+/// element would have. Range data is copied verbatim — diagnostics
+/// retain the original source span.
+fn element_with_retagged(el: &Element, new_tag: &str) -> Element {
+    let attributes = el
+        .attributes
+        .iter()
+        .filter(|attr| {
+            !(matches!(attr.name.namespace, AttributeNamespace::Bare) && attr.name.local == "tag")
+        })
+        .cloned()
+        .collect();
+    Element {
+        tag: new_tag.to_string(),
+        attributes,
+        children: el.children.clone(),
+        self_closing: el.self_closing,
+        range: el.range,
+        tag_range: el.tag_range,
+    }
+}
+
 fn collect_teleports(nodes: &[AstNode], out: &mut HashMap<String, Vec<AstNode>>) {
     for node in nodes {
         let AstNode::Element(el) = node else { continue };
@@ -874,6 +911,30 @@ fn eval_memo_deps(body: &str, scope: &LowerScope) -> Vec<serde_json::Value> {
 /// Every author-visible lowering still flows through this function;
 /// the memo gate is purely a cache layer.
 fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
+    // **`<dispatch tag="{expr}"/>` — runtime-tag dispatch.** When the
+    // tag attribute resolves to a closed-set runtime primitive
+    // (`container`, `text`, `heading`, `image`, `spacer`, `input`,
+    // `fragment`, `slot`, `host-children`), rebuild a synthetic
+    // element with the resolved tag and lower it through the same
+    // primitive arms below. When it resolves to anything else, the
+    // synthetic element falls through to the resolver — which now
+    // sees the resolved tag instead of `dispatch`, so plugin / shell
+    // tags route uniformly. Closes the §15 PRUI-reference gap that
+    // listed `<{panel.tag} .../>` as inexpressible: data-driven tag
+    // routing now works for the runtime's primitive vocabulary as
+    // well as registered tags. The pre-existing `component=` form
+    // (resolver-side dispatch by registered-component id) keeps
+    // working — that path is still handled by `RegistryTagResolver`
+    // when the synthesised tag stays "dispatch".
+    if el.tag == "dispatch" {
+        if let Some(target_tag) = bare_attr_value(el, "tag", scope) {
+            let trimmed = target_tag.trim();
+            if !trimmed.is_empty() && trimmed != "dispatch" {
+                let synthetic = element_with_retagged(el, trimmed);
+                return lower_element_body(&synthetic, scope);
+            }
+        }
+    }
     match el.tag.as_str() {
         "container" | "component" => {
             let mut props = ContainerProps::default();
@@ -1140,7 +1201,7 @@ fn expand_control_flow(
                 // unconditional reset-to-`None` becomes the "no for at
                 // all" baseline up at `None` of `match cf`.
                 chain_taken = Some(!iter.is_empty());
-                for (idx, (key, item)) in iter.into_iter().enumerate() {
+                for (key, item) in iter {
                     let mut child_scope = active.clone().with_binding(var.clone(), item);
                     // Optional iteration-index / object-key binding —
                     // `for="row, idx in rows"` exposes the index as a
@@ -1152,11 +1213,6 @@ fn expand_control_flow(
                         child_scope = child_scope.with_binding(idx_name.clone(), key);
                     }
                     out.push((node.clone(), Some(child_scope)));
-                    // `idx` is the running iteration counter; the
-                    // bound second-LHS value is whatever the source
-                    // shape natively produces (integer for arrays /
-                    // ranges, string for object entries).
-                    let _ = idx;
                 }
             }
         }
@@ -1260,9 +1316,7 @@ fn resolve_to_i64(s: &str, scope: &LowerScope) -> Option<i64> {
     if let Ok(n) = s.parse::<i64>() {
         return Some(n);
     }
-    let value = lookup_expression(s, scope)
-        .cloned()
-        .or_else(|| evaluate_expression(s, scope))?;
+    let value = lookup_path_owned(s, scope).or_else(|| evaluate_expression(s, scope))?;
     match value {
         serde_json::Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
         serde_json::Value::String(s) => s.parse::<i64>().ok(),
@@ -1803,20 +1857,18 @@ fn apply_container_attributes(
             // so attaching handlers to text / spacer leaves is a
             // separate follow-up (every leaf with author-driven
             // events lives inside a container today).
+            //
+            // Empty-string filter (PRUI ref §4): `on:event=""` is
+            // dropped so a ternary that resolves to `""` omits the
+            // handler — matches the `data:` / `aria:` rule.
+            //
             // **Wave 14.3** — recognise dotted event-modifier suffixes
-            // (Vue `@click.once`, Svelte `on:click|once`, HTMX
-            // `hx-trigger="click delay:500ms"`). The author writes
-            // `on:click.once="cmd foo"` / `on:click.stop` and the
-            // runtime round-trips it as a `data-on-click-once`
-            // semantic attr — the dot becomes a dash so the existing
-            // `data-on-<key>` hit-test cache picks it up uniformly.
-            // Today no consumer reads the modifier suffix; data carries
-            // author intent and the resolver-side handler integration
-            // follows (same pattern as Wave 9.4 transitions + Wave
-            // 13.3 use directives).
+            // (Vue `@click.once`, Svelte `on:click|once`). The dot
+            // becomes a dash so the existing `data-on-<key>` hit-test
+            // cache picks it up uniformly.
             AttributeNamespace::On => {
-                if let Some(action) = raw {
-                    let local_key = local.replace('.', "-");
+                if let Some(action) = raw.filter(|s| !s.is_empty()) {
+                    let local_key = on_event_attr_key(local);
                     props
                         .semantic
                         .attrs
@@ -1845,13 +1897,10 @@ fn apply_container_attributes(
             // so the HTML / SSR backends inherit them and the
             // hit-test cache can route off them like any `data-*`.
             //
-            // Wave 12 follow-up: mirror the `data:` namespace's
-            // empty-string filter so authors can use ternary
-            // (`aria:level="{depth > 0 ? depth + 1 : ''}"`) to omit
-            // the attribute conditionally. A literal `aria-foo=""` is
-            // meaningless to every screen reader, so dropping it
-            // matches user intent rather than HTML's serialisation
-            // shape.
+            // Both filter empty resolved values so authors can write
+            // a ternary (`aria:level="{depth > 0 ? depth + 1 : ''}"`,
+            // `data:on-click="{enabled ? 'cmd save' : ''}"`) to omit
+            // the attribute conditionally — same shape `on:` uses.
             AttributeNamespace::Aria => {
                 if let Some(value) = raw.filter(|s| !s.is_empty()) {
                     props
@@ -2002,13 +2051,14 @@ fn collect_text_content(children: &[AstNode], scope: &LowerScope) -> String {
                 out.push_str(&resolved);
             }
             AstNode::Interpolation(expr) => {
-                // Cheap bare-path lookup first (Wave 11.2 substrate);
-                // operator-bearing bodies (ternary, `||`, `&&`, `==`)
-                // fall through to the full evaluator so authors can
-                // write `<text>{text ? text : status}</text>` against
-                // the same vocabulary attribute interpolations use.
-                let resolved = if let Some(v) = lookup_expression(&expr.body, scope) {
-                    stringify_value(v)
+                // Cheap bare-path lookup first (Wave 11.2 substrate),
+                // with virtual `.length`/`.first`/`.last` segments
+                // included; operator-bearing bodies (ternary, `||`,
+                // `&&`, `==`) fall through to the full evaluator so
+                // authors can write `<text>{text ? text : status}</text>`
+                // against the same vocabulary attribute interpolations use.
+                let resolved = if let Some(v) = lookup_path_owned(&expr.body, scope) {
+                    stringify_value(&v)
                 } else if let Some(v) = evaluate_expression(&expr.body, scope) {
                     stringify_value(&v)
                 } else {
@@ -2102,14 +2152,15 @@ fn attribute_string(value: &AttributeValue) -> Option<String> {
 /// expression form is one place to update.
 fn resolved_attribute_string(value: &AttributeValue, scope: &LowerScope) -> Option<String> {
     fn resolve_one(body: &str, scope: &LowerScope) -> String {
-        // Cheap path first — bare dotted-path binding lookup. Keeps
-        // typed `Value::String("hi")` stringified verbatim (lookup
-        // returns `&"hi"`, `stringify_value` strips the quotes) and
-        // avoids paying the expression-parser cost for plain `{name}`
-        // interpolations. Operator-bearing expressions fall through
-        // to `evaluate_expression`.
-        if let Some(v) = lookup_expression(body, scope) {
-            return stringify_value(v);
+        // Cheap path first — bare dotted-path binding lookup, with
+        // virtual `.length`/`.first`/`.last` segments handled by
+        // [`lookup_path_owned`]. Keeps typed `Value::String("hi")`
+        // stringified verbatim (lookup returns `"hi"`, `stringify_value`
+        // strips the quotes) and avoids paying the expression-parser
+        // cost for plain `{name}` interpolations. Operator-bearing
+        // expressions fall through to `evaluate_expression`.
+        if let Some(v) = lookup_path_owned(body, scope) {
+            return stringify_value(&v);
         }
         match evaluate_expression(body, scope) {
             Some(v) => stringify_value(&v),
@@ -2157,8 +2208,8 @@ fn interpolate(text: &str, scope: &LowerScope) -> String {
                 body.push(inner);
             }
             let body = body.trim();
-            if let Some(v) = lookup_expression(body, scope) {
-                out.push_str(&stringify_value(v));
+            if let Some(v) = lookup_path_owned(body, scope) {
+                out.push_str(&stringify_value(&v));
             } else if let Some(v) = evaluate_expression(body, scope) {
                 out.push_str(&stringify_value(&v));
             }
@@ -2188,6 +2239,20 @@ pub fn lookup_expression_in_scope<'a>(
     lookup_expression(body, scope)
 }
 
+/// Owned-value counterpart of [`lookup_expression_in_scope`] that
+/// also supports virtual trailing segments (`.length`, `.size`,
+/// `.count`, `.first`, `.last`) on arrays / objects / strings. Used
+/// by `prism-builder`'s resolver so dispatched-tag attribute
+/// resolution (`<shell.foo prop="{items.length}"/>`) reads through
+/// the same vocabulary the runtime's own attribute paths use.
+#[doc(hidden)]
+pub fn lookup_path_owned_in_scope(
+    body: &str,
+    scope: &LowerScope,
+) -> Option<serde_json::Value> {
+    lookup_path_owned(body, scope)
+}
+
 /// Internal counterpart used by `lower_*` paths.
 fn lookup_expression<'a>(body: &str, scope: &'a LowerScope) -> Option<&'a serde_json::Value> {
     let body = body.trim();
@@ -2214,6 +2279,70 @@ fn lookup_expression<'a>(body: &str, scope: &'a LowerScope) -> Option<&'a serde_
     Some(cursor)
 }
 
+/// Owned-value path resolution that augments [`lookup_expression`]
+/// with **virtual trailing segments** on arrays / objects:
+///
+/// | Segment | Array | Object | String |
+/// |---|---|---|---|
+/// | `.length`, `.size`, `.count` | number of items | number of keys | grapheme count |
+/// | `.first` | first item | — | first char (as string) |
+/// | `.last`  | last item  | — | last char (as string)  |
+///
+/// `arr.length` returns the integer length; `arr.first` / `.last`
+/// return the JSON value at the leaf position (or `Null` for an empty
+/// container). Strings inherit a parity surface so authors aren't
+/// surprised by `name.length` on a string binding. Returns `None` when
+/// the path doesn't terminate in a virtual segment AND
+/// [`lookup_expression`] can't resolve it either.
+///
+/// Used by every "resolve a path body" seam — `resolved_attribute_string`,
+/// `resolve_to_i64`, `eval_truthy`, the text-interpolation path —
+/// so the same author-facing dotted-path vocabulary works everywhere.
+fn lookup_path_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value> {
+    if let Some(v) = lookup_expression(body, scope) {
+        return Some(v.clone());
+    }
+    let body = body.trim();
+    let (head, virtual_seg) = body.rsplit_once('.')?;
+    let head = head.trim();
+    let virtual_seg = virtual_seg.trim();
+    if !matches!(
+        virtual_seg,
+        "length" | "size" | "count" | "first" | "last"
+    ) {
+        return None;
+    }
+    let parent = lookup_expression(head, scope)?;
+    Some(match (parent, virtual_seg) {
+        (serde_json::Value::Array(arr), "length" | "size" | "count") => {
+            serde_json::Value::from(arr.len() as i64)
+        }
+        (serde_json::Value::Object(map), "length" | "size" | "count") => {
+            serde_json::Value::from(map.len() as i64)
+        }
+        (serde_json::Value::String(s), "length" | "size" | "count") => {
+            serde_json::Value::from(s.chars().count() as i64)
+        }
+        (serde_json::Value::Array(arr), "first") => {
+            arr.first().cloned().unwrap_or(serde_json::Value::Null)
+        }
+        (serde_json::Value::Array(arr), "last") => {
+            arr.last().cloned().unwrap_or(serde_json::Value::Null)
+        }
+        (serde_json::Value::String(s), "first") => s
+            .chars()
+            .next()
+            .map(|c| serde_json::Value::from(c.to_string()))
+            .unwrap_or(serde_json::Value::Null),
+        (serde_json::Value::String(s), "last") => s
+            .chars()
+            .last()
+            .map(|c| serde_json::Value::from(c.to_string()))
+            .unwrap_or(serde_json::Value::Null),
+        _ => return None,
+    })
+}
+
 /// Truthy evaluator for `if=` / `else-if=`. Routes through the full
 /// expression evaluator in [`evaluate_expression`] so authors get
 /// ternary, boolean `||`/`&&`/`!`, comparisons, arithmetic, and dotted
@@ -2233,12 +2362,13 @@ fn eval_truthy(body: &str, scope: &LowerScope) -> bool {
     }
     // Direct binding lookup — handles the `if="{row.selected}"` shape
     // where the bound value is a typed JSON value (array / object /
-    // bool). Falls through for any operator-bearing expression because
-    // `lookup_expression` only walks bare dotted paths.
-    if let Some(v) = lookup_expression(body, scope) {
+    // bool). Virtual `.length`/`.first`/`.last` segments resolve here
+    // too, so `if="{items.length}"` is true iff non-empty without any
+    // operator. Falls through for any operator-bearing expression.
+    if let Some(v) = lookup_path_owned(body, scope) {
         return match v {
             serde_json::Value::Null => false,
-            serde_json::Value::Bool(b) => *b,
+            serde_json::Value::Bool(b) => b,
             serde_json::Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
             serde_json::Value::String(s) => !s.is_empty(),
             serde_json::Value::Array(a) => !a.is_empty(),
@@ -2294,32 +2424,19 @@ pub fn evaluate_expression(body: &str, scope: &LowerScope) -> Option<serde_json:
             if operand_type != "field" {
                 return ExprValue::String(String::new());
             }
-            let mut cursor = match self.scope.binding(id) {
-                Some(v) => v,
-                None => return ExprValue::String(String::new()),
+            // Compose the dotted path the way `lookup_path_owned` reads
+            // it, so virtual `.length` / `.first` / `.last` segments
+            // resolve the same way they do in bare-path lookups —
+            // `items.length > 0` is the symmetric operator-bearing form
+            // of `if="{items.length}"`.
+            let full_path = match subfield {
+                Some(rest) => format!("{}.{}", id, rest),
+                None => id.to_string(),
             };
-            if let Some(path) = subfield {
-                for seg in path.split('.') {
-                    let seg = seg.trim();
-                    if seg.is_empty() {
-                        return ExprValue::String(String::new());
-                    }
-                    cursor = match cursor {
-                        serde_json::Value::Object(map) => match map.get(seg) {
-                            Some(v) => v,
-                            None => return ExprValue::String(String::new()),
-                        },
-                        serde_json::Value::Array(arr) => {
-                            match seg.parse::<usize>().ok().and_then(|i| arr.get(i)) {
-                                Some(v) => v,
-                                None => return ExprValue::String(String::new()),
-                            }
-                        }
-                        _ => return ExprValue::String(String::new()),
-                    };
-                }
+            match lookup_path_owned(&full_path, self.scope) {
+                Some(v) => json_to_expr_value(&v),
+                None => ExprValue::String(String::new()),
             }
-            json_to_expr_value(cursor)
         }
     }
     let store = ScopeStore { scope };
@@ -2347,9 +2464,20 @@ fn expr_value_to_json(v: prism_core::language::expression::ExprValue) -> serde_j
     use prism_core::language::expression::ExprValue;
     match v {
         ExprValue::Boolean(b) => serde_json::Value::Bool(b),
-        ExprValue::Number(n) => serde_json::Number::from_f64(n)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+        // Prefer the integer encoding when the value is exact — keeps
+        // `Number(5)` stringifying as `"5"` rather than `"5.0"` so a
+        // count derived through the evaluator surface (e.g.
+        // `items.length + 1`) reads identically to one derived through
+        // the direct `lookup_path_owned` surface.
+        ExprValue::Number(n) => {
+            if n.is_finite() && n.fract() == 0.0 && n >= i64::MIN as f64 && n <= i64::MAX as f64 {
+                serde_json::Value::Number(serde_json::Number::from(n as i64))
+            } else {
+                serde_json::Number::from_f64(n)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
+            }
+        }
         ExprValue::String(s) => serde_json::Value::String(s),
     }
 }
@@ -5999,5 +6127,314 @@ mod tests {
         // top = 1rem = 20, left = 2rem = 40
         assert!((props.padding.top - 20.0).abs() < f32::EPSILON);
         assert!((props.padding.left - 40.0).abs() < f32::EPSILON);
+    }
+
+    // ---------- `<dispatch tag="{expr}"/>` runtime-tag dispatch ----------
+
+    /// A literal `tag="container"` rewrites the dispatch element into
+    /// a closed-set primitive and lowers it through the container arm
+    /// — every container attribute (`gap`, `style:*`, …) flows through
+    /// the synthesised element verbatim.
+    #[test]
+    fn dispatch_tag_literal_routes_to_primitive_container() {
+        let nodes = interpret(
+            r##"<dispatch tag="container" gap="12" style:background="#aabbcc"/>"##,
+        )
+        .unwrap();
+        assert_eq!(nodes.len(), 1);
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!("expected container, got {:?}", nodes[0]);
+        };
+        assert!((props.gap - 12.0).abs() < f32::EPSILON);
+        let bg = props.background.expect("bg");
+        assert_eq!((bg.r, bg.g, bg.b), (0xaa, 0xbb, 0xcc));
+    }
+
+    /// `tag="{binding}"` resolves against scope and re-dispatches.
+    /// Closes the §15 "data-driven tag" authoring gap for the
+    /// primitive vocabulary.
+    #[test]
+    fn dispatch_tag_resolves_through_scope_binding() {
+        let scope = LowerScope::default()
+            .with_binding("kind", json!("text"));
+        let nodes = interpret_with_scope(
+            r#"<dispatch tag="{kind}">hello</dispatch>"#,
+            &scope,
+        )
+        .unwrap();
+        let Node::Text { content, .. } = &nodes[0] else {
+            panic!("expected text");
+        };
+        assert_eq!(content, "hello");
+    }
+
+    /// Unknown resolved tags fall through to the resolver — no resolver
+    /// means the "drop wrapper, keep children" default fires, exactly
+    /// as for any author-written unknown tag.
+    #[test]
+    fn dispatch_tag_unknown_falls_through_to_default_unknown_tag() {
+        let nodes = interpret(r#"<dispatch tag="my.widget"><text>inner</text></dispatch>"#)
+            .unwrap();
+        assert_eq!(nodes.len(), 1);
+        let Node::Text { content, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(content, "inner");
+    }
+
+    /// Empty/missing `tag=` leaves the element as bare `<dispatch>`,
+    /// which falls through to the resolver path (legacy `component=`
+    /// form). Without a resolver, the unknown-tag default fires.
+    #[test]
+    fn dispatch_with_empty_tag_attribute_falls_through() {
+        let nodes = interpret(
+            r#"<dispatch tag=""><text>fallback</text></dispatch>"#,
+        )
+        .unwrap();
+        let Node::Text { content, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(content, "fallback");
+    }
+
+    /// The synthesised element retains every non-`tag` attribute so a
+    /// dispatched primitive sees the same prop shape an authored
+    /// element would.
+    #[test]
+    fn dispatch_tag_drops_tag_attribute_but_keeps_others() {
+        let nodes = interpret(
+            r##"<dispatch tag="text" font-size="22" id="dyn-title">Title</dispatch>"##,
+        )
+        .unwrap();
+        let Node::Text { id, content, props } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(id, "dyn-title");
+        assert_eq!(content, "Title");
+        assert!((props.font_size - 22.0).abs() < f32::EPSILON);
+    }
+
+    /// Dispatch composes with `for=` — typical use case is rendering
+    /// a row whose primitive varies by data.
+    #[test]
+    fn dispatch_tag_inside_for_loop_emits_one_node_per_item() {
+        let scope = LowerScope::default().with_binding(
+            "rows",
+            json!([
+                {"kind": "text", "body": "A"},
+                {"kind": "text", "body": "B"},
+                {"kind": "spacer"},
+            ]),
+        );
+        let nodes = interpret_with_scope(
+            r#"<container>
+                <dispatch for="row in rows" tag="{row.kind}">{row.body}</dispatch>
+               </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(children.len(), 3);
+        assert!(matches!(children[0], Node::Text { .. }));
+        assert!(matches!(children[1], Node::Text { .. }));
+        assert!(matches!(children[2], Node::Spacer { .. }));
+    }
+
+    // ---------- Virtual `.length` / `.first` / `.last` segments ----------
+
+    /// `items.length` reads as the array length from a bare-path
+    /// lookup — closes the `for="i in 0..items.length"` authoring
+    /// gap the PRUI reference promises.
+    #[test]
+    fn array_length_virtual_segment_reads_as_count() {
+        let scope = LowerScope::default()
+            .with_binding("rows", json!(["a", "b", "c", "d"]));
+        let nodes = interpret_with_scope(
+            r#"<container>
+                <text for="i in 0..rows.length">{i}</text>
+               </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(children.len(), 4);
+    }
+
+    /// `obj.length` reads as the number of keys.
+    #[test]
+    fn object_length_virtual_segment_reads_as_key_count() {
+        let scope = LowerScope::default().with_binding(
+            "form",
+            json!({"name": "x", "email": "y", "age": 1}),
+        );
+        let nodes = interpret_with_scope(
+            r#"<text>{form.length}</text>"#,
+            &scope,
+        )
+        .unwrap();
+        let Node::Text { content, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(content, "3");
+    }
+
+    /// `items.first` / `items.last` resolve to the first/last
+    /// element value.
+    #[test]
+    fn array_first_and_last_virtual_segments_resolve_to_endpoints() {
+        let scope = LowerScope::default()
+            .with_binding("rows", json!(["alpha", "beta", "gamma"]));
+        let nodes = interpret_with_scope(
+            r#"<container>
+                <text>{rows.first}</text>
+                <text>{rows.last}</text>
+               </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        let Node::Text { content: first, .. } = &children[0] else {
+            panic!()
+        };
+        let Node::Text { content: last, .. } = &children[1] else {
+            panic!()
+        };
+        assert_eq!(first, "alpha");
+        assert_eq!(last, "gamma");
+    }
+
+    /// Empty array → first/last return Null which stringifies to ""
+    /// (the empty-string filter elsewhere already absorbs this).
+    #[test]
+    fn empty_array_first_returns_empty_string() {
+        let scope = LowerScope::default().with_binding("rows", json!([]));
+        let nodes = interpret_with_scope(
+            r#"<text>{rows.first}</text>"#,
+            &scope,
+        )
+        .unwrap();
+        let Node::Text { content, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(content, "");
+    }
+
+    /// `if="{items.length}"` is truthy when non-empty, falsy when
+    /// empty — matches the JS array-truthiness rule authors expect.
+    #[test]
+    fn if_with_length_is_falsy_on_empty_array() {
+        let scope = LowerScope::default().with_binding("rows", json!([]));
+        let nodes = interpret_with_scope(
+            r#"<text if="{rows.length}">visible</text>"#,
+            &scope,
+        )
+        .unwrap();
+        assert!(nodes.is_empty());
+    }
+
+    /// `if="{items.length > 0}"` flows through the full evaluator and
+    /// sees the same synthesized length value.
+    #[test]
+    fn comparison_against_length_in_evaluator_works() {
+        let scope = LowerScope::default()
+            .with_binding("rows", json!(["a", "b", "c"]));
+        let nodes = interpret_with_scope(
+            r#"<container>
+                <text if="{rows.length > 2}">many</text>
+                <text else>few</text>
+               </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        let Node::Text { content, .. } = &children[0] else {
+            panic!()
+        };
+        assert_eq!(content, "many");
+    }
+
+    /// Strings also expose `.length` / `.first` / `.last`, matching
+    /// the surface promise that the same virtual segments work on
+    /// every container-shape.
+    #[test]
+    fn string_length_first_last_resolve_through_virtual_segments() {
+        let scope = LowerScope::default()
+            .with_binding("word", json!("hello"));
+        let nodes = interpret_with_scope(
+            r#"<container>
+                <text>{word.length}</text>
+                <text>{word.first}</text>
+                <text>{word.last}</text>
+               </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        let texts: Vec<String> = children
+            .iter()
+            .map(|c| match c {
+                Node::Text { content, .. } => content.clone(),
+                _ => String::new(),
+            })
+            .collect();
+        assert_eq!(texts, vec!["5".to_string(), "h".to_string(), "o".to_string()]);
+    }
+
+    // ---------- on:event empty-string filter + modifier flattening ----------
+
+    /// `on:click=""` drops cleanly so a ternary that resolves to ""
+    /// omits the handler, matching the `data:`/`aria:` rule.
+    #[test]
+    fn on_event_empty_string_drops_the_attribute() {
+        let nodes = interpret(r#"<container on:click=""/>"#).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!(!props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, _)| k == "data-on-click"));
+    }
+
+    /// `on:click.once.stop` flattens to `data-on-click-once-stop` —
+    /// the dotted suffix is the author surface; consumers read the
+    /// dash-joined wire form.
+    #[test]
+    fn on_event_modifier_dot_suffix_flattens_to_dash_in_data_attr() {
+        let nodes = interpret(
+            r#"<container on:click.once.stop="cmd save"/>"#,
+        )
+        .unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attr = props
+            .semantic
+            .attrs
+            .iter()
+            .find(|(k, _)| k == "data-on-click-once-stop");
+        assert!(attr.is_some(), "{:?}", props.semantic.attrs);
+        assert_eq!(attr.unwrap().1, "cmd save");
+    }
+
+    /// `on:event_key` is the shared canonical-key helper — sanity
+    /// check it directly so a future refactor doesn't drift the wire
+    /// shape silently.
+    #[test]
+    fn on_event_attr_key_replaces_dots_with_dashes() {
+        assert_eq!(on_event_attr_key("click"), "click");
+        assert_eq!(on_event_attr_key("click.once"), "click-once");
+        assert_eq!(on_event_attr_key("click.once.stop"), "click-once-stop");
     }
 }

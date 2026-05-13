@@ -20,6 +20,11 @@ pub struct LoadedApp {
     pub manifest: AppManifest,
     /// Absolute path to the app's directory (the parent of `manifest.toml`).
     pub base_dir: PathBuf,
+    /// ADR-009: the parsed app skeleton when `[entry] skeleton` was
+    /// declared and the file parses cleanly. `None` means the app
+    /// either declared no skeleton or its skeleton failed to load —
+    /// the shell falls back to [`crate::render::default_app_skeleton`].
+    pub skeleton: Option<crate::render::Skeleton>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -59,9 +64,27 @@ pub fn discover(root: impl AsRef<Path>) -> Result<Vec<LoadedApp>, AppLoaderError
             path: manifest_path.clone(),
             source,
         })?;
+        // ADR-009: optional per-app skeleton. Parse failures are
+        // logged but don't abort the load — the app falls back to
+        // the default skeleton so the launchpad tile still surfaces.
+        let skeleton = manifest.entry.skeleton.as_ref().and_then(|rel| {
+            let skel_path = path.join(rel);
+            match crate::render::Skeleton::load_from_path(&skel_path) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    eprintln!(
+                        "prism-shell: failed to load app skeleton `{}` for `{}`: {e}",
+                        skel_path.display(),
+                        manifest.id
+                    );
+                    None
+                }
+            }
+        });
         out.push(LoadedApp {
             manifest,
             base_dir: path,
+            skeleton,
         });
     }
     // Deterministic order — file system iteration is unspecified on

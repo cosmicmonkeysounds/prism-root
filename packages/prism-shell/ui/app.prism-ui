@@ -1,24 +1,25 @@
 <!--
-  Prism Studio shell skeleton. Source-driven replacement for the
+  Prism Studio host skeleton. Source-driven replacement for the
   legacy ui/app.slint. Every shell-chrome primitive is referenced
   by its registered tag; RegistryTagResolver dispatches to the
   matching Block::lower_ui in prism-shell/src/components/.
-  See docs/dev/clay-migration-plan.md sections 13 to 17.
+  See docs/dev/clay-migration-plan.md sections 13 to 17 and
+  docs/adr/009-per-app-skeletons.md.
 
-  The body is one tag — `shell.dock-workspace` — that recursively
-  walks the active page's DockNode tree and emits a `shell.dock-panel`
-  for every leaf. Each leaf's `panel-id` routes through
-  `components::panel_routing::PANEL_ROUTES` to the matching content
-  tag (builder → builder-canvas, inspector → inspector-tree, …).
-  Adding a new dockable panel is one row in that table, never a
-  skeleton edit.
+  The `<shell.app-window>` body is intentionally empty. The active
+  app's skeleton — discovered from `apps/<id>/manifest.toml`'s
+  `[entry] skeleton = "..."` and parsed at boot — provides the
+  workspace content via `Skeleton::with_app_body`. Apps that
+  declare no skeleton get the default (a single
+  `<shell.dock-workspace/>`); that's what every built-in app sees
+  today, so observable behaviour is unchanged until an app opts in.
 -->
 <shell.app-window
     id="root"
     status="Ready"
     app-name="Studio">
 
-  <shell.dock-workspace id="dock"/>
+  <!-- app skeleton body grafted here by `Skeleton::with_app_body` -->
 
 </shell.app-window>
 

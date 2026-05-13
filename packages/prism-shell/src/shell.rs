@@ -23,7 +23,7 @@ use prism_ui_runtime::layout::{HitRect, Node as UiNode, Surface, Viewport};
 use crate::components::{register_document_builtins, ShellComponentRegistry};
 use crate::events::dispatch_event;
 use crate::props::{PropCtx, ShellPropBindings};
-use crate::render::{render_tree_with, Skeleton, Stylesheet};
+use crate::render::{default_app_skeleton, render_tree_with, Skeleton, Stylesheet};
 use crate::render_scope::RenderScope;
 use crate::services::{
     Clipboard, LuauHost, MutCtx, NoopLuauHost, OsVfs, ServiceRegistry, UndoStack, Vfs,
@@ -64,6 +64,16 @@ pub struct ShellInner {
     /// [`PropCtx`] so the dock-workspace binding can resolve labels
     /// + content tags for every reachable panel id.
     pub dock_catalog: Arc<prism_dock::DockCatalog>,
+    /// ADR-009: per-app skeleton cache. Keyed by `manifest.id`; built
+    /// once at boot from every `LoadedApp` whose manifest declared
+    /// `[entry] skeleton = "..."`. Apps not in this map fall back to
+    /// [`Self::default_app_skeleton`] (a single
+    /// `<shell.dock-workspace/>`).
+    pub app_skeletons: std::collections::HashMap<String, Skeleton>,
+    /// ADR-009: the fallback skeleton applied when the active app is
+    /// `None` or its id has no entry in [`Self::app_skeletons`].
+    /// Parsed once at boot to avoid re-running the parser per frame.
+    pub default_app_skeleton: Skeleton,
     pub state: crate::AppState,
     pub viewport: Viewport,
     pub undo: UndoStack,
@@ -132,6 +142,22 @@ impl ShellInner {
             // so manifest-registered panels surface in the live dock.
             dock_catalog: Some(self.dock_catalog.as_ref()),
         }
+    }
+
+    /// ADR-009: the skeleton whose body should fill the host's
+    /// `<shell.app-window>` this frame. Picks the active app's
+    /// skeleton from [`Self::app_skeletons`] if present, otherwise
+    /// returns the cached [`Self::default_app_skeleton`]. The caller
+    /// (typically `Shell::render`) calls
+    /// `host_skeleton.with_app_body(active_app_skeleton())` to
+    /// produce the composed skeleton that drives the frame's render.
+    pub fn active_app_skeleton(&self) -> &Skeleton {
+        self.state
+            .workspace
+            .active_app
+            .as_deref()
+            .and_then(|id| self.app_skeletons.get(id))
+            .unwrap_or(&self.default_app_skeleton)
     }
 
     /// Sister to [`Self::prop_ctx`] for the §24 write side. Every
@@ -203,6 +229,18 @@ impl Shell {
         let _panel_count =
             crate::app_registry::install_panels_from_manifests(&app_registrar, &loaded_apps);
         let dock_catalog = Arc::new(app_registrar.snapshot_catalog());
+        // ADR-009: cache every loaded app's parsed skeleton so the
+        // render path can graft the active app's body into the host
+        // skeleton's `<shell.app-window>` per frame.
+        let app_skeletons: std::collections::HashMap<String, Skeleton> = loaded_apps
+            .iter()
+            .filter_map(|a| {
+                a.skeleton
+                    .as_ref()
+                    .map(|s| (a.manifest.id.clone(), s.clone()))
+            })
+            .collect();
+        let default_app = default_app_skeleton();
         // DSL self-bootstrap Loop 3: if any manifest declares service
         // preferences, filter `App`-scoped services to the declared
         // allowlist. Permissive default — manifests that omit
@@ -240,6 +278,8 @@ impl Shell {
             services,
             app_registrar,
             dock_catalog,
+            app_skeletons,
+            default_app_skeleton: default_app,
             // §43 A1 + Wave 1: hydrated boot state with the modifier
             // registry installed. `AppState::default()` is the
             // zero-data shape for tests and headless renders;
@@ -326,10 +366,15 @@ impl Shell {
         let inner = self.inner.borrow();
         let cache = Rc::clone(&inner.memo_cache);
         let stylesheet = self.stylesheet.borrow().clone();
+        // ADR-009: graft the active app's skeleton body into the host
+        // skeleton's `<shell.app-window>` element. Cheap (AST clone),
+        // bounded (host skeleton is ~50 nodes), and runs once per
+        // frame — no caching needed unless profiling shows it.
+        let composed = self.skeleton.with_app_body(inner.active_app_skeleton());
         let mut tree = inner.render_scope.run_in_render_pass(|| {
             render_with_hot_reload(|| {
                 render_tree_with(
-                    &self.skeleton,
+                    &composed,
                     &inner.bindings,
                     Arc::clone(&inner.resolver),
                     &inner.prop_ctx(),

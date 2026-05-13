@@ -32,7 +32,7 @@ use crate::props::{PropCtx, PropEmission, ShellPropBindings};
 
 /// Pre-parsed `app.prism-ui` skeleton. Held once at boot — every
 /// frame clones the AST, merges emissions into attributes, and lowers.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Skeleton {
     pub doc: prism_ui_ast::Document,
 }
@@ -57,6 +57,73 @@ impl Skeleton {
         }
         Ok(Self { doc })
     }
+
+    /// Load a skeleton from an absolute filesystem path. Used by
+    /// `AppLoader` to parse per-app skeletons referenced from
+    /// `manifest.toml`'s `[entry] skeleton` field (ADR-009).
+    pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self, String> {
+        let source = std::fs::read_to_string(path.as_ref())
+            .map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
+        Self::from_source(&source)
+    }
+
+    /// ADR-009: graft an app skeleton's top-level nodes into this
+    /// host skeleton's `<shell.app-window>` body. Returns a cloned
+    /// skeleton with the substitution applied; the receiver is left
+    /// untouched so a single host skeleton can host every app's
+    /// body without sharing mutable state.
+    ///
+    /// If the host skeleton has no `<shell.app-window>` element (an
+    /// unusual configuration — every shipped host has one), the app
+    /// body is appended verbatim to the document root so the app's
+    /// content still renders rather than being silently dropped.
+    pub fn with_app_body(&self, app: &Skeleton) -> Skeleton {
+        let mut merged = self.doc.clone();
+        let mut grafted = false;
+        graft_into_app_window(&mut merged.nodes, &app.doc.nodes, &mut grafted);
+        if !grafted {
+            // Fallback path: no `<shell.app-window>` found. Append
+            // the app's body to the document root so we don't silently
+            // drop the user's app content.
+            merged.nodes.extend(app.doc.nodes.iter().cloned());
+        }
+        Skeleton { doc: merged }
+    }
+}
+
+/// Walk `nodes` looking for the first `<shell.app-window>` element.
+/// When found, replace its children with `app_body` (a clone, so
+/// `Skeleton::with_app_body` can be called repeatedly against the
+/// same source app skeleton). Sets `grafted = true` to signal
+/// success to the caller.
+fn graft_into_app_window(
+    nodes: &mut [prism_ui_ast::Node],
+    app_body: &[prism_ui_ast::Node],
+    grafted: &mut bool,
+) {
+    for node in nodes {
+        if *grafted {
+            return;
+        }
+        if let prism_ui_ast::Node::Element(el) = node {
+            if el.tag == "shell.app-window" {
+                el.children = app_body.to_vec();
+                el.self_closing = false;
+                *grafted = true;
+                return;
+            }
+            graft_into_app_window(&mut el.children, app_body, grafted);
+        }
+    }
+}
+
+/// ADR-009 default app skeleton — what fills `<shell.app-window>`
+/// when an app declares no skeleton of its own. Single
+/// `<shell.dock-workspace/>` element so today's four built-in apps
+/// keep rendering exactly as they did before per-app skeletons.
+pub fn default_app_skeleton() -> Skeleton {
+    Skeleton::from_source(r#"<shell.dock-workspace id="dock"/>"#)
+        .expect("default app skeleton parses")
 }
 
 /// Pre-parsed `.prss` stylesheet — the boot-time and hot-reload
@@ -470,8 +537,158 @@ mod tests {
     }
 
     #[test]
+    fn default_app_skeleton_is_a_dock_workspace() {
+        // ADR-009 pin: the fallback skeleton applied when an app
+        // declares no `[entry] skeleton` must be exactly one
+        // `<shell.dock-workspace/>` element, preserving the
+        // pre-split behaviour.
+        let s = default_app_skeleton();
+        assert_eq!(s.doc.nodes.len(), 1);
+        match &s.doc.nodes[0] {
+            prism_ui_ast::Node::Element(el) => {
+                assert_eq!(el.tag, "shell.dock-workspace");
+                assert!(el.children.is_empty());
+            }
+            other => panic!("expected element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_app_body_grafts_into_shell_app_window() {
+        // ADR-009: the host skeleton's `<shell.app-window>` body is
+        // empty; `with_app_body` clones the host and replaces that
+        // body with the app skeleton's top-level nodes.
+        let host = Skeleton::load().expect("host parse");
+        // Before the graft, the `<shell.app-window>` element should
+        // have no *element* children (HTML comments are preserved by
+        // the parser but they don't contribute to lowered output).
+        let app_window_before = find_app_window(&host.doc.nodes).expect("app-window present");
+        let element_children: Vec<_> = app_window_before
+            .children
+            .iter()
+            .filter(|n| matches!(n, prism_ui_ast::Node::Element(_)))
+            .collect();
+        assert!(
+            element_children.is_empty(),
+            "host skeleton must declare empty `<shell.app-window>` element body"
+        );
+
+        let app = Skeleton::from_source(
+            r#"<shell.dock-workspace id="my-dock"/>"#,
+        )
+        .expect("app parse");
+        let merged = host.with_app_body(&app);
+        let app_window_after = find_app_window(&merged.doc.nodes).expect("app-window present");
+        let merged_elements: Vec<&prism_ui_ast::Node> = app_window_after
+            .children
+            .iter()
+            .filter(|n| matches!(n, prism_ui_ast::Node::Element(_)))
+            .collect();
+        assert_eq!(
+            merged_elements.len(),
+            1,
+            "graft should populate body with one app element node"
+        );
+        match merged_elements[0] {
+            prism_ui_ast::Node::Element(el) => {
+                assert_eq!(el.tag, "shell.dock-workspace");
+                // Verify the id from the app skeleton flows through.
+                let id_attr = el
+                    .attributes
+                    .iter()
+                    .find(|a| a.name.raw == "id")
+                    .expect("id attribute");
+                match &id_attr.value {
+                    prism_ui_ast::AttributeValue::String { value, .. } => {
+                        assert_eq!(value, "my-dock");
+                    }
+                    other => panic!("expected literal id, got {other:?}"),
+                }
+            }
+            other => panic!("expected element, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_app_body_leaves_overlay_siblings_intact() {
+        // ADR-009: the host skeleton has overlay siblings
+        // (workflow-page-bar, command-palette, toast-stack, …) outside
+        // `<shell.app-window>`. The graft must touch only the
+        // app-window's body; overlay siblings stay where they were.
+        let host = Skeleton::load().expect("host parse");
+        let app = Skeleton::from_source(r#"<shell.dock-workspace/>"#).expect("app parse");
+        let merged = host.with_app_body(&app);
+        // Same number of top-level nodes before and after.
+        assert_eq!(merged.doc.nodes.len(), host.doc.nodes.len());
+        // The overlay tags appear at the same positions.
+        let host_tags = top_level_tags(&host.doc.nodes);
+        let merged_tags = top_level_tags(&merged.doc.nodes);
+        assert_eq!(host_tags, merged_tags);
+    }
+
+    #[test]
+    fn with_app_body_replaces_existing_body() {
+        // Idempotency: applying `with_app_body` against a host that
+        // already has a body replaces it rather than appending.
+        let host = Skeleton::load().expect("host parse");
+        let first = host.with_app_body(
+            &Skeleton::from_source(r#"<shell.dock-workspace id="first"/>"#).unwrap(),
+        );
+        let second = first.with_app_body(
+            &Skeleton::from_source(r#"<shell.dock-workspace id="second"/>"#).unwrap(),
+        );
+        let body = find_app_window(&second.doc.nodes).unwrap();
+        let elements: Vec<&prism_ui_ast::Node> = body
+            .children
+            .iter()
+            .filter(|n| matches!(n, prism_ui_ast::Node::Element(_)))
+            .collect();
+        assert_eq!(elements.len(), 1);
+        match elements[0] {
+            prism_ui_ast::Node::Element(el) => {
+                let id_attr = el.attributes.iter().find(|a| a.name.raw == "id").unwrap();
+                match &id_attr.value {
+                    prism_ui_ast::AttributeValue::String { value, .. } => {
+                        assert_eq!(value, "second");
+                    }
+                    other => panic!("expected literal, got {other:?}"),
+                }
+            }
+            other => panic!("expected element, got {other:?}"),
+        }
+    }
+
+    fn find_app_window(nodes: &[prism_ui_ast::Node]) -> Option<&prism_ui_ast::Element> {
+        for node in nodes {
+            if let prism_ui_ast::Node::Element(el) = node {
+                if el.tag == "shell.app-window" {
+                    return Some(el);
+                }
+                if let Some(found) = find_app_window(&el.children) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    fn top_level_tags(nodes: &[prism_ui_ast::Node]) -> Vec<String> {
+        nodes
+            .iter()
+            .filter_map(|n| match n {
+                prism_ui_ast::Node::Element(el) => Some(el.tag.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
     fn render_tree_lowers_full_skeleton_through_resolver() {
-        let skel = Skeleton::load().expect("parse");
+        // ADR-009: compose host + default app skeletons so the
+        // legacy dock-workspace body is present for this resolver
+        // walk. Same as `Shell::render` does at runtime.
+        let host = Skeleton::load().expect("parse");
+        let skel = host.with_app_body(&default_app_skeleton());
         let bindings = ShellPropBindings::with_builtins();
         let mut reg = ShellComponentRegistry::new();
         register_shell_builtins(&mut reg).expect("register");
@@ -649,7 +866,10 @@ mod tests {
         // Switching workflow pages flips the embedded panel without
         // any binding edit. This is the §16/§17 closing property
         // expressed end-to-end against the pipeline.
-        let skel = Skeleton::load().expect("parse");
+        // ADR-009: compose with the default app skeleton so the
+        // dock-workspace is grafted into `<shell.app-window>`'s body.
+        let host = Skeleton::load().expect("parse");
+        let skel = host.with_app_body(&default_app_skeleton());
         let bindings = ShellPropBindings::with_builtins();
         let mut reg = ShellComponentRegistry::new();
         // Wave 11.2 batch: `shell.app-window` is DSL-authored, so the

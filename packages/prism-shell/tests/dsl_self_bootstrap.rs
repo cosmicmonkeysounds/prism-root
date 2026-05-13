@@ -483,6 +483,184 @@ tag = "lattice.peers-panel"
     });
 }
 
+// ── ADR-009 — per-app skeletons ───────────────────────────────────
+
+#[test]
+fn manifest_declared_skeleton_loads_and_caches_in_shell() {
+    // The manifest points at `shell.prism-ui` in the same dir. The
+    // loader reads + parses it; Shell::new caches it in
+    // `ShellInner.app_skeletons`.
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+skeleton = "shell.prism-ui"
+"#,
+    )];
+    with_apps_dir("skeleton_loads", manifests, || {
+        // Also write the skeleton file alongside the manifest.
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let skel_path = std::path::Path::new(&root)
+            .join("lattice")
+            .join("shell.prism-ui");
+        std::fs::write(&skel_path, r#"<shell.dock-workspace id="custom-dock"/>"#).unwrap();
+
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        let inner = shell.inner.borrow();
+        assert!(
+            inner.app_skeletons.contains_key("lattice"),
+            "expected `lattice` skeleton to be cached, got keys={:?}",
+            inner.app_skeletons.keys().collect::<Vec<_>>()
+        );
+    });
+}
+
+#[test]
+fn missing_skeleton_file_falls_back_silently_without_aborting_boot() {
+    // The manifest declares a skeleton that doesn't exist on disk.
+    // Shell::new must still succeed; that app simply gets no entry
+    // in `app_skeletons` and renders against the default body.
+    let manifests: &[(&str, &str)] = &[(
+        "broken",
+        r#"id = "broken"
+label = "Broken"
+
+[entry]
+skeleton = "does-not-exist.prism-ui"
+"#,
+    )];
+    with_apps_dir("skeleton_missing", manifests, || {
+        let shell = prism_shell::Shell::new().expect("Shell::new should succeed despite missing skel");
+        let inner = shell.inner.borrow();
+        assert!(
+            !inner.app_skeletons.contains_key("broken"),
+            "broken app should have no cached skeleton"
+        );
+        // Launchpad tile still surfaces.
+        assert!(inner.state.catalog.apps.iter().any(|a| a.id == "broken"));
+    });
+}
+
+#[test]
+fn active_app_skeleton_selects_per_app_or_default() {
+    // ADR-009 contract: `inner.active_app_skeleton()` picks the
+    // active app's skeleton if cached, else the default.
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+skeleton = "shell.prism-ui"
+"#,
+    )];
+    with_apps_dir("active_app_skel", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let skel_path = std::path::Path::new(&root)
+            .join("lattice")
+            .join("shell.prism-ui");
+        std::fs::write(&skel_path, r#"<shell.dock-workspace id="lattice-dock"/>"#).unwrap();
+
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        let mut inner = shell.inner.borrow_mut();
+
+        // No active app → default skeleton applies.
+        inner.state.workspace.active_app = None;
+        let default_dock_id = first_element_attr(inner.active_app_skeleton(), "id");
+        assert_eq!(default_dock_id.as_deref(), Some("dock"));
+
+        // Switch to lattice → cached app skeleton applies.
+        inner.state.workspace.active_app = Some("lattice".to_string());
+        let active_dock_id = first_element_attr(inner.active_app_skeleton(), "id");
+        assert_eq!(active_dock_id.as_deref(), Some("lattice-dock"));
+
+        // Switch to an unknown app id → falls back to default.
+        inner.state.workspace.active_app = Some("nonexistent".to_string());
+        let fallback_dock_id = first_element_attr(inner.active_app_skeleton(), "id");
+        assert_eq!(fallback_dock_id.as_deref(), Some("dock"));
+    });
+}
+
+#[test]
+fn shell_render_composes_host_with_active_app_body() {
+    // The render path grafts the active app's skeleton into the host
+    // skeleton's `<shell.app-window>` body. The composed AST drives
+    // the actual lower pass, so the rendered output reflects the
+    // app's skeleton.
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+skeleton = "shell.prism-ui"
+"#,
+    )];
+    with_apps_dir("shell_render_compose", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let skel_path = std::path::Path::new(&root)
+            .join("lattice")
+            .join("shell.prism-ui");
+        std::fs::write(&skel_path, r#"<shell.dock-workspace id="lattice-dock"/>"#).unwrap();
+
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        {
+            let mut inner = shell.inner.borrow_mut();
+            inner.state.workspace.active_app = Some("lattice".to_string());
+        }
+        let tree = shell.render();
+        // Walk the rendered tree to find any node with id starting
+        // with `lattice-dock` — the dock workspace id from the
+        // lattice skeleton flows through to the rendered output.
+        let mut found = false;
+        walk_ids(&tree, "lattice-dock", &mut found);
+        assert!(
+            found,
+            "expected rendered tree to contain a node with id starting with `lattice-dock`"
+        );
+    });
+}
+
+/// Helper — first element node in a skeleton, return its named attr value.
+fn first_element_attr(skel: &prism_shell::Skeleton, attr: &str) -> Option<String> {
+    use prism_core::language::prism_ui::{AttributeValue, Node};
+    for n in &skel.doc.nodes {
+        if let Node::Element(el) = n {
+            for a in &el.attributes {
+                if a.name.raw == attr {
+                    if let AttributeValue::String { value, .. } = &a.value {
+                        return Some(value.clone());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Walk the rendered `UiNode` tree looking for any container whose
+/// id starts with `needle`. Sets `found` to true on the first hit.
+fn walk_ids(nodes: &[prism_ui_runtime::layout::Node], needle: &str, found: &mut bool) {
+    use prism_ui_runtime::layout::Node as UiNode;
+    if *found {
+        return;
+    }
+    for n in nodes {
+        if *found {
+            return;
+        }
+        if let UiNode::Container { id, children, .. } = n {
+            if id.starts_with(needle) {
+                *found = true;
+                return;
+            }
+            walk_ids(children, needle, found);
+        }
+    }
+}
+
 #[test]
 fn no_apps_directory_falls_back_to_hardcoded_launchpad() {
     // Sanity check: clear PRISM_APPS_DIR + point at a path that

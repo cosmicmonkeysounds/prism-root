@@ -46,7 +46,8 @@ use prism_core::language::prism_ui::{
     ast::TemplatePart, AttributeNamespace, AttributeValue, Element, Node as AstNode,
 };
 use prism_ui_runtime::interpret::{
-    apply_style_override, evaluate_expression, lookup_expression_in_scope, lower_ast_children,
+    apply_style_override, evaluate_expression, lookup_path_owned_in_scope,
+    lower_ast_children,
     stringify_value_for_template, LowerScope, TagResolver,
 };
 use prism_ui_runtime::layout::Node as UiNode;
@@ -244,7 +245,15 @@ fn attach_on_handlers(node: &mut UiNode, element: &Element, scope: &LowerScope) 
         let Some(value) = resolved_attribute_string(&attr.value, scope) else {
             continue;
         };
-        on_attrs.push((format!("data-on-{}", attr.name.local), value));
+        // Empty-string filter (PRUI ref §4) + dotted event-modifier
+        // suffix flattening (Wave 14.3) — share the runtime's helper
+        // so dispatched `<shell.*>` containers and source-authored
+        // `<container>` elements emit identically.
+        if value.is_empty() {
+            continue;
+        }
+        let local_key = prism_ui_runtime::interpret::on_event_attr_key(&attr.name.local);
+        on_attrs.push((format!("data-on-{}", local_key), value));
     }
     if on_attrs.is_empty() {
         return;
@@ -428,8 +437,11 @@ fn is_bare_path_expression(body: &str) -> bool {
 /// Returns `None` for `AttributeValue::Empty` (boolean attrs).
 fn resolved_attribute_string(value: &AttributeValue, scope: &LowerScope) -> Option<String> {
     fn resolve_one(body: &str, scope: &LowerScope) -> String {
-        if let Some(v) = lookup_expression_in_scope(body, scope) {
-            return stringify_value_for_template(v);
+        // Owned lookup so virtual `.length`/`.first`/`.last` segments
+        // resolve through the same vocabulary as the runtime's
+        // attribute paths.
+        if let Some(v) = lookup_path_owned_in_scope(body, scope) {
+            return stringify_value_for_template(&v);
         }
         if is_bare_path_expression(body) {
             return String::new();
@@ -469,12 +481,13 @@ fn resolved_attribute_value(value: &AttributeValue, scope: &LowerScope) -> Value
     match value {
         AttributeValue::Empty => Value::Bool(true),
         AttributeValue::Expression(expr) => {
-            if let Some(v) = lookup_expression_in_scope(&expr.body, scope) {
-                return v.clone();
+            // Bare-path lookup first (virtual segments included) — this
+            // is the typed-prop pass-through that keeps arrays / objects
+            // intact for `props="{item}"` spread. Operator-bearing
+            // expressions still flow through the evaluator.
+            if let Some(v) = lookup_path_owned_in_scope(&expr.body, scope) {
+                return v;
             }
-            // Bare-path miss → Null (the prop reader's expected fallback,
-            // matches the pre-evaluator semantic). Operator-bearing
-            // expressions are evaluated and surface their computed value.
             if is_bare_path_expression(&expr.body) {
                 return Value::Null;
             }
@@ -1027,6 +1040,98 @@ mod tests {
         // Tint from `row.props.tint` flowed through the `props=` spread.
         let bg = props.background.expect("dispatch should pass tint through");
         assert_eq!(bg.r, 0xff);
+    }
+
+    #[test]
+    fn dispatch_tag_routes_to_registered_block() {
+        // Symmetric form of the `component=` dispatch: `<dispatch
+        // tag="demo.box"/>` resolves the tag attribute at the runtime
+        // layer (rewrite-to-synthetic-element), which then falls
+        // through to the resolver — which sees a `<demo.box/>`-shaped
+        // element and dispatches normally.
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let scope = LowerScope::default().with_resolver(resolver);
+        let (doc, errs) = parse(r##"<dispatch tag="demo.box" id="b" tint="#00ff00"/>"##);
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let nodes = lower_document_with_scope(&doc, &scope);
+        assert_eq!(nodes.len(), 1, "exactly one node");
+        let UiNode::Container { id, props, .. } = &nodes[0] else {
+            panic!("expected demo.box container, got {:?}", nodes[0])
+        };
+        assert_eq!(id, "b");
+        let bg = props.background.expect("tint propagated through dispatch");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0xff, 0x00));
+    }
+
+    #[test]
+    fn dispatch_tag_resolves_from_scope_and_routes_to_block() {
+        // The interesting case: `tag="{kind}"` resolves through scope
+        // before being rewritten. Closes the §15 PRUI-ref gap for
+        // data-driven registered-tag dispatch.
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let scope = LowerScope::default()
+            .with_resolver(resolver)
+            .with_binding("kind", serde_json::json!("demo.box"));
+        let (doc, errs) =
+            parse(r##"<dispatch tag="{kind}" id="b" tint="#0000ff"/>"##);
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { id, props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(id, "b");
+        let bg = props.background.expect("tint must flow through dispatch");
+        assert_eq!(bg.b, 0xff);
+    }
+
+    #[test]
+    fn dispatch_tag_to_primitive_short_circuits_resolver() {
+        // `tag="container"` rewrites to a runtime-primitive
+        // `<container/>` and never hits the resolver. The DemoBox
+        // 40×40 sizing must NOT surface — confirming we routed to
+        // the primitive arm, not a registered-component fallback.
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let scope = LowerScope::default().with_resolver(resolver);
+        let (doc, errs) = parse(
+            r##"<dispatch tag="container" id="root" gap="4" style:background="#112233"/>"##,
+        );
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { id, props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(id, "root");
+        assert!((props.gap - 4.0).abs() < f32::EPSILON);
+        let bg = props.background.expect("background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x11, 0x22, 0x33));
+        // No fixed 40×40 sizing — that's DemoBox's signature, which
+        // must be absent when routing to a primitive.
+        assert!(!matches!(
+            props.width,
+            prism_ui_runtime::layout::Sizing::Fixed(40.0)
+        ));
+    }
+
+    #[test]
+    fn dispatch_tag_takes_precedence_over_component_attr() {
+        // If both `tag=` and `component=` are present, the runtime's
+        // rewrite happens first — the synthesised element no longer
+        // sees `component=` as routing because it's no longer a
+        // `<dispatch>` tag. Pin the precedence so authoring stays
+        // unambiguous.
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let scope = LowerScope::default().with_resolver(resolver);
+        let (doc, errs) = parse(
+            r##"<dispatch tag="container" component="demo.box" id="root" style:background="#abcdef"/>"##,
+        );
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { id, props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(id, "root");
+        let bg = props.background.expect("bg");
+        assert_eq!((bg.r, bg.g, bg.b), (0xab, 0xcd, 0xef));
     }
 
     #[test]

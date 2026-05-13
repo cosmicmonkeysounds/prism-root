@@ -500,6 +500,7 @@ mod tests {
                     ..Default::default()
                 },
                 base_dir: std::path::PathBuf::from("/tmp/lattice"),
+                skeleton: None,
             },
             LoadedApp {
                 manifest: AppManifest {
@@ -508,6 +509,7 @@ mod tests {
                     ..Default::default()
                 },
                 base_dir: std::path::PathBuf::from("/tmp/musica"),
+                skeleton: None,
             },
         ];
         let reg = ShellAppRegistrar::with_builtin_panels();
@@ -544,6 +546,7 @@ mod tests {
                 ..Default::default()
             },
             base_dir: std::path::PathBuf::from("/tmp/broken"),
+                skeleton: None,
         }];
         let reg = ShellAppRegistrar::with_builtin_panels();
         let count = install_panels_from_manifests(&reg, &apps);
