@@ -447,6 +447,56 @@ impl LowerScope {
     pub fn stylesheet(&self) -> Option<&prism_core::language::prss::StyleSheet> {
         self.stylesheet.as_deref()
     }
+
+    /// **Token-driven rem base** — the pixel size one `rem` / `em`
+    /// resolves to during length parsing. Reads
+    /// `tokens.typography.font-size-md` from the active `tokens`
+    /// binding when present, defaulting to the canonical browser
+    /// 16px when no tokens are seeded or the lookup fails. Hosts
+    /// that swap a custom design-token table see `1rem` rescale
+    /// across the entire shell uniformly.
+    pub fn rem_px(&self) -> f32 {
+        const DEFAULT_REM_PX: f32 = 16.0;
+        let Some(tokens) = self.bindings.get("tokens") else {
+            return DEFAULT_REM_PX;
+        };
+        let Some(typography) = tokens.get("typography") else {
+            return DEFAULT_REM_PX;
+        };
+        let Some(value) = typography.get("font-size-md") else {
+            return DEFAULT_REM_PX;
+        };
+        match value {
+            serde_json::Value::Number(n) => n.as_f64().map(|f| f as f32).unwrap_or(DEFAULT_REM_PX),
+            serde_json::Value::String(s) => s.trim().parse::<f32>().unwrap_or(DEFAULT_REM_PX),
+            _ => DEFAULT_REM_PX,
+        }
+    }
+
+    /// **PRSS descendant selectors** — return a fork of this scope
+    /// with `classes` appended to the ancestor class chain. Empty
+    /// `classes` returns the scope unchanged so the cheap path
+    /// (no class on this container) avoids the Arc clone + Vec push.
+    /// Scope forks during control-flow / slot expansion inherit the
+    /// chain via the `Arc` clone; only the lowering boundary that
+    /// actually adds an ancestor class pays the deep clone.
+    pub fn with_class_chain_appending(mut self, classes: Vec<String>) -> Self {
+        if classes.is_empty() {
+            return self;
+        }
+        let mut next = (*self.class_chain).clone();
+        next.push(classes);
+        self.class_chain = Arc::new(next);
+        self
+    }
+
+    /// **PRSS descendant selectors** — borrow the ancestor class
+    /// chain, outermost-first. The current element's classes are
+    /// **not** in this list; the descendant matcher reads them
+    /// directly from the active set computed at apply time.
+    pub fn class_chain(&self) -> &[Vec<String>] {
+        self.class_chain.as_slice()
+    }
 }
 
 /// Merge per-bucket token overrides from a PRSS [`TokenOverrides`]
@@ -829,7 +879,24 @@ fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
             let mut props = ContainerProps::default();
             let mut id = String::new();
             apply_container_attributes(el, scope, &mut props, &mut id);
-            let mut children = lower_children(&el.children, scope);
+            // **PRSS descendant selectors** — extend the ancestor
+            // class chain for child lowering so `[class."btn icon"]`
+            // can match an `<icon>` nested under this container's
+            // `class="btn"`. The active-class collection runs again
+            // here (and once already inside `apply_container_attributes`);
+            // it's a cheap walk over the element's attribute list and
+            // keeps the function-level seam intact. Empty class set
+            // skips the scope clone via `with_class_chain_appending`'s
+            // early return.
+            let active = active_class_names(el, scope);
+            let child_scope_owned;
+            let child_scope: &LowerScope = if active.is_empty() {
+                scope
+            } else {
+                child_scope_owned = scope.clone().with_class_chain_appending(active);
+                &child_scope_owned
+            };
+            let mut children = lower_children(&el.children, child_scope);
             // **Wave 14.3** — `<teleport to="X">payload</teleport>`
             // routing. Any teleport in the document whose `to` matches
             // this element's id appends its payload here, lowered in
@@ -1569,14 +1636,42 @@ fn apply_container_attributes(
     // `class="… foo"` would. No-op when no stylesheet is loaded
     // (headless / SSR / first-boot path) — both forms round-trip as
     // stale-but-harmless authored attrs in that case.
+    //
+    // **Descendant selectors** apply *after* flat classes so a more
+    // specific match (`btn icon`) overrides the flat (`icon`) entry,
+    // matching CSS specificity ordering. The chain comes from the
+    // outer `lower_element_body`, which threads each container's
+    // active classes into [`LowerScope::with_class_chain_appending`]
+    // before lowering children.
     if let Some(sheet) = scope.stylesheet() {
-        for class_name in active_class_names(el, scope) {
-            apply_prss_class(sheet, &class_name, props, scope);
+        let active = active_class_names(el, scope);
+        for class_name in &active {
+            apply_prss_class(sheet, class_name, props, scope);
         }
+        apply_descendant_selectors(sheet, &active, scope, props);
     }
     for attr in &el.attributes {
         let local = attr.name.local.as_str();
-        let raw = resolved_attribute_string(&attr.value, scope);
+        let raw = resolved_attribute_string(&attr.value, scope).map(|v| {
+            // **Short-name token references** — `padding="md"` /
+            // `style:background="accent"` resolve to
+            // `tokens.spacing.md` / `tokens.colors.accent` *before*
+            // the per-attribute parse runs. Limited to Bare + Style
+            // attrs so `data:role="md"` / `aria:level="md"` don't
+            // accidentally substitute. See `prss-reference.md` §6.
+            // **Token-driven rem base** — any `Nrem` / `Nem` segments
+            // expand to pixel-resolved numerics using
+            // [`LowerScope::rem_px`] so a custom
+            // `tokens.typography.font-size-md` rescales every length
+            // through the same parser uniformly.
+            match attr.name.namespace {
+                AttributeNamespace::Bare | AttributeNamespace::Style => {
+                    let resolved = resolve_short_token(local, &v, scope).unwrap_or(v);
+                    expand_length_units(&resolved, scope)
+                }
+                _ => v,
+            }
+        });
         match attr.name.namespace {
             AttributeNamespace::Bare => match local {
                 "direction" => {
@@ -1819,7 +1914,18 @@ fn apply_container_attributes(
 fn apply_text_attributes(el: &Element, scope: &LowerScope, props: &mut TextProps, id: &mut String) {
     for attr in &el.attributes {
         let local = attr.name.local.as_str();
-        let raw = resolved_attribute_string(&attr.value, scope);
+        // Mirror the resolution + rem-expansion seam used by
+        // [`apply_container_attributes`] so `font-size="md"` reads
+        // through `tokens.typography.font-size-md` and `font-size="1rem"`
+        // honours the scope-driven rem base.
+        let raw =
+            resolved_attribute_string(&attr.value, scope).map(|v| match attr.name.namespace {
+                AttributeNamespace::Bare | AttributeNamespace::Style => {
+                    let resolved = resolve_short_token(local, &v, scope).unwrap_or(v);
+                    expand_length_units(&resolved, scope)
+                }
+                _ => v,
+            });
         match attr.name.namespace {
             AttributeNamespace::Bare if local == "font-size" => {
                 if let Some(v) = raw.as_deref().and_then(parse_f32) {
@@ -2249,12 +2355,58 @@ pub fn stringify_value_for_template(value: &serde_json::Value) -> String {
     stringify_value(value)
 }
 
-/// Base pixel size used by `rem` and `em` unit suffixes. Matches
-/// the browser default for CSS root font size. The token-driven
-/// override (`{tokens.typography.font-size-md}`) is a follow-up
-/// — today the constant is uniform across every parse_f32 call
-/// site so the unit math stays predictable without scope threading.
+/// Default pixel size used by `rem` and `em` unit suffixes when no
+/// scope-driven base is available. Matches the browser default for
+/// CSS root font size. Scope-aware call sites read
+/// `tokens.typography.font-size-md` via [`LowerScope::rem_px`] and
+/// pre-expand length values through [`expand_length_units`] before
+/// dispatching to the parsers below.
 const REM_PX: f32 = 16.0;
+
+/// Pre-expand any `Nrem` / `Nem` segments in `value` to their
+/// pixel-resolved numeric form, using the scope's
+/// [`LowerScope::rem_px`] base. Multi-segment strings (`padding="1rem 2rem"`)
+/// expand each whitespace-separated token independently so the
+/// downstream `parse_padding_shorthand` consumer reads pixel numbers
+/// uniformly.
+///
+/// When the scope's rem base equals the canonical 16px default, the
+/// helper short-circuits and returns the value unchanged so the
+/// hot path (no token override) avoids the alloc.
+fn expand_length_units(value: &str, scope: &LowerScope) -> String {
+    let rem_px = scope.rem_px();
+    if (rem_px - REM_PX).abs() < f32::EPSILON {
+        return value.to_string();
+    }
+    let mut out = String::with_capacity(value.len());
+    let mut leading_ws_done = false;
+    for token in value.split_whitespace() {
+        if leading_ws_done {
+            out.push(' ');
+        } else {
+            leading_ws_done = true;
+        }
+        // Order matters — `rem` ends in `em`. Try `rem` first.
+        let expanded = if let Some(num) = token.strip_suffix("rem") {
+            num.trim_end()
+                .parse::<f32>()
+                .ok()
+                .map(|n| (n * rem_px).to_string())
+        } else if let Some(num) = token.strip_suffix("em") {
+            num.trim_end()
+                .parse::<f32>()
+                .ok()
+                .map(|n| (n * rem_px).to_string())
+        } else {
+            None
+        };
+        match expanded {
+            Some(s) => out.push_str(&s),
+            None => out.push_str(token),
+        }
+    }
+    out
+}
 
 /// Parse a length-valued string. Accepts:
 ///
@@ -2399,14 +2551,172 @@ fn apply_prss_class(
         return;
     };
     for (key, value) in &resolved.properties {
-        let resolved_value = interpolate(value, scope);
-        apply_style_override(props, key, &resolved_value);
+        let interpolated = interpolate(value, scope);
+        let resolved_short = resolve_short_token(key, &interpolated, scope).unwrap_or(interpolated);
+        let final_value = expand_length_units(&resolved_short, scope);
+        apply_style_override(props, key, &final_value);
     }
     for (state, key, value) in &resolved.states {
-        let resolved_value = interpolate(value, scope);
+        let interpolated = interpolate(value, scope);
+        let resolved_short = resolve_short_token(key, &interpolated, scope).unwrap_or(interpolated);
+        let final_value = expand_length_units(&resolved_short, scope);
         let suffixed = format!("{}:{}", key, state);
-        apply_style_override(props, &suffixed, &resolved_value);
+        apply_style_override(props, &suffixed, &final_value);
     }
+}
+
+/// **PRSS descendant selectors** — walk every multi-segment class
+/// in the sheet and apply the ones whose segment chain matches the
+/// element's active class set + the ancestor class chain on
+/// `scope`. Ordering: each matching selector's properties layer on
+/// top of the flat-class application, so a more specific selector
+/// (`.btn .icon`) overrides the flat (`.icon`) for keys it sets.
+/// Selectors are visited in declaration order; later wins on key
+/// conflicts (matching the §4.6 application-order rule).
+fn apply_descendant_selectors(
+    sheet: &prism_core::language::prss::StyleSheet,
+    active: &[String],
+    scope: &LowerScope,
+    props: &mut ContainerProps,
+) {
+    let chain = scope.class_chain();
+    for (_, segments, resolved) in sheet.descendant_selectors() {
+        if !descendant_selector_matches(&segments, active, chain) {
+            continue;
+        }
+        for (key, value) in &resolved.properties {
+            let interpolated = interpolate(value, scope);
+            let resolved_short =
+                resolve_short_token(key, &interpolated, scope).unwrap_or(interpolated);
+            let final_value = expand_length_units(&resolved_short, scope);
+            apply_style_override(props, key, &final_value);
+        }
+        for (state, key, value) in &resolved.states {
+            let interpolated = interpolate(value, scope);
+            let resolved_short =
+                resolve_short_token(key, &interpolated, scope).unwrap_or(interpolated);
+            let final_value = expand_length_units(&resolved_short, scope);
+            let suffixed = format!("{}:{}", key, state);
+            apply_style_override(props, &suffixed, &final_value);
+        }
+    }
+}
+
+/// **Short-name token references** (`prss-reference.md` §6) — when a
+/// PRSS class property or PRUI inline style value is a bare token
+/// name (e.g. `radius = "md"` or `style:background="accent"`),
+/// resolve it through the active `tokens.<bucket>.<name>` table on
+/// `scope` to its underlying value (`8`, `"#7c3aed"`). Returns
+/// `None` when the value isn't a bare token name (literal hex,
+/// numeric with units, expression result, …) or when the looked-up
+/// token isn't present — caller falls back to the raw value.
+///
+/// The bucket is derived from `key` (after a state-suffix split):
+/// colors-typed keys (`background`, `color`, `border`) read from
+/// `tokens.colors`; spacing-typed keys (`gap`, `padding`,
+/// `padding-*`, `margin*`) read from `tokens.spacing`; `radius`
+/// reads from `tokens.radius`; `font-size` / `line-height` read
+/// from `tokens.typography` with the canonical `font-size-<short>`
+/// / `line-height-<short>` key shape mirrored from
+/// [`design_tokens_to_json`].
+fn resolve_short_token(key: &str, value: &str, scope: &LowerScope) -> Option<String> {
+    let trimmed = value.trim();
+    if !is_bare_token_name(trimmed) {
+        return None;
+    }
+    let (bucket, token_key) = short_token_bucket_for_key(key, trimmed)?;
+    let tokens = scope.binding("tokens")?.as_object()?;
+    let bucket_obj = tokens.get(bucket)?.as_object()?;
+    let val = bucket_obj.get(&token_key)?;
+    Some(stringify_value(val))
+}
+
+/// True when `s` matches the shape PRSS short-name token references
+/// recognise: lowercase ASCII identifier characters (a-z), digits,
+/// `-`, or `_`, with a non-digit first character. Filters out hex
+/// colors (`#…`), numeric values (`8`, `1.5`, `1rem`), expression
+/// remnants (`{…}`), and capitalised words. The shape mirrors the
+/// design-token key spelling — `accent`, `text-primary`, `surface-elevated`,
+/// `font-size-md`, `md`.
+fn is_bare_token_name(s: &str) -> bool {
+    let mut chars = s.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_lowercase() || first == '_') {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+/// Map a PRSS / PRUI style key (after a state-suffix split) onto its
+/// `(bucket, token_key)` lookup pair. `None` for keys that don't
+/// participate in short-name resolution (`width`, `height`,
+/// `direction`, `tag`, …).
+fn short_token_bucket_for_key(key: &str, short: &str) -> Option<(&'static str, String)> {
+    use prism_core::language::prism_ui::ast::split_state_suffix;
+    let (bare_key, _) = split_state_suffix(key);
+    match bare_key {
+        "background" | "color" | "border" => Some(("colors", short.to_string())),
+        "radius" => Some(("radius", short.to_string())),
+        "gap" | "padding" | "padding-left" | "padding-right" | "padding-top" | "padding-bottom"
+        | "margin" | "margin-left" | "margin-right" | "margin-top" | "margin-bottom" => {
+            Some(("spacing", short.to_string()))
+        }
+        "font-size" => Some(("typography", format!("font-size-{}", short))),
+        "line-height" => Some(("typography", format!("line-height-{}", short))),
+        _ => None,
+    }
+}
+
+/// CSS-style descendant matcher: the rightmost segment must match
+/// a class in `current` (the element's active class set); each
+/// preceding segment must match an ancestor's class set, in order
+/// from innermost outward, with intermediate ancestors skipped if
+/// they don't match.
+///
+/// `chain` is outermost-first as stored in [`LowerScope::class_chain`];
+/// the match walks it from innermost (`chain.len()-1`) outward so the
+/// nearest ancestor with the needed class is consumed first.
+fn descendant_selector_matches(
+    segments: &[&str],
+    current: &[String],
+    chain: &[Vec<String>],
+) -> bool {
+    if segments.is_empty() {
+        return false;
+    }
+    let last = segments[segments.len() - 1];
+    if !current.iter().any(|c| c == last) {
+        return false;
+    }
+    let prefix = &segments[..segments.len() - 1];
+    if prefix.is_empty() {
+        // Single segment — caller handles flat application; we do
+        // not apply here to avoid double-counting. Returning false
+        // matches `descendant_selectors`'s `len() <= 1` filter; this
+        // arm is defensive.
+        return false;
+    }
+    let mut chain_idx = chain.len();
+    // Walk prefix segments innermost-first. For each needle, scan
+    // ancestors (innermost→outermost), consuming whichever one
+    // contains it. Anything before that ancestor is still available
+    // for outer prefix segments.
+    for needle in prefix.iter().rev() {
+        let mut found = false;
+        while chain_idx > 0 {
+            chain_idx -= 1;
+            if chain[chain_idx].iter().any(|c| c == needle) {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+    true
 }
 
 pub fn apply_style_override(props: &mut ContainerProps, local: &str, value: &str) {
@@ -4716,5 +5026,292 @@ mod tests {
         };
         assert!((props.padding.top - 16.0).abs() < f32::EPSILON); // 1rem
         assert!((props.padding.left - 8.0).abs() < f32::EPSILON); // 8px
+    }
+
+    // ─── class:foo="{cond}" reactive class toggle ──────────────
+
+    /// Truthy `class:active` applies the named PRSS class as if it
+    /// were part of `class="…"`.
+    #[test]
+    fn class_toggle_truthy_applies_prss_class() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"[class.active]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default()
+            .with_binding("on", serde_json::json!(true))
+            .with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(r#"<container class:active="{on}"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    /// Falsy `class:active` does not apply the class — the runtime
+    /// renders as if `class:active` were absent.
+    #[test]
+    fn class_toggle_falsy_skips_prss_class() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"[class.active]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default()
+            .with_binding("on", serde_json::json!(false))
+            .with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(r#"<container class:active="{on}"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!(props.background.is_none());
+    }
+
+    /// Boolean attribute form (`class:active` with no `=value`)
+    /// reads as truthy — Vue / Svelte parity.
+    #[test]
+    fn class_toggle_boolean_form_is_truthy() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"[class.active]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(r#"<container class:active/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!(props.background.is_some());
+    }
+
+    /// `class:foo` layers on top of static `class="…"` — both lists
+    /// participate in PRSS application; later toggles win on key
+    /// conflicts.
+    #[test]
+    fn class_toggle_layers_on_static_class_attribute() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.btn]
+            background = "#ffffff"
+
+            [class.primary]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default()
+            .with_binding("primary", serde_json::json!(true))
+            .with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container class="btn" class:primary="{primary}"/>"#,
+            &scope,
+        )
+        .unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        // `primary` declared after `btn` in attribute order; later wins.
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    // ─── PRSS descendant selectors ─────────────────────────────
+
+    /// `.btn .icon` matches an `<icon>` (well, container with
+    /// class="icon") nested under a container with class="btn",
+    /// even with intermediate ancestors.
+    #[test]
+    fn prss_descendant_selector_matches_through_ancestor_chain() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.btn]
+            background = "#fff"
+
+            [class.icon]
+            background = "#aaa"
+
+            [class.".btn .icon"]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container class="btn">
+                <container class="wrap">
+                    <container id="leaf" class="icon"/>
+                </container>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        // Walk to the deepest container.
+        let leaf = find_container_by_id(&nodes, "leaf").expect("leaf");
+        let Node::Container { props, .. } = leaf else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    /// Without a matching ancestor `.btn`, the descendant selector
+    /// does not match — the leaf falls back to its flat `.icon`
+    /// styling.
+    #[test]
+    fn prss_descendant_selector_misses_without_matching_ancestor() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.icon]
+            background = "#aaa"
+
+            [class.".btn .icon"]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(
+            r#"<container>
+                <container id="leaf" class="icon"/>
+            </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let leaf = find_container_by_id(&nodes, "leaf").expect("leaf");
+        let Node::Container { props, .. } = leaf else {
+            panic!()
+        };
+        let bg = props.background.expect("background");
+        assert_eq!((bg.r, bg.g, bg.b), (0xaa, 0xaa, 0xaa));
+    }
+
+    fn find_container_by_id<'a>(nodes: &'a [Node], id: &str) -> Option<&'a Node> {
+        for n in nodes {
+            if let Node::Container {
+                id: cid, children, ..
+            } = n
+            {
+                if cid == id {
+                    return Some(n);
+                }
+                if let Some(found) = find_container_by_id(children, id) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    // ─── Short-name token references ───────────────────────────
+
+    /// PRSS `radius = "md"` resolves through the active token table
+    /// to the `tokens.radius.md` value.
+    #[test]
+    fn prss_short_name_radius_resolves_through_tokens() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"[class.btn]
+            radius = "md"
+            "##,
+        );
+        let scope = LowerScope::default()
+            .with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS)
+            .with_stylesheet(Arc::new(sheet));
+        let nodes = interpret_with_scope(r#"<container class="btn"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let expected = prism_core::design_tokens::DEFAULT_TOKENS.radius.md as f32;
+        assert!((props.radius.tl - expected).abs() < f32::EPSILON);
+    }
+
+    /// Inline `style:background="accent"` resolves through
+    /// `tokens.colors.accent`.
+    #[test]
+    fn inline_style_short_name_color_resolves_through_tokens() {
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes =
+            interpret_with_scope(r#"<container style:background="accent"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let expected = &prism_core::design_tokens::DEFAULT_TOKENS.colors.accent;
+        let bg = props.background.expect("background");
+        assert_eq!(bg.r, expected.r);
+        assert_eq!(bg.g, expected.g);
+        assert_eq!(bg.b, expected.b);
+    }
+
+    /// Bare `padding="md"` resolves through `tokens.spacing.md`.
+    #[test]
+    fn bare_padding_short_name_resolves_through_spacing_tokens() {
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes = interpret_with_scope(r#"<container padding="md"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let expected = prism_core::design_tokens::DEFAULT_TOKENS.spacing.md as f32;
+        assert!((props.padding.left - expected).abs() < f32::EPSILON);
+    }
+
+    /// Unknown short names drop silently — the value passes through
+    /// to the parser, which fails to interpret and leaves the prop
+    /// at its default. Matches PRSS's "unknown drops cleanly" rule.
+    #[test]
+    fn short_name_lookup_miss_falls_through_to_parser() {
+        let scope =
+            LowerScope::default().with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        let nodes =
+            interpret_with_scope(r#"<container padding="not-a-token-name"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        // Default Padding::all(0) survives.
+        assert!((props.padding.left - 0.0).abs() < f32::EPSILON);
+    }
+
+    // ─── Token-driven rem base ─────────────────────────────────
+
+    /// `1rem` reads through `tokens.typography.font-size-md` when
+    /// the scope has a token table installed. Double the base
+    /// → double the resolved padding.
+    #[test]
+    fn rem_base_reads_from_typography_font_size_md() {
+        let mut tokens = prism_core::design_tokens::DEFAULT_TOKENS;
+        tokens.typography.font_size_md = 32; // 32px base instead of 16
+        let scope = LowerScope::default().with_design_tokens(&tokens);
+        let nodes = interpret_with_scope(r#"<container padding="1rem"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!((props.padding.left - 32.0).abs() < f32::EPSILON);
+    }
+
+    /// Without a token binding, `rem_px` falls back to the canonical
+    /// 16px so `1rem` reads as 16 — preserving existing behaviour.
+    #[test]
+    fn rem_base_defaults_to_sixteen_without_tokens() {
+        let scope = LowerScope::default();
+        let nodes = interpret_with_scope(r#"<container padding="1rem"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!((props.padding.left - 16.0).abs() < f32::EPSILON);
+    }
+
+    /// Multi-segment shorthand expansion (`padding="1rem 2rem"`)
+    /// honours the scope-driven rem base across every segment.
+    #[test]
+    fn rem_base_applies_to_each_padding_shorthand_token() {
+        let mut tokens = prism_core::design_tokens::DEFAULT_TOKENS;
+        tokens.typography.font_size_md = 20;
+        let scope = LowerScope::default().with_design_tokens(&tokens);
+        let nodes = interpret_with_scope(r#"<container padding="1rem 2rem"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        // top = 1rem = 20, left = 2rem = 40
+        assert!((props.padding.top - 20.0).abs() < f32::EPSILON);
+        assert!((props.padding.left - 40.0).abs() < f32::EPSILON);
     }
 }

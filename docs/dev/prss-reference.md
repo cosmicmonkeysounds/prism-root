@@ -249,12 +249,76 @@ Lowest priority first; later steps override:
 1. **Block defaults** — the `lower_ui` body's own styling.
 2. **Stylesheet classes** — left to right of `class="…"`, base
    properties then state variants.
-3. **PRUI inline `style:` attributes** — `style:background="#…"`.
-4. **PRUI inline `style="{obj}"` spread** — Wave 12.
+3. **Descendant selectors** (§4.7) — multi-segment matches layer
+   on top of flat-class application; declaration-order resolves
+   ties on conflicting keys.
+4. **PRUI inline `style:` attributes** — `style:background="#…"`.
+5. **PRUI inline `style="{obj}"` spread** — Wave 12.
 
 Inline always wins. The mental model matches React's
 `<Foo className="btn" style={{ background: 'red' }}/>`: the
 class is the theme, the style is the override.
+
+### 4.7 Descendant selectors
+
+A class key may carry multiple whitespace-separated segments to
+target an element only when its ancestor chain also matches.
+TOML keys with whitespace must be quoted, so the spelling reads
+either CSS-style (with leading dots) or bare:
+
+```toml
+[class.btn]
+background = "{tokens.colors.surface}"
+
+[class.icon]
+color = "{tokens.colors.text-secondary}"
+
+[class.".btn .icon"]
+color = "{tokens.colors.accent}"
+```
+
+Used from PRUI:
+
+```prui
+<container class="btn">
+  <container class="icon"/>      <!-- ancestor btn → matches .btn .icon -->
+</container>
+
+<container>
+  <container class="icon"/>      <!-- no ancestor btn → only flat .icon applies -->
+</container>
+```
+
+Matching follows CSS descendant rules:
+
+* The **rightmost** segment must match a class on the current
+  element.
+* Each preceding segment must match an ancestor's class set, in
+  order from innermost outward. Intermediate ancestors that don't
+  match are skipped.
+* Application order: flat classes first, then descendant
+  selectors (declaration order). Later assignments win on key
+  conflicts — same shape as `extends`.
+
+### 4.8 Reactive class toggles (`class:foo`)
+
+PRUI's `class:<name>="{cond}"` attribute toggles a PRSS class on
+the container based on a boolean expression — Vue's
+`<div :class="{ active: isActive }">` / Svelte's
+`<div class:active={isActive}>` collapsed into one syntactic form.
+
+```prui
+<container class="btn" class:primary="{state.kind == 'primary'}">
+  Save
+</container>
+```
+
+When the expression is truthy, the named class participates in
+the PRSS pre-pass exactly as if it were appended to the static
+`class="…"` list. The boolean form `class:active` (no `=value`)
+reads as `true`. Falsy values drop the class cleanly. Without a
+stylesheet loaded, the toggle is a no-op — same shape `class="…"`
+itself takes on a host without PRSS.
 
 ---
 
@@ -349,9 +413,38 @@ The literal form is simpler. The interpolation form lets a class
 reference any token by full path — useful when the same color
 needs to flow into both a class and a PRUI inline `style:`.
 
-Short-name token lookup (e.g. `radius = "md"` resolving to
-`tokens.radius.md = 8`) is not yet implemented; use the
-`{tokens.radius.md}` form explicitly for now.
+### Short-name token lookup
+
+A bare identifier on a token-backed property resolves through the
+matching token bucket without the explicit `{tokens.…}` body.
+The bucket is derived from the property key:
+
+| Key | Bucket | Lookup shape |
+|---|---|---|
+| `background` / `color` / `border` | `tokens.colors` | `tokens.colors.<value>` |
+| `radius` | `tokens.radius` | `tokens.radius.<value>` |
+| `gap` / `padding` / `padding-*` / `margin*` | `tokens.spacing` | `tokens.spacing.<value>` |
+| `font-size` | `tokens.typography` | `tokens.typography.font-size-<value>` |
+| `line-height` | `tokens.typography` | `tokens.typography.line-height-<value>` |
+
+A short name must look like a token spelling (lowercase ASCII
+identifier characters, no leading digit). Hex colors (`#…`),
+numeric values (`8`, `1rem`, `50%`), and unrecognised names fall
+through unchanged so the parser handles them. Hosts that don't
+seed a token table see every short-name attempt drop silently —
+same as today's "unknown drops cleanly" rule.
+
+```toml
+[class.btn]
+radius = "md"            # → tokens.radius.md
+padding = "md"           # → tokens.spacing.md
+background = "accent"    # → tokens.colors.accent
+font-size = "lg"         # → tokens.typography.font-size-lg
+```
+
+The same resolution applies to PRUI inline `style:` and bare
+length-typed attrs, so `<container padding="md"/>` and
+`style:background="accent"` read the table identically.
 
 ---
 
@@ -394,22 +487,31 @@ CSS, with PRSS as the source of truth).
 ## 8. Hot reload
 
 PRSS rides on the same fingerprint-cache substrate `.prui` uses
-(Phase 10 of `dioxus-inspiration.md`). Each save through the dev
-loop:
+(Phase 10 of `dioxus-inspiration.md`). The `.prss` extension is
+part of `prism_cli::dev_loop::DEFAULT_EXTENSIONS`, so any save
+under a watched path triggers the reload pipeline. Each save:
 
 1. Reparses the file.
-2. Compares the structural hash (the set of class names and
-   their `extends` chain).
-3. If structural-hash matches, applies the literal property diffs
-   in place — every reactive context that read a token or class
-   value re-evaluates without touching the tree.
-4. If structural-hash differs, falls back to a full re-walk
-   (`subsecond::call` swap if running with `--hot=subsecond`,
-   otherwise child respawn).
+2. Builds a [`PrssFingerprint`](../../packages/prism-ui-build/src/prss_hash.rs)
+   from the new sheet (structural hash + full hash + literal slot
+   table).
+3. The host's [`PrssFingerprintCache`](../../packages/prism-ui-build/src/prss_watch.rs)
+   compares against the previous fingerprint and emits a
+   `PrssChange`:
+   * `LiteralOnly { patches }` — same class shape, same key set;
+     only literal property / token values differ. The host
+     re-evaluates every reactive context that read those slots
+     without touching the AST.
+   * `Structural` — class added/removed, key set changed,
+     `extends` chain changed. Falls back to a full re-walk
+     (`subsecond::call` swap if running with `--hot=subsecond`,
+     otherwise child respawn).
+   * `NoChange` / `ParseError` / `ReadError` — no-op / surface
+     diagnostic / retry on next batch.
 
-The dev-loop watcher extension list grows to include `.prss`
-alongside `.prui` and `.rs`. Same `DevLoop` from `prism-cli`, no
-new infrastructure.
+Same `DevLoop` from `prism-cli`, no new infrastructure — the
+`.prss` extension joins `.rs` and `.prism-ui` in the default
+respawn filter.
 
 ---
 
@@ -441,7 +543,6 @@ editor and keeps the last good stylesheet active.
 | Container queries | Defer — same |
 | `@keyframes` / animations | Wait on the `transition:` namespace's runtime animator |
 | Pseudo-elements (`::before`, `::after`) | Skip — no consumer; the same shape lands as `<container/>` siblings |
-| Descendant selectors (`.btn .icon`) | Defer — `extends` covers the common case; descendant matching is a substantial scope |
 | `!important` | Skip — the application-order table (§4.6) is the precedence rule |
 | `@import` / `@use` | Defer — host loads + merges multiple files explicitly |
 | CSS variables (`var(--foo)`) | Skip — `{tokens.<path>}` interpolation covers this |

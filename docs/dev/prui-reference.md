@@ -204,7 +204,7 @@ binding (§8) is the idiomatic path for theme-driven sizes.
 
 Every attribute is classified into a namespace by its prefix (or by
 being a known keyword). The classifier is
-`AttributeNamespace::classify(raw)`. Twelve namespaces in total:
+`AttributeNamespace::classify(raw)`. Thirteen namespaces in total:
 
 | Namespace | Prefix / keyword | Lowers to | Example |
 |---|---|---|---|
@@ -220,7 +220,8 @@ being a known keyword). The classifier is
 | **Route** | `route:` | Sugar for `data:` — same lowering, dedicated namespace for hit-routing attrs | `route:role="resize-handle"` |
 | **Transition** | `transition:` | `data-transition-<prop>` semantic attr; future `Effect`-driven animator hook | `transition:opacity="200ms"` |
 | **Use** | `use:` | Attach a registered `ModifierBehaviour` by id (Wave 13.3); the attribute value becomes the modifier's first prop | `use:tooltip="Click to save"` |
-| **Identifier** | `class` / `id` | `id` sets the node id; `class` reserved for inspector / HTML | `id="palette::row"` |
+| **Class** | `class:` | Conditionally applies the named PRSS class when the value is truthy (Svelte/Vue parity); see `prss-reference.md` §4.8 | `class:active="{state.active}"` |
+| **Identifier** | `class` / `id` | `id` sets the node id; bare `class="…"` lists static PRSS classes (no colon) | `id="palette::row"` / `class="btn primary"` |
 
 Two cross-cutting rules:
 
