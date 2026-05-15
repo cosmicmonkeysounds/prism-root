@@ -204,6 +204,22 @@ pub(crate) mod test_support {
     #[derive(Default)]
     pub struct InMemVfs {
         files: HashMap<PathBuf, Vec<u8>>,
+        /// Optional canned response for `pick_file`. The first call
+        /// consumes the value; subsequent calls fall back to
+        /// `VfsError::Unsupported` (the trait default). Used by D3
+        /// tests to drive the picker-aware persistence flow without
+        /// pulling in `rfd`. `Mutex` rather than `RefCell` so
+        /// `InMemVfs` keeps the `Vfs: Send + Sync` bound.
+        pick_response: std::sync::Mutex<Option<Result<Vec<PathBuf>, VfsError>>>,
+    }
+
+    impl InMemVfs {
+        /// Queue a single canned picker response. Subsequent
+        /// `pick_file` calls without a queued response fall back to
+        /// the trait default (`Err(Unsupported)`).
+        pub fn queue_pick(&self, response: Result<Vec<PathBuf>, VfsError>) {
+            *self.pick_response.lock().unwrap() = Some(response);
+        }
     }
 
     impl Vfs for InMemVfs {
@@ -231,6 +247,14 @@ pub(crate) mod test_support {
 
         fn exists(&self, path: &Path) -> bool {
             self.files.contains_key(path)
+        }
+
+        fn pick_file(&self, _spec: &FilePickerSpec) -> Result<Vec<PathBuf>, VfsError> {
+            if let Some(r) = self.pick_response.lock().unwrap().take() {
+                r
+            } else {
+                Err(VfsError::Unsupported)
+            }
         }
     }
 }

@@ -124,6 +124,17 @@ pub enum RenderCommand {
         /// ignored otherwise.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         underline_color: Option<Color>,
+        /// Byte offsets the paint pass should outline with a thin
+        /// border. Used for matching-bracket highlights: the host
+        /// passes the open + close offsets and the paint draws a
+        /// 1-px box around the glyph at each. Empty / absent →
+        /// nothing painted.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        glyph_outlines: Vec<usize>,
+        /// Outline colour for [`Self::glyph_outlines`]. Required when
+        /// the vector is non-empty; ignored otherwise.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        glyph_outline_color: Option<Color>,
     },
     Image {
         bounds: Rect,

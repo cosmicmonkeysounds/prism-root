@@ -66,7 +66,12 @@ fn dispatch_event_inner(
         // canvas gizmo capture runs. This lets clicks on inspector
         // rows / field-editor toggles mutate state without poking
         // through the canvas-tool dispatch.
-        Event::PointerDown { x, y, button } => {
+        Event::PointerDown {
+            x,
+            y,
+            button,
+            modifiers: pointer_modifiers,
+        } => {
             // B4: a pointer-down that *isn't* on a text-input field
             // commits any active field-focus session before any other
             // routing runs. Clicking a chrome button, a second field
@@ -94,14 +99,15 @@ fn dispatch_event_inner(
                 .map(|h| route_color_slider_press(inner, h, *x))
                 .unwrap_or(false);
             // The code-editor body needs the pointer-x / pointer-y
-            // (in viewport-space) to resolve a byte offset within the
-            // shaped text. Route it *before* the table-driven
+            // (in viewport-space) and the modifier state to resolve
+            // a byte offset + handle shift-click extend + the multi-
+            // click cascade. Route it *before* the table-driven
             // `route_pointer_down` so the handler can take focus +
             // reposition the caret in one pass.
             let code_editor_press = !slider
                 && hit
                     .as_ref()
-                    .map(|h| route_code_editor_body_press(inner, h, *x, *y))
+                    .map(|h| route_code_editor_body_press(inner, h, *x, *y, *pointer_modifiers))
                     .unwrap_or(false);
             let routed = slider
                 || code_editor_press
@@ -186,7 +192,7 @@ fn dispatch_event_inner(
                 || selected
                 || captured
         }
-        Event::PointerMove { x, y } => {
+        Event::PointerMove { x, y, modifiers: _ } => {
             // B4: a property-row number-scrub session intercepts
             // pointer-move before the canvas gets a chance — they're
             // disjoint surfaces (right rail vs canvas) and the canvas
@@ -241,10 +247,21 @@ fn dispatch_event_inner(
             } else {
                 false
             };
+            // Code-editor drag-select intercepts pointer-move when a
+            // press anchored a drag. Sits before the canvas tool so a
+            // drag that began inside the editor body can't bleed into
+            // the canvas pointer arm. No-op when no drag is active.
+            let editor_dragged = route_code_editor_body_drag(inner, *x, *y);
+            // Editor hover — resolve the token under the pointer to
+            // a help entry and surface it through the help-tooltip
+            // slot. Runs after drag so a drag in progress still
+            // wins; no-op when the hit isn't a code-editor body.
+            route_code_editor_body_hover(inner, hit.as_ref(), *x, *y);
             scrubbed
                 || palette_moved
                 || resized
                 || slid
+                || editor_dragged
                 || inner.borrow_mut().state.canvas.pointer_move(*x, *y)
         }
         Event::PointerUp { x, y, .. } => {
@@ -299,10 +316,15 @@ fn dispatch_event_inner(
                     .take()
                     .is_some()
             };
+            // Editor drag release — drop any in-flight selection
+            // drag before the canvas pointer-up runs so the canvas
+            // tool can't accidentally pick up the release event.
+            let editor_released = route_code_editor_body_release(inner);
             stepped
                 || dropped
                 || resize_committed
                 || slider_released
+                || editor_released
                 || inner.borrow_mut().state.canvas.pointer_up(*x, *y)
         }
         // §24: every other event variant fans out through the service
@@ -515,8 +537,7 @@ fn handle_field_edit_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bo
     if let Some(value) = toggle_value {
         let mut guard = inner.borrow_mut();
         let g = &mut *guard;
-        let registry = g.registry.as_component_registry();
-        return g.state.set_node_prop(target, key, value, Some(registry));
+        return write_field_value(g, hit, target, key, value);
     }
     // Number / integer: open a drag-scrub session. Pointer-move
     // delivers the actual mutation; click (no drag) falls through
@@ -880,8 +901,39 @@ fn step_number_on_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool 
     };
     let mut guard = inner.borrow_mut();
     let g = &mut *guard;
-    let registry = g.registry.as_component_registry();
-    g.state.set_node_prop(target, key, value, Some(registry))
+    write_field_value(g, hit, target, key, value)
+}
+
+/// Inline-template third slice — dispatch a field-editor write to
+/// either [`AppState::set_node_prop`] (regular node selection) or
+/// [`AppState::set_facet_template_prop`] (facet-template descendant
+/// selection) based on whether `data-template-path` is present on
+/// the hit-test rect. Single seam for every click-driven write, so
+/// the routing logic doesn't drift across the seven-or-so commit
+/// sites in `handle_field_edit_click` / drag-commit / text-input
+/// commit.
+fn write_field_value(
+    g: &mut crate::shell::ShellInner,
+    hit: &HitRect,
+    target: &str,
+    key: &str,
+    value: serde_json::Value,
+) -> bool {
+    let template_path = attr_value(hit, "data-template-path")
+        .unwrap_or("")
+        .to_string();
+    // Split borrow: name `registry` and `state` as disjoint fields
+    // of `*g` so the mut borrow on `state` and the immut borrow on
+    // `registry` don't overlap. Sound — Rust's borrow checker
+    // understands struct field splits.
+    let crate::shell::ShellInner {
+        registry, state, ..
+    } = g;
+    let reg = registry.as_component_registry();
+    if !template_path.is_empty() {
+        return state.set_facet_template_prop(target, &template_path, key, value, Some(reg));
+    }
+    state.set_node_prop(target, key, value, Some(reg))
 }
 
 /// §43 A1: pointer-down on a container that carries a
@@ -1242,55 +1294,261 @@ fn handle_select_dropdown_close_click(inner: &Rc<RefCell<ShellInner>>, _hit: &Hi
     inner.borrow_mut().state.close_select_dropdown()
 }
 
-/// Pointer-down on the code-editor body. Sets keyboard focus on the
-/// in-shell code editor (closing any active property-row field-focus
-/// first so the next keystroke unambiguously targets the editor), then
-/// repositions the caret to the byte offset the click resolves to.
-///
-/// Byte resolution mirrors the runtime's `chars * font_size * 0.55`
-/// natural-width heuristic — accurate to the pixel for the monospace
-/// font the code editor uses and good enough for variable-width
-/// fallbacks. Shift-click extends the existing selection (the
-/// editor's anchor stays put while the caret jumps to the new byte).
-/// Returns `true` when the hit was a code-editor body — false lets the
-/// table-driven `route_pointer_down` keep dispatching for other
-/// `data-role`s.
+/// Process-wide hit-tester for editor text. cosmic-text's
+/// `FontSystem` is heavy to construct (font enumeration), so we
+/// reuse a single one across every click. The text system never
+/// bakes glyphs here — `byte_at` only walks shaped runs — so the
+/// glyph cache the type maintains for the femtovg path stays
+/// empty in this instance.
+fn editor_hit_tester() -> &'static std::sync::Mutex<prism_ui_runtime::text::TextSystem> {
+    use std::sync::{Mutex, OnceLock};
+    static HIT_TESTER: OnceLock<Mutex<prism_ui_runtime::text::TextSystem>> = OnceLock::new();
+    HIT_TESTER.get_or_init(|| Mutex::new(prism_ui_runtime::text::TextSystem::new()))
+}
+
+/// Resolve a click on the code-editor body to a byte offset within
+/// the current buffer through cosmic-text's real glyph spans — works
+/// under both monospace and proportional fonts.
+#[allow(clippy::too_many_arguments)]
+fn resolve_editor_byte_at(
+    text: &str,
+    bounds_x: f32,
+    bounds_y: f32,
+    bounds_w: f32,
+    click_x: f32,
+    click_y: f32,
+    scroll_x: f32,
+    scroll_y: f32,
+    font_size: f32,
+) -> usize {
+    const TEXT_PAD_X: f32 = 6.0;
+    const TEXT_PAD_Y: f32 = 4.0;
+    let local_x = (click_x - bounds_x - TEXT_PAD_X + scroll_x).max(0.0);
+    let local_y = (click_y - bounds_y - TEXT_PAD_Y + scroll_y).max(0.0);
+    let shape_width = (bounds_w - TEXT_PAD_X * 2.0).max(0.0);
+    let mut sys = editor_hit_tester()
+        .lock()
+        .expect("editor hit-tester poisoned");
+    sys.byte_at(text, font_size, shape_width, local_x, local_y)
+}
+
+/// Monotonic millis since program start. Drives the editor's
+/// multi-click cascade so double/triple clicks register correctly.
+fn click_millis() -> u64 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    let epoch = *EPOCH.get_or_init(Instant::now);
+    epoch.elapsed().as_millis() as u64
+}
+
+/// Pointer-down on the code-editor body. Sets keyboard focus, then
+/// resolves the click to a byte via cosmic-text. Modifier-aware:
+/// shift held extends the existing selection. Multi-click cascade
+/// turns 2 / 3 clicks at the same byte within ~500 ms into word /
+/// line selection. Plain single clicks open a drag — pointer-move +
+/// pointer-up close the loop through
+/// `route_code_editor_body_drag` / `_release`.
 fn route_code_editor_body_press(
     inner: &Rc<RefCell<ShellInner>>,
     hit: &HitRect,
     x: f32,
     y: f32,
+    modifiers: prism_ui_runtime::event::Modifiers,
 ) -> bool {
     if attr_value(hit, "data-role") != Some("code-editor-body") {
         return false;
     }
+    const FONT_SIZE: f32 = 13.0;
     let mut guard = inner.borrow_mut();
     let ShellInner {
         state, registry, ..
     } = &mut *guard;
-    // Close any open property-row field-focus first.
     state.cancel_field_focus(Some(registry.as_component_registry()));
     state.code_editor_focused = true;
-    // The code editor's font matches the DSL: font-size 13 inside a
-    // 6-px-horizontal / 4-px-vertical text inset. Same heuristic the
-    // layout pass uses, kept here so click positioning agrees with
-    // shaped glyph widths byte-for-byte under a monospace font.
-    const FONT_SIZE: f32 = 13.0;
-    const TEXT_PAD_X: f32 = 6.0;
-    const TEXT_PAD_Y: f32 = 4.0;
-    let local_x = (x - hit.bounds.x - TEXT_PAD_X).max(0.0);
-    let local_y = (y - hit.bounds.y - TEXT_PAD_Y).max(0.0);
-    let row = ((local_y / (FONT_SIZE * 1.2)).floor() as usize) + 1;
-    let col = ((local_x / (FONT_SIZE * 0.55)).round() as usize).max(0);
-    let byte = state
-        .canvas
-        .code_buffer
-        .editor
-        .line_col_to_byte(row.max(1), col);
-    // Shift held → extend the existing selection's anchor.
-    let extend = false; // pointer modifiers aren't threaded here yet
-    state.canvas.code_buffer.editor.place_caret_at(byte, extend);
+    let text = state.canvas.code_buffer.source().to_string();
+    let scroll_x = state.canvas.code_buffer.scroll_x;
+    let scroll_y = state.canvas.code_buffer.scroll_y;
+    let byte = resolve_editor_byte_at(
+        &text,
+        hit.bounds.x,
+        hit.bounds.y,
+        hit.bounds.width,
+        x,
+        y,
+        scroll_x,
+        scroll_y,
+        FONT_SIZE,
+    );
+    let now = click_millis();
+    let click_kind = state.canvas.code_buffer.editor.register_click(byte, now);
+    use prism_ui_runtime::editor::ClickKind;
+    match click_kind {
+        ClickKind::Single => {
+            state
+                .canvas
+                .code_buffer
+                .editor
+                .place_caret_at(byte, modifiers.shift);
+            // Shift-click extends a selection — don't start a drag.
+            state.editor_drag = if modifiers.shift {
+                None
+            } else {
+                Some(crate::state::EditorDrag {
+                    anchor_byte: byte,
+                    bounds_x: hit.bounds.x,
+                    bounds_y: hit.bounds.y,
+                    bounds_w: hit.bounds.width,
+                    scroll_x,
+                    scroll_y,
+                    font_size: FONT_SIZE,
+                })
+            };
+        }
+        ClickKind::DoubleWord => {
+            state.canvas.code_buffer.editor.select_word_at(byte);
+            state.editor_drag = None;
+        }
+        ClickKind::TripleLine => {
+            state.canvas.code_buffer.editor.select_line_at(byte);
+            state.editor_drag = None;
+        }
+    }
     true
+}
+
+/// Pointer-move while an editor drag is in flight. Resolves the
+/// move position to a byte using the drag's anchored bounds + the
+/// current buffer text, then extends the selection so the editor's
+/// caret jumps to the new byte while the anchor stays put.
+fn route_code_editor_body_drag(inner: &Rc<RefCell<ShellInner>>, x: f32, y: f32) -> bool {
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let Some(drag) = g.state.editor_drag.clone() else {
+        return false;
+    };
+    let text = g.state.canvas.code_buffer.source().to_string();
+    let byte = resolve_editor_byte_at(
+        &text,
+        drag.bounds_x,
+        drag.bounds_y,
+        drag.bounds_w,
+        x,
+        y,
+        drag.scroll_x,
+        drag.scroll_y,
+        drag.font_size,
+    );
+    // First move after press: anchor at the click byte so subsequent
+    // extends pivot from there. (The Single arm above placed the
+    // caret without an anchor.)
+    if g.state.canvas.code_buffer.editor.selection().is_none() {
+        g.state
+            .canvas
+            .code_buffer
+            .editor
+            .place_caret_at(drag.anchor_byte, false);
+    }
+    g.state.canvas.code_buffer.editor.place_caret_at(byte, true);
+    true
+}
+
+/// Pointer-up — drop any active editor drag.
+fn route_code_editor_body_release(inner: &Rc<RefCell<ShellInner>>) -> bool {
+    inner.borrow_mut().state.editor_drag.take().is_some()
+}
+
+/// Process-wide help registry for editor hover. Loaded lazily on
+/// first hover; entries cover Luau / Rust / JavaScript keywords.
+/// `OnceLock` (not `Mutex<OnceLock>`) — the registry is read-only
+/// after construction.
+fn editor_help_registry() -> &'static prism_core::HelpRegistry {
+    use std::sync::OnceLock;
+    static REG: OnceLock<prism_core::HelpRegistry> = OnceLock::new();
+    REG.get_or_init(crate::editor_help::editor_help_registry)
+}
+
+/// Pointer-move over the code editor — resolve the byte under the
+/// pointer to a token and, if the lexeme has a help entry, push a
+/// tooltip into `state.overlay.help_tooltip`. Misses clear the
+/// tooltip so it doesn't linger after the pointer leaves a keyword.
+fn route_code_editor_body_hover(
+    inner: &Rc<RefCell<ShellInner>>,
+    hit: Option<&HitRect>,
+    x: f32,
+    y: f32,
+) {
+    let Some(h) = hit.filter(|h| attr_value(h, "data-role") == Some("code-editor-body")) else {
+        // Not over an editor body — if we have an editor tooltip up,
+        // clear it. We tag editor tooltips via a sentinel title
+        // prefix so we don't clobber unrelated help (palette help,
+        // help-menu hover, …).
+        let mut guard = inner.borrow_mut();
+        if let Some(tip) = &guard.state.overlay.help_tooltip {
+            if tip.title.starts_with("editor:") {
+                guard.state.overlay.help_tooltip = None;
+            }
+        }
+        return;
+    };
+    const FONT_SIZE: f32 = 13.0;
+    let (text, language, scroll_x, scroll_y) = {
+        let g = inner.borrow();
+        (
+            g.state.canvas.code_buffer.source().to_string(),
+            g.state.canvas.code_buffer.language.clone(),
+            g.state.canvas.code_buffer.scroll_x,
+            g.state.canvas.code_buffer.scroll_y,
+        )
+    };
+    let byte = resolve_editor_byte_at(
+        &text,
+        h.bounds.x,
+        h.bounds.y,
+        h.bounds.width,
+        x,
+        y,
+        scroll_x,
+        scroll_y,
+        FONT_SIZE,
+    );
+    let lang = if language.is_empty() {
+        "luau"
+    } else {
+        language.as_str()
+    };
+    let Some((_, lexeme)) = prism_ui_runtime::syntax::token_at(&text, lang, byte) else {
+        let mut guard = inner.borrow_mut();
+        if let Some(tip) = &guard.state.overlay.help_tooltip {
+            if tip.title.starts_with("editor:") {
+                guard.state.overlay.help_tooltip = None;
+            }
+        }
+        return;
+    };
+    let Some(help_id) = crate::editor_help::help_id_for(lang, lexeme) else {
+        return;
+    };
+    let entry = editor_help_registry().get(&help_id);
+    let mut guard = inner.borrow_mut();
+    match entry {
+        Some(entry) => {
+            // Stamp `editor:` onto the title so the "clear when
+            // hover leaves the editor" path above can distinguish
+            // our tooltips from other consumers'.
+            guard.state.overlay.help_tooltip = Some(crate::state::HelpTooltip {
+                title: format!("editor:{}", entry.title),
+                summary: entry.summary.clone(),
+            });
+        }
+        None => {
+            if let Some(tip) = &guard.state.overlay.help_tooltip {
+                if tip.title.starts_with("editor:") {
+                    guard.state.overlay.help_tooltip = None;
+                }
+            }
+        }
+    }
 }
 
 /// Wave 2.4 HSL — `data-role="color-hsl-slider"` press. Reads
@@ -1465,6 +1723,7 @@ mod tests {
     use super::*;
     use crate::shell::Shell;
     use prism_ui_runtime::command::Rect;
+    use prism_ui_runtime::event::Modifiers;
 
     fn hit_with(role: &str, target: &str, extra: &[(&str, &str)]) -> HitRect {
         let mut attrs = vec![
@@ -1542,12 +1801,18 @@ mod tests {
             x: 100.0,
             y: 100.0,
             button: PointerButton::Primary,
+            modifiers: Modifiers::default(),
         };
-        let mv = Event::PointerMove { x: 160.0, y: 140.0 };
+        let mv = Event::PointerMove {
+            x: 160.0,
+            y: 140.0,
+            modifiers: Modifiers::default(),
+        };
         let up = Event::PointerUp {
             x: 160.0,
             y: 140.0,
             button: PointerButton::Primary,
+            modifiers: Modifiers::default(),
         };
         assert!(
             !dispatch_event(&shell.inner, &down, None),
@@ -1596,6 +1861,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -1630,6 +1896,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -1673,6 +1940,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -1720,6 +1988,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -1757,6 +2026,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -1783,6 +2053,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -1817,6 +2088,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -1856,6 +2128,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -1904,6 +2177,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit.clone()),
         );
@@ -1914,6 +2188,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -1948,6 +2223,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit2.clone()),
         );
@@ -1957,6 +2233,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit2),
         );
@@ -2009,6 +2286,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit.clone()),
         );
@@ -2018,6 +2296,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -2083,13 +2362,18 @@ mod tests {
                 x: 140.0,
                 y: 12.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit.clone()),
         );
         // Move +40px → 40/4 = +10 → value should be 20.0.
         let _ = dispatch_event(
             &shell.inner,
-            &Event::PointerMove { x: 180.0, y: 12.0 },
+            &Event::PointerMove {
+                x: 180.0,
+                y: 12.0,
+                modifiers: Modifiers::default(),
+            },
             Some(hit.clone()),
         );
         let _ = dispatch_event(
@@ -2098,6 +2382,7 @@ mod tests {
                 x: 180.0,
                 y: 12.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -2136,6 +2421,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -2174,6 +2460,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(open),
         );
@@ -2186,6 +2473,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(blur_hit),
         );
@@ -2210,6 +2498,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -2341,6 +2630,7 @@ mod tests {
                 x: 0.0,
                 y: 0.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(click_hit),
         );
@@ -2393,6 +2683,7 @@ mod tests {
                 x: 0.0,
                 y: 0.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(edit_hit),
         );
@@ -2484,6 +2775,7 @@ mod tests {
                 x: 10.0,
                 y: 10.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -2525,6 +2817,7 @@ mod tests {
                 x: 100.0,
                 y: 100.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -2567,6 +2860,7 @@ mod tests {
                 x: 10.0,
                 y: 10.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -2638,6 +2932,7 @@ mod tests {
                 x: 10.0,
                 y: 10.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -2724,6 +3019,7 @@ mod tests {
             x: 10.0,
             y: 10.0,
             button: PointerButton::Primary,
+            modifiers: Modifiers::default(),
         };
         let dirty_first = dispatch_event(&shell.inner, &press(), Some(hit()));
         assert!(
@@ -2776,6 +3072,7 @@ mod tests {
                 x: 10.0,
                 y: 10.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -2811,6 +3108,7 @@ mod tests {
                 x: 10.0,
                 y: 10.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -2872,6 +3170,7 @@ mod tests {
                 x: 10.0,
                 y: 10.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -2927,6 +3226,7 @@ mod tests {
                 x: 10.0,
                 y: 10.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -2960,6 +3260,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -2991,6 +3292,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3028,6 +3330,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3062,6 +3365,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3110,6 +3414,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3148,6 +3453,7 @@ mod tests {
                 x: 1.0,
                 y: 1.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3186,6 +3492,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3232,6 +3539,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3282,6 +3590,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3315,6 +3624,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3351,6 +3661,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3403,6 +3714,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3430,6 +3742,7 @@ mod tests {
                 x: 5.0,
                 y: 5.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3472,6 +3785,7 @@ mod tests {
                 x: 10.0,
                 y: 10.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3529,6 +3843,7 @@ mod tests {
                 x: 1.0,
                 y: 1.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3582,6 +3897,7 @@ mod tests {
                 x: 1.0,
                 y: 1.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3616,6 +3932,7 @@ mod tests {
                 x: 1.0,
                 y: 1.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3649,6 +3966,7 @@ mod tests {
                 x: 1.0,
                 y: 1.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3704,6 +4022,7 @@ mod tests {
                 x: 100.0,
                 y: 200.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3764,6 +4083,7 @@ mod tests {
                 x: 12.0,
                 y: 12.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit.clone()),
         );
@@ -3774,6 +4094,7 @@ mod tests {
                 x: 20.0,
                 y: 20.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3838,6 +4159,7 @@ mod tests {
                 x: 10.0,
                 y: 10.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3882,6 +4204,7 @@ mod tests {
                 x: 50.0,
                 y: 50.0,
                 button: PointerButton::Secondary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3937,6 +4260,7 @@ mod tests {
                 x: 400.0,
                 y: 300.0,
                 button: PointerButton::Secondary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -3986,6 +4310,7 @@ mod tests {
                 x: 0.0,
                 y: 0.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -4021,6 +4346,7 @@ mod tests {
                 x: 25.0,
                 y: 49.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -4072,6 +4398,7 @@ mod tests {
                 x: 0.0,
                 y: 0.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(handle_hit),
         );
@@ -4081,7 +4408,15 @@ mod tests {
         );
         // PointerMove with no hit (resize drag doesn't need one):
         // delta (50, 30) under bottom-right handle adds positively.
-        let _ = dispatch_event(&shell.inner, &Event::PointerMove { x: 50.0, y: 30.0 }, None);
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerMove {
+                x: 50.0,
+                y: 30.0,
+                modifiers: Modifiers::default(),
+            },
+            None,
+        );
         let pos = shell
             .inner
             .borrow()
@@ -4105,6 +4440,7 @@ mod tests {
                 x: 50.0,
                 y: 30.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             None,
         );
@@ -4133,6 +4469,7 @@ mod tests {
                 x: 0.0,
                 y: 0.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(handle_hit),
         );
@@ -4166,6 +4503,7 @@ mod tests {
                 x: 0.0,
                 y: 0.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(handle_hit),
         );
@@ -4205,6 +4543,7 @@ mod tests {
                 x: 0.0,
                 y: 0.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -4240,6 +4579,7 @@ mod tests {
                 x: 0.0,
                 y: 0.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -4274,6 +4614,7 @@ mod tests {
                 x: 0.0,
                 y: 0.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );
@@ -4314,6 +4655,7 @@ mod tests {
                 x: 1.0,
                 y: 1.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             Some(hit),
         );

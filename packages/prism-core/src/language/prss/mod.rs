@@ -21,5 +21,5 @@ pub mod stylesheet;
 
 pub use stylesheet::{
     is_descendant_selector, parse, selector_segments, ClassDef, ParseError, ResolvedClass,
-    StyleSheet, TokenOverrides, PRSS_EXTENSIONS,
+    StyleSheet, TokenOverrides, LUA_VALUE_SENTINEL, PRSS_EXTENSIONS,
 };

@@ -27,6 +27,7 @@ pub fn translate(event: &WindowEvent, state: &mut InputState) -> Option<Event> {
             Some(Event::PointerMove {
                 x: state.pointer.0,
                 y: state.pointer.1,
+                modifiers: state.modifiers,
             })
         }
         WindowEvent::MouseInput {
@@ -43,11 +44,13 @@ pub fn translate(event: &WindowEvent, state: &mut InputState) -> Option<Event> {
                     x: state.pointer.0,
                     y: state.pointer.1,
                     button: pb,
+                    modifiers: state.modifiers,
                 },
                 ElementState::Released => Event::PointerUp {
                     x: state.pointer.0,
                     y: state.pointer.1,
                     button: pb,
+                    modifiers: state.modifiers,
                 },
             })
         }

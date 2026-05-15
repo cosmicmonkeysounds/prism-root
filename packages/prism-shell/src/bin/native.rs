@@ -58,13 +58,91 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if matches!(cli, Cli::Run) && std::env::var("PRISM_WATCH_UI").is_ok()
+        || matches!(cli, Cli::WatchUi)
+    {
+        // C3 — hot-reload watcher. Watches the bundled
+        // `ui/app.prism-ui` skeleton + every per-app
+        // `apps/<id>/shell.prism-ui` discovered at boot. Edits apply
+        // in place without a cargo respawn.
+        let specs = build_watch_specs();
+        return shell.run_with_hot_reload(specs);
+    }
+
     shell.run()
+}
+
+/// Build the list of `.prism-ui` files the C3 hot-reload watcher
+/// observes. Always includes the canonical
+/// `packages/prism-shell/ui/app.prism-ui` (the default skeleton);
+/// each `apps/<id>/shell.prism-ui` is included when the file exists.
+/// Paths resolve relative to the workspace root, walked up from the
+/// current working directory until a `Cargo.toml` containing
+/// `[workspace]` is found.
+fn build_watch_specs() -> Vec<prism_shell::hot_reload::WatchSpec> {
+    use prism_shell::hot_reload::{ReloadTarget, WatchSpec};
+    let mut specs = Vec::new();
+    let Some(workspace_root) = find_workspace_root() else {
+        return specs;
+    };
+
+    let app = workspace_root.join("packages/prism-shell/ui/app.prism-ui");
+    if app.exists() {
+        specs.push(WatchSpec {
+            path: app,
+            target: ReloadTarget::DefaultSkeleton,
+        });
+    }
+
+    let apps_dir = workspace_root.join("apps");
+    if let Ok(entries) = std::fs::read_dir(&apps_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let skeleton = path.join("shell.prism-ui");
+            if !skeleton.exists() {
+                continue;
+            }
+            let Some(app_id) = path.file_name().and_then(|s| s.to_str()).map(String::from) else {
+                continue;
+            };
+            specs.push(WatchSpec {
+                path: skeleton,
+                target: ReloadTarget::AppSkeleton { app_id },
+            });
+        }
+    }
+    specs
+}
+
+fn find_workspace_root() -> Option<std::path::PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        let manifest = dir.join("Cargo.toml");
+        if manifest.exists() {
+            if let Ok(s) = std::fs::read_to_string(&manifest) {
+                if s.contains("[workspace]") {
+                    return Some(dir);
+                }
+            }
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
 enum Cli {
     /// No flags — boot into the femtovg event loop.
     Run,
+    /// `--watch-ui` — boot the event loop with a hot-reload
+    /// watcher attached to `ui/app.prism-ui` + every
+    /// `apps/<id>/shell.prism-ui`. Closes C3 of
+    /// `docs/dev/ui-migration-followups.md`.
+    WatchUi,
     /// `--scene <name>` — apply the scene, run the event loop.
     Scene { scene: BuiltinScene },
     /// `--scene list` — print the scene names and exit.
@@ -93,11 +171,16 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
     let mut scene: Option<BuiltinScene> = None;
     let mut screenshot: Option<String> = None;
     let mut list_scenes = false;
+    let mut watch_ui = false;
     let mut width: u32 = 1280;
     let mut height: u32 = 800;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--watch-ui" => {
+                watch_ui = true;
+                i += 1;
+            }
             "--scene" => {
                 let value = args
                     .get(i + 1)
@@ -150,6 +233,9 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
     }
     if let Some(scene) = scene {
         return Ok(Cli::Scene { scene });
+    }
+    if watch_ui {
+        return Ok(Cli::WatchUi);
     }
     Ok(Cli::Run)
 }

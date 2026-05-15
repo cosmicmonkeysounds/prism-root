@@ -26,7 +26,7 @@ default = ["native"]
 # end-to-end. The wasm32-unknown-unknown target can't pull in mlua
 # (vendored Luau only builds against emscripten); the runtime feature
 # therefore stays off in the `web` matrix.
-native = ["prism-core/crdt", "prism-core/luau", "prism-ui-runtime/femtovg", "dep:rfd"]
+native = ["prism-core/crdt", "prism-core/luau", "prism-ui-runtime/femtovg", "prism-ui-runtime/luau", "dep:rfd", "dep:notify"]
 web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom", "uuid/js", "prism-ui-runtime/web"]
 # Phase 9 of `docs/dev/dioxus-inspiration.md`. Wraps the per-frame
 # render walk in `subsecond::call` so a swapped-in `lower_ui` body
@@ -60,6 +60,13 @@ getrandom = { workspace = true, optional = true, features = ["js"] }
 # `file.open` plumbing in the persistence service.
 rfd = { workspace = true, optional = true }
 
+# Native file watcher for C3 hot reload — `Shell::run_with_hot_reload`
+# spawns a `notify::RecommendedWatcher` thread that posts skeleton
+# source changes through an mpsc channel; the femtovg backend's
+# tick hook drains the channel and applies the swap in-place.
+# Gated by `native` so the wasm matrix doesn't pull it in.
+notify = { workspace = true, optional = true }
+
 # Wave 7.2 of `docs/dev/composable-builder-plan.md` — PNG headless
 # capture sink. The shell's `dump_png` walks the `RenderCommand`
 # stream and writes RGBA via the workspace `image` crate (which
@@ -72,6 +79,19 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+# Used as the lookup type for the live document's facet table —
+# `BuilderDocument::facets` is an `IndexMap`, and the shell's
+# `materialize_facet_templates` helper accepts any map that
+# satisfies the in-crate `FacetLookup` trait.
+indexmap = { workspace = true }
+
+[build-dependencies]
+# Build-time validation of every `.prism-ui` source the shell ships
+# (`ui/app.prism-ui` + `ui/components/*.prism-ui`). A parse error in
+# any of them fails the build instead of producing a binary that
+# panics in `Skeleton::load`. Closes C1 of
+# `docs/dev/ui-migration-followups.md`.
+prism-ui-build = { path = "../prism-ui-build" }
 
 [dev-dependencies]
 insta = { workspace = true }

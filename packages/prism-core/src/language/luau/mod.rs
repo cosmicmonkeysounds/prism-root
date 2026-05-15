@@ -30,6 +30,6 @@ pub mod provider;
 pub mod visual;
 
 pub use contribution::{create_luau_contribution, LUAU_EXTENSIONS, LUAU_ID};
-pub use parser::{parse_errors, parse_luau};
+pub use parser::{parse_errors, parse_luau, top_level_locals, TopLevelLocal};
 pub use provider::LuauSyntaxProvider;
 pub use visual::LuauVisualLanguage;

@@ -39,6 +39,7 @@
     data:key="{key}"
     data:kind="{kind}"
     data:target-id="{target-id}"
+    data:template-path="{template-path}"
     data:value="{data-value}"
     data:options="{options-joined}"
     data:min="{min-set ? min : ''}"

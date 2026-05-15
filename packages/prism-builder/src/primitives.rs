@@ -116,6 +116,8 @@ fn text_input_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -
         scroll_x: 0.0,
         scroll_y: 0.0,
         underline: None,
+        bracket_match: Vec::new(),
+        highlight_current_line: false,
     }
 }
 /// Wave 10.5 — `prism.drag-scrub`. The runtime emits a styled
@@ -586,6 +588,8 @@ fn text_buffer_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) 
         scroll_x: 0.0,
         scroll_y: 0.0,
         underline: None,
+        bracket_match: Vec::new(),
+        highlight_current_line: false,
     }
 }
 

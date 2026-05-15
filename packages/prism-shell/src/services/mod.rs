@@ -56,6 +56,8 @@ pub use code_editor::CodeEditorService;
 pub use field_focus::FieldFocusService;
 pub use help::HelpService;
 pub use input::{InputScheme, InputService};
+#[cfg(feature = "native")]
+pub use luau::MluaLuauHost;
 pub use luau::{LuauHost, LuauService, NoopLuauHost};
 pub use menu::MenuService;
 pub use palette::CommandPaletteService;

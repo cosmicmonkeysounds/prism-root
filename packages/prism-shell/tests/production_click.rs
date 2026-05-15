@@ -7,7 +7,7 @@
 
 use prism_shell::events::dispatch_event;
 use prism_shell::Shell;
-use prism_ui_runtime::event::{Event, PointerButton};
+use prism_ui_runtime::event::{Event, Modifiers, PointerButton};
 use prism_ui_runtime::layout::{Node, Surface};
 
 fn wrap_root(children: Vec<Node>) -> Node {
@@ -94,6 +94,7 @@ fn production_pointer_down_on_palette_item_mutates_selection() {
         x: palette_hit.bounds.x + 1.0,
         y: palette_hit.bounds.y + 1.0,
         button: PointerButton::Primary,
+        modifiers: Modifiers::default(),
     };
     let hit = surface
         .hit_test_at(palette_hit.bounds.x + 1.0, palette_hit.bounds.y + 1.0)
@@ -152,6 +153,7 @@ fn production_pointer_down_on_nav_button_flips_selection() {
         x: folder_hit.bounds.x + 1.0,
         y: folder_hit.bounds.y + 1.0,
         button: PointerButton::Primary,
+        modifiers: Modifiers::default(),
     };
     let hit = surface
         .hit_test_at(folder_hit.bounds.x + 1.0, folder_hit.bounds.y + 1.0)
@@ -199,6 +201,7 @@ fn production_pointer_down_on_menu_pill_opens_menu() {
         x: edit_hit.bounds.x + 1.0,
         y: edit_hit.bounds.y + 1.0,
         button: PointerButton::Primary,
+        modifiers: Modifiers::default(),
     };
     let hit = surface
         .hit_test_at(edit_hit.bounds.x + 1.0, edit_hit.bounds.y + 1.0)
@@ -256,6 +259,7 @@ fn production_pointer_down_on_number_field_starts_drag_session() {
         x: row_hit.bounds.x + 1.0,
         y: row_hit.bounds.y + 1.0,
         button: PointerButton::Primary,
+        modifiers: Modifiers::default(),
     };
     let hit = surface
         .hit_test_at(row_hit.bounds.x + 1.0, row_hit.bounds.y + 1.0)
@@ -312,6 +316,7 @@ fn production_typing_into_text_field_mutates_bound_prop_end_to_end() {
         x: row_hit.bounds.x + 1.0,
         y: row_hit.bounds.y + 1.0,
         button: PointerButton::Primary,
+        modifiers: Modifiers::default(),
     };
     let hit = surface
         .hit_test_at(row_hit.bounds.x + 1.0, row_hit.bounds.y + 1.0)
@@ -428,6 +433,7 @@ fn production_pointer_down_on_text_field_opens_focus_session() {
         x: row_hit.bounds.x + 1.0,
         y: row_hit.bounds.y + 1.0,
         button: PointerButton::Primary,
+        modifiers: Modifiers::default(),
     };
     let hit = surface
         .hit_test_at(row_hit.bounds.x + 1.0, row_hit.bounds.y + 1.0)

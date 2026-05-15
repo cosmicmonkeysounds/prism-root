@@ -108,6 +108,8 @@ pub fn draw_at<R: Renderer>(
                 spans,
                 underline,
                 underline_color,
+                glyph_outlines,
+                glyph_outline_color,
             } => {
                 draw_text(
                     canvas,
@@ -125,6 +127,8 @@ pub fn draw_at<R: Renderer>(
                     spans,
                     *underline,
                     *underline_color,
+                    glyph_outlines,
+                    *glyph_outline_color,
                     bounds.height,
                 );
             }
@@ -257,6 +261,8 @@ fn draw_text<R: Renderer>(
     spans: &[TextSpan],
     underline: Option<TextSelection>,
     underline_color: Option<Color>,
+    glyph_outlines: &[usize],
+    glyph_outline_color: Option<Color>,
     box_height: f32,
 ) {
     // Heuristic natural width — same `chars * font_size * 0.55`
@@ -459,6 +465,31 @@ fn draw_text<R: Renderer>(
                     let mut path = Path::new();
                     path.rect(left + row_min, stroke_y, row_max - row_min, stroke_h);
                     canvas.fill_path(&path, &Paint::color(femto(ul_colour)));
+                }
+            }
+        }
+    }
+
+    // ── Glyph outlines (matching brackets, …) ──────────────────
+    if !glyph_outlines.is_empty() {
+        if let Some(outline_colour) = glyph_outline_color {
+            for byte in glyph_outlines {
+                // Find a glyph whose start is `byte` — the canonical
+                // "outline this character" entry point. Fallback: if
+                // no glyph starts at the byte, skip silently (the
+                // bracket may have been scrolled out of view).
+                if let Some(span) = glyph_spans.iter().find(|s| s.start == *byte) {
+                    let row = &line_metrics[span.line_idx];
+                    let mut path = Path::new();
+                    path.rect(
+                        left + span.x_min - 0.5,
+                        top + row.line_top,
+                        (span.x_max - span.x_min) + 1.0,
+                        row.line_height,
+                    );
+                    let mut paint = Paint::color(femto(outline_colour));
+                    paint.set_line_width(1.0);
+                    canvas.stroke_path(&path, &paint);
                 }
             }
         }

@@ -26,6 +26,18 @@ use super::ast::{
     Node, ParseError, TemplatePart,
 };
 
+/// Tags whose body the PRUI parser must scan verbatim (no nested
+/// elements / interpolations / comments). The Wave A landing of
+/// `prui-luau-fusion.md` §7.1 introduces `<script lang="luau">`; the
+/// same raw-text mode applies to `<style>` blocks (Wave H), so both
+/// are listed up front — mirrors HTML's "raw text element" set.
+fn is_raw_text_tag(tag: &str) -> bool {
+    // `language` (Wave E sub-dialect blocks, §7.8) joins
+    // `script`/`style`: a dialect body is foreign source (markdown,
+    // SQL, …) the PRUI parser must not interpret.
+    matches!(tag, "script" | "style" | "language")
+}
+
 /// Parse a `.prism-ui` source file into a typed [`Document`].
 ///
 /// Returns the document plus a list of recoverable [`ParseError`]s —
@@ -161,10 +173,132 @@ impl<'s> Parser<'s> {
                 continue;
             }
 
+            // **Wave E (§7.8)** — `~name{ … }` sub-dialect sigil,
+            // sugar for `<language name="name"> … </language>`. Only
+            // a `~ident{` run (no space) is a sigil; a bare `~` in
+            // prose flows to the text path untouched.
+            if self.scanner.peek() == Some('~') {
+                if let Some(node) = self.try_parse_sigil() {
+                    out.push(node);
+                    continue;
+                }
+            }
+
             // Text / interpolation run.
             self.parse_text_or_interpolation(&mut out);
         }
         out
+    }
+
+    /// **Wave E** — `~name{ body }` → `<language name="name">body
+    /// </language>`. Lookahead-validated: returns `None` (consuming
+    /// nothing) unless the `~ident{` shape matches, so non-sigil
+    /// `~` in prose is left for the text path. The body is a raw run
+    /// with brace balancing; `\{` / `\}` escape a literal brace.
+    fn try_parse_sigil(&mut self) -> Option<Node> {
+        let rest = &self.scanner.source()[self.scanner.offset()..];
+        let mut chars = rest.char_indices();
+        // `~`
+        match chars.next() {
+            Some((_, '~')) => {}
+            _ => return None,
+        }
+        // ident: alpha/_ then alnum/_/-
+        let mut name_end = 1;
+        let mut first = true;
+        for (i, c) in chars.by_ref() {
+            let ok = if first {
+                c.is_ascii_alphabetic() || c == '_'
+            } else {
+                c.is_ascii_alphanumeric() || c == '_' || c == '-'
+            };
+            if ok {
+                name_end = i + c.len_utf8();
+                first = false;
+            } else {
+                // The char that ended the ident must be `{`.
+                if c == '{' && !first {
+                    break;
+                }
+                return None;
+            }
+        }
+        let name = rest[1..name_end].to_string();
+        if name.is_empty() || !rest[name_end..].starts_with('{') {
+            return None;
+        }
+        let start = self.scanner.position();
+        // Consume `~name{`.
+        for _ in 0..rest[..name_end].chars().count() {
+            self.scanner.advance();
+        }
+        self.scanner.advance(); // `{`
+
+        let mut body = String::new();
+        let mut depth = 1usize;
+        loop {
+            match self.scanner.peek() {
+                None => {
+                    self.errors.push(ParseError {
+                        message: format!("Unterminated `~{name}{{ … }}` sigil"),
+                        range: SourceRange {
+                            start,
+                            end: self.scanner.position(),
+                        },
+                        code: "unterminated-sigil",
+                    });
+                    break;
+                }
+                Some('\\') => {
+                    self.scanner.advance();
+                    match self.scanner.peek() {
+                        Some(c @ ('{' | '}')) => {
+                            body.push(c);
+                            self.scanner.advance();
+                        }
+                        _ => body.push('\\'),
+                    }
+                }
+                Some('{') => {
+                    depth += 1;
+                    body.push('{');
+                    self.scanner.advance();
+                }
+                Some('}') => {
+                    depth -= 1;
+                    self.scanner.advance();
+                    if depth == 0 {
+                        break;
+                    }
+                    body.push('}');
+                }
+                Some(c) => {
+                    body.push(c);
+                    self.scanner.advance_unicode();
+                }
+            }
+        }
+        let range = SourceRange {
+            start,
+            end: self.scanner.position(),
+        };
+        Some(Node::Element(Element {
+            tag: "language".to_string(),
+            attributes: vec![Attribute {
+                name: AttributeName {
+                    raw: "name".to_string(),
+                    local: "name".to_string(),
+                    namespace: AttributeNamespace::Bare,
+                    range,
+                },
+                value: AttributeValue::String { value: name, range },
+                range,
+            }],
+            children: vec![Node::Text { value: body, range }],
+            self_closing: false,
+            range,
+            tag_range: range,
+        }))
     }
 
     fn parse_comment(&mut self) -> Node {
@@ -273,8 +407,19 @@ impl<'s> Parser<'s> {
             }));
         }
 
-        // Children.
-        let children = self.parse_nodes(Some(&tag));
+        // **Raw-text elements** (`<script>` / `<style>`). Their bodies
+        // are foreign-language source (Luau, PRSS) that the PRUI
+        // parser must not interpret — `{`, `<`, `&`, etc. occur as
+        // ordinary syntax in those languages. Mirrors HTML's
+        // `script`/`style` parsing mode: scan verbatim until the
+        // matching `</tag>`, stash as a single text child. The
+        // §7.1 (`prui-luau-fusion.md`) loader extracts these bodies
+        // before the rest of the AST flows into lowering.
+        let children = if is_raw_text_tag(&tag) {
+            self.parse_raw_text_body(&tag)
+        } else {
+            self.parse_nodes(Some(&tag))
+        };
 
         // Closing tag.
         if self.peek_str("</") {
@@ -615,6 +760,50 @@ impl<'s> Parser<'s> {
         self.scanner.source()[self.scanner.offset()..].starts_with(expected)
     }
 
+    /// Scan the body of a raw-text element (`<script>` / `<style>`)
+    /// verbatim until the matching `</tag>`. Emits a single
+    /// [`Node::Text`] containing the body — the PRUI walker doesn't
+    /// recurse into it. Consumes the closing tag, mirroring
+    /// `parse_element`'s normal close path; an unterminated body
+    /// records an `unclosed-element` error and stops at EOF.
+    fn parse_raw_text_body(&mut self, tag: &str) -> Vec<Node> {
+        let body_start_offset = self.scanner.offset();
+        let body_start_pos = self.scanner.position();
+        let close = format!("</{tag}");
+        loop {
+            if self.scanner.is_at_end() {
+                self.errors.push(ParseError {
+                    message: format!("Unclosed raw-text element '<{tag}>'"),
+                    range: SourceRange {
+                        start: body_start_pos,
+                        end: self.scanner.position(),
+                    },
+                    code: "unclosed-element",
+                });
+                break;
+            }
+            if self.peek_str(&close) {
+                break;
+            }
+            self.scanner.advance_unicode();
+        }
+        let body_end_offset = self.scanner.offset();
+        let value = self.scanner.source()[body_start_offset..body_end_offset].to_string();
+        let body_node = Node::Text {
+            value,
+            range: SourceRange {
+                start: body_start_pos,
+                end: self.scanner.position(),
+            },
+        };
+
+        // Consume the closing tag — `parse_element`'s outer body
+        // already drives that branch for normal elements, so leave it
+        // to handle the close after we return. Stash a single text
+        // child as the only descendant.
+        vec![body_node]
+    }
+
     /// Advance past the next `>` (inclusive). Returns the consumed
     /// substring for diagnostics. Used as a recovery primitive.
     fn consume_until_gt(&mut self) -> String {
@@ -848,6 +1037,132 @@ mod tests {
         assert_eq!(root.children.len(), 1);
         assert_eq!(root.children[0].kind, "element");
         assert_eq!(root.children[0].value.as_deref(), Some("button"));
+    }
+
+    #[test]
+    fn parses_script_block_as_raw_text() {
+        // `local`, `{`, `<`, `function` — every Luau-shaped token the
+        // PRUI parser would otherwise misinterpret. Wave A of
+        // `prui-luau-fusion.md` §7.1 requires the body to survive
+        // verbatim as a single text child.
+        let src = r##"<script lang="luau">
+local function priority_color(p)
+  if p == "high" then return "#ff0000" end
+  return "#888888"
+end
+local state = prism.state { expanded = false }
+</script>"##;
+        let doc = parse_ok(src);
+        let Node::Element(el) = &doc.nodes[0] else {
+            panic!("expected element");
+        };
+        assert_eq!(el.tag, "script");
+        assert_eq!(el.attributes[0].name.raw, "lang");
+        assert_eq!(el.children.len(), 1);
+        let Node::Text { value, .. } = &el.children[0] else {
+            panic!("expected raw text body");
+        };
+        assert!(value.contains("local function priority_color"));
+        assert!(value.contains("prism.state { expanded = false }"));
+    }
+
+    #[test]
+    fn parses_style_block_as_raw_text() {
+        let src = r##"<style lang="prss">
+[class.card]
+background = "#ffffff"
+radius = 8
+</style>"##;
+        let doc = parse_ok(src);
+        let Node::Element(el) = &doc.nodes[0] else {
+            panic!();
+        };
+        assert_eq!(el.tag, "style");
+        let Node::Text { value, .. } = &el.children[0] else {
+            panic!();
+        };
+        assert!(value.contains("[class.card]"));
+    }
+
+    #[test]
+    fn script_block_then_sibling_element() {
+        // After the raw-text body closes, the parser must resume
+        // normal mode and read the sibling element. Regression guard
+        // against a sticky "still in raw text" state.
+        let src = r#"<script lang="luau">local x = 1</script>
+<container/>"#;
+        let doc = parse_ok(src);
+        assert!(doc
+            .nodes
+            .iter()
+            .any(|n| matches!(n, Node::Element(el) if el.tag == "script")));
+        assert!(doc
+            .nodes
+            .iter()
+            .any(|n| matches!(n, Node::Element(el) if el.tag == "container")));
+    }
+
+    #[test]
+    fn parses_language_block_as_raw_text() {
+        let src = "<language name=\"sql\">select * from t where x < 3 and y = '{a}'</language>";
+        let doc = parse_ok(src);
+        let Node::Element(el) = &doc.nodes[0] else {
+            panic!()
+        };
+        assert_eq!(el.tag, "language");
+        assert_eq!(el.attributes[0].name.local, "name");
+        let Node::Text { value, .. } = &el.children[0] else {
+            panic!()
+        };
+        assert!(value.contains("select * from t where x < 3"));
+        assert!(value.contains("'{a}'"));
+    }
+
+    #[test]
+    fn parses_dialect_sigil_sugar() {
+        let doc = parse_ok("<container>~md{**bold** and _it_}</container>");
+        let Node::Element(c) = &doc.nodes[0] else {
+            panic!()
+        };
+        let Node::Element(lang) = &c.children[0] else {
+            panic!("expected <language>, got {:?}", c.children[0]);
+        };
+        assert_eq!(lang.tag, "language");
+        match &lang.attributes[0].value {
+            AttributeValue::String { value, .. } => assert_eq!(value, "md"),
+            o => panic!("{o:?}"),
+        }
+        let Node::Text { value, .. } = &lang.children[0] else {
+            panic!()
+        };
+        assert_eq!(value, "**bold** and _it_");
+    }
+
+    #[test]
+    fn sigil_balances_braces_and_escapes() {
+        let doc = parse_ok(r"<container>~tex{a {b} c \{lit\}}</container>");
+        let Node::Element(c) = &doc.nodes[0] else {
+            panic!()
+        };
+        let Node::Element(lang) = &c.children[0] else {
+            panic!()
+        };
+        let Node::Text { value, .. } = &lang.children[0] else {
+            panic!()
+        };
+        assert_eq!(value, "a {b} c {lit}");
+    }
+
+    #[test]
+    fn bare_tilde_in_prose_is_not_a_sigil() {
+        let doc = parse_ok("<text>about ~5 items</text>");
+        let Node::Element(t) = &doc.nodes[0] else {
+            panic!()
+        };
+        let Node::Text { value, .. } = &t.children[0] else {
+            panic!()
+        };
+        assert_eq!(value, "about ~5 items");
     }
 
     #[test]

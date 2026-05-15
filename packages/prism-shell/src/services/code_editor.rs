@@ -76,6 +76,16 @@ impl ShellService for CodeEditorService {
                 }
                 if modifiers.ctrl || modifiers.meta {
                     match code.as_str() {
+                        // Override Ctrl+/ — route through the buffer's
+                        // language-aware toggle so the prefix matches
+                        // the active language (Luau `--`, JS `//`,
+                        // Python `#`, …). The editor's own apply_key
+                        // would otherwise default to `--`.
+                        "/" => {
+                            ctx.state.canvas.code_buffer.toggle_line_comment();
+                            ensure_caret_visible(ctx);
+                            return EventOutcome::Handled;
+                        }
                         "c" => {
                             if let Some(s) = ctx.state.canvas.code_buffer.editor.selected_text() {
                                 let s = s.to_string();

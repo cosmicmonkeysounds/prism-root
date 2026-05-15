@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::cursor::Position;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Buffer {
     #[serde(
         serialize_with = "serialize_rope",
@@ -19,12 +19,6 @@ fn serialize_rope<S: serde::Serializer>(rope: &Rope, ser: S) -> Result<S::Ok, S:
 fn deserialize_rope<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Rope, D::Error> {
     let s = String::deserialize(de)?;
     Ok(Rope::from_str(&s))
-}
-
-impl Default for Buffer {
-    fn default() -> Self {
-        Self { rope: Rope::new() }
-    }
 }
 
 impl Buffer {

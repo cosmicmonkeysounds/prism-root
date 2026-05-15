@@ -25,7 +25,14 @@ use crate::cmd;
 use crate::services::{CommandSpec, ShellService};
 
 /// What every Luau-capable host implements. One method, one shape.
-pub trait LuauHost: Send + Sync {
+///
+/// **Not `Send + Sync`** — the `mlua::Lua` state behind
+/// [`MluaLuauHost`] is single-threaded (`Rc<Lua>`), and the shell
+/// itself runs single-threaded by construction
+/// (`type Shell = Rc<RefCell<ShellInner>>`). Adding the bound would
+/// force [`MluaLuauHost`] to wrap the runtime in a `Mutex` for no
+/// gain.
+pub trait LuauHost {
     /// Run `script` with `args` as a JSON object. Returns whatever
     /// the script's last expression evaluates to, encoded back as
     /// `serde_json::Value`. Errors surface as `Err(String)` —
@@ -44,6 +51,36 @@ impl LuauHost for NoopLuauHost {
     fn exec(&mut self, script: &str, args: &Value) -> Result<Value, String> {
         self.calls.push((script.to_string(), args.clone()));
         Ok(Value::Null)
+    }
+}
+
+/// Real `mlua`-backed `LuauHost` that delegates to a shared
+/// [`prism_core::luau_runtime::LuauRuntime`]. Closes D2 of
+/// `docs/dev/ui-migration-followups.md`: `ctx.luau.exec(...)` now
+/// runs against the **same** persistent Lua state that app
+/// `[entry] script` bodies ran in at boot, so one-shot scripts can
+/// reference module-level locals registered earlier.
+///
+/// Lives under `feature = "native"` because the persistent runtime
+/// pulls in `mlua` (vendored Luau), which doesn't build for
+/// `wasm32-unknown-unknown` today. Web targets keep
+/// [`NoopLuauHost`] until a wasm-friendly Lua runtime lands.
+#[cfg(feature = "native")]
+pub struct MluaLuauHost {
+    rt: std::rc::Rc<prism_core::luau_runtime::LuauRuntime>,
+}
+
+#[cfg(feature = "native")]
+impl MluaLuauHost {
+    pub fn new(rt: std::rc::Rc<prism_core::luau_runtime::LuauRuntime>) -> Self {
+        Self { rt }
+    }
+}
+
+#[cfg(feature = "native")]
+impl LuauHost for MluaLuauHost {
+    fn exec(&mut self, script: &str, args: &Value) -> Result<Value, String> {
+        self.rt.exec(script, args)
     }
 }
 
@@ -87,6 +124,32 @@ mod tests {
     use crate::services::{Clipboard, MutCtx, OsVfs, ServiceRegistry, UndoStack};
     use crate::AppState;
     use prism_ui_runtime::layout::Viewport;
+
+    /// D2 — the real `MluaLuauHost` runs Lua through the shared
+    /// `LuauRuntime`. Verifies `return 6 * 7` round-trips as `42`
+    /// through `LuauHost::exec`. The `feature = "native"` gate keeps
+    /// this test off the wasm matrix where mlua doesn't link.
+    #[cfg(feature = "native")]
+    #[test]
+    fn mlua_host_executes_luau_returning_number() {
+        let registrar: std::sync::Arc<dyn prism_core::AppRegistrar> =
+            std::sync::Arc::new(crate::app_registry::ShellAppRegistrar::default());
+        let rt = prism_core::luau_runtime::LuauRuntime::new_with_tokens(
+            registrar,
+            prism_core::design_tokens::DEFAULT_TOKENS,
+            prism_core::shell_mode::ShellMode::Build,
+            prism_core::shell_mode::Permission::Dev,
+        )
+        .expect("LuauRuntime");
+        let mut host = MluaLuauHost::new(std::rc::Rc::new(rt));
+        let result = host
+            .exec(
+                "return 6 * 7",
+                &serde_json::Value::Object(Default::default()),
+            )
+            .expect("exec");
+        assert_eq!(result, serde_json::json!(42));
+    }
 
     #[test]
     fn run_selection_pushes_toast_via_noop_host() {

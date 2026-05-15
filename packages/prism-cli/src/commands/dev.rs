@@ -184,7 +184,7 @@ fn cargo_run_dev_builder(
     package: &str,
     label: &str,
     workspace: &Workspace,
-    _hot_reload: bool,
+    hot_reload: bool,
     use_subsecond: bool,
 ) -> CommandBuilder {
     let mut b = CommandBuilder::cargo()
@@ -198,6 +198,17 @@ fn cargo_run_dev_builder(
         // generated dylib through `subsecond::register_handler` at
         // runtime; that's a follow-up.
         b = b.arg("--features").arg("hot-reload");
+    }
+    // C3 — pass `--watch-ui` to the shell binary so `prism dev
+    // shell` boots with the `.prism-ui` hot-reload watcher
+    // attached. Edits apply in place via
+    // `Shell::install_default_skeleton` /
+    // `install_app_skeleton` without a cargo respawn. The
+    // dev_loop's `.prism-ui` extension still triggers a respawn
+    // on structural changes that need a fresh cargo build, but
+    // the watcher catches literal edits first.
+    if hot_reload && package == "prism-shell" {
+        b = b.arg("--").arg("--watch-ui");
     }
     b
 }
@@ -428,7 +439,13 @@ mod tests {
         assert_eq!(p.len(), 1);
         assert_eq!(p[0].label_str(), Some("shell"));
         let argv = p[0].argv().1;
-        assert_eq!(argv, vec!["run", "--package", "prism-shell"]);
+        // C3 — when hot-reload is on (the default), pass
+        // `--watch-ui` so the shell binary attaches its
+        // `.prism-ui` watcher and applies edits in-place.
+        assert_eq!(
+            argv,
+            vec!["run", "--package", "prism-shell", "--", "--watch-ui"]
+        );
     }
 
     #[test]
@@ -456,7 +473,9 @@ mod tests {
                 "--package",
                 "prism-shell",
                 "--features",
-                "hot-reload"
+                "hot-reload",
+                "--",
+                "--watch-ui"
             ]
         );
     }

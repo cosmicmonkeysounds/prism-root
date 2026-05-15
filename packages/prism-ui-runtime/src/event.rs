@@ -20,16 +20,22 @@ pub enum Event {
     PointerMove {
         x: f32,
         y: f32,
+        #[serde(default)]
+        modifiers: Modifiers,
     },
     PointerDown {
         x: f32,
         y: f32,
         button: PointerButton,
+        #[serde(default)]
+        modifiers: Modifiers,
     },
     PointerUp {
         x: f32,
         y: f32,
         button: PointerButton,
+        #[serde(default)]
+        modifiers: Modifiers,
     },
     Wheel {
         dx: f32,

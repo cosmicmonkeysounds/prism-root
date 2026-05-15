@@ -1232,7 +1232,7 @@ fn app_main_luau_registers_service_dispatching_on_event() {
     // value decodes into the matching EventOutcome. Drives the
     // service directly through the registry since the event router
     // isn't trivial to invoke from a test harness.
-    use prism_ui_runtime::event::Event;
+    use prism_ui_runtime::event::{Event, Modifiers};
     use prism_ui_runtime::layout::Viewport;
 
     let manifests: &[(&str, &str)] = &[(
@@ -1305,6 +1305,7 @@ script = "main.luau"
                 x: 0.0,
                 y: 0.0,
                 button: prism_ui_runtime::event::PointerButton::Primary,
+                modifiers: Modifiers::default(),
             },
             &mut ctx,
             cmds,
@@ -2069,6 +2070,7 @@ script = "main.luau"
                 x: 0.0,
                 y: 0.0,
                 button: prism_ui_runtime::event::PointerButton::Primary,
+                modifiers: prism_ui_runtime::event::Modifiers::default(),
             },
             &mut ctx,
             cmds,

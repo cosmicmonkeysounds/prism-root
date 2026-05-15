@@ -30,10 +30,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use prism_core::language::prism_ui::ast::{Attribute, AttributeName, Expression};
 use prism_core::language::prism_ui::{
     parse, split_state_suffix, AttributeNamespace, AttributeValue, Document as AstDocument,
     Element, Node as AstNode, ParseError,
 };
+use prism_core::language::syntax::SourceRange;
 
 use crate::command::{Color, CornerRadius};
 use crate::layout::{
@@ -70,6 +72,23 @@ pub trait TagResolver: Send + Sync {
     fn resolve(&self, element: &Element, scope: &LowerScope) -> Option<Vec<Node>>;
 }
 
+/// **Wave H (`prui-luau-fusion.md` §5.4)** — host hook that resolves
+/// an `<import kind="path"/>` to the imported file's source text.
+/// The runtime parses a `.prui` from a string and has no filesystem
+/// of its own, so sidecar/`<import>` resolution is delegated: the
+/// shell/relay host (which *does* know the document's directory and
+/// the workspace's `prism://` roots) supplies a resolver via
+/// [`LowerScope::with_import_resolver`].
+///
+/// `kind` is one of `stylesheet` / `script` / `widget` / `dialect`
+/// (the four `<import>` projections); `path` is the verbatim
+/// attribute value (`./theme.prss`, `prism://lib/fmt.luau`).
+/// Returning `None` means "unresolved" — the import is skipped
+/// (graceful, like an unknown tag) rather than failing the render.
+pub trait ImportResolver: Send + Sync {
+    fn resolve_import(&self, kind: &str, path: &str) -> Option<String>;
+}
+
 /// Per-tag host emission: the props the binding emitted and the
 /// pre-lowered children, kept side-by-side in one record. Used by
 /// downstream `lower_as` callers (the dock-panel routing path is
@@ -102,6 +121,11 @@ pub struct LowerScope {
     bindings: HashMap<String, serde_json::Value>,
     slots: SlotBindings,
     resolver: Option<Arc<dyn TagResolver>>,
+    /// **Wave H** — host hook for `<import>` resolution. `None` on
+    /// the string-only `interpret()` path (imports are skipped); the
+    /// shell/relay installs one that reads the document directory +
+    /// `prism://` roots.
+    import_resolver: Option<Arc<dyn ImportResolver>>,
     /// Tag-keyed pre-lowered children supplied by the *host*, not the
     /// AST. Distinct from [`SlotBindings`] (which holds AST nodes for
     /// `<slot/>` expansion) and from
@@ -180,6 +204,16 @@ pub struct LowerScope {
     /// control-flow / slot expansion; the inner Vec is cloned only
     /// when the chain extends.
     class_chain: Arc<Vec<Vec<String>>>,
+    /// **Wave A (`prui-luau-fusion.md` §7.1)** — the per-document
+    /// Luau state harvested from `<script lang="luau">` blocks. When
+    /// set, expression-slot identifier lookups and call resolution
+    /// fall through to this frame after the binding map / functional
+    /// builtins miss, so a script's top-level `local`s and helper
+    /// functions are reachable from every `{expr}`. `None` on every
+    /// document with no script block (the common case) and on every
+    /// build without the `luau` feature. `Arc`-cheap to fork.
+    #[cfg(feature = "luau")]
+    luau_scope: Option<crate::luau_scope::LuauScopeFrame>,
 }
 
 /// **Wave 14.3** — per-element memo cache keyed by `id`. Hosts that
@@ -260,6 +294,18 @@ impl LowerScope {
         self
     }
 
+    /// **Wave H** — install the `<import>` resolver. Propagates
+    /// through scope clones like [`Self::with_resolver`].
+    pub fn with_import_resolver(mut self, resolver: Arc<dyn ImportResolver>) -> Self {
+        self.import_resolver = Some(resolver);
+        self
+    }
+
+    /// **Wave H** — borrow the installed import resolver, if any.
+    pub fn import_resolver(&self) -> Option<&Arc<dyn ImportResolver>> {
+        self.import_resolver.as_ref()
+    }
+
     /// Install a tag-keyed map of pre-lowered children. When the
     /// resolver dispatches an element whose tag is a key in this map,
     /// the values become the block's `host_children` — overriding the
@@ -300,6 +346,18 @@ impl LowerScope {
 
     pub fn binding(&self, name: &str) -> Option<&serde_json::Value> {
         self.bindings.get(name)
+    }
+
+    /// **Wave I (`prui-luau-fusion.md` §6.2)** — snapshot every
+    /// host/document binding as one JSON object. Seeded into the
+    /// per-document Lua state as `prism.scope` so a `<script>` can
+    /// read host-provided props (`prism.scope.task`) the same way an
+    /// `{expr}` slot resolves a bare identifier. (The *typed* view —
+    /// `---@type Task` checked against the host `BlockSpec` schema —
+    /// is the external `luau-analyze` half of Wave I; this is the
+    /// runtime value bridge it type-annotates.)
+    pub fn bindings_json(&self) -> serde_json::Value {
+        serde_json::Value::Object(self.bindings.clone().into_iter().collect())
     }
 
     pub fn resolver(&self) -> Option<&Arc<dyn TagResolver>> {
@@ -458,6 +516,14 @@ impl LowerScope {
         self.stylesheet.as_deref()
     }
 
+    /// **Wave C** — clone-cheap handle to the installed stylesheet
+    /// `Arc`, so a forked scope (the hygienic macro-expansion scope)
+    /// can re-thread the same PRSS sheet without owning the original.
+    /// `None` when no sheet is loaded (headless / SSR / pre-PRSS).
+    pub fn stylesheet_arc(&self) -> Option<Arc<prism_core::language::prss::StyleSheet>> {
+        self.stylesheet.clone()
+    }
+
     /// **Token-driven rem base** — the pixel size one `rem` / `em`
     /// resolves to during length parsing. Reads
     /// `tokens.typography.font-size-md` from the active `tokens`
@@ -506,6 +572,23 @@ impl LowerScope {
     /// directly from the active set computed at apply time.
     pub fn class_chain(&self) -> &[Vec<String>] {
         self.class_chain.as_slice()
+    }
+
+    /// **Wave A** — install the per-document Luau scope frame
+    /// harvested from `<script lang="luau">` blocks. Forks of this
+    /// scope (control-flow / slot expansion) inherit the frame via
+    /// the `Arc` clone, so a script local resolves identically at
+    /// every nesting depth.
+    #[cfg(feature = "luau")]
+    pub fn with_luau_scope(mut self, frame: crate::luau_scope::LuauScopeFrame) -> Self {
+        self.luau_scope = Some(frame);
+        self
+    }
+
+    /// **Wave A** — borrow the installed Luau scope frame, if any.
+    #[cfg(feature = "luau")]
+    pub fn luau_scope(&self) -> Option<&crate::luau_scope::LuauScopeFrame> {
+        self.luau_scope.as_ref()
     }
 }
 
@@ -691,6 +774,115 @@ pub fn lower_document(document: &AstDocument) -> Vec<Node> {
 }
 
 pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> Vec<Node> {
+    // **Wave A (`prui-luau-fusion.md` §7.1)** — harvest every
+    // top-level `<script lang="luau">` block before the main walk.
+    // The bodies run once in a per-document Lua state; the script's
+    // top-level `local`s become document-scope bindings the
+    // expression resolver consults. The `<script>` element itself
+    // lowers to nothing (it's behaviour, not tree). Gated on the
+    // `luau` feature — without it, scripts are inert (the HTML/SSR
+    // path stays mlua-free).
+    // **Wave H (§5.3/§5.4)** — inline `<style lang="prss">` blocks
+    // and `<import stylesheet="…">` sidecars merge into the document
+    // stylesheet *before* the Luau frame is built, so a computed
+    // `{ lua = "…" }` value (Wave F) in an inline sheet still
+    // evaluates against the frame at apply time. Successive sheets
+    // layer in order (later wins); the pre-existing scope sheet (a
+    // host-installed sidecar) is the base. No `<style>`/`<import>`
+    // → untouched.
+    let style_owned;
+    let scope: &LowerScope = {
+        let mut bodies = collect_inline_stylesheets(&document.nodes);
+        if let Some(res) = scope.import_resolver() {
+            for (kind, path) in collect_imports(&document.nodes) {
+                if kind == "stylesheet" {
+                    if let Some(src) = res.resolve_import("stylesheet", &path) {
+                        bodies.push(src);
+                    }
+                }
+            }
+        }
+        if bodies.is_empty() {
+            scope
+        } else {
+            let mut merged = scope
+                .stylesheet_arc()
+                .map(|a| (*a).clone())
+                .unwrap_or_default();
+            for body in &bodies {
+                let (parsed, _errs) = prism_core::language::prss::parse(body);
+                merged = merged.merged_with(parsed);
+            }
+            style_owned = scope.clone().with_stylesheet(Arc::new(merged));
+            &style_owned
+        }
+    };
+
+    #[cfg(feature = "luau")]
+    let luau_owned;
+    #[cfg(feature = "luau")]
+    let scope: &LowerScope = {
+        let mut bodies = collect_script_bodies(&document.nodes);
+        // **Wave H** — `<import script="…">` / `<import dialect="…">`
+        // sources feed the same per-document Lua state (a dialect
+        // file is just a script that calls `prism.dialect{…}`). `as=`
+        // namespacing for scripts is a documented follow-up.
+        if let Some(res) = scope.import_resolver() {
+            for (kind, path) in collect_imports(&document.nodes) {
+                if matches!(kind.as_str(), "script" | "dialect") {
+                    if let Some(src) = res.resolve_import(&kind, &path) {
+                        bodies.push(src);
+                    }
+                }
+            }
+        }
+        // **Wave B** — a script-less document can still use closure
+        // builtins / pipes (`for="t in tasks | filter(|t| …)"`).
+        // Those need a Lua state to compile the closure in, so
+        // provision an empty (helpers + tokens only) frame when the
+        // AST's expression text uses the closure / pipe sigils. The
+        // scan is over parsed expression bodies only and the `||`
+        // logical-or is stripped first, so a plain `{a || b}`
+        // document never pays for a Lua state.
+        if scope.luau_scope().is_some() {
+            scope
+        } else if !bodies.is_empty() {
+            let srcs: Vec<&str> = bodies.iter().map(String::as_str).collect();
+            let tokens = scope.binding("tokens");
+            let scope_json = scope.bindings_json();
+            match crate::luau_scope::LuauScopeFrame::from_scripts_with_scope(
+                &srcs,
+                tokens,
+                Some(&scope_json),
+            ) {
+                Ok(frame) => {
+                    luau_owned = scope.clone().with_luau_scope(frame);
+                    &luau_owned
+                }
+                // A script error is non-fatal: the document still
+                // renders, just without script bindings. (Inline
+                // diagnostics for the error land with the Wave I
+                // type-checking pass.)
+                Err(_) => scope,
+            }
+        } else if document_uses_luau_expr(&document.nodes) {
+            let scope_json = scope.bindings_json();
+            match crate::luau_scope::LuauScopeFrame::from_scripts_with_scope(
+                &[],
+                scope.binding("tokens"),
+                Some(&scope_json),
+            ) {
+                Ok(frame) => {
+                    luau_owned = scope.clone().with_luau_scope(frame);
+                    &luau_owned
+                }
+                Err(_) => scope,
+            }
+        } else {
+            scope
+        }
+    };
+
     // **Wave 14.3** — pre-scan the entire AST for `<teleport
     // to="…">` elements before the main lowering walk starts. Each
     // teleport's children are stashed by target id; later, when the
@@ -704,6 +896,127 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
     }
     let scope_with_teleports = scope.clone().with_teleports(Arc::new(teleports));
     lower_children(&document.nodes, &scope_with_teleports)
+}
+
+/// **Wave A** — collect the raw body of every top-level
+/// `<script lang="luau">` element, in source order. The grammar
+/// parses a `<script>` block as a raw-text element (one
+/// [`AstNode::Text`] child); multiple inline blocks concatenate at
+/// the [`crate::luau_scope::LuauScopeFrame`] seam. Non-luau
+/// `lang=` scripts are skipped so a future `<script lang="…">`
+/// dialect doesn't get fed to the Lua state.
+#[cfg(feature = "luau")]
+fn collect_script_bodies(nodes: &[AstNode]) -> Vec<String> {
+    let mut out = Vec::new();
+    for node in nodes {
+        let AstNode::Element(el) = node else { continue };
+        if el.tag != "script" {
+            continue;
+        }
+        let is_luau = el.attributes.iter().any(|a| {
+            a.name.local == "lang"
+                && matches!(
+                    &a.value,
+                    AttributeValue::String { value, .. } if value == "luau" || value == "lua"
+                )
+        });
+        if !is_luau {
+            continue;
+        }
+        for child in &el.children {
+            if let AstNode::Text { value, .. } = child {
+                out.push(value.clone());
+            }
+        }
+    }
+    out
+}
+
+/// **Wave H (`prui-luau-fusion.md` §5.3)** — collect the body of
+/// every top-level inline `<style lang="prss">` block (or bare
+/// `<style>`, which defaults to PRSS), in source order. Grammar
+/// parses `<style>` as raw-text (one [`AstNode::Text`] child).
+fn collect_inline_stylesheets(nodes: &[AstNode]) -> Vec<String> {
+    let mut out = Vec::new();
+    for node in nodes {
+        let AstNode::Element(el) = node else { continue };
+        if el.tag != "style" {
+            continue;
+        }
+        let lang_ok = el.attributes.iter().all(|a| {
+            a.name.local != "lang"
+                || matches!(&a.value, AttributeValue::String { value, .. } if value == "prss")
+        });
+        if !lang_ok {
+            continue;
+        }
+        for child in &el.children {
+            if let AstNode::Text { value, .. } = child {
+                out.push(value.clone());
+            }
+        }
+    }
+    out
+}
+
+/// **Wave H (§5.4)** — collect `<import KIND="path"/>` pairs. `KIND`
+/// is the first attribute whose local name is one of the four
+/// projections. `as=` namespacing is parsed but not yet applied
+/// (documented follow-up).
+fn collect_imports(nodes: &[AstNode]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for node in nodes {
+        let AstNode::Element(el) = node else { continue };
+        if el.tag != "import" {
+            continue;
+        }
+        for a in &el.attributes {
+            if matches!(
+                a.name.local.as_str(),
+                "stylesheet" | "script" | "widget" | "dialect"
+            ) {
+                if let AttributeValue::String { value, .. } = &a.value {
+                    out.push((a.name.local.clone(), value.clone()));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// **Wave B** — does any expression body in the document use the
+/// closure (`|x| …`, `\fn(x) …`) or pipe (`|>`, ` | `) sigils?
+/// Drives lazy provisioning of an empty Luau frame for script-less
+/// documents. Scans only parsed expression text (attribute values,
+/// interpolations, control-flow predicates) — never literal text
+/// runs — and strips `||` first so a plain logical-or never
+/// triggers a Lua state.
+#[cfg(feature = "luau")]
+fn document_uses_luau_expr(nodes: &[AstNode]) -> bool {
+    fn expr_has_sigil(body: &str) -> bool {
+        let stripped = body.replace("||", "");
+        stripped.contains("\\fn") || stripped.contains('|')
+    }
+    fn attr_has(value: &AttributeValue) -> bool {
+        match value {
+            AttributeValue::Expression(e) => expr_has_sigil(&e.body),
+            AttributeValue::Template { parts, .. } => parts.iter().any(|p| match p {
+                prism_core::language::prism_ui::ast::TemplatePart::Expression(e) => {
+                    expr_has_sigil(&e.body)
+                }
+                prism_core::language::prism_ui::ast::TemplatePart::Literal { .. } => false,
+            }),
+            _ => false,
+        }
+    }
+    nodes.iter().any(|node| match node {
+        AstNode::Element(el) => {
+            el.attributes.iter().any(|a| attr_has(&a.value))
+                || document_uses_luau_expr(&el.children)
+        }
+        AstNode::Interpolation(e) => expr_has_sigil(&e.body),
+        _ => false,
+    })
 }
 
 /// **Wave 14.3** — recursive AST scan that collects every
@@ -817,6 +1130,16 @@ fn lower_node(node: &AstNode, scope: &LowerScope) -> Vec<Node> {
             }
         }
         AstNode::Interpolation(expr) => {
+            // **Wave C** — inside a macro expansion, `{children}`
+            // (and `<fragment>{children}</fragment>`) splices the
+            // caller's already-lowered child nodes verbatim. The
+            // macro path binds them via `with_host_children_ui`;
+            // `<host-children/>` is the equivalent explicit form.
+            if expr.body.trim() == "children" {
+                if let Some(injected) = scope.host_children_ui() {
+                    return injected.to_vec();
+                }
+            }
             let resolved = lookup_expression(&expr.body, scope)
                 .map(stringify_value)
                 .unwrap_or_default();
@@ -993,6 +1316,44 @@ fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
         // document-level pre-scan and will land at the target site
         // when the matching `id="…"` is lowered.
         "teleport" => Vec::new(),
+        // **Wave A** — `<script>` is behaviour, `<style>` is theme;
+        // neither is tree. Their bodies are harvested in the
+        // document pre-pass (`collect_script_bodies`) / the Wave H
+        // stylesheet pass — at their source position they render
+        // nothing. Listed here so they never fall through to the
+        // unknown-tag resolver and accidentally surface as an empty
+        // container.
+        // **Wave H** — `<import>` is resolved in the document
+        // pre-pass; at its source position it renders nothing.
+        "script" | "style" | "import" => Vec::new(),
+        // **Wave D (`prui-luau-fusion.md` §7.5)** — `<match on="{x}">`
+        // with `<case>` children. Pure parser sugar: rewritten to a
+        // synthetic `<let>` (the matched value, bound once) plus a
+        // chained `if`/`else-if`/`else` over `<fragment>` wrappers,
+        // then lowered through the existing control-flow expander.
+        "match" => expand_match(el, scope),
+        // A stray `<case>` (outside `<match>`) is malformed — it
+        // renders nothing rather than leaking its body.
+        "case" => Vec::new(),
+        // **Wave D (§7.6)** — `<suspense>` / `<fallback>`. The
+        // fallback body shows while any binding the primary subtree
+        // reads is a pending coroutine marker; otherwise the primary
+        // subtree renders (fallback stripped).
+        "suspense" => expand_suspense(el, scope),
+        // `<fallback>` only has meaning as a `<suspense>` child;
+        // consumed there. Standalone → nothing.
+        "fallback" => Vec::new(),
+        // **Wave E (`prui-luau-fusion.md` §7.8)** — sub-dialect
+        // block. `<language name="md">…</language>` (and the
+        // `~md{…}` sigil it desugars from) routes the raw body
+        // through the script-registered dialect's `parse(source)`,
+        // then re-parses + lowers the returned `prui[[…]]` source.
+        // Unknown dialect / no Luau scope → nothing (graceful, like
+        // an unresolved tag).
+        #[cfg(feature = "luau")]
+        "language" => expand_language(el, scope),
+        #[cfg(not(feature = "luau"))]
+        "language" => Vec::new(),
         "text" | "heading" => {
             let mut props = TextProps::default();
             let mut id = String::new();
@@ -1049,6 +1410,35 @@ fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
         // imposing a flex parent. Drops `if=` / `for=` correctly
         // because those are handled at the sibling expansion layer.
         "fragment" => lower_children(&el.children, scope),
+        // **A4** — declarative facet repeater. `<facet name="post"
+        // from="state.posts">…</facet>` lowers its children once per
+        // item in the resolved `from` source, binding each item to
+        // the per-iteration scope under `name` (default `"item"`).
+        // Sugars `<container for="post in state.posts">…</container>`
+        // into a dedicated tag that reads at the call site as data
+        // iteration rather than control-flow plumbing.
+        //
+        // Resolves through the same `resolve_for_iteration` helper
+        // `for=` uses, so the `from` source accepts dotted-path
+        // bindings (`state.posts`), virtual segments, ranges
+        // (`0..5`), and the array/object iteration shapes — same
+        // vocabulary, one resolver. Closes A4 of
+        // `docs/dev/ui-migration-followups.md`.
+        "facet" => {
+            let name = bare_attr_value(el, "name", scope).unwrap_or_else(|| "item".to_string());
+            let Some(from) = bare_attr_value(el, "from", scope) else {
+                // No `from` → render nothing rather than panic. Same
+                // shape as a `for=` with an unresolved source.
+                return Vec::new();
+            };
+            let iter = resolve_for_iteration(&from, None, false, scope);
+            let mut out = Vec::new();
+            for (_key, item) in iter {
+                let child_scope = scope.clone().with_binding(name.clone(), item);
+                out.extend(lower_children(&el.children, &child_scope));
+            }
+            out
+        }
         "host-children" => {
             if let Some(name) = bare_attr_value(el, "name", scope) {
                 if let Some(injected) = scope.host_children_for_slot(&name) {
@@ -1070,6 +1460,18 @@ fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
         // can nest a scene inside `<scene>` without forcing the runtime
         // to know about it.
         _ => {
+            // **Wave C (`prui-luau-fusion.md` §7.7)** — a Luau macro
+            // tag. Checked *before* the host resolver so a script can
+            // shadow / define element vocabulary document-locally.
+            // The macro receives the caller's resolved attributes +
+            // already-lowered children and returns `prui[[…]]` source
+            // the host re-parses and lowers in a hygienic scope.
+            #[cfg(feature = "luau")]
+            if let Some(frame) = scope.luau_scope() {
+                if frame.has_macro(&el.tag) {
+                    return expand_macro_element(el, scope, frame);
+                }
+            }
             if let Some(resolver) = scope.resolver() {
                 if let Some(nodes) = resolver.resolve(el, scope) {
                     return nodes;
@@ -1078,6 +1480,394 @@ fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
             lower_children(&el.children, scope)
         }
     }
+}
+
+/// **Wave C** — expand a Luau macro element. Resolves the call
+/// site's attributes to a JSON object and lowers its children in the
+/// *caller's* scope (so `{caller_binding}` inside macro children
+/// resolves at the call site, Vue-slot style), then hands both to
+/// the macro. The returned `prui[[…]]` source is parsed and lowered
+/// in a **hygienic** scope: document context (resolver, tokens,
+/// Luau frame) is carried so nested tags / `{tokens.*}` / nested
+/// macros still work, but the caller's PRUI bindings are dropped —
+/// the macro body sees only `attrs` + `children` (§7.7 hygiene).
+#[cfg(feature = "luau")]
+fn expand_macro_element(
+    el: &Element,
+    scope: &LowerScope,
+    frame: &crate::luau_scope::LuauScopeFrame,
+) -> Vec<Node> {
+    // Resolved attribute object: bare/identifier attrs keyed by
+    // local name. Empty (valueless) attrs are booleans.
+    let mut attrs = serde_json::Map::new();
+    for a in &el.attributes {
+        if !matches!(
+            a.name.namespace,
+            AttributeNamespace::Bare | AttributeNamespace::Identifier
+        ) {
+            continue;
+        }
+        let v = match &a.value {
+            AttributeValue::Empty => serde_json::Value::Bool(true),
+            AttributeValue::Expression(e) => lookup_expression(&e.body, scope)
+                .cloned()
+                .or_else(|| evaluate_expression(&e.body, scope))
+                .unwrap_or(serde_json::Value::Null),
+            _ => resolved_attribute_string(&a.value, scope)
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        };
+        attrs.insert(a.name.local.clone(), v);
+    }
+    let attrs_json = serde_json::Value::Object(attrs);
+
+    // Caller's children, lowered at the call site.
+    let children_nodes = lower_children(&el.children, scope);
+    let children_json = serde_json::to_value(&children_nodes).unwrap_or(serde_json::Value::Null);
+
+    let src = match frame.expand_macro(&el.tag, &attrs_json, &children_json) {
+        Some(Ok(s)) => s,
+        // Macro error / not-a-macro (shouldn't happen — `has_macro`
+        // gated) → render nothing rather than a broken subtree.
+        _ => return Vec::new(),
+    };
+
+    let (doc, errors) = parse(&src);
+    if !errors.is_empty() {
+        return Vec::new();
+    }
+
+    // Hygienic scope: keep document context, drop caller bindings.
+    let mut macro_scope = LowerScope::default().with_luau_scope(frame.clone());
+    if let Some(resolver) = scope.resolver() {
+        macro_scope = macro_scope.with_resolver(Arc::clone(resolver));
+    }
+    if let Some(tokens) = scope.binding("tokens") {
+        macro_scope = macro_scope.with_binding("tokens", tokens.clone());
+    }
+    // **Wave C** — re-thread the PRSS sheet so a macro body's
+    // `class="…"` resolves named classes exactly as it would at the
+    // call site. Installed after the `tokens` binding so the sheet's
+    // `[tokens.*]` overrides cascade over it (the §4.6 order), then
+    // the macro-specific bindings layer on last.
+    if let Some(sheet) = scope.stylesheet_arc() {
+        macro_scope = macro_scope.with_stylesheet(sheet);
+    }
+    macro_scope = macro_scope
+        .with_binding("attrs", attrs_json)
+        .with_host_children_ui(children_nodes);
+    lower_document_with_scope(&doc, &macro_scope)
+}
+
+// ---------------------------------------------------------------------------
+// Wave D — <match> / <suspense> desugaring
+// ---------------------------------------------------------------------------
+
+/// Build a synthetic control-flow [`Attribute`] (`if` / `else-if` /
+/// `else`) carrying `body` as a `{expr}` value. `range` is the
+/// `<match>` element's span so diagnostics point at the sugar site.
+fn cf_attr(local: &str, body: Option<&str>, range: SourceRange) -> Attribute {
+    let value = match body {
+        Some(b) => AttributeValue::Expression(Expression {
+            body: b.to_string(),
+            range,
+        }),
+        None => AttributeValue::Empty,
+    };
+    Attribute {
+        name: AttributeName {
+            raw: local.to_string(),
+            local: local.to_string(),
+            namespace: AttributeNamespace::ControlFlow,
+            range,
+        },
+        value,
+        range,
+    }
+}
+
+/// Wrap `children` in a synthetic `<fragment>` element carrying one
+/// control-flow attribute — the unit a `<case>` rewrites to.
+fn cf_fragment(cf: Attribute, children: Vec<AstNode>, range: SourceRange) -> AstNode {
+    AstNode::Element(Element {
+        tag: "fragment".to_string(),
+        attributes: vec![cf],
+        children,
+        self_closing: false,
+        range,
+        tag_range: range,
+    })
+}
+
+/// **Wave D (§7.5)** — rewrite `<match on="{X}">` + `<case>` children
+/// into a `<let>`-bound chained `if`/`else-if`/`else` and lower it.
+///
+/// - `<case is="lit">` → `__match == 'lit'` (string literal) or
+///   `__match == (expr)` when `is="{expr}"`.
+/// - An extra `if="{cond}"` on the case narrows: `(eq) and (cond)`.
+/// - `<case default>` → the `else` arm (must be last; later cases
+///   are unreachable and dropped, matching first-match-wins).
+///
+/// The matched expression is evaluated exactly once (the synthetic
+/// `<let>`), so side-effect-free but non-trivial `on=` expressions
+/// don't re-run per case.
+fn expand_match(el: &Element, scope: &LowerScope) -> Vec<Node> {
+    let range = el.range;
+    // The matched expression text (no surrounding braces).
+    let on_body = el.attributes.iter().find_map(|a| {
+        if a.name.local != "on" {
+            return None;
+        }
+        match &a.value {
+            AttributeValue::Expression(e) => Some(e.body.clone()),
+            AttributeValue::String { value, .. } => Some(value.clone()),
+            _ => None,
+        }
+    });
+    let Some(on_body) = on_body else {
+        return Vec::new();
+    };
+    // Unique binding name so nested `<match>` don't collide.
+    let bind = format!("__match_{}", range.start.offset);
+
+    let mut synthetic: Vec<AstNode> = Vec::new();
+    // `<let name="bind" value="{on_body}"/>`
+    synthetic.push(AstNode::Element(Element {
+        tag: "let".to_string(),
+        attributes: vec![
+            Attribute {
+                name: AttributeName {
+                    raw: "name".into(),
+                    local: "name".into(),
+                    namespace: AttributeNamespace::Bare,
+                    range,
+                },
+                value: AttributeValue::String {
+                    value: bind.clone(),
+                    range,
+                },
+                range,
+            },
+            Attribute {
+                name: AttributeName {
+                    raw: "value".into(),
+                    local: "value".into(),
+                    namespace: AttributeNamespace::Bare,
+                    range,
+                },
+                value: AttributeValue::Expression(Expression {
+                    body: on_body,
+                    range,
+                }),
+                range,
+            },
+        ],
+        children: Vec::new(),
+        self_closing: true,
+        range,
+        tag_range: range,
+    }));
+
+    let mut first = true;
+    let mut seen_default = false;
+    for child in &el.children {
+        let AstNode::Element(case) = child else {
+            continue;
+        };
+        if case.tag != "case" || seen_default {
+            // Non-`<case>` children and anything after `<case
+            // default>` are unreachable — first-match-wins.
+            continue;
+        }
+        let is_default = case
+            .attributes
+            .iter()
+            .any(|a| a.name.local == "default" && matches!(a.value, AttributeValue::Empty));
+        // Optional narrowing `if="{cond}"` on the case.
+        let extra = case.attributes.iter().find_map(|a| {
+            if matches!(a.name.namespace, AttributeNamespace::ControlFlow) && a.name.local == "if" {
+                attribute_string(&a.value)
+            } else {
+                None
+            }
+        });
+        let extra = extra.map(|s| {
+            s.trim()
+                .trim_start_matches('{')
+                .trim_end_matches('}')
+                .trim()
+                .to_string()
+        });
+
+        let cf = if is_default {
+            seen_default = true;
+            cf_attr("else", None, range)
+        } else {
+            // `is=` literal vs expression.
+            let rhs = case.attributes.iter().find_map(|a| {
+                if a.name.local != "is" {
+                    return None;
+                }
+                match &a.value {
+                    AttributeValue::String { value, .. } => {
+                        Some(format!("'{}'", value.replace('\'', "\\'")))
+                    }
+                    AttributeValue::Expression(e) => Some(format!("({})", e.body)),
+                    _ => None,
+                }
+            });
+            let Some(rhs) = rhs else { continue };
+            let mut pred = format!("{bind} == {rhs}");
+            if let Some(extra) = &extra {
+                if !extra.is_empty() {
+                    pred = format!("({pred}) and ({extra})");
+                }
+            }
+            if first {
+                cf_attr("if", Some(&pred), range)
+            } else {
+                cf_attr("else-if", Some(&pred), range)
+            }
+        };
+        first = false;
+        synthetic.push(cf_fragment(cf, case.children.clone(), range));
+    }
+
+    lower_children(&synthetic, scope)
+}
+
+/// **Wave D (§7.6)** — `<suspense>` lowering. The first
+/// `<fallback>` child is the placeholder; the remaining children
+/// are the primary subtree. If any `{expr}` slot the primary
+/// subtree reads resolves to a *pending* marker
+/// (`{ tag = "Pending" }`, the shape a `prism.objects:query_async`
+/// coroutine binding carries before it resolves), the fallback is
+/// rendered; otherwise the primary subtree renders (fallback
+/// stripped). Full coroutine scheduling is open question 3 — this
+/// is the lowering-time swap that makes the boundary observable.
+fn expand_suspense(el: &Element, scope: &LowerScope) -> Vec<Node> {
+    let mut fallback: Vec<AstNode> = Vec::new();
+    let mut primary: Vec<AstNode> = Vec::new();
+    for child in &el.children {
+        match child {
+            AstNode::Element(c) if c.tag == "fallback" => {
+                fallback.extend(c.children.iter().cloned());
+            }
+            other => primary.push(other.clone()),
+        }
+    }
+    if subtree_has_pending(&primary, scope) {
+        lower_children(&fallback, scope)
+    } else {
+        lower_children(&primary, scope)
+    }
+}
+
+/// Does any expression referenced by `nodes` resolve to a pending
+/// coroutine marker? Walks attribute values, interpolations, and
+/// `for=` / `if=` predicates — a `None`-resolving binding is *not*
+/// pending (that's just absent data); only an explicit
+/// `{ tag = "Pending" }` object trips the fallback.
+fn subtree_has_pending(nodes: &[AstNode], scope: &LowerScope) -> bool {
+    fn is_pending(v: &serde_json::Value) -> bool {
+        v.get("tag").and_then(|t| t.as_str()) == Some("Pending")
+    }
+    fn expr_pending(body: &str, scope: &LowerScope) -> bool {
+        let b = body
+            .trim()
+            .trim_start_matches('{')
+            .trim_end_matches('}')
+            .trim();
+        // Whole-expression value (covers `for="t in async_tasks"`
+        // where the source *is* the pending object).
+        if lookup_path_owned(b, scope)
+            .or_else(|| evaluate_expression(b, scope))
+            .as_ref()
+            .map(is_pending)
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        // Root binding of a dotted path: `{async_tasks.tag}` is
+        // pending if `async_tasks` itself is the pending marker —
+        // reading *into* an unresolved coroutine still suspends.
+        let head: String = b
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if head.is_empty() || head.len() == b.len() {
+            return false;
+        }
+        scope
+            .binding(&head)
+            .map(is_pending)
+            .or_else(|| lookup_path_owned(&head, scope).as_ref().map(is_pending))
+            .unwrap_or(false)
+    }
+    nodes.iter().any(|n| match n {
+        AstNode::Interpolation(e) => expr_pending(&e.body, scope),
+        AstNode::Element(el) => {
+            el.attributes.iter().any(|a| match &a.value {
+                AttributeValue::Expression(e) => expr_pending(&e.body, scope),
+                AttributeValue::Template { parts, .. } => parts.iter().any(|p| match p {
+                    prism_core::language::prism_ui::ast::TemplatePart::Expression(e) => {
+                        expr_pending(&e.body, scope)
+                    }
+                    _ => false,
+                }),
+                _ => false,
+            }) || subtree_has_pending(&el.children, scope)
+        }
+        _ => false,
+    })
+}
+
+/// **Wave E (§7.8)** — expand a `<language name="x">body</language>`
+/// block. The body (one raw [`AstNode::Text`] child, the grammar
+/// parses `<language>` as raw-text) is handed to the dialect's
+/// `parse(source)`; the returned `prui[[…]]` source is parsed and
+/// lowered in the **current** scope (a dialect is authored inline
+/// at the call site, so `{tokens.*}` / call-site bindings resolve —
+/// unlike a macro, which is hygienic).
+#[cfg(feature = "luau")]
+fn expand_language(el: &Element, scope: &LowerScope) -> Vec<Node> {
+    let Some(frame) = scope.luau_scope() else {
+        return Vec::new();
+    };
+    let name = el.attributes.iter().find_map(|a| {
+        if a.name.local == "name" {
+            match &a.value {
+                AttributeValue::String { value, .. } => Some(value.clone()),
+                AttributeValue::Expression(e) => Some(e.body.clone()),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    });
+    let Some(name) = name else {
+        return Vec::new();
+    };
+    if !frame.has_dialect(&name) {
+        return Vec::new();
+    }
+    let body: String = el
+        .children
+        .iter()
+        .filter_map(|c| match c {
+            AstNode::Text { value, .. } => Some(value.as_str()),
+            _ => None,
+        })
+        .collect();
+    let src = match frame.expand_dialect(&name, &body) {
+        Some(Ok(s)) => s,
+        _ => return Vec::new(),
+    };
+    let (doc, errors) = parse(&src);
+    if !errors.is_empty() {
+        return Vec::new();
+    }
+    lower_document_with_scope(&doc, scope)
 }
 
 // ---------------------------------------------------------------------------
@@ -1665,6 +2455,8 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
     let mut scroll_x: f32 = 0.0;
     let mut scroll_y: f32 = 0.0;
     let mut underline: Option<(usize, usize)> = None;
+    let mut bracket_match: Vec<usize> = Vec::new();
+    let mut highlight_current_line = false;
     // `syntax-language` chooses the tokenizer the interpret pass
     // runs against the input's `value`. Set by the code editor's
     // DSL (`<input syntax-language="luau"/>`); ignored when empty.
@@ -1745,6 +2537,26 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
                         scroll_y = v;
                     }
                 }
+                // `bracket-match="<open>,<close>"` — pair of byte
+                // offsets the renderer should paint thin outlines
+                // around. Used for the matching-bracket highlight.
+                "bracket-match" => {
+                    if let Some(s) = raw.as_deref() {
+                        if let Some((a, b)) = s.split_once(',') {
+                            if let (Ok(a), Ok(b)) =
+                                (a.trim().parse::<usize>(), b.trim().parse::<usize>())
+                            {
+                                bracket_match = vec![a, b];
+                            }
+                        }
+                    }
+                }
+                // `highlight-current-line="true"` — paint a subtle
+                // strip behind the caret's row. Default off so
+                // inline string-property fields don't gain one.
+                "highlight-current-line" => {
+                    highlight_current_line = matches!(raw.as_deref(), Some("true"));
+                }
                 // `underline="<start>,<end>"` — byte range the
                 // renderer should paint an underline through. Used
                 // by IME preedit decoration; same parser shape as
@@ -1796,6 +2608,16 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
                     semantic.attrs.push((format!("data-bind-{}", local), v));
                 }
             }
+            AttributeNamespace::Facet => {
+                if let Some(v) = raw {
+                    semantic.attrs.push((format!("data-fct-{}", local), v));
+                }
+            }
+            AttributeNamespace::Signal => {
+                if let Some(v) = raw {
+                    semantic.attrs.push((format!("data-sig-{}", local), v));
+                }
+            }
             // `aria:*` / `data:*` / `route:*` pass through to the
             // semantic carrier so inputs participate in the same
             // hit-test / SSR routing the containers do.
@@ -1845,6 +2667,8 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
         scroll_x,
         scroll_y,
         underline,
+        bracket_match,
+        highlight_current_line,
     }
 }
 
@@ -2140,6 +2964,33 @@ fn apply_container_attributes(
                     props.semantic.attrs.push((attr, value));
                 }
             }
+            // **Wave G (§7.11)** — `probe:<name>="event-key"` taps a
+            // value/interaction into the document probe stream.
+            // Lowers to `data-probe-<name>` (same round-trip
+            // discipline as `route:` / `use:`); `prism.probes:on`
+            // subscribes. Live event firing off the data attr is a
+            // host event-router follow-up (open question 3 family).
+            AttributeNamespace::Probe => {
+                if let Some(value) = raw.filter(|s| !s.is_empty()) {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("data-probe-{}", local), value));
+                }
+            }
+            // **Wave G (§7.12)** — `at:<time>="{…}"` keyframe stop.
+            // Lowers to `data-at-<time>` so the animator can read the
+            // timeline at observe time; mirrors `transition:` /
+            // `animate:` (the Effect-driven animator that consumes
+            // these is the shared follow-up).
+            AttributeNamespace::At => {
+                if let Some(value) = raw {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("data-at-{}", local), value));
+                }
+            }
             // Wave 13.3: `use:<id>[="<value>"]` directive sugar for
             // attaching a registered `ModifierBehaviour`. Today the
             // namespace lowers to `data-use-<id>="<value>"` so author
@@ -2171,6 +3022,30 @@ fn apply_container_attributes(
                         .semantic
                         .attrs
                         .push((format!("data-bind-{}", local), value));
+                }
+            }
+            // `fct:<key>="<source>"` (facet) and `sig:<key>="<source>"`
+            // (signal declaration) follow the same carry-through
+            // pattern. The host walks the lowered tree post-interpret
+            // and acts on `data-fct-*` / `data-sig-*` semantic attrs
+            // — facets expand against `BuilderDocument::facets`,
+            // signal declarations register against the shell's signal
+            // scope. SSR backends pass them through to the rendered
+            // HTML where consumers (e.g. relay JS) can pick them up.
+            AttributeNamespace::Facet => {
+                if let Some(value) = raw {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("data-fct-{}", local), value));
+                }
+            }
+            AttributeNamespace::Signal => {
+                if let Some(value) = raw {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("data-sig-{}", local), value));
                 }
             }
             _ => {}
@@ -2501,6 +3376,18 @@ fn lookup_path_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value
     if let Some(v) = lookup_expression(body, scope) {
         return Some(v.clone());
     }
+    // **Wave B (`prui-luau-fusion.md` §7.2)** — pipe rewrite. `a | f(x)`
+    // and `a |> f(x)` desugar to `f(a, x)` (left-associative, F#/Elm
+    // shape) *before* the call resolver runs, so a pipeline like
+    // `tasks | filter('status','open') | take(5)` reads as nested
+    // builtin calls. Pure string transform — no Lua needed for the
+    // pipe itself (the closure args, if any, are resolved later by
+    // the closure-aware builtin path).
+    if let Some(rewritten) = rewrite_pipes(body) {
+        if let Some(v) = lookup_path_owned(&rewritten, scope) {
+            return Some(v);
+        }
+    }
     let body = body.trim();
     // **Functional helpers** — `map`, `reduce`, `filter`, `find`,
     // `slice`, `sort_by`, `unique`, `reverse`, `keys`, `values`,
@@ -2512,6 +3399,16 @@ fn lookup_path_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value
     // the same `{call(arr, …)}` shape.
     if let Some(v) = try_call_owned(body, scope) {
         return Some(v);
+    }
+    // **Wave A** — script-block scope. A `<script lang="luau">`
+    // block's top-level `local`s resolve here after the JSON binding
+    // map and functional builtins miss (the §5.6 resolution stack:
+    // script locals sit below `let`/`for` vars, above host bindings).
+    #[cfg(feature = "luau")]
+    if let Some(frame) = scope.luau_scope() {
+        if let Some(v) = frame.lookup(body) {
+            return Some(v);
+        }
     }
     let (head, virtual_seg) = body.rsplit_once('.')?;
     let head = head.trim();
@@ -2550,6 +3447,109 @@ fn lookup_path_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value
     })
 }
 
+/// **Wave B (`prui-luau-fusion.md` §7.2)** — rewrite the pipe
+/// operator into nested calls. `a | f(x)` and the `|>` alias both
+/// desugar to `f(a, x)`; the operator is left-associative so
+/// `t | filter(p) | take(5)` becomes `take(filter(t, p), 5)`.
+///
+/// Returns `Some(rewritten)` when at least one top-level pipe was
+/// found (fully resolved — the result is pipe-free), `None` when the
+/// body has no pipe so callers skip the extra resolution attempt.
+///
+/// Disambiguation rules (no Lua needed — this is a pure string
+/// transform):
+/// - `||` (logical or) is never a pipe.
+/// - A closure literal's own bars (`|t| t.x`) are not pipes: the
+///   pipe operator is either `|>` or a `|` with whitespace on *both*
+///   sides, and closure bars never present that shape.
+/// - Scanning is depth- and quote-aware, so a `|` inside
+///   `filter(|t| …)` (depth ≥ 1) or inside a string is skipped.
+fn rewrite_pipes(body: &str) -> Option<String> {
+    let split = find_last_top_level_pipe(body)?;
+    let lhs = body[..split.0].trim();
+    let rhs = body[split.1..].trim();
+    if lhs.is_empty() || rhs.is_empty() {
+        return None;
+    }
+    // Left-associative: recurse on the LHS first so `a | f | g`
+    // resolves inner-out to `g(f(a))`.
+    let lhs_rewritten = rewrite_pipes(lhs).unwrap_or_else(|| lhs.to_string());
+    // RHS must be a call or a bare callable name. `f(x)` →
+    // `f(lhs, x)`; `f()` / `f` → `f(lhs)`.
+    let piped = if let Some(open) = rhs.find('(') {
+        let close = matching_close_paren(rhs, open)?;
+        // Anything after the call's `)` (a trailing `.field` or
+        // another operator) isn't a valid pipe RHS — bail so the
+        // caller treats the body as non-pipe.
+        if rhs[close + 1..].trim() != "" {
+            return None;
+        }
+        let name = rhs[..open].trim();
+        let inner = rhs[open + 1..close].trim();
+        if inner.is_empty() {
+            format!("{name}({lhs_rewritten})")
+        } else {
+            format!("{name}({lhs_rewritten}, {inner})")
+        }
+    } else {
+        // Bare name. Reject anything with operator/space chars so we
+        // don't swallow a malformed RHS.
+        if rhs
+            .chars()
+            .any(|c| !(c.is_alphanumeric() || c == '_' || c == '.'))
+        {
+            return None;
+        }
+        format!("{rhs}({lhs_rewritten})")
+    };
+    Some(piped)
+}
+
+/// Find the byte range `(start, end)` of the last top-level pipe
+/// operator in `body`, where `start..end` is the operator span (so
+/// `body[..start]` is the LHS and `body[end..]` the RHS). Skips
+/// `||`, quoted regions, and any `|` nested in parens/brackets.
+fn find_last_top_level_pipe(body: &str) -> Option<(usize, usize)> {
+    let bytes = body.as_bytes();
+    let mut depth = 0i32;
+    let mut in_str: Option<u8> = None;
+    let mut last: Option<(usize, usize)> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        match (in_str, c) {
+            (Some(q), x) if x == q => in_str = None,
+            (Some(_), _) => {}
+            (None, b'\'' | b'"') => in_str = Some(c),
+            (None, b'(' | b'[' | b'{') => depth += 1,
+            (None, b')' | b']' | b'}') => depth -= 1,
+            (None, b'|') if depth == 0 => {
+                // `|>` operator.
+                if bytes.get(i + 1) == Some(&b'>') {
+                    last = Some((i, i + 2));
+                    i += 2;
+                    continue;
+                }
+                // `||` logical-or — skip both bars.
+                if bytes.get(i + 1) == Some(&b'|') {
+                    i += 2;
+                    continue;
+                }
+                // `|` pipe only when whitespace-flanked (a closure's
+                // own `|t|` bars never are).
+                let prev_ws = i > 0 && bytes[i - 1].is_ascii_whitespace();
+                let next_ws = bytes.get(i + 1).is_some_and(u8::is_ascii_whitespace);
+                if prev_ws && next_ws {
+                    last = Some((i, i + 1));
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    last
+}
+
 /// Recognised functional builtin names that operate on typed JSON
 /// values (arrays / objects / strings). Used by [`try_call_owned`]
 /// to gate the cheap call-form parse — anything else falls through
@@ -2582,7 +3582,181 @@ const ARRAY_CALL_NAMES: &[&str] = &[
     "chunk",
     "zip",
     "range",
+    // **Wave B** — closure-only builtin (no field-name form). Listed
+    // so the call gate admits it; `eval_array_call` has no `reject`
+    // arm, so a non-closure `reject(...)` resolves to `None`.
+    "reject",
 ];
+
+/// **Wave B (`prui-luau-fusion.md` §7.2 / B.4)** — builtins that
+/// accept a closure literal as a second call form
+/// (`filter(arr, |t| t.x)` alongside `filter(arr, "x", v)`). The
+/// closure is evaluated per element through the per-document Luau
+/// scope.
+#[cfg(feature = "luau")]
+const CLOSURE_BUILTINS: &[&str] = &[
+    "filter", "reject", "map", "find", "any", "all", "sort_by", "group_by", "count_by",
+];
+
+/// **Wave B** — cheap shape check: does this raw arg look like a
+/// closure literal? Full validation happens in `desugar_closure`;
+/// this only decides whether to take the closure-aware builtin path
+/// instead of the field-name path.
+#[cfg(feature = "luau")]
+fn looks_like_closure(s: &str) -> bool {
+    let s = s.trim();
+    s.starts_with("\\fn") || (s.starts_with('|') && !s.starts_with("||"))
+}
+
+/// **Wave B** — split a call-arg list on top-level commas, returning
+/// the raw (unevaluated) slices. Mirrors [`parse_call_args`]'s
+/// depth/quote scanner but keeps the substrings verbatim so a
+/// closure literal (`|t| t.x`) survives to `desugar_closure` instead
+/// of being mangled by argument evaluation.
+#[cfg(feature = "luau")]
+fn split_top_level_args(inside: &str) -> Option<Vec<&str>> {
+    let trimmed = inside.trim();
+    if trimmed.is_empty() {
+        return Some(Vec::new());
+    }
+    let bytes = inside.as_bytes();
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut in_str: Option<u8> = None;
+    let mut start = 0usize;
+    for (i, &c) in bytes.iter().enumerate() {
+        match (in_str, c) {
+            (Some(q), x) if x == q => in_str = None,
+            (Some(_), _) => {}
+            (None, b'\'' | b'"') => in_str = Some(c),
+            (None, b'(' | b'[' | b'{') => depth += 1,
+            (None, b')' | b']' | b'}') => {
+                depth -= 1;
+                if depth < 0 {
+                    return None;
+                }
+            }
+            (None, b',') if depth == 0 => {
+                out.push(inside[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 || in_str.is_some() {
+        return None;
+    }
+    out.push(inside[start..].trim());
+    Some(out)
+}
+
+/// **Wave B** — evaluate a closure-form functional builtin. `raw`
+/// are the unevaluated arg slices: `raw[0]` is the collection
+/// expression (resolved through the owned-value vocabulary so a
+/// pipeline / nested call still works), `raw[1]` is the closure
+/// literal, and (for `sort_by`) an optional `raw[2]` order token
+/// (`'desc'`). Returns `None` on any shape mismatch so the caller
+/// fails the call cleanly rather than emitting wrong data.
+#[cfg(feature = "luau")]
+fn eval_closure_builtin(
+    name: &str,
+    raw: &[&str],
+    scope: &LowerScope,
+    frame: &crate::luau_scope::LuauScopeFrame,
+) -> Option<serde_json::Value> {
+    use serde_json::Value;
+    let arr = match lookup_path_owned(raw.first()?.trim(), scope)? {
+        Value::Array(a) => a,
+        _ => return None,
+    };
+    let clo = raw.get(1)?.trim();
+    let truthy = |v: &Value| !matches!(v, Value::Null | Value::Bool(false));
+    // Evaluate the closure for one element; a closure error aborts
+    // the whole builtin (returns `None`) — no partial results.
+    let eval = |item: &Value| -> Option<Value> {
+        frame.call_closure(clo, std::slice::from_ref(item))?.ok()
+    };
+    match name {
+        "filter" | "reject" => {
+            let want = name == "filter";
+            let mut out = Vec::new();
+            for item in &arr {
+                if truthy(&eval(item)?) == want {
+                    out.push(item.clone());
+                }
+            }
+            Some(Value::Array(out))
+        }
+        "map" => {
+            let mut out = Vec::with_capacity(arr.len());
+            for item in &arr {
+                out.push(eval(item)?);
+            }
+            Some(Value::Array(out))
+        }
+        "find" => {
+            for item in &arr {
+                if truthy(&eval(item)?) {
+                    return Some(item.clone());
+                }
+            }
+            Some(Value::Null)
+        }
+        "any" => {
+            for item in &arr {
+                if truthy(&eval(item)?) {
+                    return Some(Value::Bool(true));
+                }
+            }
+            Some(Value::Bool(false))
+        }
+        "all" => {
+            for item in &arr {
+                if !truthy(&eval(item)?) {
+                    return Some(Value::Bool(false));
+                }
+            }
+            Some(Value::Bool(true))
+        }
+        "sort_by" => {
+            // Decorate-sort-undecorate: the closure runs once per
+            // element (not per comparison).
+            let mut keyed: Vec<(Value, Value)> = Vec::with_capacity(arr.len());
+            for item in &arr {
+                keyed.push((eval(item)?, item.clone()));
+            }
+            keyed.sort_by(|a, b| compare_values(Some(&a.0), Some(&b.0)));
+            let desc = raw
+                .get(2)
+                .map(|s| s.trim().trim_matches(['\'', '"']))
+                .is_some_and(|s| s == "desc");
+            if desc {
+                keyed.reverse();
+            }
+            Some(Value::Array(keyed.into_iter().map(|(_, v)| v).collect()))
+        }
+        "group_by" | "count_by" => {
+            let counting = name == "count_by";
+            let mut map = serde_json::Map::new();
+            for item in &arr {
+                let key = stringify_value(&eval(item)?);
+                if counting {
+                    let slot = map.entry(key).or_insert(Value::from(0));
+                    let n = slot.as_i64().unwrap_or(0) + 1;
+                    *slot = Value::from(n);
+                } else if let Some(a) = map
+                    .entry(key)
+                    .or_insert_with(|| Value::Array(Vec::new()))
+                    .as_array_mut()
+                {
+                    a.push(item.clone());
+                }
+            }
+            Some(Value::Object(map))
+        }
+        _ => None,
+    }
+}
 
 /// Try to resolve `body` as a functional-builtin call — optionally
 /// followed by a dotted access path: `map(arr, "field")`,
@@ -2597,7 +3771,47 @@ fn try_call_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value> {
     let body = body.trim();
     let open = body.find('(')?;
     let name = body[..open].trim();
+    // **Wave F (`prui-luau-fusion.md` §7.9)** — colour helpers usable
+    // from computed PRSS (`{ lua = "darken(tokens.colors.accent,
+    // 0.1)" }`) and any expression slot. Native so the doc example
+    // works without a `<script>`-defined helper; args resolve through
+    // the same owned-value pipeline (so `tokens.colors.accent` is a
+    // valid first arg).
+    if matches!(name, "darken" | "lighten" | "alpha" | "mix") {
+        let close = matching_close_paren(body, open)?;
+        let args = parse_call_args(&body[open + 1..close], scope)?;
+        let v = eval_color_call(name, &args)?;
+        let tail = body[close + 1..].trim_start();
+        return if tail.is_empty() {
+            Some(v)
+        } else {
+            walk_dotted_path(&v, tail.strip_prefix('.')?)
+        };
+    }
     if !ARRAY_CALL_NAMES.contains(&name) {
+        // **Wave A** — a `<script>` helper call
+        // (`{priority_color(task.priority)}`). The call resolver
+        // already parses args + the trailing dotted chain; we only
+        // add a new dispatch arm for "the name is a harvested Luau
+        // function". Args resolve through the same `parse_call_args`
+        // path so nested builtin / binding args still work.
+        #[cfg(feature = "luau")]
+        if let Some(frame) = scope.luau_scope() {
+            if frame.has_function(name) {
+                let close = matching_close_paren(body, open)?;
+                let args = parse_call_args(&body[open + 1..close], scope)?;
+                let result = match frame.call(name, &args)? {
+                    Ok(v) => v,
+                    Err(_) => return None,
+                };
+                let tail = body[close + 1..].trim_start();
+                if tail.is_empty() {
+                    return Some(result);
+                }
+                let rest = tail.strip_prefix('.')?;
+                return walk_dotted_path(&result, rest);
+            }
+        }
         return None;
     }
     // Match the closing paren that pairs with `open`, respecting
@@ -2606,6 +3820,26 @@ fn try_call_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value> {
     // boundary cleanly.
     let close = matching_close_paren(body, open)?;
     let inside = &body[open + 1..close];
+    // **Wave B** — closure-form builtin
+    // (`filter(tasks, |t| t.priority == 'high')`). Checked before
+    // `parse_call_args` so the closure literal isn't mangled by
+    // argument evaluation. A closure-shaped arg with no Luau scope,
+    // or a closure eval error, fails the call (returns `None`)
+    // rather than silently falling into the field-name path.
+    #[cfg(feature = "luau")]
+    if CLOSURE_BUILTINS.contains(&name) {
+        if let Some(raw) = split_top_level_args(inside) {
+            if raw.iter().any(|a| looks_like_closure(a)) {
+                let frame = scope.luau_scope()?;
+                let v = eval_closure_builtin(name, &raw, scope, frame)?;
+                let tail = body[close + 1..].trim_start();
+                if tail.is_empty() {
+                    return Some(v);
+                }
+                return walk_dotted_path(&v, tail.strip_prefix('.')?);
+            }
+        }
+    }
     let args = parse_call_args(inside, scope)?;
     let call_value = eval_array_call(name, &args)?;
     let tail = body[close + 1..].trim_start();
@@ -2789,6 +4023,75 @@ fn eval_call_arg(s: &str, scope: &LowerScope) -> Option<serde_json::Value> {
 /// Dispatch a parsed call to its implementation. Pure transformation
 /// over `Vec<Value>` — no scope access here; everything resolves at
 /// arg-parse time so the implementations stay test-friendly.
+/// **Wave F** — parse `#rgb` / `#rrggbb` / `#rrggbbaa` into RGBA
+/// (alpha defaults 255). Returns `None` for anything else (a token
+/// reference that didn't resolve, a named colour) so the caller
+/// fails the call cleanly.
+fn parse_hex_rgba(s: &str) -> Option<(u8, u8, u8, u8)> {
+    let h = s.trim().strip_prefix('#')?;
+    let b = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
+    match h.len() {
+        3 => {
+            let d = |i: usize| u8::from_str_radix(&h[i..i + 1], 16).ok().map(|v| v * 17);
+            Some((d(0)?, d(1)?, d(2)?, 255))
+        }
+        6 => Some((b(0)?, b(2)?, b(4)?, 255)),
+        8 => Some((b(0)?, b(2)?, b(4)?, b(6)?)),
+        _ => None,
+    }
+}
+
+fn rgba_hex(r: u8, g: u8, b: u8, a: u8) -> String {
+    format!("#{r:02x}{g:02x}{b:02x}{a:02x}")
+}
+
+/// **Wave F (§7.9)** — colour math for computed PRSS / expression
+/// slots. `amount`/`t` are clamped to `0.0..=1.0`; a non-colour
+/// first arg returns `None`.
+fn eval_color_call(name: &str, args: &[serde_json::Value]) -> Option<serde_json::Value> {
+    let as_f = |v: &serde_json::Value| match v {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.parse::<f64>().ok(),
+        _ => None,
+    };
+    let as_hex = |v: &serde_json::Value| match v {
+        serde_json::Value::String(s) => parse_hex_rgba(s),
+        _ => None,
+    };
+    let lerp = |x: u8, y: u8, t: f64| (x as f64 + (y as f64 - x as f64) * t).round() as u8;
+    match name {
+        "darken" | "lighten" => {
+            let (r, g, b, a) = as_hex(args.first()?)?;
+            let amt = as_f(args.get(1)?)?.clamp(0.0, 1.0);
+            let f = |c: u8| {
+                if name == "darken" {
+                    (c as f64 * (1.0 - amt)).round() as u8
+                } else {
+                    (c as f64 + (255.0 - c as f64) * amt).round() as u8
+                }
+            };
+            Some(serde_json::Value::String(rgba_hex(f(r), f(g), f(b), a)))
+        }
+        "alpha" => {
+            let (r, g, b, _) = as_hex(args.first()?)?;
+            let a = (as_f(args.get(1)?)?.clamp(0.0, 1.0) * 255.0).round() as u8;
+            Some(serde_json::Value::String(rgba_hex(r, g, b, a)))
+        }
+        "mix" => {
+            let (r1, g1, b1, a1) = as_hex(args.first()?)?;
+            let (r2, g2, b2, a2) = as_hex(args.get(1)?)?;
+            let t = as_f(args.get(2)?).unwrap_or(0.5).clamp(0.0, 1.0);
+            Some(serde_json::Value::String(rgba_hex(
+                lerp(r1, r2, t),
+                lerp(g1, g2, t),
+                lerp(b1, b2, t),
+                lerp(a1, a2, t),
+            )))
+        }
+        _ => None,
+    }
+}
+
 fn eval_array_call(name: &str, args: &[serde_json::Value]) -> Option<serde_json::Value> {
     use serde_json::Value;
     let arr_arg = |i: usize| match args.get(i) {
@@ -3571,6 +4874,27 @@ fn string_value_is_truthy(s: &str) -> bool {
 /// Unknown class names are no-ops (a parent `extends` chain that
 /// already surfaced a `missing-parent` diagnostic at parse time
 /// drops cleanly at apply time too).
+/// **Wave F (`prui-luau-fusion.md` §7.9)** — resolve a PRSS value
+/// that may be a `{ lua = "…" }` computed expression. A
+/// sentinel-prefixed value (encoded by the prism-core PRSS parser)
+/// has its trailing expression evaluated through the same
+/// owned-value pipeline class bindings use — so `tokens.*` lookups
+/// and Luau-frame helpers (`darken(…)`) both resolve. A plain value
+/// passes through untouched. Borrowed `Cow` on the common
+/// (non-computed) path keeps the hot loop allocation-free.
+fn prss_value_resolved<'a>(value: &'a str, scope: &LowerScope) -> std::borrow::Cow<'a, str> {
+    match value.strip_prefix(prism_core::language::prss::LUA_VALUE_SENTINEL) {
+        Some(expr) => {
+            let resolved = lookup_path_owned(expr, scope)
+                .or_else(|| evaluate_expression(expr, scope))
+                .map(|v| stringify_value(&v))
+                .unwrap_or_default();
+            std::borrow::Cow::Owned(resolved)
+        }
+        None => std::borrow::Cow::Borrowed(value),
+    }
+}
+
 fn apply_prss_class(
     sheet: &prism_core::language::prss::StyleSheet,
     name: &str,
@@ -3581,13 +4905,15 @@ fn apply_prss_class(
         return;
     };
     for (key, value) in &resolved.properties {
-        let interpolated = interpolate(value, scope);
+        let computed = prss_value_resolved(value, scope);
+        let interpolated = interpolate(&computed, scope);
         let resolved_short = resolve_short_token(key, &interpolated, scope).unwrap_or(interpolated);
         let final_value = expand_length_units(&resolved_short, scope);
         apply_style_override(props, key, &final_value);
     }
     for (state, key, value) in &resolved.states {
-        let interpolated = interpolate(value, scope);
+        let computed = prss_value_resolved(value, scope);
+        let interpolated = interpolate(&computed, scope);
         let resolved_short = resolve_short_token(key, &interpolated, scope).unwrap_or(interpolated);
         let final_value = expand_length_units(&resolved_short, scope);
         let suffixed = format!("{}:{}", key, state);
@@ -3615,14 +4941,16 @@ fn apply_descendant_selectors(
             continue;
         }
         for (key, value) in &resolved.properties {
-            let interpolated = interpolate(value, scope);
+            let computed = prss_value_resolved(value, scope);
+            let interpolated = interpolate(&computed, scope);
             let resolved_short =
                 resolve_short_token(key, &interpolated, scope).unwrap_or(interpolated);
             let final_value = expand_length_units(&resolved_short, scope);
             apply_style_override(props, key, &final_value);
         }
         for (state, key, value) in &resolved.states {
-            let interpolated = interpolate(value, scope);
+            let computed = prss_value_resolved(value, scope);
+            let interpolated = interpolate(&computed, scope);
             let resolved_short =
                 resolve_short_token(key, &interpolated, scope).unwrap_or(interpolated);
             let final_value = expand_length_units(&resolved_short, scope);
@@ -5046,6 +6374,145 @@ mod tests {
         assert_eq!(
             attrs.get("data-bind-title").map(String::as_str),
             Some("$selection.name")
+        );
+    }
+
+    /// `fct:<key>="<source>"` and `sig:<key>="<source>"` follow the
+    /// same carry-through pattern as `bind:` — they surface as
+    /// `data-fct-<key>` / `data-sig-<key>` semantic attrs so the
+    /// host's facet expander / signal-scope installer can act on
+    /// them post-interpret.
+    #[test]
+    fn fct_and_sig_namespaces_lower_to_data_attrs() {
+        let nodes =
+            interpret(r#"<container fct:source="resource:posts" sig:emit="clicked"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            attrs.get("data-fct-source").map(String::as_str),
+            Some("resource:posts")
+        );
+        assert_eq!(
+            attrs.get("data-sig-emit").map(String::as_str),
+            Some("clicked")
+        );
+    }
+
+    /// A4 — `<facet name="row" from="<source>">…</facet>` lowers its
+    /// children once per item resolved from `from`, binding each
+    /// item under `name` in the per-iteration scope. Same vocabulary
+    /// as `for="row in source"`, dedicated tag for declarative
+    /// authorship.
+    #[test]
+    fn facet_element_repeats_children_once_per_item() {
+        let mut scope = LowerScope::default();
+        scope.bindings.insert(
+            "posts".to_string(),
+            serde_json::json!([
+                {"title": "First"},
+                {"title": "Second"},
+                {"title": "Third"},
+            ]),
+        );
+        let nodes = interpret_with_scope(
+            r#"<facet name="post" from="posts"><text>{post.title}</text></facet>"#,
+            &scope,
+        )
+        .unwrap();
+        // One Text node per post.
+        assert_eq!(nodes.len(), 3);
+        let titles: Vec<String> = nodes
+            .iter()
+            .map(|n| match n {
+                crate::layout::Node::Text { content, .. } => content.clone(),
+                other => panic!("expected text, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(titles, vec!["First", "Second", "Third"]);
+    }
+
+    /// Default item-binding name is `"item"` when `name=` is omitted.
+    /// `<facet from="rows">{item.foo}</facet>` reads the same as
+    /// `<facet name="item" from="rows">{item.foo}</facet>`.
+    #[test]
+    fn facet_element_defaults_item_name_to_item() {
+        let mut scope = LowerScope::default();
+        scope.bindings.insert(
+            "rows".to_string(),
+            serde_json::json!([{"value": "alpha"}, {"value": "beta"}]),
+        );
+        let nodes = interpret_with_scope(
+            r#"<facet from="rows"><text>{item.value}</text></facet>"#,
+            &scope,
+        )
+        .unwrap();
+        assert_eq!(nodes.len(), 2);
+        let values: Vec<String> = nodes
+            .iter()
+            .map(|n| match n {
+                crate::layout::Node::Text { content, .. } => content.clone(),
+                other => panic!("expected text, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(values, vec!["alpha", "beta"]);
+    }
+
+    /// A `<facet>` with no resolvable `from` source lowers to empty
+    /// — matches the `for=` behaviour and keeps headless / boot
+    /// paths panic-free.
+    #[test]
+    fn facet_element_with_missing_source_lowers_to_empty() {
+        let nodes = interpret(r#"<facet name="row" from="nope.does.not.exist"/>"#).unwrap();
+        assert!(nodes.is_empty());
+    }
+
+    /// A `<facet>` accepts inline range sources (same vocabulary as
+    /// `for="i in 0..3"`).
+    #[test]
+    fn facet_element_supports_range_sources() {
+        let nodes =
+            interpret(r#"<facet name="i" from="0..3"><text>row {i}</text></facet>"#).unwrap();
+        assert_eq!(nodes.len(), 3);
+        let labels: Vec<String> = nodes
+            .iter()
+            .map(|n| match n {
+                crate::layout::Node::Text { content, .. } => content.clone(),
+                other => panic!("expected text, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(labels, vec!["row 0", "row 1", "row 2"]);
+    }
+
+    /// Same carry-through on `<input>` so text-input authors can
+    /// bind facets / signals at the field boundary too.
+    #[test]
+    fn fct_and_sig_namespaces_lower_on_text_input() {
+        let nodes = interpret(
+            r#"<input fct:option="resource:options" sig:on:change="emit form.email-changed"/>"#,
+        )
+        .unwrap();
+        let crate::layout::Node::TextInput { semantic, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attrs: std::collections::HashMap<_, _> = semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            attrs.get("data-fct-option").map(String::as_str),
+            Some("resource:options")
+        );
+        assert_eq!(
+            attrs.get("data-sig-on:change").map(String::as_str),
+            Some("emit form.email-changed")
         );
     }
 
@@ -7420,5 +8887,993 @@ mod tests {
         assert_eq!(on_event_attr_key("click"), "click");
         assert_eq!(on_event_attr_key("click.once"), "click-once");
         assert_eq!(on_event_attr_key("click.once.stop"), "click-once-stop");
+    }
+
+    // ---------- Wave B: pipe operator rewrite ----------
+
+    #[test]
+    fn pipe_rewrites_single_call() {
+        assert_eq!(
+            rewrite_pipes("tasks | take(5)").as_deref(),
+            Some("take(tasks, 5)")
+        );
+    }
+
+    #[test]
+    fn pipe_rewrites_bare_name() {
+        assert_eq!(
+            rewrite_pipes("xs | reverse").as_deref(),
+            Some("reverse(xs)")
+        );
+    }
+
+    #[test]
+    fn pipe_is_left_associative() {
+        assert_eq!(
+            rewrite_pipes("t | filter('s','open') | take(5)").as_deref(),
+            Some("take(filter(t, 's','open'), 5)")
+        );
+    }
+
+    #[test]
+    fn pipe_alias_arrow_form() {
+        assert_eq!(
+            rewrite_pipes("rows |> slice(0, 3)").as_deref(),
+            Some("slice(rows, 0, 3)")
+        );
+    }
+
+    #[test]
+    fn logical_or_is_not_a_pipe() {
+        assert_eq!(rewrite_pipes("a || b"), None);
+    }
+
+    #[test]
+    fn closure_bars_are_not_pipes() {
+        // A standalone closure literal has no top-level pipe.
+        assert_eq!(rewrite_pipes("|t| t.priority == 'high'"), None);
+        // Pipe whose RHS call carries a closure arg: only the
+        // top-level `|` rewrites; the closure's bars stay intact.
+        assert_eq!(
+            rewrite_pipes("tasks | filter(|t| t.x == 'high')").as_deref(),
+            Some("filter(tasks, |t| t.x == 'high')")
+        );
+    }
+
+    #[test]
+    fn pipe_inside_parens_is_untouched() {
+        // The only `|` is depth-1 (inside the call) → not a pipe.
+        assert_eq!(rewrite_pipes("f(a | b)"), None);
+    }
+
+    // ---------- Wave B: closure builtins + pipelines (e2e) ----------
+
+    /// §7.2 headline: a `for=` source built from a pipe + closure
+    /// filter, with no `<script>` block (frame auto-provisioned).
+    #[cfg(feature = "luau")]
+    #[test]
+    fn for_source_pipe_closure_filter() {
+        let src = r#"
+<script lang="luau">
+  local tasks = prism.state {
+    { title = "A", priority = "high" },
+    { title = "B", priority = "low" },
+    { title = "C", priority = "high" },
+  }
+</script>
+<container for="t in tasks | filter(|t| t.priority == 'high')">
+  <text>{t.title}</text>
+</container>
+"#;
+        let nodes = interpret(src).unwrap();
+        let titles: Vec<String> = nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Container { children, .. } => match children.first() {
+                    Some(Node::Text { content, .. }) => Some(content.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(titles, vec!["A".to_string(), "C".to_string()]);
+    }
+
+    /// Multi-stage pipeline: filter (closure) → sort_by (closure,
+    /// desc via negation) → take. Mirrors the §7.2 example shape.
+    #[cfg(feature = "luau")]
+    #[test]
+    fn pipeline_filter_sort_take() {
+        let src = r#"
+<script lang="luau">
+  local tasks = prism.state {
+    { title = "lo",  prio = 1, open = true },
+    { title = "hi",  prio = 9, open = true },
+    { title = "mid", prio = 5, open = true },
+    { title = "done",prio = 7, open = false },
+  }
+</script>
+<container for="t in tasks
+    | filter(|t| t.open)
+    | sort_by(\fn(t) return -t.prio end)
+    | take(2)">
+  <text>{t.title}</text>
+</container>
+"#;
+        let nodes = interpret(src).unwrap();
+        let titles: Vec<String> = nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Container { children, .. } => match children.first() {
+                    Some(Node::Text { content, .. }) => Some(content.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        // open ones by prio desc: hi(9), mid(5), lo(1) → take 2.
+        assert_eq!(titles, vec!["hi".to_string(), "mid".to_string()]);
+    }
+
+    /// Non-closure field-name builtin form is untouched by the
+    /// closure path (regression guard for the dispatch order).
+    #[cfg(feature = "luau")]
+    #[test]
+    fn field_name_builtin_still_works_alongside_closures() {
+        let src = r#"
+<script lang="luau">
+  local rows = prism.state {
+    { k = "x", on = true }, { k = "y", on = false },
+  }
+</script>
+<container for="r in filter(rows, 'on', true)">
+  <text>{r.k}</text>
+</container>
+"#;
+        let nodes = interpret(src).unwrap();
+        let ks: Vec<String> = nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Container { children, .. } => match children.first() {
+                    Some(Node::Text { content, .. }) => Some(content.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ks, vec!["x".to_string()]);
+    }
+
+    /// Closure `map` inside a text interpolation, script-less doc
+    /// (frame auto-provisioned purely from the `|x|` sigil).
+    #[cfg(feature = "luau")]
+    #[test]
+    fn scriptless_closure_autoprovisions_frame() {
+        // `range(1,4)` → [1,2,3]; map squares; join.
+        let src = r#"<text>{join(map(range(1, 4), |n| n * n), ",")}</text>"#;
+        let nodes = interpret(src).unwrap();
+        let Node::Text { content, .. } = &nodes[0] else {
+            panic!("expected text, got {:?}", nodes[0]);
+        };
+        assert_eq!(content, "1,4,9");
+    }
+
+    /// The §7.2 grouping example verbatim:
+    /// `entries(group_by(tasks, \fn(t) return t.assignee end))`,
+    /// then iterate with `{grp.key}`. Exercises closure-builtin
+    /// composition nested inside a non-closure builtin (`entries`).
+    #[cfg(feature = "luau")]
+    #[test]
+    fn entries_of_group_by_closure() {
+        let src = r#"
+<script lang="luau">
+  local tasks = prism.state {
+    { title = "a", assignee = "ann" },
+    { title = "b", assignee = "bo" },
+    { title = "c", assignee = "ann" },
+  }
+</script>
+<container for="grp in entries(group_by(tasks, \fn(t) return t.assignee end))">
+  <text>{grp.key}</text>
+</container>
+"#;
+        let nodes = interpret(src).unwrap();
+        let mut keys: Vec<String> = nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Container { children, .. } => match children.first() {
+                    Some(Node::Text { content, .. }) => Some(content.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        keys.sort();
+        assert_eq!(keys, vec!["ann".to_string(), "bo".to_string()]);
+    }
+
+    /// A closure closes over a harvested script `local`
+    /// (`threshold`) — strip-to-globals + same-Lua compile means the
+    /// closure body resolves it like any document binding.
+    #[cfg(feature = "luau")]
+    #[test]
+    fn closure_closes_over_script_local() {
+        let src = r#"
+<script lang="luau">
+  local threshold = "high"
+  local tasks = prism.state {
+    { title = "A", priority = "high" },
+    { title = "B", priority = "low" },
+  }
+</script>
+<container for="t in tasks | filter(|t| t.priority == threshold)">
+  <text>{t.title}</text>
+</container>
+"#;
+        let nodes = interpret(src).unwrap();
+        let titles: Vec<String> = nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Container { children, .. } => match children.first() {
+                    Some(Node::Text { content, .. }) => Some(content.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(titles, vec!["A".to_string()]);
+    }
+
+    // ---------- Wave C: prui[[…]] quasi-quote + macros (e2e) ----------
+
+    /// §7.7 headline: a `prism.macro` returning `prui[[…]]` with
+    /// `{attrs.title}` interpolation and `{children}` splice, used
+    /// as a custom `<empty-state>` tag with a child button.
+    #[cfg(feature = "luau")]
+    #[test]
+    fn macro_empty_state_with_attrs_and_children() {
+        let src = r##"
+<script lang="luau">
+  prism.macro("empty-state", function(attrs, children)
+    return prui [[
+      <container direction="column" gap="8">
+        <text>{attrs.title}</text>
+        <text>{attrs.subtitle}</text>
+        <fragment>{children}</fragment>
+      </container>
+    ]]
+  end)
+</script>
+<empty-state title="No tasks" subtitle="Create one">
+  <button>Create</button>
+</empty-state>
+"##;
+        let nodes = interpret(src).unwrap();
+        // The macro expanded to a single container.
+        assert_eq!(nodes.len(), 1, "got {nodes:?}");
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!("expected container, got {:?}", nodes[0]);
+        };
+        let texts: Vec<String> = children
+            .iter()
+            .filter_map(|c| match c {
+                Node::Text { content, .. } => Some(content.clone()),
+                _ => None,
+            })
+            .collect();
+        // `{attrs.title}` / `{attrs.subtitle}` resolved, and the
+        // caller's `<button>Create</button>` spliced in via
+        // `<fragment>{children}</fragment>` (button → text "Create").
+        assert!(texts.contains(&"No tasks".to_string()), "{texts:?}");
+        assert!(texts.contains(&"Create one".to_string()), "{texts:?}");
+        assert!(
+            texts.contains(&"Create".to_string()),
+            "children not spliced: {texts:?}"
+        );
+    }
+
+    /// Macro body resolves `{tokens.*}` (document context carried
+    /// into the hygienic macro scope) but NOT a caller PRUI binding
+    /// (`{leak}`) — Racket-style hygiene (§7.7).
+    #[cfg(feature = "luau")]
+    #[test]
+    fn macro_sees_tokens_but_not_caller_scope() {
+        let src = r##"
+<script lang="luau">
+  local rows = prism.state { "SECRET" }
+  prism.macro("chip", function(attrs, children)
+    return prui [[
+      <container style:background="{tokens.colors.accent}">
+        <text>{attrs.label}</text>
+        <text>{leak}</text>
+      </container>
+    ]]
+  end)
+</script>
+<container for="leak in rows">
+  <chip label="ok"/>
+</container>
+"##;
+        let nodes = interpret(src).unwrap();
+        // Find every text content in the tree.
+        fn texts(n: &Node, out: &mut Vec<String>) {
+            match n {
+                Node::Text { content, .. } => out.push(content.clone()),
+                Node::Container { children, .. } => {
+                    for c in children {
+                        texts(c, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut all = Vec::new();
+        for n in &nodes {
+            texts(n, &mut all);
+        }
+        assert!(
+            all.contains(&"ok".to_string()),
+            "attrs.label resolved: {all:?}"
+        );
+        assert!(
+            !all.contains(&"SECRET".to_string()),
+            "caller binding leaked into macro body: {all:?}"
+        );
+    }
+
+    /// A macro that emits another macro tag — nested expansion
+    /// works because the hygienic scope carries the Luau frame.
+    #[cfg(feature = "luau")]
+    #[test]
+    fn nested_macro_expansion() {
+        let src = r##"
+<script lang="luau">
+  prism.macro("inner", function(attrs, children)
+    return prui [[ <text>{attrs.v}</text> ]]
+  end)
+  prism.macro("outer", function(attrs, children)
+    return prui [[ <container><inner v="deep"/></container> ]]
+  end)
+</script>
+<outer/>
+"##;
+        let nodes = interpret(src).unwrap();
+        fn first_text(n: &Node) -> Option<String> {
+            match n {
+                Node::Text { content, .. } => Some(content.clone()),
+                Node::Container { children, .. } => children.iter().find_map(first_text),
+                _ => None,
+            }
+        }
+        assert_eq!(
+            nodes.iter().find_map(first_text),
+            Some("deep".to_string()),
+            "nested macro <inner> did not expand inside <outer>"
+        );
+    }
+
+    /// A macro body's `class="…"` resolves the PRSS sheet that was
+    /// installed at the call site — the hygienic scope re-threads
+    /// the sheet `Arc` (Wave C gap closure).
+    #[cfg(feature = "luau")]
+    #[test]
+    fn macro_body_class_resolves_caller_stylesheet() {
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.card]
+            background = "#0060c0"
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let src = r##"
+<script lang="luau">
+  prism.macro("boxed", function(attrs, children)
+    return prui [[ <container id="m" class="card"/> ]]
+  end)
+</script>
+<boxed/>
+"##;
+        let nodes = interpret_with_scope(src, &scope).unwrap();
+        let m = find_container_by_id(&nodes, "m").expect("macro container");
+        let Node::Container { props, .. } = m else {
+            panic!()
+        };
+        let bg = props.background.expect("PRSS class applied in macro body");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    // ---------- Wave D: <match> / <suspense> ----------
+
+    fn text_contents(nodes: &[Node]) -> Vec<String> {
+        fn walk(n: &Node, out: &mut Vec<String>) {
+            match n {
+                Node::Text { content, .. } => out.push(content.clone()),
+                Node::Container { children, .. } => {
+                    for c in children {
+                        walk(c, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut v = Vec::new();
+        for n in nodes {
+            walk(n, &mut v);
+        }
+        v
+    }
+
+    #[test]
+    fn match_selects_literal_case() {
+        let src = r#"
+<let name="kind" value="hover"/>
+<match on="{kind}">
+  <case is="click"><text>was click</text></case>
+  <case is="hover"><text>was hover</text></case>
+  <case default><text>unknown</text></case>
+</match>
+"#;
+        let nodes = interpret(src).unwrap();
+        assert_eq!(text_contents(&nodes), vec!["was hover".to_string()]);
+    }
+
+    #[test]
+    fn match_default_when_no_case_matches() {
+        let src = r#"
+<let name="kind" value="scroll"/>
+<match on="{kind}">
+  <case is="click"><text>c</text></case>
+  <case default><text>fallthrough</text></case>
+</match>
+"#;
+        let nodes = interpret(src).unwrap();
+        assert_eq!(text_contents(&nodes), vec!["fallthrough".to_string()]);
+    }
+
+    #[test]
+    fn match_case_if_clause_narrows() {
+        // `is="key"` matches but the `if=` clause fails → falls to
+        // default.
+        let src = r#"
+<let name="kind" value="key"/>
+<let name="key" value="Enter"/>
+<match on="{kind}">
+  <case is="key" if="{key == 'Escape'}"><text>esc</text></case>
+  <case default><text>other key</text></case>
+</match>
+"#;
+        let nodes = interpret(src).unwrap();
+        assert_eq!(text_contents(&nodes), vec!["other key".to_string()]);
+    }
+
+    #[test]
+    fn match_first_match_wins_default_terminates() {
+        // A second matching case after an earlier match never fires;
+        // content after `<case default>` is unreachable.
+        let src = r#"
+<let name="k" value="a"/>
+<match on="{k}">
+  <case is="a"><text>first</text></case>
+  <case is="a"><text>second</text></case>
+  <case default><text>def</text></case>
+</match>
+"#;
+        let nodes = interpret(src).unwrap();
+        assert_eq!(text_contents(&nodes), vec!["first".to_string()]);
+    }
+
+    #[test]
+    fn suspense_shows_primary_when_not_pending() {
+        let src = r#"
+<let name="status" value="ready"/>
+<suspense>
+  <fallback><text>loading</text></fallback>
+  <container><text>{status}</text></container>
+</suspense>
+"#;
+        let nodes = interpret(src).unwrap();
+        let texts = text_contents(&nodes);
+        assert_eq!(texts, vec!["ready".to_string()], "primary should render");
+    }
+
+    #[cfg(feature = "luau")]
+    #[test]
+    fn suspense_shows_fallback_on_pending_marker() {
+        // A script binding shaped like an unresolved async query.
+        let src = r##"
+<script lang="luau">
+  local async_tasks = prism.state { tag = "Pending" }
+</script>
+<suspense>
+  <fallback><text>loading…</text></fallback>
+  <container><text>{async_tasks.tag}</text></container>
+</suspense>
+"##;
+        let nodes = interpret(src).unwrap();
+        assert_eq!(text_contents(&nodes), vec!["loading…".to_string()]);
+    }
+
+    // ---------- Wave E: sub-dialects + sigils ----------
+
+    /// §7.8 headline: `prism.dialect{name,parse}` + a
+    /// `<language name="upper">` block whose body the dialect
+    /// transforms into `prui[[…]]` source.
+    #[cfg(feature = "luau")]
+    #[test]
+    fn language_block_dispatches_to_dialect() {
+        let src = r##"
+<script lang="luau">
+  prism.dialect {
+    name = "upper",
+    parse = function(source)
+      return "<text>" .. string.upper(source) .. "</text>"
+    end,
+  }
+</script>
+<language name="upper">hello world</language>
+"##;
+        let nodes = interpret(src).unwrap();
+        assert_eq!(text_contents(&nodes), vec!["HELLO WORLD".to_string()]);
+    }
+
+    /// The `~name{ … }` sigil is sugar for the same dialect path.
+    #[cfg(feature = "luau")]
+    #[test]
+    fn dialect_sigil_inline() {
+        let src = r##"
+<script lang="luau">
+  prism.dialect {
+    name = "shout",
+    parse = function(s) return "<text>" .. s .. "!!!</text>" end,
+  }
+</script>
+<container>~shout{go}</container>
+"##;
+        let nodes = interpret(src).unwrap();
+        assert_eq!(text_contents(&nodes), vec!["go!!!".to_string()]);
+    }
+
+    /// A small markdown-ish dialect (demonstrates the §7.8 / E.3
+    /// "every dialect is a Luau file" path): bullet lines → `<text>`
+    /// rows. Proves the dialect can emit a multi-node tree.
+    #[cfg(feature = "luau")]
+    #[test]
+    fn markdown_style_dialect_emits_node_tree() {
+        let src = r##"
+<script lang="luau">
+  prism.dialect {
+    name = "md",
+    parse = function(source)
+      local out = "<container direction=\"column\">"
+      for line in (source .. "\n"):gmatch("([^\n]*)\n") do
+        local t = line:match("^%s*(.-)%s*$")
+        if t ~= "" then
+          out = out .. "<text>" .. t .. "</text>"
+        end
+      end
+      return out .. "</container>"
+    end,
+  }
+</script>
+<language name="md">
+- first
+- second
+</language>
+"##;
+        let nodes = interpret(src).unwrap();
+        let texts = text_contents(&nodes);
+        assert!(texts.contains(&"- first".to_string()), "{texts:?}");
+        assert!(texts.contains(&"- second".to_string()), "{texts:?}");
+    }
+
+    /// An unregistered dialect renders nothing (graceful) rather
+    /// than leaking its raw body.
+    #[cfg(feature = "luau")]
+    #[test]
+    fn unknown_dialect_renders_nothing() {
+        let src = r#"<container>~nope{secret body}</container>"#;
+        let nodes = interpret(src).unwrap();
+        assert!(
+            !text_contents(&nodes).iter().any(|t| t.contains("secret")),
+            "raw dialect body leaked"
+        );
+    }
+
+    /// `prui_ast.*` builds the same source string `prui[[…]]`
+    /// would, so a dialect can emit a tree programmatically.
+    #[cfg(feature = "luau")]
+    #[test]
+    fn prui_ast_constructors_build_tree() {
+        let src = r##"
+<script lang="luau">
+  prism.dialect {
+    name = "card",
+    parse = function(s)
+      return prui_ast.container({
+        direction = "column",
+        children = {
+          prui_ast.heading(s, { level = 2 }),
+          prui_ast.text("body"),
+        },
+      })
+    end,
+  }
+</script>
+<language name="card">Title</language>
+"##;
+        let nodes = interpret(src).unwrap();
+        let texts = text_contents(&nodes);
+        assert!(texts.contains(&"Title".to_string()), "{texts:?}");
+        assert!(texts.contains(&"body".to_string()), "{texts:?}");
+    }
+
+    // ---------- Wave F: computed PRSS { lua = "…" } ----------
+
+    #[test]
+    fn prss_lua_value_resolves_token() {
+        let (sheet, errs) = prism_core::language::prss::parse(
+            r##"
+            [class.card]
+            background = { lua = "tokens.colors.accent" }
+            "##,
+        );
+        assert!(errs.is_empty(), "{errs:?}");
+        let scope = LowerScope::default()
+            .with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS)
+            .with_stylesheet(Arc::new(sheet));
+        let nodes =
+            interpret_with_scope(r#"<container id="c" class="card"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = find_container_by_id(&nodes, "c").unwrap() else {
+            panic!()
+        };
+        let accent = prism_core::design_tokens::DEFAULT_TOKENS.colors.accent;
+        let bg = props.background.expect("computed background");
+        assert_eq!((bg.r, bg.g, bg.b), (accent.r, accent.g, accent.b));
+    }
+
+    #[test]
+    fn prss_lua_darken_helper() {
+        let (sheet, errs) = prism_core::language::prss::parse(
+            r##"
+            [class.btn]
+            background = { lua = "darken('#808080', 0.5)" }
+            "##,
+        );
+        assert!(errs.is_empty(), "{errs:?}");
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes =
+            interpret_with_scope(r#"<container id="b" class="btn"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = find_container_by_id(&nodes, "b").unwrap() else {
+            panic!()
+        };
+        // 0x80 * (1 - 0.5) = 64 = 0x40.
+        let bg = props.background.expect("darkened background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x40, 0x40, 0x40));
+    }
+
+    #[test]
+    fn prss_lua_computed_state_override() {
+        let (sheet, errs) = prism_core::language::prss::parse(
+            r##"
+            [class.btn]
+            background = "#000000"
+            [class.btn.hovered]
+            background = { lua = "lighten('#000000', 1.0)" }
+            "##,
+        );
+        assert!(errs.is_empty(), "{errs:?}");
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let nodes =
+            interpret_with_scope(r#"<container id="b" class="btn"/>"#, &scope).unwrap();
+        let Node::Container { props, .. } = find_container_by_id(&nodes, "b").unwrap() else {
+            panic!()
+        };
+        // base black; hovered → lighten(black,1.0) = white.
+        let hov = props.hover.as_ref().expect("hover override");
+        let bg = hov.background.expect("hovered background");
+        assert_eq!((bg.r, bg.g, bg.b), (0xff, 0xff, 0xff));
+    }
+
+    #[cfg(feature = "luau")]
+    #[test]
+    fn prss_lua_value_calls_script_helper() {
+        // A `<script>`-defined helper is reachable from a computed
+        // PRSS value (the §7.9 "PRSS → Luau" edge).
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.tag]
+            background = { lua = "brand()" }
+            "##,
+        );
+        let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+        let src = r##"
+<script lang="luau">
+  local function brand() return "#123456" end
+</script>
+<container id="t" class="tag"/>
+"##;
+        let nodes = interpret_with_scope(src, &scope).unwrap();
+        let Node::Container { props, .. } = find_container_by_id(&nodes, "t").unwrap() else {
+            panic!()
+        };
+        let bg = props.background.expect("script-computed background");
+        assert_eq!((bg.r, bg.g, bg.b), (0x12, 0x34, 0x56));
+    }
+
+    // ---------- Wave H: inline <style> + <import> ----------
+
+    #[test]
+    fn inline_style_block_applies_classes() {
+        let src = r##"
+<style lang="prss">
+[class.card]
+background = "#0060c0"
+</style>
+<container id="c" class="card"/>
+"##;
+        let nodes = interpret(src).unwrap();
+        let Node::Container { props, .. } = find_container_by_id(&nodes, "c").unwrap() else {
+            panic!()
+        };
+        let bg = props.background.expect("inline-style class applied");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x60, 0xc0));
+    }
+
+    #[test]
+    fn multiple_style_blocks_layer_later_wins() {
+        let src = r##"
+<style lang="prss">
+[class.x]
+background = "#111111"
+</style>
+<style lang="prss">
+[class.x]
+background = "#222222"
+</style>
+<container id="c" class="x"/>
+"##;
+        let nodes = interpret(src).unwrap();
+        let Node::Container { props, .. } = find_container_by_id(&nodes, "c").unwrap() else {
+            panic!()
+        };
+        let bg = props.background.unwrap();
+        assert_eq!((bg.r, bg.g, bg.b), (0x22, 0x22, 0x22));
+    }
+
+    #[cfg(feature = "luau")]
+    #[test]
+    fn inline_style_computed_value_uses_frame() {
+        // Inline <style> with a Wave-F `{lua=…}` value referencing a
+        // <script> helper — proves the style merge runs before the
+        // Luau frame is built.
+        let src = r##"
+<style lang="prss">
+[class.tag]
+background = { lua = "brand()" }
+</style>
+<script lang="luau">
+  local function brand() return "#abcdef" end
+</script>
+<container id="t" class="tag"/>
+"##;
+        let nodes = interpret(src).unwrap();
+        let Node::Container { props, .. } = find_container_by_id(&nodes, "t").unwrap() else {
+            panic!()
+        };
+        let bg = props.background.expect("computed inline-style value");
+        assert_eq!((bg.r, bg.g, bg.b), (0xab, 0xcd, 0xef));
+    }
+
+    #[test]
+    fn import_stylesheet_via_resolver() {
+        struct Res;
+        impl ImportResolver for Res {
+            fn resolve_import(&self, kind: &str, path: &str) -> Option<String> {
+                if kind == "stylesheet" && path == "./theme.prss" {
+                    Some("[class.themed]\nbackground = \"#00ff00\"".to_string())
+                } else {
+                    None
+                }
+            }
+        }
+        let scope = LowerScope::default().with_import_resolver(Arc::new(Res));
+        let src = r#"
+<import stylesheet="./theme.prss"/>
+<container id="c" class="themed"/>
+"#;
+        let nodes = interpret_with_scope(src, &scope).unwrap();
+        let Node::Container { props, .. } = find_container_by_id(&nodes, "c").unwrap() else {
+            panic!()
+        };
+        let bg = props.background.expect("imported sheet applied");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0xff, 0x00));
+    }
+
+    #[cfg(feature = "luau")]
+    #[test]
+    fn import_script_feeds_luau_frame() {
+        struct Res;
+        impl ImportResolver for Res {
+            fn resolve_import(&self, kind: &str, path: &str) -> Option<String> {
+                (kind == "script" && path == "prism://lib/fmt.luau")
+                    .then(|| "local function shout(s) return s .. '!' end".to_string())
+            }
+        }
+        let scope = LowerScope::default().with_import_resolver(Arc::new(Res));
+        let src = r#"
+<import script="prism://lib/fmt.luau"/>
+<text>{shout('hi')}</text>
+"#;
+        let nodes = interpret_with_scope(src, &scope).unwrap();
+        assert_eq!(text_contents(&nodes), vec!["hi!".to_string()]);
+    }
+
+    // ---------- Wave G: probe: + at: ----------
+
+    #[test]
+    fn probe_namespace_lowers_to_data_attr() {
+        let nodes =
+            interpret(r#"<container probe:render="card-shown" at:0="{opacity: 0}"/>"#).unwrap();
+        let Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attrs = &props.semantic.attrs;
+        assert!(
+            attrs
+                .iter()
+                .any(|(k, v)| k == "data-probe-render" && v == "card-shown"),
+            "{attrs:?}"
+        );
+        assert!(
+            attrs.iter().any(|(k, _)| k == "data-at-0"),
+            "at: keyframe attr missing: {attrs:?}"
+        );
+    }
+
+    #[cfg(feature = "luau")]
+    #[test]
+    fn prism_probes_on_subscribes_and_fires() {
+        // Register a probe handler that records into a script local;
+        // fire it from Rust (the host event-router seam) and read
+        // the local back through the binding surface.
+        let src = r##"
+<script lang="luau">
+  local hits = prism.state { count = 0, last = "" }
+  prism.probes:on("clicked", function(ev)
+    hits.count = hits.count + 1
+    hits.last = ev.id
+  end)
+</script>
+<container probe:click="clicked"/>
+"##;
+        let (doc, errs) = prism_core::language::prism_ui::parse(src);
+        assert!(errs.is_empty(), "{errs:?}");
+        // Build the frame the way the loader does.
+        let bodies: Vec<String> = doc
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                prism_core::language::prism_ui::Node::Element(e) if e.tag == "script" => {
+                    e.children.iter().find_map(|c| match c {
+                        prism_core::language::prism_ui::Node::Text { value, .. } => {
+                            Some(value.clone())
+                        }
+                        _ => None,
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+        let srcs: Vec<&str> = bodies.iter().map(String::as_str).collect();
+        let frame =
+            crate::luau_scope::LuauScopeFrame::from_scripts(&srcs, None).expect("frame");
+        assert!(frame.has_probe("clicked"));
+        frame
+            .fire_probe("clicked", &serde_json::json!({ "id": "btn-1" }))
+            .expect("subscribed")
+            .expect("handler ok");
+        // The handler mutated the live `hits` state table (read
+        // live, not from the frozen load-time snapshot).
+        assert_eq!(frame.read_global("hits.count"), Some(serde_json::json!(1)));
+        assert_eq!(
+            frame.read_global("hits.last"),
+            Some(serde_json::json!("btn-1"))
+        );
+    }
+
+    // ---------- Wave I: prism.scope host-binding bridge ----------
+
+    #[cfg(feature = "luau")]
+    #[test]
+    fn prism_scope_reads_host_binding() {
+        // The host (resolver) provides `task`; a <script> reads it
+        // via `prism.scope.task` and a helper projects a field that
+        // an {expr} slot then renders.
+        let scope = LowerScope::default().with_binding(
+            "task",
+            serde_json::json!({ "title": "Ship it", "priority": "high" }),
+        );
+        let src = r##"
+<script lang="luau">
+  local task = prism.scope.task
+  local function label() return task.title .. " (" .. task.priority .. ")" end
+</script>
+<text>{label()}</text>
+"##;
+        let nodes = interpret_with_scope(src, &scope).unwrap();
+        assert_eq!(text_contents(&nodes), vec!["Ship it (high)".to_string()]);
+    }
+
+    #[cfg(feature = "luau")]
+    #[test]
+    fn prism_scope_absent_binding_is_nil() {
+        // Reading an unprovided host binding is nil-safe (no panic,
+        // no leak) — the script guards with `or`.
+        let src = r##"
+<script lang="luau">
+  local who = prism.scope.user or "anon"
+</script>
+<text>{who}</text>
+"##;
+        let nodes = interpret(src).unwrap();
+        assert_eq!(text_contents(&nodes), vec!["anon".to_string()]);
+    }
+
+    // ---------- Wave A: <script lang="luau"> colocated module ----------
+
+    /// End-to-end §7.1: a `<script>` block's top-level `local`s
+    /// (helper fn + state table) resolve in `{expr}` slots, and the
+    /// `<script>` element itself renders nothing.
+    #[cfg(feature = "luau")]
+    #[test]
+    fn script_block_locals_resolve_in_expression_slots() {
+        let src = r##"
+<script lang="luau">
+  local function priority_color(p)
+    if p == "high" then return "#ff0000" end
+    return "#888888"
+  end
+  local state = prism.state { label = "Ready" }
+</script>
+<container>
+  <text style:color="{priority_color('high')}">{state.label}</text>
+</container>
+"##;
+        let nodes = interpret(src).unwrap();
+        // Only the <container> lowers — the <script> is inert.
+        assert_eq!(nodes.len(), 1, "script must not render a node");
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!("expected container, got {:?}", nodes[0]);
+        };
+        let Node::Text { content, props, .. } = &children[0] else {
+            panic!("expected text child");
+        };
+        assert_eq!(content, "Ready", "state.label binding resolved");
+        assert_eq!(
+            props.color,
+            Color {
+                r: 0xff,
+                g: 0,
+                b: 0,
+                a: 0xff
+            },
+            "priority_color('high') resolved through the call seam"
+        );
+    }
+
+    /// Without the script block the same slots resolve to nothing —
+    /// guards that the Luau path is additive, not load-bearing for
+    /// plain documents.
+    #[cfg(feature = "luau")]
+    #[test]
+    fn document_without_script_is_unaffected() {
+        let nodes = interpret(r#"<container><text>Hi</text></container>"#).unwrap();
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        let Node::Text { content, .. } = &children[0] else {
+            panic!()
+        };
+        assert_eq!(content, "Hi");
     }
 }

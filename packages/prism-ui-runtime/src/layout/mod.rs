@@ -61,6 +61,14 @@ impl Default for Viewport {
 /// enum once we grow the matching primitives.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+// The `TextInput` variant carries a fat editor-state bundle —
+// caret + selection + spans + scroll + bracket-match + flags. The
+// `Container` variant by contrast is small. Boxing TextInput would
+// force a pointer indirection on every read in the layout / paint
+// hot paths just to shave bytes off an enum stored as `Box<Node>`
+// already at every aggregate site (`Node::Container.children` is a
+// `Vec<Node>`, not a slice of variants). Allow the variance.
+#[allow(clippy::large_enum_variant)]
 pub enum Node {
     Container {
         /// Stable identifier — survives re-layout, used by hit-testing,
@@ -195,6 +203,22 @@ pub enum Node {
         /// preedit underline and the selection highlight together.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         underline: Option<(usize, usize)>,
+        /// Byte offsets of bracket pairs the paint pass should
+        /// outline. Each entry is `(open_byte, close_byte)` — the
+        /// runtime draws a thin outline around the glyph at each
+        /// offset so users see the matching bracket of the one
+        /// adjacent to the caret. Optional; empty vector renders
+        /// nothing extra. Resolved by the host via
+        /// [`editor::TextEditor::matching_bracket_for`].
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        bracket_match: Vec<usize>,
+        /// `true` when the editor should paint a subtle highlight
+        /// behind the caret's line. Hosts flip this on whenever the
+        /// editor is focused so the active line stands out from
+        /// neighbours. Off by default so inline string-property
+        /// fields don't gain a stray strip.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        highlight_current_line: bool,
     },
 }
 
@@ -880,6 +904,8 @@ enum NodeContext {
         scroll_x: f32,
         scroll_y: f32,
         underline: Option<(usize, usize)>,
+        bracket_match: Vec<usize>,
+        highlight_current_line: bool,
     },
 }
 
@@ -974,6 +1000,8 @@ fn build_taffy_subtree(
             scroll_x,
             scroll_y,
             underline,
+            bracket_match,
+            highlight_current_line,
             ..
         } => {
             // Same Grow→flex_grow rule the container/image arms use — a
@@ -1019,6 +1047,8 @@ fn build_taffy_subtree(
                 scroll_x: *scroll_x,
                 scroll_y: *scroll_y,
                 underline: *underline,
+                bracket_match: bracket_match.clone(),
+                highlight_current_line: *highlight_current_line,
             };
             taffy
                 .new_leaf_with_context(style, ctx)
@@ -1276,6 +1306,8 @@ fn emit_commands_with_opacity(
                 spans: Vec::new(),
                 underline: None,
                 underline_color: None,
+                glyph_outlines: Vec::new(),
+                glyph_outline_color: None,
             });
         }
         Some(NodeContext::Image {
@@ -1313,6 +1345,8 @@ fn emit_commands_with_opacity(
             scroll_x,
             scroll_y,
             underline,
+            bracket_match,
+            highlight_current_line,
         }) => {
             out.push(RenderCommand::Rectangle {
                 bounds,
@@ -1440,6 +1474,48 @@ fn emit_commands_with_opacity(
                     },
                 });
             }
+            // Current-line highlight — paint a faint accent strip
+            // behind the caret's line. Sits under the Text command
+            // so glyphs read on top. Approximated using the same
+            // `font_size * 1.2` line-height heuristic the runtime
+            // uses everywhere; correct for monospace, close enough
+            // for proportional.
+            if *highlight_current_line && !*is_placeholder {
+                if let Some(byte) = caret_byte {
+                    let bytes = text.as_bytes();
+                    let mut row: usize = 0;
+                    let limit = (*byte).min(bytes.len());
+                    for (i, b) in bytes.iter().enumerate() {
+                        if i >= limit {
+                            break;
+                        }
+                        if *b == b'\n' {
+                            row += 1;
+                        }
+                    }
+                    let row_h = props.font_size * 1.2;
+                    let y_top = text_top - *scroll_y + row as f32 * row_h;
+                    let hl_colour = scale_color_alpha(
+                        Color {
+                            r: 0,
+                            g: 96,
+                            b: 192,
+                            a: 14,
+                        },
+                        parent_opacity,
+                    );
+                    out.push(RenderCommand::Rectangle {
+                        bounds: Rect {
+                            x: text_left,
+                            y: y_top,
+                            width: text_width,
+                            height: row_h,
+                        },
+                        color: hl_colour,
+                        radius: CornerRadius::default(),
+                    });
+                }
+            }
             out.push(RenderCommand::Text {
                 bounds: Rect {
                     x: text_left - *scroll_x,
@@ -1475,6 +1551,20 @@ fn emit_commands_with_opacity(
                         parent_opacity,
                     )
                 }),
+                glyph_outlines: bracket_match.clone(),
+                glyph_outline_color: if bracket_match.is_empty() {
+                    None
+                } else {
+                    Some(scale_color_alpha(
+                        Color {
+                            r: 0,
+                            g: 96,
+                            b: 192,
+                            a: 96,
+                        },
+                        parent_opacity,
+                    ))
+                },
             });
             if scroll_active {
                 out.push(RenderCommand::ScissorEnd);

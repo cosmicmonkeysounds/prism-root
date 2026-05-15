@@ -172,6 +172,29 @@ pub fn highlight(source: &str, language: &str) -> Vec<TextSpan> {
     spans
 }
 
+/// Find the token (kind + lexeme) covering byte `offset` in
+/// `source` when tokenized as `language`. Used by editor hover —
+/// the host resolves the byte under the pointer, calls this, and
+/// looks the lexeme up in a help registry.
+pub fn token_at<'a>(
+    source: &'a str,
+    language: &str,
+    offset: usize,
+) -> Option<(TokenKind, &'a str)> {
+    let tokens = match normalise_language(language) {
+        Language::Luau => tokenize_luau(source),
+        Language::Rust => tokenize_rust(source),
+        Language::JavaScript => tokenize_js(source),
+        Language::Unknown => return None,
+    };
+    for (kind, start, end) in tokens {
+        if offset >= start && offset < end {
+            return Some((kind, &source[start..end]));
+        }
+    }
+    None
+}
+
 /// Variant of [`highlight`] that accepts a custom palette — used by
 /// tests and any host that wants theme-specific colours.
 pub fn highlight_with_palette(source: &str, language: &str, palette: &Palette) -> Vec<TextSpan> {

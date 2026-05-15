@@ -69,7 +69,133 @@ pub struct TextEditor {
     /// byte offsets. `None` means the OS didn't report one; the
     /// renderer falls back to the preedit's end.
     preedit_cursor: Option<usize>,
+    /// Multi-click selection cascade tracker. Recorded by
+    /// [`Self::register_click`]; the host advances it on every
+    /// pointer-down so a quick double-click selects the word, triple
+    /// selects the line.
+    click_history: ClickHistory,
+    /// `true` for code editors — typing `(`/`[`/`{`/`"`/`'`/backtick
+    /// auto-inserts the matching closing character (with the caret
+    /// parked in between), and typing a closing char that's already
+    /// under the caret overtypes instead of duplicating. Inline
+    /// string-property fields keep this off so users can type a
+    /// literal `(` without surprises.
+    bracket_pairs: bool,
     history: History,
+}
+
+/// Result of [`TextEditor::register_click`] — tells the host how to
+/// translate the click into a selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClickKind {
+    /// Plain caret placement; the host may optionally extend selection
+    /// from the previous anchor (shift-click).
+    Single,
+    /// Select the word containing the click point.
+    DoubleWord,
+    /// Select the line containing the click point.
+    TripleLine,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct ClickHistory {
+    last_byte: Option<usize>,
+    last_ms: Option<u64>,
+    streak: u8,
+}
+
+fn is_word_char_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+fn matching_close(open: char) -> Option<char> {
+    match open {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        '"' => Some('"'),
+        '\'' => Some('\''),
+        '`' => Some('`'),
+        // Closing chars passed in for overtype lookups — they pair
+        // with themselves on the close side.
+        ')' | ']' | '}' => Some(open),
+        _ => None,
+    }
+}
+
+fn is_close_char(c: char) -> bool {
+    matches!(c, ')' | ']' | '}' | '"' | '\'' | '`')
+}
+
+fn is_bracket(b: u8) -> bool {
+    matches!(b, b'(' | b')' | b'[' | b']' | b'{' | b'}')
+}
+
+/// Walk the buffer from `start` (a bracket byte of `ch`) to its
+/// matching partner. Handles nested pairs; ignores brackets inside
+/// quotes / comments (best-effort heuristic — full parser is the
+/// language module's job).
+fn match_bracket(text: &str, start: usize, ch: char) -> Option<usize> {
+    let (open, close) = match ch {
+        '(' => ('(', ')'),
+        ')' => ('(', ')'),
+        '[' => ('[', ']'),
+        ']' => ('[', ']'),
+        '{' => ('{', '}'),
+        '}' => ('{', '}'),
+        _ => return None,
+    };
+    let forward = matches!(ch, '(' | '[' | '{');
+    let bytes = text.as_bytes();
+    let open_b = open as u8;
+    let close_b = close as u8;
+    let mut depth: i32 = 1;
+    if forward {
+        let mut i = next_char_boundary(text, start);
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == open_b {
+                depth += 1;
+            } else if b == close_b {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            i = next_char_boundary(text, i);
+        }
+        None
+    } else {
+        let mut i = start;
+        while i > 0 {
+            i = prev_char_boundary(text, i);
+            let b = bytes[i];
+            if b == close_b {
+                depth += 1;
+            } else if b == open_b {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Default line-comment prefix for a language tag. `None` → editor
+/// falls back to no-op when the toggle-comment key fires.
+pub fn line_comment_prefix(language: &str) -> Option<&'static str> {
+    match language.trim().to_ascii_lowercase().as_str() {
+        "luau" | "lua" | "sql" => Some("--"),
+        "rust" | "rs" | "javascript" | "js" | "typescript" | "ts" | "jsx" | "tsx" | "c" | "cpp"
+        | "c++" | "go" | "swift" | "java" | "kotlin" | "scala" => Some("//"),
+        "python" | "py" | "shell" | "sh" | "bash" | "ruby" | "rb" | "toml" | "yaml" | "yml" => {
+            Some("#")
+        }
+        "html" | "xml" | "css" => None, // block-comment only — caller can extend later
+        _ => None,
+    }
 }
 
 /// One snapshot in the undo stack. Captures the full buffer plus
@@ -609,12 +735,36 @@ impl TextEditor {
         if !self.multiline {
             return EditOutcome::Inert;
         }
-        // Compute the indent from the line the caret sits on *before*
-        // we touch the buffer. If a selection is active, `insert`'s
-        // replace path puts the caret at `min(anchor, caret)`, but
-        // we want the original line's indent — capture first.
+        // Capture context before mutating: the existing line's
+        // indent, and whether the caret sits in a "smart indent"
+        // position — i.e. right after an open bracket or between an
+        // open / close pair like `{|}`.
         let indent = leading_whitespace_of_line(&self.text, self.caret);
-        let to_insert = format!("\n{indent}");
+        let before = self.text[..self.caret].chars().next_back();
+        let after = self.text[self.caret..].chars().next();
+        let opens_block = matches!(before, Some('{') | Some('(') | Some('['));
+        let closes_immediately = matches!(
+            (before, after),
+            (Some('{'), Some('}')) | (Some('('), Some(')')) | (Some('['), Some(']'))
+        );
+        if closes_immediately {
+            // `{|}` → `{`, indented blank, `}` with caret on the
+            // middle line. Three inserts wrapped in one undo step.
+            let extra = "  "; // two-space indent step; configurable later
+            let body = format!("\n{indent}{extra}\n{indent}");
+            let out = self.insert(&body, true);
+            if out.mutated() {
+                // Park caret on the indented middle line — that's
+                // `\n{indent}{extra}` characters past the original
+                // insert origin, but `insert` left the caret at the
+                // end. Rewind to the middle line's end of indent.
+                let rewind = ("\n".len() + indent.len()) as isize;
+                self.caret = (self.caret as isize - rewind).max(0) as usize;
+            }
+            return out;
+        }
+        let extra = if opens_block { "  " } else { "" };
+        let to_insert = format!("\n{indent}{extra}");
         self.insert(&to_insert, true)
     }
 
@@ -958,6 +1108,10 @@ impl TextEditor {
                     self.move_right(shift)
                 }
             }
+            // Alt+Up/Down — move line(s) up / down. Matched ahead of
+            // the plain arrow arms so the modifier takes precedence.
+            "arrowup" if mods.alt => self.move_line_by(-1),
+            "arrowdown" if mods.alt => self.move_line_by(1),
             "arrowup" => self.move_up(shift),
             "arrowdown" => self.move_down(shift),
             // Page nav: 12 rows is the rough "single page" heuristic
@@ -1012,13 +1166,423 @@ impl TextEditor {
             "y" if cmd => self.redo(),
             "d" if cmd => self.duplicate_line(),
             "k" if cmd => self.delete_line(),
+            // Ctrl+L — select current line (alternative to triple
+            // click). Many editors use Ctrl+L for "select line" or
+            // "expand selection to line"; we adopt the former.
+            "l" if cmd => self.select_current_line(),
+            // Ctrl+] — jump to the matching bracket. (Some editors
+            // use Ctrl+M; we'll keep the more common Ctrl+] for
+            // bracket-jump and leave Ctrl+M free for go-to-line.)
+            "]" if cmd && !shift => self.jump_to_matching_bracket(),
+            // Ctrl+/ — toggle line comment using the supplied
+            // prefix. Note: the runtime doesn't carry a language
+            // tag itself, so the prefix defaults to the most common
+            // Luau form (`--`). Hosts override via
+            // `Self::toggle_line_comment(prefix)` directly with the
+            // resolved language's prefix.
+            "/" if cmd => self.toggle_line_comment("--"),
             _ => EditOutcome::Inert,
         }
     }
 
     /// Apply a `Text` event — a chunk of typed / IME-committed text.
+    /// When `bracket_pairs` is enabled (the editor default for code
+    /// languages), typing `(` / `[` / `{` / `"` / `'` / `` ` ``
+    /// inserts the matching closing char and parks the caret in the
+    /// middle; typing the closing char when the caret already sits
+    /// on it overtypes (skip-ahead). Non-bracket text inserts
+    /// verbatim.
     pub fn apply_text(&mut self, text: &str) -> EditOutcome {
+        if !self.bracket_pairs || text.is_empty() {
+            return self.insert(text, false);
+        }
+        // Single-char bracket / quote — try smart insert / overtype.
+        if text.chars().nth(1).is_none() {
+            let ch = text.chars().next().unwrap();
+            if let Some(close) = matching_close(ch) {
+                // Overtype: if the caret already sits on the close
+                // we typed and there's a balanced open before, just
+                // skip ahead (don't insert a duplicate).
+                if let Some(under) = self.text[self.caret..].chars().next() {
+                    if under == ch && is_close_char(ch) {
+                        self.caret = next_char_boundary(&self.text, self.caret);
+                        self.history.last_group = None;
+                        return EditOutcome::Mutated;
+                    }
+                }
+                // Open quote — only auto-close when the cursor is at
+                // a word break (avoids closing inside identifiers).
+                let at_break = self.text[..self.caret]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+                if !is_close_char(ch) && at_break {
+                    let pair = format!("{ch}{close}");
+                    let out = self.insert(&pair, false);
+                    if out.mutated() {
+                        // Park caret between the pair.
+                        self.caret = prev_char_boundary(&self.text, self.caret);
+                    }
+                    return out;
+                }
+            }
+        }
         self.insert(text, false)
+    }
+
+    /// Toggle whether smart bracket / quote pairing fires on
+    /// [`apply_text`]. Default `false` — hosts that want VS-Code-
+    /// style auto-close flip it on at session start. Plain inline
+    /// string fields keep the resting off.
+    pub fn set_bracket_pairs(&mut self, on: bool) {
+        self.bracket_pairs = on;
+    }
+
+    pub fn bracket_pairs_enabled(&self) -> bool {
+        self.bracket_pairs
+    }
+
+    /// Toggle a line-comment prefix on the current line (or every
+    /// line in the active selection). The prefix is added when *any*
+    /// line in the range lacks it, removed otherwise — the standard
+    /// VS-Code rule. Empty selections + caret-on-blank-line work the
+    /// same way as a one-line toggle.
+    pub fn toggle_line_comment(&mut self, prefix: &str) -> EditOutcome {
+        if prefix.is_empty() {
+            return EditOutcome::Inert;
+        }
+        let (sel_start, sel_end) = self.selection().unwrap_or((self.caret, self.caret));
+        let first_line_start = line_start_of(&self.text, sel_start);
+        let last_line_end = line_end_excl_of(
+            &self.text,
+            // For a selection that ends *at* a line boundary
+            // (selection includes the trailing newline) we don't
+            // want to also flag the next line — push end back by
+            // one char if it's a newline boundary.
+            sel_end.saturating_sub(
+                if sel_end > sel_start
+                    && sel_end > 0
+                    && self.text.as_bytes().get(sel_end - 1) == Some(&b'\n')
+                {
+                    1
+                } else {
+                    0
+                },
+            ),
+        );
+        // Collect each line's start byte.
+        let mut line_starts = vec![first_line_start];
+        let mut cur = first_line_start;
+        while cur < last_line_end {
+            match self.text[cur..last_line_end].find('\n') {
+                Some(nl) => {
+                    let next = cur + nl + 1;
+                    if next <= self.text.len()
+                        && next <= last_line_end + 1
+                        && (next - 1 < last_line_end || next > last_line_end)
+                    {
+                        line_starts.push(next);
+                    }
+                    cur = next;
+                }
+                None => break,
+            }
+        }
+        line_starts.retain(|s| *s <= self.text.len());
+        line_starts.dedup();
+        // Decide direction: comment-out unless *every* non-blank line
+        // already starts with the prefix (after trimming leading WS).
+        let all_commented = line_starts.iter().all(|&s| {
+            let line_end = line_end_excl_of(&self.text, s);
+            let body = &self.text[s..line_end];
+            let trimmed = body.trim_start();
+            trimmed.is_empty() || trimmed.starts_with(prefix)
+        });
+        let had_selection = self.has_selection();
+        self.push_undo(EditGroup::Atomic);
+        let prefix_with_space = format!("{prefix} ");
+        let mut total_shift: isize = 0;
+        if all_commented {
+            for &start in line_starts.iter().rev() {
+                let line_end = line_end_excl_of(&self.text, start);
+                let body = &self.text[start..line_end];
+                let leading_ws_len = body.len() - body.trim_start().len();
+                let body_after_ws = &body[leading_ws_len..];
+                let removed = if body_after_ws.starts_with(&prefix_with_space) {
+                    prefix_with_space.len()
+                } else if body_after_ws.starts_with(prefix) {
+                    prefix.len()
+                } else {
+                    0
+                };
+                if removed > 0 {
+                    let remove_start = start + leading_ws_len;
+                    self.text
+                        .replace_range(remove_start..remove_start + removed, "");
+                    total_shift -= removed as isize;
+                }
+            }
+        } else {
+            let payload = prefix_with_space.clone();
+            for &start in line_starts.iter().rev() {
+                let line_end = line_end_excl_of(&self.text, start);
+                let body = &self.text[start..line_end];
+                if body.trim().is_empty() {
+                    continue;
+                }
+                let leading_ws_len = body.len() - body.trim_start().len();
+                self.text.insert_str(start + leading_ws_len, &payload);
+                total_shift += payload.len() as isize;
+            }
+        }
+        // Re-derive the selection so the user can keep toggling. We
+        // preserve "block selected" by spanning the first edited line
+        // to the new end-of-last-edited-line. Single-line caret
+        // toggles preserve a collapsed caret near the original
+        // position.
+        let len = self.text.len();
+        if had_selection {
+            let last_line_new_start = if line_starts.len() <= 1 {
+                first_line_start
+            } else {
+                // Walk newlines from the first edited line's start to
+                // find the new last-line start. This avoids re-doing
+                // the byte arithmetic above.
+                let mut count_needed = line_starts.len() - 1;
+                let mut idx = first_line_start;
+                while count_needed > 0 {
+                    match self.text[idx..].find('\n') {
+                        Some(nl) => {
+                            idx += nl + 1;
+                            count_needed -= 1;
+                        }
+                        None => break,
+                    }
+                }
+                idx
+            };
+            let new_end = line_end_excl_of(&self.text, last_line_new_start);
+            self.anchor = Some(first_line_start);
+            self.caret = new_end;
+        } else {
+            // Shift caret + anchor by the total shift so the caret
+            // stays on the same logical character.
+            self.caret = ((self.caret as isize) + total_shift)
+                .max(0)
+                .min(len as isize) as usize;
+            if let Some(a) = self.anchor.as_mut() {
+                *a = ((*a as isize) + total_shift).max(0).min(len as isize) as usize;
+            }
+        }
+        self.preferred_col = None;
+        EditOutcome::Mutated
+    }
+
+    /// Move the line containing the caret up by `delta` rows. Negative
+    /// `delta` moves up. Multi-line selections move the whole block;
+    /// the selection follows the move so users can chain Alt+Up/Down.
+    pub fn move_line_by(&mut self, delta: i32) -> EditOutcome {
+        if !self.multiline || delta == 0 {
+            return EditOutcome::Inert;
+        }
+        // Span of lines to move. Selection (if any) widens to whole
+        // lines so partial-line selections still move full lines.
+        let (sel_s, sel_e) = self.selection().unwrap_or((self.caret, self.caret));
+        let block_start = line_start_of(&self.text, sel_s);
+        let block_end_excl = {
+            let mut e = sel_e;
+            // If the selection's end byte sits at the line start
+            // (sel-extended-through-newline), pull it back so we
+            // don't also move the following line.
+            if e > sel_s && e > 0 && self.text.as_bytes().get(e - 1) == Some(&b'\n') {
+                e -= 1;
+            }
+            line_end_excl_of(&self.text, e)
+        };
+        // Snapshot the block + the adjacent line we'll swap with.
+        if delta < 0 {
+            // Move up: nothing to do if we're already on line 0.
+            if block_start == 0 {
+                return EditOutcome::Inert;
+            }
+            let prev_line_end = block_start - 1;
+            let prev_line_start = line_start_of(&self.text, prev_line_end);
+            // text = [.. prev .. \n block ..] → [.. block \n prev ..]
+            let prev_line = self.text[prev_line_start..prev_line_end].to_string();
+            let block = self.text[block_start..block_end_excl].to_string();
+            self.push_undo(EditGroup::Atomic);
+            self.text.replace_range(
+                prev_line_start..block_end_excl,
+                &format!("{block}\n{prev_line}"),
+            );
+            let shift = (prev_line.len() + 1) as isize;
+            self.caret = (self.caret as isize - shift).max(0) as usize;
+            if let Some(a) = self.anchor.as_mut() {
+                *a = (*a as isize - shift).max(0) as usize;
+            }
+            EditOutcome::Mutated
+        } else {
+            // Move down.
+            if block_end_excl >= self.text.len() {
+                return EditOutcome::Inert;
+            }
+            let next_line_start = block_end_excl + 1; // past the `\n`
+            let next_line_end = line_end_excl_of(&self.text, next_line_start);
+            let next_line = self.text[next_line_start..next_line_end].to_string();
+            let block = self.text[block_start..block_end_excl].to_string();
+            self.push_undo(EditGroup::Atomic);
+            self.text
+                .replace_range(block_start..next_line_end, &format!("{next_line}\n{block}"));
+            let shift = (next_line.len() + 1) as isize;
+            self.caret = (self.caret as isize + shift) as usize;
+            if let Some(a) = self.anchor.as_mut() {
+                *a = (*a as isize + shift) as usize;
+            }
+            EditOutcome::Mutated
+        }
+    }
+
+    /// Select the line containing the caret (Ctrl+L). Same effect as
+    /// [`Self::select_line_at`] for the current caret byte — exposed
+    /// as a no-arg alias so the key route can call it without
+    /// re-reading the caret.
+    pub fn select_current_line(&mut self) -> EditOutcome {
+        let byte = self.caret;
+        self.select_line_at(byte);
+        EditOutcome::Mutated
+    }
+
+    /// Jump the caret to the bracket that matches the one
+    /// immediately adjacent to the caret. Walks forward from
+    /// `(` `[` `{` and backward from `)` `]` `}`, balancing
+    /// intermediate pairs. Returns `Inert` when no bracket is
+    /// adjacent or the match is missing.
+    pub fn jump_to_matching_bracket(&mut self) -> EditOutcome {
+        let bytes = self.text.as_bytes();
+        // Prefer the bracket *at* the caret; fall back to the one
+        // immediately before it.
+        let (start, ch) = if let Some(&b) = bytes.get(self.caret).filter(|b| is_bracket(**b)) {
+            (self.caret, b as char)
+        } else if self.caret > 0 && is_bracket(bytes[self.caret - 1]) {
+            (self.caret - 1, bytes[self.caret - 1] as char)
+        } else {
+            return EditOutcome::Inert;
+        };
+        let Some(target) = match_bracket(&self.text, start, ch) else {
+            return EditOutcome::Inert;
+        };
+        self.caret = target;
+        self.preferred_col = None;
+        self.history.last_group = None;
+        EditOutcome::Mutated
+    }
+
+    /// Resolve the byte offset of the bracket matching the one
+    /// adjacent to `byte`. Used by the host for the matching-bracket
+    /// paint highlight. Returns `None` when no bracket is adjacent
+    /// or no match exists.
+    pub fn matching_bracket_for(&self, byte: usize) -> Option<usize> {
+        let bytes = self.text.as_bytes();
+        let (start, ch) = if let Some(&b) = bytes.get(byte).filter(|b| is_bracket(**b)) {
+            (byte, b as char)
+        } else if byte > 0 && is_bracket(bytes[byte - 1]) {
+            (byte - 1, bytes[byte - 1] as char)
+        } else {
+            return None;
+        };
+        match_bracket(&self.text, start, ch)
+    }
+
+    /// Select the word containing byte `idx`. "Word" is the maximal
+    /// run of alphanumeric / `_` characters that includes (or is
+    /// adjacent to) the click point. Used by double-click gestures.
+    pub fn select_word_at(&mut self, idx: usize) {
+        let idx = clamp_to_char_boundary(&self.text, idx);
+        let bytes = self.text.as_bytes();
+        // Click *exactly* on a word char → expand in both directions.
+        // Click past the end of the buffer where the previous char
+        // is a word char → select the word ending there. Anything
+        // else (comma, space, end of buffer with no preceding word)
+        // → select a single char so the gesture has visible feedback.
+        let on_word = bytes.get(idx).is_some_and(|b| is_word_char_byte(*b));
+        let trailing_word = idx == bytes.len() && idx > 0 && is_word_char_byte(bytes[idx - 1]);
+        if !on_word && !trailing_word {
+            let end = if idx < bytes.len() {
+                next_char_boundary(&self.text, idx)
+            } else {
+                idx
+            };
+            self.anchor = Some(idx);
+            self.caret = end;
+            self.preferred_col = None;
+            self.history.last_group = None;
+            return;
+        }
+        let mut start = idx;
+        while start > 0 {
+            let prev = prev_char_boundary(&self.text, start);
+            if !is_word_char_byte(bytes[prev]) {
+                break;
+            }
+            start = prev;
+        }
+        let mut end = idx;
+        while end < bytes.len() && is_word_char_byte(bytes[end]) {
+            end = next_char_boundary(&self.text, end);
+        }
+        self.anchor = Some(start);
+        self.caret = end;
+        self.preferred_col = None;
+        self.history.last_group = None;
+    }
+
+    /// Select the entire line containing byte `idx`. Triple-click.
+    pub fn select_line_at(&mut self, idx: usize) {
+        let idx = clamp_to_char_boundary(&self.text, idx);
+        let (line_start, line_end) = current_line_range_exclusive(&self.text, idx);
+        self.anchor = Some(line_start);
+        self.caret = line_end;
+        self.preferred_col = None;
+        self.history.last_group = None;
+    }
+
+    /// Multi-click cascade — register a click at byte `idx` at clock
+    /// `now_ms` and return the kind of selection the host should
+    /// apply. Tracks the previous click; a second click at the same
+    /// byte within 500 ms is a `DoubleWord`, a third in another 500
+    /// ms is `TripleLine`. Anything else resets to `Single`.
+    pub fn register_click(&mut self, idx: usize, now_ms: u64) -> ClickKind {
+        const MULTI_CLICK_MS: u64 = 500;
+        let near = self.click_history.last_byte.is_some_and(|b| {
+            // A small byte tolerance (~3 chars) lets users be sloppy
+            // about clicking the exact same offset twice.
+            (b as isize - idx as isize).unsigned_abs() < 4
+        });
+        let within = self
+            .click_history
+            .last_ms
+            .map(|t| now_ms.saturating_sub(t) <= MULTI_CLICK_MS)
+            .unwrap_or(false);
+        let kind = if near && within && self.click_history.streak > 0 {
+            match self.click_history.streak {
+                1 => ClickKind::DoubleWord,
+                _ => ClickKind::TripleLine,
+            }
+        } else {
+            ClickKind::Single
+        };
+        let new_streak = match kind {
+            ClickKind::Single => 1,
+            ClickKind::DoubleWord => 2,
+            // Reset the cascade after a triple — the streak counter
+            // drops to 0 so the next click starts a fresh `Single`
+            // regardless of timing.
+            ClickKind::TripleLine => 0,
+        };
+        self.click_history.streak = new_streak;
+        self.click_history.last_byte = Some(idx);
+        self.click_history.last_ms = Some(now_ms);
+        kind
     }
 
     /// Active IME preedit string. Empty when no composition is in
@@ -1524,6 +2088,152 @@ mod tests {
     }
 
     #[test]
+    fn toggle_line_comment_adds_prefix_when_uncommented() {
+        let mut ed = TextEditor::with_text("hello");
+        ed.toggle_line_comment("--");
+        assert_eq!(ed.text(), "-- hello");
+    }
+
+    #[test]
+    fn toggle_line_comment_removes_prefix_when_commented() {
+        let mut ed = TextEditor::with_text("-- hello");
+        ed.toggle_line_comment("--");
+        assert_eq!(ed.text(), "hello");
+    }
+
+    #[test]
+    fn toggle_line_comment_handles_multi_line_selection() {
+        let mut ed = TextEditor::new_multi_line();
+        ed.set_text("a\nb\nc");
+        ed.place_caret_at(0, false);
+        ed.place_caret_at(5, true);
+        ed.toggle_line_comment("//");
+        assert_eq!(ed.text(), "// a\n// b\n// c");
+        // Toggling again removes.
+        ed.toggle_line_comment("//");
+        assert_eq!(ed.text(), "a\nb\nc");
+    }
+
+    #[test]
+    fn toggle_line_comment_preserves_indentation() {
+        let mut ed = TextEditor::with_text("    hello");
+        ed.toggle_line_comment("--");
+        assert_eq!(ed.text(), "    -- hello");
+    }
+
+    #[test]
+    fn move_line_up_swaps_with_previous() {
+        let mut ed = TextEditor::new_multi_line();
+        ed.set_text("one\ntwo\nthree");
+        ed.place_caret_at(6, false); // on "two"
+        ed.move_line_by(-1);
+        assert_eq!(ed.text(), "two\none\nthree");
+    }
+
+    #[test]
+    fn move_line_down_swaps_with_next() {
+        let mut ed = TextEditor::new_multi_line();
+        ed.set_text("one\ntwo\nthree");
+        ed.place_caret_at(1, false); // on "one"
+        ed.move_line_by(1);
+        assert_eq!(ed.text(), "two\none\nthree");
+    }
+
+    #[test]
+    fn move_line_up_at_doc_start_is_inert() {
+        let mut ed = TextEditor::new_multi_line();
+        ed.set_text("a\nb");
+        ed.place_caret_at(0, false);
+        let outcome = ed.move_line_by(-1);
+        assert!(!outcome.mutated());
+    }
+
+    #[test]
+    fn auto_close_inserts_matching_bracket() {
+        let mut ed = TextEditor::new_multi_line();
+        ed.set_bracket_pairs(true);
+        ed.apply_text("(");
+        assert_eq!(ed.text(), "()");
+        // Caret should sit between the pair.
+        assert_eq!(ed.caret_byte(), 1);
+    }
+
+    #[test]
+    fn auto_close_overtypes_existing_close() {
+        let mut ed = TextEditor::new_multi_line();
+        ed.set_bracket_pairs(true);
+        ed.apply_text("(");
+        // Now type ")" — should skip ahead, not duplicate.
+        ed.apply_text(")");
+        assert_eq!(ed.text(), "()");
+        assert_eq!(ed.caret_byte(), 2);
+    }
+
+    #[test]
+    fn auto_close_skipped_for_identifiers() {
+        let mut ed = TextEditor::new_multi_line();
+        ed.set_bracket_pairs(true);
+        ed.apply_text("foo");
+        ed.apply_text("'"); // 'foo' would be wrong — caret is after identifier
+        assert_eq!(ed.text(), "foo'");
+    }
+
+    #[test]
+    fn smart_indent_after_open_brace() {
+        let mut ed = TextEditor::new_multi_line();
+        ed.set_text("if (true) {");
+        ed.place_caret_at(11, false);
+        ed.insert_newline();
+        // Caret is now indented one level past the line.
+        assert_eq!(ed.text(), "if (true) {\n  ");
+    }
+
+    #[test]
+    fn smart_indent_between_braces_opens_three_lines() {
+        let mut ed = TextEditor::new_multi_line();
+        ed.set_text("if (true) {}");
+        ed.place_caret_at(11, false); // between `{` and `}`
+        ed.insert_newline();
+        assert_eq!(ed.text(), "if (true) {\n  \n}");
+        // Caret is on the indented middle line.
+        let (line, col) = ed.caret_line_col();
+        assert_eq!((line, col), (2, 3));
+    }
+
+    #[test]
+    fn jump_to_matching_bracket_forward() {
+        let mut ed = TextEditor::with_text("a (b (c) d) e");
+        ed.place_caret_at(2, false); // on the outer `(`
+        ed.jump_to_matching_bracket();
+        assert_eq!(ed.caret_byte(), 10); // the outer `)`
+    }
+
+    #[test]
+    fn jump_to_matching_bracket_backward() {
+        let mut ed = TextEditor::with_text("a (b (c) d) e");
+        ed.place_caret_at(10, false); // on the outer `)`
+        ed.jump_to_matching_bracket();
+        assert_eq!(ed.caret_byte(), 2);
+    }
+
+    #[test]
+    fn select_current_line_selects_whole_line() {
+        let mut ed = TextEditor::new_multi_line();
+        ed.set_text("aaa\nbbb\nccc");
+        ed.place_caret_at(5, false); // middle of "bbb"
+        ed.select_current_line();
+        assert_eq!(ed.selected_text(), Some("bbb"));
+    }
+
+    #[test]
+    fn line_comment_prefix_resolves_known_languages() {
+        assert_eq!(line_comment_prefix("luau"), Some("--"));
+        assert_eq!(line_comment_prefix("rust"), Some("//"));
+        assert_eq!(line_comment_prefix("python"), Some("#"));
+        assert_eq!(line_comment_prefix("unknown"), None);
+    }
+
+    #[test]
     fn ime_preedit_sets_display_text_and_range() {
         let mut ed = TextEditor::with_text("ab");
         ed.place_caret_at(2, false);
@@ -1611,6 +2321,55 @@ mod tests {
         // Preferred column = 5 → on a 6-char row, lands at col 6
         // (1-based) which equals 5 chars in.
         assert_eq!(col, 6);
+    }
+
+    #[test]
+    fn select_word_at_selects_alphanumeric_run() {
+        let mut ed = TextEditor::with_text("hello world foo");
+        ed.select_word_at(7); // middle of "world"
+        assert_eq!(ed.selection(), Some((6, 11)));
+        assert_eq!(ed.selected_text(), Some("world"));
+    }
+
+    #[test]
+    fn select_word_at_on_punctuation_selects_one_char() {
+        let mut ed = TextEditor::with_text("a, b");
+        ed.select_word_at(1); // the comma
+        assert_eq!(ed.selection(), Some((1, 2)));
+    }
+
+    #[test]
+    fn select_line_at_selects_whole_line() {
+        let mut ed = TextEditor::new_multi_line();
+        ed.set_text("one\ntwo\nthree");
+        ed.select_line_at(5); // middle of "two"
+        assert_eq!(ed.selected_text(), Some("two"));
+    }
+
+    #[test]
+    fn register_click_cascade() {
+        let mut ed = TextEditor::with_text("hello");
+        assert_eq!(ed.register_click(2, 0), ClickKind::Single);
+        assert_eq!(ed.register_click(2, 100), ClickKind::DoubleWord);
+        assert_eq!(ed.register_click(2, 200), ClickKind::TripleLine);
+        // Reset after triple — next click starts a fresh streak.
+        assert_eq!(ed.register_click(2, 300), ClickKind::Single);
+    }
+
+    #[test]
+    fn register_click_resets_when_too_slow() {
+        let mut ed = TextEditor::with_text("hello");
+        assert_eq!(ed.register_click(2, 0), ClickKind::Single);
+        // 600 ms later — outside the multi-click window.
+        assert_eq!(ed.register_click(2, 600), ClickKind::Single);
+    }
+
+    #[test]
+    fn register_click_resets_when_far_apart() {
+        let mut ed = TextEditor::with_text("hello world");
+        assert_eq!(ed.register_click(2, 0), ClickKind::Single);
+        // Same time but different byte — not a multi-click.
+        assert_eq!(ed.register_click(8, 100), ClickKind::Single);
     }
 
     #[test]

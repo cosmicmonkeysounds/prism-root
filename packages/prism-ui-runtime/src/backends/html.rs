@@ -207,6 +207,8 @@ mod tests {
             spans: Vec::new(),
             underline: None,
             underline_color: None,
+            glyph_outlines: Vec::new(),
+            glyph_outline_color: None,
         };
         let html = lower(&[cmd]);
         assert!(html.contains("&lt;script&gt;"));

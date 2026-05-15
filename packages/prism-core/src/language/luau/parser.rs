@@ -452,6 +452,66 @@ fn node_from_tokens(_source: &str, kind: &str, stmt: &Stmt) -> SyntaxNode {
     }
 }
 
+/// A top-level `local` declaration discovered in a Luau chunk: the
+/// bound name(s) plus the byte offset of the `local` keyword itself.
+///
+/// Used by the PRUI `<script lang="luau">` loader
+/// (`prui-luau-fusion.md` §7.1 / Wave A): to surface a script's
+/// top-level `local`s as document-scope bindings, the loader strips
+/// the `local` keyword at `local_keyword_offset` so the binding
+/// lands in the chunk's environment instead of a chunk-scoped local.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TopLevelLocal {
+    /// Bound names. A `local a, b = …` yields `["a", "b"]`; a
+    /// `local function f` yields `["f"]`.
+    pub names: Vec<String>,
+    /// Byte offset of the `local` keyword in the original source.
+    pub local_keyword_offset: usize,
+}
+
+/// Walk a Luau chunk and return every **top-level** `local`
+/// declaration (`local x = …`, `local a, b = …`, `local function
+/// f`). Nested locals (inside functions / blocks) are intentionally
+/// skipped — only chunk-level bindings become document scope.
+///
+/// Parse failures yield an empty list: a malformed script surfaces
+/// its error through the normal exec path, not here.
+pub fn top_level_locals(source: &str) -> Vec<TopLevelLocal> {
+    let lua_version = full_moon::LuaVersion::luau();
+    let Ok(ast) = full_moon::parse_fallible(source, lua_version).into_result() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for stmt in ast.nodes().stmts() {
+        match stmt {
+            Stmt::LocalAssignment(local) => {
+                let names = local
+                    .names()
+                    .iter()
+                    .map(|n| n.token().to_string())
+                    .collect();
+                out.push(TopLevelLocal {
+                    names,
+                    local_keyword_offset: token_offset(source, local.local_token()),
+                });
+            }
+            Stmt::LocalFunction(local_fn) => {
+                out.push(TopLevelLocal {
+                    names: vec![local_fn.name().token().to_string()],
+                    local_keyword_offset: token_offset(source, local_fn.local_token()),
+                });
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn token_offset(source: &str, token: &TokenReference) -> usize {
+    let start = token.start_position();
+    offset_from_position(source, start.line(), start.character())
+}
+
 pub fn parse_errors(source: &str) -> Vec<String> {
     let lua_version = full_moon::LuaVersion::luau();
     let result = full_moon::parse_fallible(source, lua_version);
@@ -479,6 +539,34 @@ mod tests {
         let root = parse_luau("local x = 42");
         assert_eq!(root.children.len(), 1);
         assert_eq!(root.children[0].kind, "local_assignment");
+    }
+
+    #[test]
+    fn top_level_locals_collects_names_and_offsets() {
+        let src = "local x = 1\nlocal a, b = 2, 3\nlocal function f() return 9 end\n";
+        let locals = top_level_locals(src);
+        assert_eq!(locals.len(), 3);
+        assert_eq!(locals[0].names, vec!["x"]);
+        assert_eq!(locals[0].local_keyword_offset, 0);
+        assert_eq!(locals[1].names, vec!["a", "b"]);
+        assert_eq!(&src[locals[1].local_keyword_offset..][..5], "local");
+        assert_eq!(locals[2].names, vec!["f"]);
+        assert_eq!(&src[locals[2].local_keyword_offset..][..5], "local");
+    }
+
+    #[test]
+    fn top_level_locals_skips_nested() {
+        // The `inner` local lives inside `f`'s body — not document
+        // scope. Only `f` is top-level.
+        let src = "local function f()\n  local inner = 1\n  return inner\nend";
+        let locals = top_level_locals(src);
+        assert_eq!(locals.len(), 1);
+        assert_eq!(locals[0].names, vec!["f"]);
+    }
+
+    #[test]
+    fn top_level_locals_empty_on_parse_error() {
+        assert!(top_level_locals("local x = = =").is_empty());
     }
 
     #[test]

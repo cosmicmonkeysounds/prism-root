@@ -65,6 +65,8 @@
         caret-byte="{caret-byte}"
         selection="{selection}"
         underline="{underline}"
+        bracket-match="{bracket-match}"
+        highlight-current-line="{highlight-current-line}"
         syntax-language="{language}"
         scroll-x="{scroll-x}"
         scroll-y="{scroll-y}"

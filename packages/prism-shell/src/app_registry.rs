@@ -736,19 +736,19 @@ fn event_to_json(event: &prism_ui_runtime::event::Event) -> serde_json::Value {
     use prism_ui_runtime::event::Event;
     use serde_json::json;
     match event {
-        Event::PointerDown { x, y, button } => json!({
+        Event::PointerDown { x, y, button, .. } => json!({
             "kind": "PointerDown",
             "x": x,
             "y": y,
             "button": format!("{button:?}"),
         }),
-        Event::PointerUp { x, y, button } => json!({
+        Event::PointerUp { x, y, button, .. } => json!({
             "kind": "PointerUp",
             "x": x,
             "y": y,
             "button": format!("{button:?}"),
         }),
-        Event::PointerMove { x, y } => json!({
+        Event::PointerMove { x, y, .. } => json!({
             "kind": "PointerMove",
             "x": x,
             "y": y,

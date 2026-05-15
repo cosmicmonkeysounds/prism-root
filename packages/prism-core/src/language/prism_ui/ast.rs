@@ -136,6 +136,16 @@ pub enum AttributeNamespace {
     /// produces a slide-down expand. Companion to the `transition:`
     /// namespace which owns the mid-life value-change case.
     Animate,
+    /// **Wave G (`prui-luau-fusion.md` §7.11)** — `probe:<name>=
+    /// "event-key"` taps a render-time value / interaction into a
+    /// document-scoped event stream. Lowers to `data-probe-<name>`;
+    /// `prism.probes:on(name, fn)` subscribes Luau-side.
+    Probe,
+    /// **Wave G (§7.12)** — `at:<time>="{ …keyframe… }"` declares a
+    /// keyframe animation state at `<time>` (`0`, `50%`, `200ms`).
+    /// Lowers to `data-at-<time>`; companion to `transition:` /
+    /// `animate:` for multi-stop timelines.
+    At,
     /// `class` / `id` — CSS-style addressing for inspector + HTML.
     Identifier,
 }
@@ -226,6 +236,8 @@ impl AttributeNamespace {
                 "route" => AttributeNamespace::Route,
                 "transition" => AttributeNamespace::Transition,
                 "animate" => AttributeNamespace::Animate,
+                "probe" => AttributeNamespace::Probe,
+                "at" => AttributeNamespace::At,
                 "use" => AttributeNamespace::Use,
                 "class" => AttributeNamespace::Class,
                 _ => return (AttributeNamespace::Bare, raw.to_string()),

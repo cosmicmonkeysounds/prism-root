@@ -259,17 +259,22 @@ button — but the click does nothing.
   `tokens_binding_resolves_color_in_style_namespace` in
   `interpret.rs`.
 
-### A4. Facets (`fct:*`) and signal declarations (`sig:*`)
-- **Status:** classified, not lowered. `<facet name="items"
-  from="resource:posts">…</facet>` parses; the runtime never
-  reaches for `FacetDef` or the resource layer.
-- **Lands in:** new `prism-ui-runtime` module hooking
-  `prism_builder::FacetDef`. The resolver needs to expand a
-  facet element into a repeated subtree at lower-time.
-- **Why deferred:** no shipped block consumes facet output yet
-  — landing this without a consumer is paying for unused
-  infrastructure. Re-evaluate once the first authored Studio
-  page wants a list bound to a resource.
+### A4. Facets (`fct:*`) and signal declarations (`sig:*`) — LANDED
+- **Status (element form):** the `<facet name="row" from="<source>">…</facet>`
+  element is now a first-class arm in `lower_element_body`
+  (`packages/prism-ui-runtime/src/interpret.rs`). It resolves
+  `from` through the same `resolve_for_iteration` helper `for=`
+  uses, binds each item under `name` (default `"item"`), and
+  lowers the children once per item. Range sources (`0..5`),
+  array bindings (`state.posts`), and object iteration all work
+  uniformly. Four regression tests under
+  `facet_element_*`. Missing-source / empty-source render to
+  nothing rather than panic, matching `for=`.
+- **Status (`fct:*` / `sig:*` namespaces):** carry-through landed
+  separately — see the regression tests in `interpret.rs` under
+  `fct_and_sig_namespaces_*`. The container + text-input arms
+  emit `data-fct-<key>` / `data-sig-<key>` semantic attrs that
+  downstream hosts pick up.
 
 ### A5. Comment scanner UTF-8 bug — LANDED
 - **Status:** Fixed. The comment scanner now walks char boundaries

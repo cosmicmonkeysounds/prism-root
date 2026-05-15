@@ -283,51 +283,43 @@ impl Shell {
         let app_registrar = crate::app_registry::ShellAppRegistrar::with_builtin_panels();
         let _panel_count =
             crate::app_registry::install_panels_from_manifests(&app_registrar, &loaded_apps);
-        // Persistent-Luau: when any app declares an `[entry] script`,
-        // build a `LuauRuntime`, install the registrar as
-        // `prism.app`, and run each app's script body against the
-        // shared Lua state. Scripts can call
+        // Persistent-Luau runtime — always built under `feature =
+        // "native"` so `ctx.luau.exec(...)` (the `LuauHost::exec`
+        // seam) and any app's `[entry] script` body share the same
+        // Lua state. Closes D2 of
+        // `docs/dev/ui-migration-followups.md`: the `NoopLuauHost`
+        // stub is only used when the build truly doesn't have mlua
+        // available (e.g. wasm32). Scripts (when present) can call
         // `prism.app:register_panel/component/service` to extend the
-        // shell at boot. Any registrations land in the registrar's
+        // shell at boot; registrations land in the registrar's
         // queues + `LuauCallbackStore` for downstream draining.
         #[cfg(feature = "native")]
         let luau_runtime: Option<Rc<prism_core::luau_runtime::LuauRuntime>> = {
-            let any_script = loaded_apps.iter().any(|a| a.script_source.is_some());
-            if any_script {
-                let registrar_arc: std::sync::Arc<dyn prism_core::AppRegistrar> =
-                    std::sync::Arc::new(app_registrar.clone());
-                // Pass live host context — design tokens + shell mode +
-                // permission — so scripts read `prism.tokens.*` and
-                // `prism.shell_mode` against the values the chrome
-                // renders with. Shell-level overrides for these
-                // (per-host theming, mode swaps) flow through here
-                // once they exist; today we install the defaults.
-                match prism_core::luau_runtime::LuauRuntime::new_with_tokens(
-                    registrar_arc,
-                    prism_core::design_tokens::DEFAULT_TOKENS,
-                    prism_core::shell_mode::ShellMode::Build,
-                    prism_core::shell_mode::Permission::Dev,
-                ) {
-                    Ok(rt) => {
-                        for app in &loaded_apps {
-                            if let Some(src) = &app.script_source {
-                                if let Err(e) = rt.load_script(src, &app.manifest.id) {
-                                    eprintln!(
-                                        "prism-shell: app `{}` boot script failed: {e}",
-                                        app.manifest.id
-                                    );
-                                }
+            let registrar_arc: std::sync::Arc<dyn prism_core::AppRegistrar> =
+                std::sync::Arc::new(app_registrar.clone());
+            match prism_core::luau_runtime::LuauRuntime::new_with_tokens(
+                registrar_arc,
+                prism_core::design_tokens::DEFAULT_TOKENS,
+                prism_core::shell_mode::ShellMode::Build,
+                prism_core::shell_mode::Permission::Dev,
+            ) {
+                Ok(rt) => {
+                    for app in &loaded_apps {
+                        if let Some(src) = &app.script_source {
+                            if let Err(e) = rt.load_script(src, &app.manifest.id) {
+                                eprintln!(
+                                    "prism-shell: app `{}` boot script failed: {e}",
+                                    app.manifest.id
+                                );
                             }
                         }
-                        Some(Rc::new(rt))
                     }
-                    Err(e) => {
-                        eprintln!("prism-shell: failed to build LuauRuntime: {e}");
-                        None
-                    }
+                    Some(Rc::new(rt))
                 }
-            } else {
-                None
+                Err(e) => {
+                    eprintln!("prism-shell: failed to build LuauRuntime: {e}");
+                    None
+                }
             }
         };
         // Drain any scripted component registrations into the live
@@ -425,7 +417,25 @@ impl Shell {
             },
             undo: UndoStack::default(),
             vfs: Box::new(OsVfs),
-            luau: Box::new(NoopLuauHost::default()),
+            luau: {
+                // D2: prefer the real `mlua`-backed host when the
+                // persistent runtime built successfully. Falls back
+                // to `NoopLuauHost` so wasm / runtime-init-failure
+                // builds still boot.
+                #[cfg(feature = "native")]
+                {
+                    if let Some(rt) = luau_runtime.as_ref() {
+                        Box::new(crate::services::MluaLuauHost::new(Rc::clone(rt)))
+                            as Box<dyn LuauHost>
+                    } else {
+                        Box::new(NoopLuauHost::default()) as Box<dyn LuauHost>
+                    }
+                }
+                #[cfg(not(feature = "native"))]
+                {
+                    Box::new(NoopLuauHost::default()) as Box<dyn LuauHost>
+                }
+            },
             clipboard: Clipboard::default(),
             render_scope: RenderScope::new(),
             animator: RefCell::new(prism_ui_runtime::animator::Animator::new()),
@@ -610,10 +620,127 @@ impl Shell {
             .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
     }
 
+    /// A2 — collect every `bind:<key>="<source>"` authored on the
+    /// currently-rendered skeleton tree. Returns a
+    /// [`SkeletonBindings`](crate::skeleton_bindings::SkeletonBindings)
+    /// list keyed by container/input id. Downstream code
+    /// (event router, future Effect installation against `AppState`
+    /// slots) consumes the list without re-walking the tree.
+    ///
+    /// The render-scope's frame-level `ReactiveContext` already
+    /// auto-subscribes any `Signal::read` invoked inside the render
+    /// walk (Phase 3a of `docs/dev/dioxus-inspiration.md`), so the
+    /// declarative `bind:*` carry-through this function surfaces is
+    /// the *metadata* layer — the wiring layer beneath it is
+    /// already reactive.
+    pub fn collect_skeleton_bindings(&self) -> crate::skeleton_bindings::SkeletonBindings {
+        let tree = self.render();
+        crate::skeleton_bindings::SkeletonBindings::collect(&tree)
+    }
+
+    /// Install (or replace) the default `app.prism-ui` skeleton from
+    /// fresh source. Used by the C3 hot-reload watcher in
+    /// `docs/dev/ui-migration-followups.md`: `prism dev shell` (or
+    /// any host) detects a change to `ui/app.prism-ui` via
+    /// `prism_ui_build::template_watch`, calls this with the new
+    /// source, and the next frame renders against the swapped
+    /// skeleton. A parse error returns `Err(msg)` so the host can
+    /// surface it as a toast without crashing the live shell.
+    pub fn install_default_skeleton(&self, source: &str) -> Result<(), String> {
+        let fresh = Skeleton::from_source(source)?;
+        self.inner.borrow_mut().default_app_skeleton = fresh;
+        self.inner
+            .borrow()
+            .render_scope
+            .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+        Ok(())
+    }
+
+    /// Same as [`Self::install_default_skeleton`] but targets a
+    /// per-app skeleton (`apps/<id>/shell.prism-ui`). When the
+    /// active app's skeleton is the one being swapped, the next
+    /// frame re-renders with the new tree; otherwise the swap is
+    /// silent until the user switches to that app.
+    pub fn install_app_skeleton(&self, app_id: &str, source: &str) -> Result<(), String> {
+        let fresh = Skeleton::from_source(source)?;
+        self.inner
+            .borrow_mut()
+            .app_skeletons
+            .insert(app_id.to_string(), fresh);
+        self.inner
+            .borrow()
+            .render_scope
+            .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+        Ok(())
+    }
+
     /// Borrow the current stylesheet for read-only inspection. `None`
     /// when nothing has been installed yet.
     pub fn stylesheet(&self) -> Option<Stylesheet> {
         self.stylesheet.borrow().clone()
+    }
+
+    /// Dispatch one input event against this shell — same path the
+    /// femtovg backend takes on every window event. Returns
+    /// `dispatch_event`'s redraw signal. Used by the e2e suite and
+    /// any host that wants to drive the shell programmatically.
+    pub fn dispatch_event(&self, event: &prism_ui_runtime::event::Event) -> bool {
+        let hit = pointer_xy(event).and_then(|(x, y)| {
+            let tree = self.render();
+            use prism_ui_runtime::layout::{
+                ContainerProps, Direction, Node as UiNode, Sizing, Surface,
+            };
+            let viewport = self.inner.borrow().viewport;
+            let root = UiNode::Container {
+                id: String::new(),
+                props: ContainerProps {
+                    direction: Direction::Column,
+                    width: Sizing::Grow,
+                    height: Sizing::Grow,
+                    ..Default::default()
+                },
+                children: tree,
+            };
+            let mut surface = Surface::new(root, viewport);
+            surface.hit_test_at(x, y).cloned()
+        });
+        crate::events::dispatch_event(&self.inner, event, hit)
+    }
+
+    /// Read-only borrow of `ShellInner` for inspection by tests and
+    /// host glue. The closure must not call back into the shell's
+    /// mutating API (e.g. `dispatch_event`) — that would trigger a
+    /// double-borrow panic.
+    pub fn with_inner<R>(&self, f: impl FnOnce(&ShellInner) -> R) -> R {
+        f(&self.inner.borrow())
+    }
+
+    /// Find the topmost hit-cache entry whose `data-role` matches
+    /// `role`. Helper for e2e tests that need to synthesise pointer
+    /// events against a known surface (e.g. the code-editor body).
+    pub fn find_hit_by_role(&self, role: &str) -> Option<prism_ui_runtime::layout::HitRect> {
+        let tree = self.render();
+        use prism_ui_runtime::layout::{
+            ContainerProps, Direction, Node as UiNode, Sizing, Surface,
+        };
+        let viewport = self.inner.borrow().viewport;
+        let root = UiNode::Container {
+            id: String::new(),
+            props: ContainerProps {
+                direction: Direction::Column,
+                width: Sizing::Grow,
+                height: Sizing::Grow,
+                ..Default::default()
+            },
+            children: tree,
+        };
+        let mut surface = Surface::new(root, viewport);
+        for h in surface.hit_rects().iter().rev() {
+            if h.attrs.iter().any(|(k, v)| k == "data-role" && v == role) {
+                return Some(h.clone());
+            }
+        }
+        None
     }
 
     /// Build the initial runtime tree. Pure function of `(skeleton,
@@ -691,6 +818,14 @@ impl Shell {
 
     #[cfg(feature = "native")]
     pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        self.run_inner(None)
+    }
+
+    #[cfg(feature = "native")]
+    fn run_inner(
+        self,
+        tick: Option<prism_ui_runtime::backends::femtovg::TickHook>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let initial = wrap_root(self.render());
         let viewport = self.inner.borrow().viewport;
         let surface = Surface::new(initial, viewport);
@@ -769,8 +904,84 @@ impl Shell {
             }
         });
 
-        prism_ui_runtime::backends::femtovg::run(surface, handler, crate::assets::loader())
-            .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))
+        match tick {
+            Some(tick) => prism_ui_runtime::backends::femtovg::run_with_tick(
+                surface,
+                handler,
+                crate::assets::loader(),
+                tick,
+            ),
+            None => {
+                prism_ui_runtime::backends::femtovg::run(surface, handler, crate::assets::loader())
+            }
+        }
+        .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))
+    }
+
+    /// Same as [`Self::run`] but spawns a [`crate::hot_reload`]
+    /// watcher first and drains its channel each tick. Closes C3 of
+    /// `docs/dev/ui-migration-followups.md`: editing a watched
+    /// `.prism-ui` file applies in-place without dropping the event
+    /// loop or rebuilding cargo. `--watch-ui` on the shell binary
+    /// is the canonical user-facing surface.
+    ///
+    /// `specs` lists each watched path along with the
+    /// [`crate::hot_reload::ReloadTarget`] it feeds. The watcher's
+    /// life is scoped to the run; when this function returns, the
+    /// watcher thread tears down.
+    #[cfg(feature = "native")]
+    pub fn run_with_hot_reload(
+        self,
+        specs: Vec<crate::hot_reload::WatchSpec>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let watcher = crate::hot_reload::spawn_hot_reload_watcher(specs)
+            .map_err(Box::<dyn std::error::Error>::from)?;
+
+        // Tick hook: drain the watcher and apply pending reloads
+        // against `ShellInner`. Render-scope dirty mark routes the
+        // swap through the next frame the handler renders; the
+        // femtovg backend's `about_to_wait` reads `surface.is_dirty()
+        // || images.has_animations()`, so we also re-render once here
+        // (via a synthetic empty handler call) when a reload landed
+        // to ensure the new tree paints without an extra input event.
+        let tick_inner = Rc::clone(&self.inner);
+        let tick: prism_ui_runtime::backends::femtovg::TickHook =
+            Box::new(move |_surface: &mut Surface| {
+                let pending = watcher.drain();
+                if pending.is_empty() {
+                    return;
+                }
+                for evt in pending {
+                    use crate::hot_reload::ReloadTarget;
+                    let parsed = Skeleton::from_source(&evt.source);
+                    match (parsed, &evt.target) {
+                        (Ok(s), ReloadTarget::DefaultSkeleton) => {
+                            tick_inner.borrow_mut().default_app_skeleton = s;
+                        }
+                        (Ok(s), ReloadTarget::AppSkeleton { app_id }) => {
+                            tick_inner
+                                .borrow_mut()
+                                .app_skeletons
+                                .insert(app_id.clone(), s);
+                        }
+                        (Err(e), _) => {
+                            eprintln!("prism-shell hot-reload: parse error: {e}");
+                            continue;
+                        }
+                    }
+                }
+                // Mark the render scope dirty so the femtovg backend's
+                // post-tick `surface.is_dirty() || …` check triggers
+                // a redraw. The handler then re-runs the full
+                // `render_tree_with` walk against the swapped
+                // skeleton and calls `surface.set_tree`.
+                tick_inner
+                    .borrow()
+                    .render_scope
+                    .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+            });
+
+        self.run_inner(Some(tick))
     }
 
     /// On the web target the femtovg backend isn't compiled in; the
@@ -901,7 +1112,7 @@ fn compute_hit(event: &Event, surface: &mut Surface) -> Option<HitRect> {
 
 fn pointer_xy(event: &Event) -> Option<(f32, f32)> {
     match event {
-        Event::PointerMove { x, y }
+        Event::PointerMove { x, y, .. }
         | Event::PointerDown { x, y, .. }
         | Event::PointerUp { x, y, .. } => Some((*x, *y)),
         _ => None,
@@ -911,6 +1122,7 @@ fn pointer_xy(event: &Event) -> Option<(f32, f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prism_ui_runtime::event::Modifiers;
 
     #[test]
     fn shell_new_succeeds() {
@@ -1225,7 +1437,11 @@ mod tests {
         // variant yields a position; non-pointer events explicitly
         // pass through dispatch unchanged.
         assert_eq!(
-            pointer_xy(&Event::PointerMove { x: 1.0, y: 2.0 }),
+            pointer_xy(&Event::PointerMove {
+                x: 1.0,
+                y: 2.0,
+                modifiers: Modifiers::default()
+            }),
             Some((1.0, 2.0))
         );
         assert_eq!(
@@ -1233,6 +1449,7 @@ mod tests {
                 x: 3.0,
                 y: 4.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             }),
             Some((3.0, 4.0))
         );
@@ -1241,6 +1458,7 @@ mod tests {
                 x: 5.0,
                 y: 6.0,
                 button: PointerButton::Primary,
+                modifiers: Modifiers::default(),
             }),
             Some((5.0, 6.0))
         );
@@ -1300,7 +1518,11 @@ mod tests {
 
         // Simulate the shell's hover-pump path: compute a hit at a
         // point inside the button's bounds and call `set_hovered`.
-        let event = Event::PointerMove { x: 10.0, y: 10.0 };
+        let event = Event::PointerMove {
+            x: 10.0,
+            y: 10.0,
+            modifiers: Modifiers::default(),
+        };
         let hit = compute_hit(&event, &mut surface);
         assert_eq!(hit.as_ref().map(|h| h.id.as_str()), Some("hot-button"));
         surface.set_hovered(hit.as_ref().map(|h| h.id.clone()));
@@ -1313,7 +1535,11 @@ mod tests {
         // Leaving the node back to nowhere should re-dirty the surface
         // so the tint clears.
         let _ = surface.commands();
-        let event = Event::PointerMove { x: 199.0, y: 199.0 };
+        let event = Event::PointerMove {
+            x: 199.0,
+            y: 199.0,
+            modifiers: Modifiers::default(),
+        };
         let hit = compute_hit(&event, &mut surface);
         assert!(hit.is_none());
         surface.set_hovered(None);
@@ -1350,6 +1576,50 @@ mod tests {
         // verify the dirty path fired.
         let dirty = shell.inner.borrow().render_scope.needs_redraw();
         assert!(dirty, "install_stylesheet must mark the render frame dirty");
+    }
+
+    /// C3 — installing a fresh `app.prism-ui` source swaps the
+    /// default skeleton in place. Subsequent `render` calls walk the
+    /// new tree; a parse error in the new source returns `Err`
+    /// without clobbering the cached skeleton.
+    #[test]
+    fn install_default_skeleton_swaps_the_active_skeleton() {
+        let shell = Shell::new().expect("boot");
+        // Fresh source — minimal valid skeleton.
+        let src = r#"<shell.app-window><container/></shell.app-window>"#;
+        shell.install_default_skeleton(src).expect("install");
+        // The default skeleton field was updated; the render scope is
+        // marked dirty so the next event loop tick redraws.
+        let dirty = shell.inner.borrow().render_scope.needs_redraw();
+        assert!(dirty, "skeleton install must mark the render scope dirty");
+    }
+
+    /// A parse error in the new source surfaces as `Err` without
+    /// mutating the in-place skeleton.
+    #[test]
+    fn install_default_skeleton_parse_error_preserves_previous() {
+        let shell = Shell::new().expect("boot");
+        let result = shell.install_default_skeleton("<not a valid skeleton");
+        assert!(result.is_err(), "malformed source must error");
+        // The shell is still renderable — the previous skeleton was
+        // not clobbered.
+        let nodes = shell.render();
+        assert!(
+            !nodes.is_empty(),
+            "previous skeleton must still drive renders"
+        );
+    }
+
+    /// Per-app skeleton swap. `install_app_skeleton("flux", …)`
+    /// inserts a fresh `Skeleton` keyed by app id so
+    /// `current_skeleton()` picks it up when `flux` is the active app.
+    #[test]
+    fn install_app_skeleton_inserts_keyed_entry() {
+        let shell = Shell::new().expect("boot");
+        let src = r#"<container><text>Custom Flux body</text></container>"#;
+        shell.install_app_skeleton("flux", src).expect("install");
+        let has = shell.inner.borrow().app_skeletons.contains_key("flux");
+        assert!(has, "swap must register under the app id");
     }
 
     /// Detaching the stylesheet (`install_stylesheet(None)`) returns

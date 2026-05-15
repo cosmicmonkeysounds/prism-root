@@ -253,6 +253,34 @@ pub fn parse(source: &str) -> (StyleSheet, Vec<ParseError>) {
     (sheet, errors)
 }
 
+impl StyleSheet {
+    /// **Wave H (`prui-luau-fusion.md` §5.3)** — layer `other` over
+    /// `self`, returning the merged sheet. Class definitions and
+    /// per-bucket token overrides from `other` win on key collision
+    /// (the §5.3 rule: a later sheet — sidecar then inline, or
+    /// successive `<style>` blocks — overrides an earlier one).
+    /// Declaration order is preserved with `self`'s entries first so
+    /// descendant-selector visitation stays deterministic.
+    pub fn merged_with(mut self, other: StyleSheet) -> StyleSheet {
+        if other.version.is_some() {
+            self.version = other.version;
+        }
+        let bucket = |into: &mut IndexMap<String, String>, from: IndexMap<String, String>| {
+            for (k, v) in from {
+                into.insert(k, v);
+            }
+        };
+        bucket(&mut self.tokens.colors, other.tokens.colors);
+        bucket(&mut self.tokens.spacing, other.tokens.spacing);
+        bucket(&mut self.tokens.radius, other.tokens.radius);
+        bucket(&mut self.tokens.typography, other.tokens.typography);
+        for (name, def) in other.classes {
+            self.classes.insert(name, def);
+        }
+        self
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Resolved-class helpers
 // ---------------------------------------------------------------------------
@@ -361,12 +389,37 @@ fn coerce_token_table(input: &IndexMap<String, toml::Value>) -> IndexMap<String,
     out
 }
 
+/// **Wave F (`prui-luau-fusion.md` §7.9)** — sentinel prefix marking
+/// a class/token value as a `{ lua = "…" }` computed expression. The
+/// PRSS IR stays a flat `IndexMap<String, String>`; the runtime
+/// detects this prefix at apply time and evaluates the trailing
+/// expression against the document's Luau frame (falling back to the
+/// PRUI expression evaluator). The `\u{1}` bytes can't occur in
+/// authored CSS-shaped values, so the encoding is collision-free.
+pub const LUA_VALUE_SENTINEL: &str = "\u{1}lua\u{1}";
+
+/// Recognise a `{ lua = "expr" }` single-key TOML table. Returns the
+/// inner expression string when matched.
+fn lua_table_expr(table: &toml::value::Table) -> Option<&str> {
+    if table.len() != 1 {
+        return None;
+    }
+    match table.get("lua")? {
+        toml::Value::String(s) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
 fn toml_value_to_string(v: &toml::Value) -> Option<String> {
     match v {
         toml::Value::String(s) => Some(s.clone()),
         toml::Value::Integer(n) => Some(n.to_string()),
         toml::Value::Float(f) => Some(format!("{f}")),
         toml::Value::Boolean(b) => Some(b.to_string()),
+        // **Wave F** — `{ lua = "…" }` → sentinel-encoded expr.
+        toml::Value::Table(t) => {
+            lua_table_expr(t).map(|expr| format!("{LUA_VALUE_SENTINEL}{expr}"))
+        }
         _ => None,
     }
 }
@@ -393,6 +446,14 @@ fn split_class_body(name: &str, body: IndexMap<String, toml::Value>) -> SplitCla
 
     for (key, value) in body {
         match value {
+            // **Wave F** — `key = { lua = "…" }` is a *computed
+            // property*, not a state sub-table. Checked before the
+            // state-name guard so `background = { lua = "…" }`
+            // doesn't trip "unknown state 'lua'".
+            toml::Value::Table(ref table) if lua_table_expr(table).is_some() => {
+                let expr = lua_table_expr(table).unwrap();
+                properties.insert(key, format!("{LUA_VALUE_SENTINEL}{expr}"));
+            }
             toml::Value::Table(table) => {
                 if !STATE_SUFFIXES.contains(&key.as_str()) {
                     errors.push(ParseError::class(

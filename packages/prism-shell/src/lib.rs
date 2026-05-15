@@ -32,8 +32,12 @@ pub mod app_registry;
 #[cfg(any(feature = "native", feature = "web"))]
 pub mod assets;
 pub mod components;
+pub mod editor_help;
 pub mod events;
 pub mod headless;
+/// C3 closure — see `docs/dev/ui-migration-followups.md`.
+#[cfg(feature = "native")]
+pub mod hot_reload;
 /// Wave 7.2 — software rasteriser for the `--screenshot` PNG path.
 /// Walks a `RenderCommand` stream into an RGBA buffer the `image`
 /// crate's PNG encoder consumes.
@@ -43,13 +47,15 @@ pub mod render;
 pub mod render_scope;
 pub mod seed;
 pub mod services;
+/// A2 closure — see `docs/dev/ui-migration-followups.md`.
+pub mod skeleton_bindings;
 pub mod state;
 
 mod shell;
 
 pub use render::{Skeleton, Stylesheet, StylesheetReload, StylesheetWatcher};
 pub use render_scope::RenderScope;
-pub use shell::{Shell, ShellError};
+pub use shell::{Shell, ShellError, ShellInner};
 pub use state::{
     AppState, BuilderSlot, CanvasSlot, CanvasViewport, ChromeSlot, CodeBuffer, CommandPalette,
     CommandResult, CursorKey, FieldFocus, HandleSide, HelpTooltip, InspectorNode, MenuLabel,

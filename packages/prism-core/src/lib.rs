@@ -93,6 +93,7 @@ pub use app_registry::{
 };
 pub use boot_config::{BootConfig, DEFAULT_BOOT_CONFIG};
 pub use design_tokens::DesignTokens;
+pub use help::{HelpEntry, HelpProvider, HelpRegistry};
 pub use kernel::atom::{select, select_memo, select_ref, Atom, AtomSubscription};
 #[cfg(feature = "crdt")]
 pub use kernel::crdt_sync::{CrdtSync, SyncEvent, SyncSubscription};

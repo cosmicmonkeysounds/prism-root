@@ -29,6 +29,8 @@ pub mod interpret;
 pub mod layout;
 #[cfg(feature = "luau")]
 pub mod luau;
+#[cfg(feature = "luau")]
+pub mod luau_scope;
 pub mod luau_types;
 pub mod syntax;
 

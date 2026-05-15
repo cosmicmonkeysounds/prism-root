@@ -798,6 +798,8 @@ pub fn with_semantic(node: UiNode, semantic: Semantic) -> UiNode {
             scroll_x,
             scroll_y,
             underline,
+            bracket_match,
+            highlight_current_line,
             ..
         } => UiNode::TextInput {
             id,
@@ -816,6 +818,8 @@ pub fn with_semantic(node: UiNode, semantic: Semantic) -> UiNode {
             scroll_x,
             scroll_y,
             underline,
+            bracket_match,
+            highlight_current_line,
         },
         UiNode::Spacer { .. } => node,
     }
@@ -1070,6 +1074,8 @@ pub fn text_input_node_with_focus(
         scroll_x: 0.0,
         scroll_y: 0.0,
         underline: None,
+        bracket_match: Vec::new(),
+        highlight_current_line: false,
     }
 }
 
@@ -1124,6 +1130,8 @@ pub fn text_input_editor_node(
         scroll_x,
         scroll_y,
         underline,
+        bracket_match: Vec::new(),
+        highlight_current_line: false,
     }
 }
 

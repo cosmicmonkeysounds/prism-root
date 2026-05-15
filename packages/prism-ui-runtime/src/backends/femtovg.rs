@@ -54,6 +54,32 @@ pub fn run(
     Ok(())
 }
 
+/// Type alias for the per-event "tick" callback. The host gets a
+/// chance to mutate the `Surface` (typically by polling a
+/// hot-reload channel and applying skeleton swaps) before the
+/// event-loop decides whether the surface is dirty enough to
+/// re-render. Called *after* every translated input event and once
+/// at startup so a pending reload landed before the first frame
+/// still applies.
+pub type TickHook = Box<dyn FnMut(&mut Surface)>;
+
+/// Same as [`run`] but with a per-event tick hook that runs before
+/// the dirty check. Used by `prism-shell::Shell::run_with_hot_reload`
+/// to poll a file-watcher channel each tick — closes C3 of
+/// `docs/dev/ui-migration-followups.md` from the backend side.
+pub fn run_with_tick(
+    surface: Surface,
+    handler: EventHandler,
+    loader: AssetLoader,
+    tick: TickHook,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let event_loop = EventLoop::new()?;
+    let mut app = App::new(surface, handler, loader);
+    app.tick = Some(tick);
+    event_loop.run_app(&mut app)?;
+    Ok(())
+}
+
 /// Back-compat helper for hosts that don't yet plug in an
 /// [`AssetLoader`]. Equivalent to `run(surface, handler,
 /// noop_loader())` — every `Image` render command renders as
@@ -77,6 +103,11 @@ struct App {
     /// `draw_at` call shares the same origin and animated-image
     /// frame indices stay stable across redraws.
     epoch: Instant,
+    /// C3 — optional per-event tick hook. The host installs one to
+    /// poll a file-watcher channel and call `Surface::set_tree`
+    /// when fresh skeleton source arrives. `None` for the default
+    /// `run` path; `Some(...)` for `run_with_tick`.
+    tick: Option<TickHook>,
 }
 
 struct RenderState {
@@ -96,6 +127,7 @@ impl App {
             input: InputState::default(),
             state: None,
             epoch: Instant::now(),
+            tick: None,
         }
     }
 }
@@ -247,9 +279,31 @@ impl ApplicationHandler for App {
             (self.handler)(&prism_event, &mut self.surface);
         }
 
+        // C3 hot-reload tick: drain any pending skeleton swaps
+        // before deciding whether the surface needs a redraw. The
+        // host's hook may dirty the surface (via `set_tree`); the
+        // standard dirty check below picks that up uniformly.
+        if let Some(tick) = self.tick.as_mut() {
+            tick(&mut self.surface);
+        }
+
         // The retained-mode contract: only request a repaint when the
         // surface is actually dirty (handler mutation, viewport
         // resize, etc.). Clean frames stay clean.
+        if self.surface.is_dirty() || self.images.has_animations() {
+            state.window.request_redraw();
+        }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        // C3 — also drain on the idle-wait edge so a file change
+        // applied while no input events are flowing still wakes the
+        // next redraw. Surface mutation inside the hook trips the
+        // `is_dirty` branch below, which requests a redraw.
+        let Some(state) = &mut self.state else { return };
+        if let Some(tick) = self.tick.as_mut() {
+            tick(&mut self.surface);
+        }
         if self.surface.is_dirty() || self.images.has_animations() {
             state.window.request_redraw();
         }

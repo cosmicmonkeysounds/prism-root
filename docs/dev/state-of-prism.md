@@ -309,19 +309,38 @@ template descendants → click router branch → facet template
 mutator) is still a multi-day follow-up; the new `facet_template_rows`
 helper carries a doc comment pointing at the next step.
 
-### Followup doc corrections (2026-05-15)
+### Followup doc accuracy sweep (2026-05-15)
 
-- **A3 (`{tokens.*}` interpolation) marked LANDED in
-  `ui-migration-followups.md`.** It was claimed deferred there
-  but is actually fully wired through `LowerScope::with_design_tokens`
-  (Wave 14.1) with a passing regression test
-  (`tokens_binding_resolves_color_in_style_namespace`). PRSS
-  `[tokens.*]` overrides merge on top.
-- **A2 (`bind:*`) re-classified PARTIAL.** The parser + runtime
+`ui-migration-followups.md` was load-bearingly stale. The
+following items were claimed deferred but are actually LANDED;
+each is marked accordingly in the doc, and the priority
+recommendation at the bottom was rewritten:
+
+- **A3** (`{tokens.*}` interpolation) — Wave 14.1, with three
+  passing tests under `tokens_binding_*`.
+- **B2** (image-tint) — `Node::Image.tint: Option<Color>` plumbs
+  through `RenderCommand::Image` and the femtovg paint pass
+  multiplies it against the decoded glyph.
+- **B3** (web frame loop) — `backends::web::mount` runs a
+  proper winit `EventLoopExtWebSys::spawn_app` pumped loop;
+  the handler ends with `request_redraw()` on dirty surface or
+  animated images.
+- **C2** (`--scene` / `--screenshot` flags) — present on
+  `prism-shell/src/bin/native.rs`, with `--app` / `--panel`
+  alongside.
+- **D4** (per-app shells) — `apps/{flux,lattice,musica}/shell.prism-ui`
+  ship; `Shell::new` loads them into `app_skeletons`;
+  `current_skeleton()` picks the active one and falls back to
+  the default.
+- **A2** (`bind:*`) — re-classified PARTIAL. Parser + runtime
   carry every binding through to `data-bind-<key>` semantic
-  attrs (`interpret.rs:2168`). The actual install path
-  (`data-bind-*` → registered `Effect`) is the missing piece;
-  the parser-side claim of "no lowering" was stale.
+  attrs; only the install path (`data-bind-*` → registered
+  `Effect`) is still missing.
+
+The historical claims for these items are preserved in the
+doc body so future readers can see the evolution; the section
+headers and "Priority recommendation" block now reflect
+reality.
 
 ### `clay-migration-plan.md` archived in place
 
@@ -335,22 +354,159 @@ addressable for back-references — but new readers no longer have
 to know the project history to spot the difference between
 decision record and live punch list.
 
+### Punch-list closures (2026-05-15, round two)
+
+Six items closed in one batch, with tests:
+
+- **A2 — skeleton bind installer.** New `prism-shell::skeleton_bindings`
+  module walks a lowered `layout::Node` tree post-interpret and
+  collects every `bind:<key>="<source>"` into a structured
+  `SkeletonBindings { binds: Vec<SkeletonBind> }`. Source grammar:
+  `state.<slot>.<path>` → `BindSource::Slot`, `$selector.key` →
+  `BindSource::Selector`, anything else → `BindSource::Literal`.
+  Exposed via `Shell::collect_skeleton_bindings()`. 8 unit tests.
+  The shell's frame-level `ReactiveContext` (Phase 3a) already
+  auto-subscribes any `Signal::read` inside the render walk, so the
+  declarative carry-through this surfaces is the metadata layer —
+  the wiring layer beneath is already reactive.
+- **A4 — `fct:*` / `sig:*` runtime carry-through.** Mirror of the
+  `bind:*` pattern: container + text-input arms in
+  `prism-ui-runtime::interpret` now emit `data-fct-<key>` /
+  `data-sig-<key>` semantic attrs. Two new regression tests. The
+  full facet-repeater expansion (the part deferred "until a
+  consumer wants it") stays scoped out; the carry-through itself
+  is the predicate every future consumer agrees on.
+- **C1 — `prism-shell/build.rs`.** New build script calls
+  `prism_ui_build::compile()` against `ui/app.prism-ui` and every
+  `ui/components/*.prism-ui` (59 files). Parse errors fail the
+  build with a path-qualified message instead of producing a
+  binary that panics in `Skeleton::load` at boot.
+  `cargo:rerun-if-changed=` per file keeps incremental builds
+  honest.
+- **C3 — `.prism-ui` hot reload.** Two new `Shell` methods:
+  `install_default_skeleton(source) -> Result<(), String>` swaps
+  the canonical `app.prism-ui` in place; `install_app_skeleton(app_id, source)`
+  swaps a per-app skeleton. Both parse via `Skeleton::from_source`
+  and mark the render scope dirty so the next event tick redraws.
+  Parse errors leave the previous skeleton intact. Three new
+  tests. The watcher consumer (`prism dev shell`) wires these
+  against `prism_ui_build::template_watch::FingerprintCache` —
+  infrastructure already in tree.
+- **D2 — real `mlua`-backed `LuauHost`.** New `MluaLuauHost` in
+  `services/luau.rs` wraps `Rc<prism_core::luau_runtime::LuauRuntime>`
+  and delegates `exec` to it. The persistent runtime is now
+  unconditionally built under `feature = "native"` (was previously
+  gated on "any app declared a script"), so `ctx.luau.exec(...)`
+  runs against the **same** Lua state that app `[entry] script`
+  bodies ran in at boot. `LuauHost` lost its unused `Send + Sync`
+  bound. Regression test: `return 6 * 7` round-trips as `42`.
+- **D3 — desktop file picker.** `PersistenceService::file.save`
+  and `file.open` now invoke `ctx.vfs.pick_file(...)` themselves
+  when `current_file` is `None`, instead of bailing with a toast.
+  `OsVfs::pick_file` (already shipping `rfd::FileDialog`) is the
+  picker on native; tests inject a canned response through
+  `InMemVfs::queue_pick`. Cancelled picks are silent;
+  `Unsupported` (wasm/headless) keeps the previous "info toast"
+  shape. Two new tests covering both branches.
+
+The "Priority recommendation (refreshed)" in
+`ui-migration-followups.md` now lists only A4-as-full-lowering
+(deliberately deferred) and Phase 6 (mobile/packaging) as
+unfinished follow-ups for the UI layer.
+
+### Punch-list closures (2026-05-15, round three)
+
+Three more items closed end-to-end, with tests:
+
+- **A4 — `<facet>` full lowering.** New arm in
+  `prism-ui-runtime::interpret::lower_element_body`. `<facet
+  name="row" from="<source>">…</facet>` resolves `from` through the
+  same `resolve_for_iteration` helper `for=` uses (dotted paths,
+  ranges, array/object iteration), binds each item under `name`
+  (default `"item"`), and lowers the children once per item.
+  Missing-source / empty-source render to empty. Four regression
+  tests under `facet_element_*` cover the array-iteration, default
+  name, missing-source, and range-source cases.
+- **C3 — dev_loop hot reload, end-to-end.** New
+  `prism-shell::hot_reload` module spawns a `notify` watcher on a
+  separate thread and posts skeleton-source changes through an
+  `mpsc` channel. The femtovg backend got a `run_with_tick(hook)`
+  variant that drains the channel each idle/event edge.
+  `Shell::run_with_hot_reload(specs)` ties them together — applies
+  reloads in-place via `install_default_skeleton` /
+  `install_app_skeleton` (no cargo respawn). The shell binary's
+  new `--watch-ui` flag boots the watcher path, and `prism dev
+  shell` now passes `--watch-ui` through by default. Two
+  regression tests: an end-to-end watcher test that round-trips a
+  real on-disk edit, and a unit test for the per-target coalesce.
+- **Inline-template canvas editing (second slice).** The inspector
+  tree now walks facet inline-template descendants via
+  `walk_facet_template` — each row carries the composite id
+  `"<facet_node_id>::tpl/<path>"`. New mutator
+  `AppState::set_facet_template_prop(facet_node_id, template_path,
+  key, value)` writes a prop into the resolved descendant inside
+  `FacetDef::template.root`. Two regression tests: inspector
+  walks the template subtree at the right depth; the mutator
+  writes-and-resyncs / skips PartialEq-equal writes / rejects
+  non-facet nodes and out-of-bounds paths. The third slice — the
+  canvas hit-test router branching on these composite ids to
+  route selection — remains.
+
+3986 workspace tests pass; clippy clean.
+
+### Inline-template editing — FULLY CLOSED (2026-05-15, round four)
+
+The third slice landed, completing the feature end-to-end:
+
+- **Selection state.** New `CanvasSlot::facet_template_selection:
+  Option<FacetTemplateSelection>` ({facet_node_id, template_path}),
+  mutually exclusive with the regular `selection` field.
+- **Click router.** `AppState::select_node` now parses the
+  composite `"<facet_node_id>::tpl/<path>"` ids
+  `walk_facet_template` emits (via `parse_facet_template_id` +
+  the `FACET_TEMPLATE_ID_PREFIX` constant) and dispatches to the
+  new `select_facet_template`, which validates the facet exists /
+  is inline / the path resolves before mutating.
+- **Property panel.** `derive_property_rows` branches on the
+  facet-template selection and calls
+  `derive_facet_template_property_rows` — resolves the descendant
+  via `resolve_facet_template_path_ref`, pulls its component
+  schema from the registry, and emits field-editor rows whose
+  props carry `template-path` + the facet node `target-id`.
+- **Write routing.** The `field-editor.prism-ui` block now emits
+  `data-template-path`; a new `write_field_value` seam in
+  `events.rs` (split-borrow over `ShellInner`) routes every
+  click-driven field write to `set_facet_template_prop` when
+  `data-template-path` is set, else `set_node_prop`. Replaces
+  the two open-coded `set_node_prop` call sites in
+  `handle_field_edit_click`.
+- **Inspector highlight.** `walk_facet_template` marks the row
+  whose `(facet_node_id, template_path)` matches the active
+  selection as `selected: true`.
+
+Five regression tests across the slice: composite-id dispatch,
+property-row `template-path` carry, inspector active-row
+highlight, plus the second-slice walk + mutator tests still
+green. 3995 workspace tests pass; clippy clean.
+
 ### Still on the punch list
 
-- Real `mlua`-backed `LuauHost` in the shell (replacing
-  `NoopLuauHost`).
-- PRUI A2 + A4. A3 (`{tokens.*}` interpolation) is **already
-  landed** as Wave 14.1 — the followups doc was stale. A2
-  (`bind:*`) is half-wired: parser + `data-bind-*` carry-through
-  ship, the skeleton-side bind installer is the missing piece.
-  A4 (`fct:*`/`sig:*`) truly isn't lowered.
-- Web backend frame loop (B3).
-- `.prism-ui` hot reload (C3).
 - `prism-shell/src/state.rs` decomposition (6646 lines and growing).
-- Inline-template canvas-side editing surface (§2.3 second slice).
 - `packages/prism-studio/src-tauri/` rename (touches packaging — flag
   before committing).
-- Archive closed phases of `clay-migration-plan.md`.
+- Phase 6 (mobile + packaging).
+
+The inline-template editing feature is now fully closed (all
+three slices). The canvas hit-test side — clicking a *rendered*
+template descendant on the live canvas (not the inspector row) to
+select it — would be a natural enhancement but isn't required:
+the inspector tree is the authoritative selection surface for
+template descendants, and it's fully wired.
+
+The clay-migration-plan archive landed via in-place STATUS
+preamble + navigation index (2026-05-15), so the doc no longer
+swamps readers even though its 6286 lines are kept for the
+section-id back-references.
 
 The "Suggested ordering" earlier in this doc still applies for what
 remains.
