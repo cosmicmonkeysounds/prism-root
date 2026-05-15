@@ -794,9 +794,9 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
     let scope: &LowerScope = {
         let mut bodies = collect_inline_stylesheets(&document.nodes);
         if let Some(res) = scope.import_resolver() {
-            for (kind, path) in collect_imports(&document.nodes) {
-                if kind == "stylesheet" {
-                    if let Some(src) = res.resolve_import("stylesheet", &path) {
+            for imp in collect_imports(&document.nodes) {
+                if imp.kind == "stylesheet" {
+                    if let Some(src) = res.resolve_import("stylesheet", &imp.path) {
                         bodies.push(src);
                     }
                 }
@@ -822,17 +822,32 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
     let luau_owned;
     #[cfg(feature = "luau")]
     let scope: &LowerScope = {
-        let mut bodies = collect_script_bodies(&document.nodes);
-        // **Wave H** — `<import script="…">` / `<import dialect="…">`
-        // sources feed the same per-document Lua state (a dialect
-        // file is just a script that calls `prism.dialect{…}`). `as=`
-        // namespacing for scripts is a documented follow-up.
+        // Inline `<script>` blocks + the tier-1 sibling are flat
+        // (top-level locals merge into document scope).
+        let mut modules: Vec<crate::luau_scope::LuauModule> =
+            collect_script_bodies(&document.nodes)
+                .into_iter()
+                .map(crate::luau_scope::LuauModule::flat)
+                .collect();
+        // **Wave H.6 (§5.9)** — `<import script="…" [as="ns"]/>` and
+        // `<import dialect="…"/>`. A `script` import *with* `as=` is
+        // a tier-2 named module (isolated, bound under `ns`); without
+        // `as=` it flat-merges (back-compat). A `dialect` file is a
+        // script that calls `prism.dialect{…}` — always flat (its
+        // effect is the registration, not a namespace).
         if let Some(res) = scope.import_resolver() {
-            for (kind, path) in collect_imports(&document.nodes) {
-                if matches!(kind.as_str(), "script" | "dialect") {
-                    if let Some(src) = res.resolve_import(&kind, &path) {
-                        bodies.push(src);
+            for imp in collect_imports(&document.nodes) {
+                if !matches!(imp.kind.as_str(), "script" | "dialect") {
+                    continue;
+                }
+                let Some(src) = res.resolve_import(&imp.kind, &imp.path) else {
+                    continue;
+                };
+                match imp.alias {
+                    Some(ns) if imp.kind == "script" => {
+                        modules.push(crate::luau_scope::LuauModule::named(ns, src));
                     }
+                    _ => modules.push(crate::luau_scope::LuauModule::flat(src)),
                 }
             }
         }
@@ -846,12 +861,11 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
         // document never pays for a Lua state.
         if scope.luau_scope().is_some() {
             scope
-        } else if !bodies.is_empty() {
-            let srcs: Vec<&str> = bodies.iter().map(String::as_str).collect();
+        } else if !modules.is_empty() {
             let tokens = scope.binding("tokens");
             let scope_json = scope.bindings_json();
-            match crate::luau_scope::LuauScopeFrame::from_scripts_with_scope(
-                &srcs,
+            match crate::luau_scope::LuauScopeFrame::from_modules_with_scope(
+                &modules,
                 tokens,
                 Some(&scope_json),
             ) {
@@ -959,24 +973,47 @@ fn collect_inline_stylesheets(nodes: &[AstNode]) -> Vec<String> {
     out
 }
 
-/// **Wave H (§5.4)** — collect `<import KIND="path"/>` pairs. `KIND`
+/// **Wave H (§5.4 / §5.9)** — a parsed `<import KIND="path"
+/// [as="alias"]/>` row. `kind` is one of the four projections;
+/// `alias` carries the `as=` namespace (applied for `script`
+/// imports — §5.9 tier 2 — parsed-only for the others).
+struct ImportSpec {
+    kind: String,
+    path: String,
+    /// Only consumed by the `#[cfg(feature = "luau")]` script-import
+    /// path (§5.9 tier 2); the HTML/SSR build never namespaces Luau.
+    #[cfg_attr(not(feature = "luau"), allow(dead_code))]
+    alias: Option<String>,
+}
+
+/// **Wave H (§5.4)** — collect every `<import>` row. The `kind`/path
 /// is the first attribute whose local name is one of the four
-/// projections. `as=` namespacing is parsed but not yet applied
-/// (documented follow-up).
-fn collect_imports(nodes: &[AstNode]) -> Vec<(String, String)> {
+/// projections; an `as=` attribute on the same element supplies the
+/// alias.
+fn collect_imports(nodes: &[AstNode]) -> Vec<ImportSpec> {
     let mut out = Vec::new();
     for node in nodes {
         let AstNode::Element(el) = node else { continue };
         if el.tag != "import" {
             continue;
         }
+        let alias = el.attributes.iter().find_map(|a| {
+            (a.name.local == "as").then(|| match &a.value {
+                AttributeValue::String { value, .. } => Some(value.clone()),
+                _ => None,
+            })?
+        });
         for a in &el.attributes {
             if matches!(
                 a.name.local.as_str(),
                 "stylesheet" | "script" | "widget" | "dialect"
             ) {
                 if let AttributeValue::String { value, .. } = &a.value {
-                    out.push((a.name.local.clone(), value.clone()));
+                    out.push(ImportSpec {
+                        kind: a.name.local.clone(),
+                        path: value.clone(),
+                        alias: alias.clone(),
+                    });
                 }
             }
         }
@@ -9521,8 +9558,7 @@ mod tests {
         let scope = LowerScope::default()
             .with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS)
             .with_stylesheet(Arc::new(sheet));
-        let nodes =
-            interpret_with_scope(r#"<container id="c" class="card"/>"#, &scope).unwrap();
+        let nodes = interpret_with_scope(r#"<container id="c" class="card"/>"#, &scope).unwrap();
         let Node::Container { props, .. } = find_container_by_id(&nodes, "c").unwrap() else {
             panic!()
         };
@@ -9541,8 +9577,7 @@ mod tests {
         );
         assert!(errs.is_empty(), "{errs:?}");
         let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
-        let nodes =
-            interpret_with_scope(r#"<container id="b" class="btn"/>"#, &scope).unwrap();
+        let nodes = interpret_with_scope(r#"<container id="b" class="btn"/>"#, &scope).unwrap();
         let Node::Container { props, .. } = find_container_by_id(&nodes, "b").unwrap() else {
             panic!()
         };
@@ -9563,8 +9598,7 @@ mod tests {
         );
         assert!(errs.is_empty(), "{errs:?}");
         let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
-        let nodes =
-            interpret_with_scope(r#"<container id="b" class="btn"/>"#, &scope).unwrap();
+        let nodes = interpret_with_scope(r#"<container id="b" class="btn"/>"#, &scope).unwrap();
         let Node::Container { props, .. } = find_container_by_id(&nodes, "b").unwrap() else {
             panic!()
         };
@@ -9708,6 +9742,67 @@ background = { lua = "brand()" }
         assert_eq!(text_contents(&nodes), vec!["hi!".to_string()]);
     }
 
+    #[cfg(feature = "luau")]
+    #[test]
+    fn import_script_as_namespaced_module() {
+        // §5.9 tier 2: two modules each define a private `currency`;
+        // namespacing keeps them isolated and addressable as
+        // `fmt.label` / `dates.label` with zero collision. A data
+        // field on the returned table resolves through `{ns.value}`.
+        struct Res;
+        impl ImportResolver for Res {
+            fn resolve_import(&self, kind: &str, path: &str) -> Option<String> {
+                match (kind, path) {
+                    ("script", "./fmt.luau") => Some(
+                        "local function currency(n) return ('$' .. tostring(n)) end\n\
+                         return { label = currency, kind = 'money' }"
+                            .to_string(),
+                    ),
+                    ("script", "./dates.luau") => Some(
+                        "local function currency(n) return (tostring(n) .. 'd') end\n\
+                         return { label = currency }"
+                            .to_string(),
+                    ),
+                    _ => None,
+                }
+            }
+        }
+        let scope = LowerScope::default().with_import_resolver(Arc::new(Res));
+        let src = r#"
+<import script="./fmt.luau" as="fmt"/>
+<import script="./dates.luau" as="dates"/>
+<text>{fmt.label(5)}</text>
+<text>{dates.label(5)}</text>
+<text>{fmt.kind}</text>
+"#;
+        let nodes = interpret_with_scope(src, &scope).unwrap();
+        assert_eq!(
+            text_contents(&nodes),
+            vec!["$5".to_string(), "5d".to_string(), "money".to_string()]
+        );
+    }
+
+    #[cfg(feature = "luau")]
+    #[test]
+    fn unnamed_script_import_still_flat_merges() {
+        // No `as=` → legacy flat-merge: the helper lands as a bare
+        // document-scope binding (back-compat with Wave H.3).
+        struct Res;
+        impl ImportResolver for Res {
+            fn resolve_import(&self, kind: &str, path: &str) -> Option<String> {
+                (kind == "script" && path == "./h.luau")
+                    .then(|| "local function dbl(n) return n * 2 end".to_string())
+            }
+        }
+        let scope = LowerScope::default().with_import_resolver(Arc::new(Res));
+        let src = r#"
+<import script="./h.luau"/>
+<text>{dbl(21)}</text>
+"#;
+        let nodes = interpret_with_scope(src, &scope).unwrap();
+        assert_eq!(text_contents(&nodes), vec!["42".to_string()]);
+    }
+
     // ---------- Wave G: probe: + at: ----------
 
     #[test]
@@ -9765,8 +9860,7 @@ background = { lua = "brand()" }
             })
             .collect();
         let srcs: Vec<&str> = bodies.iter().map(String::as_str).collect();
-        let frame =
-            crate::luau_scope::LuauScopeFrame::from_scripts(&srcs, None).expect("frame");
+        let frame = crate::luau_scope::LuauScopeFrame::from_scripts(&srcs, None).expect("frame");
         assert!(frame.has_probe("clicked"));
         frame
             .fire_probe("clicked", &serde_json::json!({ "id": "btn-1" }))

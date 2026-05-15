@@ -82,6 +82,13 @@ pub struct ShellInner {
     /// class definitions in the app sheet win on conflict because
     /// they come later in the cascade.
     pub app_stylesheets: std::collections::HashMap<String, Stylesheet>,
+    /// Wave H.1 (`prui-luau-fusion.md` §5.4/§5.9): per-app
+    /// directory, keyed by `manifest.id`. Feeds the active app's
+    /// [`crate::import_resolver::FsImportResolver`] so an app `.prui`
+    /// skeleton's `<import>` paths resolve relative to its own
+    /// directory. wasm has no filesystem — empty there.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub app_base_dirs: std::collections::HashMap<String, std::path::PathBuf>,
     pub state: crate::AppState,
     pub viewport: Viewport,
     pub undo: UndoStack,
@@ -216,6 +223,32 @@ impl ShellInner {
             .active_app
             .as_deref()
             .and_then(|id| self.app_stylesheets.get(id))
+    }
+
+    /// Wave H.1 (`prui-luau-fusion.md` §5.4/§5.9): the active app's
+    /// filesystem import resolver, if any. `None` when no app is
+    /// active, the active app has no recorded directory, or on wasm
+    /// (no filesystem — imports degrade to skipped, never fatal).
+    /// `prism://` roots are not yet declared per-app; relative
+    /// (sibling / `./` / `../`) resolution works today, `prism://`
+    /// roots land when `.prism.json scripts.*` parsing is wired.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn active_app_import_resolver(
+        &self,
+    ) -> Option<std::sync::Arc<dyn prism_ui_runtime::interpret::ImportResolver>> {
+        let id = self.state.workspace.active_app.as_deref()?;
+        let dir = self.app_base_dirs.get(id)?;
+        Some(crate::import_resolver::FsImportResolver::new(dir.clone()).arc())
+    }
+
+    /// wasm has no filesystem — the resolver is always `None`, so
+    /// `<import>` / sibling probes degrade to skipped (graceful,
+    /// matching the runtime's unknown-import rule).
+    #[cfg(target_arch = "wasm32")]
+    pub fn active_app_import_resolver(
+        &self,
+    ) -> Option<std::sync::Arc<dyn prism_ui_runtime::interpret::ImportResolver>> {
+        None
     }
 
     /// Sister to [`Self::prop_ctx`] for the §24 write side. Every
@@ -364,6 +397,13 @@ impl Shell {
                     .map(|s| (a.manifest.id.clone(), s.clone()))
             })
             .collect();
+        // Wave H.1: app id → directory, for the per-app import
+        // resolver. Every loaded app has a `base_dir`.
+        #[cfg(not(target_arch = "wasm32"))]
+        let app_base_dirs: std::collections::HashMap<String, std::path::PathBuf> = loaded_apps
+            .iter()
+            .map(|a| (a.manifest.id.clone(), a.base_dir.clone()))
+            .collect();
         let default_app = default_app_skeleton();
         // DSL self-bootstrap Loop 3: if any manifest declares service
         // preferences, filter `App`-scoped services to the declared
@@ -405,6 +445,8 @@ impl Shell {
             app_skeletons,
             default_app_skeleton: default_app,
             app_stylesheets,
+            #[cfg(not(target_arch = "wasm32"))]
+            app_base_dirs,
             // §43 A1 + Wave 1: hydrated boot state with the modifier
             // registry installed. `AppState::default()` is the
             // zero-data shape for tests and headless renders;
@@ -782,6 +824,7 @@ impl Shell {
         // bounded (host skeleton is ~50 nodes), and runs once per
         // frame — no caching needed unless profiling shows it.
         let composed = self.skeleton.with_app_body(inner.active_app_skeleton());
+        let app_import_resolver = inner.active_app_import_resolver();
         let mut tree = inner.render_scope.run_in_render_pass(|| {
             render_with_hot_reload(|| {
                 render_tree_with(
@@ -791,6 +834,7 @@ impl Shell {
                     &inner.prop_ctx(),
                     Some(Rc::clone(&cache)),
                     effective_stylesheet.as_ref(),
+                    app_import_resolver.clone(),
                 )
             })
         });
@@ -882,6 +926,7 @@ impl Shell {
                 let guard = inner.borrow();
                 let cache = Rc::clone(&guard.memo_cache);
                 let stylesheet = stylesheet_handle.borrow().clone();
+                let app_import_resolver = guard.active_app_import_resolver();
                 let mut tree = guard.render_scope.run_in_render_pass(|| {
                     render_with_hot_reload(|| {
                         render_tree_with(
@@ -891,6 +936,7 @@ impl Shell {
                             &guard.prop_ctx(),
                             Some(Rc::clone(&cache)),
                             stylesheet.as_ref(),
+                            app_import_resolver.clone(),
                         )
                     })
                 });

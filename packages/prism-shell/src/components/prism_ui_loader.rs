@@ -842,6 +842,29 @@ fn code_editor_schema() -> Vec<FieldSpec> {
         .with_default(Value::from(0.0)),
         FieldSpec::text("status-label", "Status strip label")
             .with_default(Value::String("".into())),
+        FieldSpec::text("tabs", "Open editor tabs (JSON array)"),
+        FieldSpec::number(
+            "active-tab",
+            "Active tab display index",
+            NumericBounds::min(0.0),
+        )
+        .with_default(Value::from(0.0)),
+        FieldSpec::text("bracket-match", "Matching-bracket byte pair `open,close`")
+            .with_default(Value::String("".into())),
+        FieldSpec::text(
+            "highlight-current-line",
+            "Paint a strip behind the caret's line",
+        )
+        .with_default(Value::String("true".into())),
+        FieldSpec::text(
+            "underline",
+            "Underlined byte range `start,end` (IME preedit)",
+        )
+        .with_default(Value::String("".into())),
+        FieldSpec::number("scroll-x", "Horizontal scroll", NumericBounds::min(0.0))
+            .with_default(Value::from(0.0)),
+        FieldSpec::number("scroll-y", "Vertical scroll", NumericBounds::min(0.0))
+            .with_default(Value::from(0.0)),
     ]
 }
 

@@ -23,7 +23,7 @@ use prism_core::language::prism_ui::{
 use prism_core::language::prss;
 use prism_core::language::syntax::{Position, SourceRange};
 use prism_ui_runtime::interpret::{
-    lower_document_with_scope, LowerScope, TagEmission, TagResolver,
+    lower_document_with_scope, ImportResolver, LowerScope, TagEmission, TagResolver,
 };
 use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::Value;
@@ -372,7 +372,7 @@ pub fn render_tree(
     resolver: Arc<dyn TagResolver>,
     ctx: &PropCtx,
 ) -> Vec<UiNode> {
-    render_tree_with(skeleton, bindings, resolver, ctx, None, None)
+    render_tree_with(skeleton, bindings, resolver, ctx, None, None, None)
 }
 
 /// **Wave 14.3** — same as [`render_tree`] but threads a host-owned
@@ -394,6 +394,7 @@ pub fn render_tree_with(
     ctx: &PropCtx,
     memo_cache: Option<std::rc::Rc<std::cell::RefCell<prism_ui_runtime::interpret::MemoCache>>>,
     stylesheet: Option<&Stylesheet>,
+    import_resolver: Option<Arc<dyn ImportResolver>>,
 ) -> Vec<UiNode> {
     let emissions = bindings.snapshot(ctx);
     let doc = fill_compositions(skeleton, &emissions);
@@ -425,6 +426,13 @@ pub fn render_tree_with(
         // workspace default — matches the §4.6 application order
         // (sheet later → wins on conflicts).
         scope = scope.with_stylesheet(sheet.arc());
+    }
+    if let Some(res) = import_resolver {
+        // **Wave H.1 (§5.4/§5.9)** — the active app's
+        // `FsImportResolver`, so a per-app `.prui` skeleton can
+        // `<import stylesheet|script [as=]/>` relative to the app
+        // directory + `prism://` roots.
+        scope = scope.with_import_resolver(res);
     }
     lower_document_with_scope(&doc, &scope)
 }

@@ -874,6 +874,15 @@ pub const CANVAS_PAINT_SPEC: BlockSpec =
     BlockSpec::new("prism.canvas-paint", canvas_paint_schema).lower(canvas_paint_lower);
 pub const TEXT_BUFFER_SPEC: BlockSpec =
     BlockSpec::new("prism.text-buffer", text_buffer_schema).lower(text_buffer_lower);
+/// `prism.text-area` is a discoverability alias for
+/// [`TEXT_BUFFER_SPEC`]: both lower through the same multi-line
+/// `TextInput` primitive. `text-area` matches the HTML element name
+/// most authors search for; `text-buffer` is the original Prism
+/// terminology. Adding the alias means `<prism.text-area/>` works
+/// in `.prism-ui` source identically to `<prism.text-buffer/>` —
+/// useful when a designer reaches for the textbook name.
+pub const TEXT_AREA_SPEC: BlockSpec =
+    BlockSpec::new("prism.text-area", text_buffer_schema).lower(text_buffer_lower);
 /// Wave 11.4 — Tier-3 primitive that hosts a builder document. The
 /// shell's `shell.builder-canvas` block is the chrome wrapper that
 /// composes against it.
@@ -899,6 +908,7 @@ pub const PRIMITIVES: &[&BlockSpec] = &[
     &RESIZE_EDGE_SPEC,
     &CANVAS_PAINT_SPEC,
     &TEXT_BUFFER_SPEC,
+    &TEXT_AREA_SPEC,
     &BUILDER_HOST_SPEC,
 ];
 
@@ -919,11 +929,13 @@ mod tests {
     use crate::ComponentRegistry;
 
     #[test]
-    fn primitive_count_is_fifteen() {
+    fn primitive_count_is_sixteen() {
         // Wave 10 listed 14 primitives; Wave 11.4 added
-        // `prism.builder-host`. The catalogue is a closed set;
-        // further changes need a plan update.
-        assert_eq!(PRIMITIVES.len(), 15);
+        // `prism.builder-host` (15); the editor-views pass added
+        // `prism.text-area` as an alias of `prism.text-buffer` (16).
+        // The catalogue is a closed set; further changes need a
+        // plan update.
+        assert_eq!(PRIMITIVES.len(), 16);
     }
 
     #[test]

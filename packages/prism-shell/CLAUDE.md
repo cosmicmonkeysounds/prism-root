@@ -44,6 +44,7 @@ src/
   components/          # 48 shell blocks (chrome, panels, overlays, gizmos)
   services/            # 10 services (write side — see below)
   events.rs            # `dispatch_event` router (read events → service fan-out)
+  import_resolver.rs   # `FsImportResolver` — host `ImportResolver` (sibling/`prism://`)
   lib.rs               # public surface + `web_start` wasm entry
   props.rs             # `ShellPropBindings` (read side — slot → JSON props)
   render.rs            # `render_tree` + `Skeleton` loader

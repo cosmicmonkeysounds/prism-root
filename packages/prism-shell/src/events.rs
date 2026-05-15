@@ -437,6 +437,12 @@ const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
         handle_select_dropdown_option_click,
     ),
     ("select-dropdown-close", handle_select_dropdown_close_click),
+    // Editor tabs — click switches active, close button removes,
+    // new-tab button opens a fresh Untitled. Each handler reads
+    // `data-tab-index` to know which tab the click targets.
+    ("editor-tab", handle_editor_tab_click),
+    ("editor-tab-close", handle_editor_tab_close_click),
+    ("editor-tab-new", handle_editor_tab_new_click),
     // Wave 2.4 HSL — the slider press path is routed *before*
     // `route_pointer_down` because the channel commit needs the
     // exact pointer-x coordinate (the in-table handler signature
@@ -1456,6 +1462,62 @@ fn route_code_editor_body_drag(inner: &Rc<RefCell<ShellInner>>, x: f32, y: f32) 
 /// Pointer-up — drop any active editor drag.
 fn route_code_editor_body_release(inner: &Rc<RefCell<ShellInner>>) -> bool {
     inner.borrow_mut().state.editor_drag.take().is_some()
+}
+
+/// Pointer-down on an editor tab → switch active to that tab.
+fn handle_editor_tab_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(idx_str) = attr_value(hit, "data-tab-index") else {
+        return false;
+    };
+    let Ok(idx) = idx_str.parse::<usize>() else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    // Switching tabs implies the editor wants keyboard focus too.
+    guard.state.code_editor_focused = true;
+    guard.state.canvas.switch_editor_tab(idx)
+}
+
+/// Pointer-down on a tab's close button → close that specific tab.
+/// If the closed tab is the active one, the next tab slides in;
+/// otherwise the active slot stays where it is. The hit's
+/// `data-tab-index` carries the target.
+fn handle_editor_tab_close_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(idx_str) = attr_value(hit, "data-tab-index") else {
+        return false;
+    };
+    let Ok(idx) = idx_str.parse::<usize>() else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    if idx == g.state.canvas.code_active_tab {
+        g.state.canvas.close_active_editor_tab()
+    } else {
+        // Close an inactive tab — translate the display index to a
+        // `code_tabs` slot and remove it. The active slot stays put.
+        let pop_at = if idx < g.state.canvas.code_active_tab {
+            idx
+        } else {
+            idx.saturating_sub(1)
+        };
+        if pop_at >= g.state.canvas.code_tabs.len() {
+            return false;
+        }
+        g.state.canvas.code_tabs.remove(pop_at);
+        if idx < g.state.canvas.code_active_tab {
+            g.state.canvas.code_active_tab = g.state.canvas.code_active_tab.saturating_sub(1);
+        }
+        true
+    }
+}
+
+/// `+` button next to the tab list → open a fresh Untitled tab.
+fn handle_editor_tab_new_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRect) -> bool {
+    let mut guard = inner.borrow_mut();
+    guard.state.canvas.new_editor_tab();
+    guard.state.code_editor_focused = true;
+    true
 }
 
 /// Process-wide help registry for editor hover. Loaded lazily on

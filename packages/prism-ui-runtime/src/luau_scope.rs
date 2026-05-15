@@ -93,6 +93,40 @@ impl std::fmt::Debug for LuauScopeFrame {
     }
 }
 
+/// A Luau source unit feeding a document's per-document Lua state
+/// (`prui-luau-fusion.md` §5.9).
+///
+/// - `name = None` — **flat merge.** The unit's top-level `local`s
+///   become document-scope bindings (the inline `<script>` /
+///   tier-1 sibling / un-named `<import script>` path). Many flat
+///   units share one global namespace; collisions are last-wins.
+/// - `name = Some(ns)` — **named module (tier 2).** The unit is
+///   evaluated in isolation; only the value it `return`s is visible,
+///   bound under `ns`. `{ns.fn(x)}` / `{ns.value}` resolve against
+///   that table without the module's internals leaking. Many named
+///   modules never collide — each owns its `ns.` namespace.
+#[derive(Debug, Clone)]
+pub struct LuauModule {
+    pub name: Option<String>,
+    pub source: String,
+}
+
+impl LuauModule {
+    pub fn flat(source: impl Into<String>) -> Self {
+        Self {
+            name: None,
+            source: source.into(),
+        }
+    }
+
+    pub fn named(name: impl Into<String>, source: impl Into<String>) -> Self {
+        Self {
+            name: Some(name.into()),
+            source: source.into(),
+        }
+    }
+}
+
 impl LuauScopeFrame {
     /// Build a frame from one or more `<script lang="luau">` bodies
     /// (multiple inline blocks concatenate in source order). `tokens`
@@ -120,7 +154,49 @@ impl LuauScopeFrame {
         tokens: Option<&JsonValue>,
         scope_bindings: Option<&JsonValue>,
     ) -> Result<Self, String> {
-        let combined = sources.join("\n");
+        let modules: Vec<LuauModule> = sources.iter().map(|s| LuauModule::flat(*s)).collect();
+        Self::from_modules_with_scope(&modules, tokens, scope_bindings)
+    }
+
+    /// **Wave H.6 (`prui-luau-fusion.md` §5.9)** — the general
+    /// constructor: build a per-document frame from a mix of flat
+    /// units (inline `<script>` / sibling / un-named imports) and
+    /// *named modules* (`<import script="…" as="ns">`). Flat units
+    /// concatenate and their top-level `local`s become document
+    /// scope; each named module is wrapped in an isolating IIFE so
+    /// only its `return` value lands, bound under `ns`. Module
+    /// function fields are harvested as `ns.field` callables (so the
+    /// expression resolver's dotted-call arm resolves `{ns.fn(x)}`)
+    /// and the data subset as a `ns` snapshot object (so `{ns.value}`
+    /// resolves through the lookup path).
+    pub fn from_modules_with_scope(
+        modules: &[LuauModule],
+        tokens: Option<&JsonValue>,
+        scope_bindings: Option<&JsonValue>,
+    ) -> Result<Self, String> {
+        // Flat units keep source order and merge into document scope;
+        // named modules append as isolating IIFE bindings. A named
+        // module's inner `local`s stay nested (full-moon only reports
+        // *chunk-level* locals) so nothing but its `return` leaks.
+        let mut combined = String::new();
+        let mut module_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for m in modules {
+            match &m.name {
+                None => {
+                    combined.push_str(&m.source);
+                    combined.push('\n');
+                }
+                Some(ns) => {
+                    module_names.insert(ns.clone());
+                    combined.push_str("local ");
+                    combined.push_str(ns);
+                    combined.push_str(" = (function()\n");
+                    combined.push_str(&m.source);
+                    combined.push_str("\nend)()\n");
+                }
+            }
+        }
+        let combined = combined;
         let transformed = strip_top_level_locals(&combined);
         let harvested: Vec<String> = prism_core::language::luau::top_level_locals(&combined)
             .into_iter()
@@ -191,6 +267,34 @@ impl LuauScopeFrame {
                 Ok(v) => v,
                 Err(_) => continue,
             };
+            // **§5.9 tier 2** — a named module binding. A returned
+            // *table* is exploded into `ns.field` callables + a `ns`
+            // data snapshot; a bare returned function/value falls
+            // through to the flat path (so `return function() end`
+            // and `return 42` modules still work). Flat (non-module)
+            // tables keep the legacy whole-table snapshot behaviour.
+            if module_names.contains(&name) {
+                if let LuaValue::Table(tbl) = &value {
+                    let mut data = serde_json::Map::new();
+                    for pair in tbl.clone().pairs::<String, LuaValue>() {
+                        let Ok((field, fv)) = pair else { continue };
+                        match fv {
+                            LuaValue::Function(_) => {
+                                if let Ok(key) = lua.create_registry_value(fv) {
+                                    functions.insert(format!("{name}.{field}"), key);
+                                }
+                            }
+                            other => {
+                                if let Ok(json) = lua.from_value::<JsonValue>(other) {
+                                    data.insert(field, json);
+                                }
+                            }
+                        }
+                    }
+                    snapshot.insert(name, JsonValue::Object(data));
+                    continue;
+                }
+            }
             match value {
                 LuaValue::Function(_) => {
                     if let Ok(key) = lua.create_registry_value(value) {
@@ -208,8 +312,7 @@ impl LuauScopeFrame {
         let macros: HashMap<String, RegistryKey> = macro_collector.borrow_mut().drain(..).collect();
         let dialects: HashMap<String, RegistryKey> =
             dialect_collector.borrow_mut().drain(..).collect();
-        let probes: HashMap<String, RegistryKey> =
-            probe_collector.borrow_mut().drain(..).collect();
+        let probes: HashMap<String, RegistryKey> = probe_collector.borrow_mut().drain(..).collect();
 
         Ok(Self {
             inner: Rc::new(LuauScopeInner {
@@ -773,5 +876,42 @@ mod tests {
     fn script_error_surfaces_as_err() {
         let err = LuauScopeFrame::from_scripts(&["local x = nil + {}"], None);
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn named_module_isolates_locals_and_exposes_return() {
+        // The module's own `local secret` must NOT leak to document
+        // scope; only its returned table is visible as `m.*`.
+        let m = LuauModule::named(
+            "m",
+            "local secret = 99\n\
+             local function add(a, b) return a + b end\n\
+             return { add = add, version = 2 }",
+        );
+        let frame = LuauScopeFrame::from_modules_with_scope(&[m], None, None).expect("frame");
+        assert!(frame.has_function("m.add"));
+        assert_eq!(
+            frame.call("m.add", &[1.into(), 2.into()]).unwrap().unwrap(),
+            JsonValue::from(3)
+        );
+        assert_eq!(frame.lookup("m.version"), Some(JsonValue::from(2)));
+        // `secret` stayed inside the module IIFE.
+        assert_eq!(frame.lookup("secret"), None);
+    }
+
+    #[test]
+    fn flat_and_named_modules_coexist() {
+        let flat = LuauModule::flat("local function tri(n) return n * 3 end");
+        let named = LuauModule::named("u", "return { tri = function(n) return n + 3 end }");
+        let frame =
+            LuauScopeFrame::from_modules_with_scope(&[flat, named], None, None).expect("frame");
+        assert_eq!(
+            frame.call("tri", &[4.into()]).unwrap().unwrap(),
+            JsonValue::from(12)
+        );
+        assert_eq!(
+            frame.call("u.tri", &[4.into()]).unwrap().unwrap(),
+            JsonValue::from(7)
+        );
     }
 }

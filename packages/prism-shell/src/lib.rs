@@ -38,6 +38,11 @@ pub mod headless;
 /// C3 closure — see `docs/dev/ui-migration-followups.md`.
 #[cfg(feature = "native")]
 pub mod hot_reload;
+/// Wave H.1/H.6 — filesystem-backed `ImportResolver` (sibling
+/// pairing + relative + `prism://` roots) for `prui-luau-fusion.md`
+/// §5.4 / §5.9.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod import_resolver;
 /// Wave 7.2 — software rasteriser for the `--screenshot` PNG path.
 /// Walks a `RenderCommand` stream into an RGBA buffer the `image`
 /// crate's PNG encoder consumes.

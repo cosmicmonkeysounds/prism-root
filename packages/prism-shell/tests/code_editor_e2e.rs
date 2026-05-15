@@ -351,12 +351,7 @@ fn auto_close_inserts_matching_quote() {
     // Clear the buffer and type a `(`.
     dispatch(&shell, key_press_mods("a", ctrl()));
     dispatch(&shell, key_press("backspace"));
-    dispatch(
-        &shell,
-        Event::Text {
-            text: "(".into(),
-        },
-    );
+    dispatch(&shell, Event::Text { text: "(".into() });
     assert_eq!(buffer_source(&shell), "()");
     assert_eq!(buffer_caret(&shell), 1);
 }
@@ -367,12 +362,7 @@ fn smart_indent_inside_braces_opens_three_lines() {
     // Clear and re-seed with a minimal `{}` so the smart-indent path
     // is unambiguous.
     dispatch(&shell, key_press_mods("a", ctrl()));
-    dispatch(
-        &shell,
-        Event::Text {
-            text: "{".into(),
-        },
-    );
+    dispatch(&shell, Event::Text { text: "{".into() });
     // auto-close gives "{}", caret at byte 1.
     dispatch(&shell, key_press("enter"));
     let src = buffer_source(&shell);
@@ -799,6 +789,97 @@ fn hover_leaving_editor_clears_help_tooltip() {
             .map(|t| t.title.clone())
     });
     assert!(title.is_none(), "editor tooltip should clear on leave");
+}
+
+// ─── Editor tabs + file ops ───────────────────────────────────
+
+#[test]
+fn ctrl_n_opens_a_new_untitled_tab() {
+    let shell = shell_with_editor();
+    let before = shell.with_inner(|inner| inner.state.canvas.editor_tab_count());
+    dispatch(&shell, key_press_mods("n", ctrl()));
+    let after = shell.with_inner(|inner| inner.state.canvas.editor_tab_count());
+    assert_eq!(after, before + 1);
+    let title = shell.with_inner(|inner| inner.state.canvas.code_buffer_meta.title.clone());
+    assert_eq!(title, "Untitled");
+}
+
+#[test]
+fn ctrl_w_closes_active_tab() {
+    let shell = shell_with_editor();
+    dispatch(&shell, key_press_mods("n", ctrl()));
+    let count_before_close = shell.with_inner(|inner| inner.state.canvas.editor_tab_count());
+    dispatch(&shell, key_press_mods("w", ctrl()));
+    let count_after = shell.with_inner(|inner| inner.state.canvas.editor_tab_count());
+    assert_eq!(count_after, count_before_close - 1);
+}
+
+#[test]
+fn tabs_persist_independent_buffers() {
+    let shell = shell_with_editor();
+    // Open a second tab and type into it.
+    dispatch(&shell, key_press_mods("n", ctrl()));
+    dispatch(
+        &shell,
+        Event::Text {
+            text: "tab2".into(),
+        },
+    );
+    let tab2_source = buffer_source(&shell);
+    assert_eq!(tab2_source, "tab2");
+    // Switch back to the first tab — its buffer should be intact.
+    dispatch(&shell, key_press_mods("tab", ctrl()));
+    let tab1_source = buffer_source(&shell);
+    assert!(tab1_source.starts_with("local function greet"));
+    // Switch back — tab2 buffer still has "tab2".
+    dispatch(&shell, key_press_mods("tab", ctrl()));
+    assert_eq!(buffer_source(&shell), "tab2");
+}
+
+#[test]
+fn typing_marks_active_tab_dirty() {
+    let shell = shell_with_editor();
+    dispatch(&shell, key_press_mods("n", ctrl()));
+    let dirty_before = shell.with_inner(|inner| inner.state.canvas.code_buffer_meta.dirty);
+    assert!(!dirty_before);
+    dispatch(&shell, Event::Text { text: "x".into() });
+    let dirty_after = shell.with_inner(|inner| inner.state.canvas.code_buffer_meta.dirty);
+    assert!(dirty_after, "typing should flip the dirty flag");
+}
+
+#[test]
+fn ctrl_shift_tab_cycles_backwards() {
+    let shell = shell_with_editor();
+    dispatch(&shell, key_press_mods("n", ctrl()));
+    dispatch(&shell, key_press_mods("n", ctrl()));
+    let mid_idx = shell.with_inner(|inner| inner.state.canvas.code_active_tab);
+    dispatch(
+        &shell,
+        key_press_mods(
+            "tab",
+            Modifiers {
+                ctrl: true,
+                shift: true,
+                ..Default::default()
+            },
+        ),
+    );
+    let after = shell.with_inner(|inner| inner.state.canvas.code_active_tab);
+    assert_ne!(after, mid_idx);
+}
+
+#[test]
+fn rendered_tree_carries_tab_strip_entries() {
+    let shell = shell_with_editor();
+    dispatch(&shell, key_press_mods("n", ctrl()));
+    let json = shell.dump_frame();
+    // The DSL renders the strip with `data-role="editor-tab"` per
+    // tab. Two tabs open → at least two such roles in the tree.
+    let tab_count = json.matches("\"editor-tab\"").count();
+    assert!(
+        tab_count >= 2,
+        "expected at least 2 editor-tab roles, got {tab_count}"
+    );
 }
 
 #[test]

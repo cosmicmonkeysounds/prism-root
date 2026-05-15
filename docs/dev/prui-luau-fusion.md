@@ -35,9 +35,10 @@ H/I partial, 2026-05-15.** Runtime-complete: (A) colocated
 `~name{…}` (+ `prui_ast.*` constructors); (F) computed PRSS
 `{ lua = "…" }` + native colour helpers; (G) `probe:` namespace
 + `prism.probes:on` + `at:` keyframe namespace. Partial: (H)
-inline `<style>` + `<import>`/`ImportResolver` landed,
-FS sibling-pairing / fingerprint-cache / `prism new` are host /
-build-tool follow-ups; (I) `prism.scope` value bridge landed,
+inline `<style>` + `<import>`/`ImportResolver` + FS
+sibling-pairing host resolver + **tier-2 named Luau module
+imports (§5.9)** landed; tier-3 `require`, fingerprint-cache, and
+`prism new` are follow-ups; (I) `prism.scope` value bridge landed,
 the LSP / `luau-analyze` / `prism lint --types` / Inspector
 typing is external-tooling and intentionally not faked. See §9
 Waves A–I for as-built notes. Cross-wave deferrals:
@@ -314,9 +315,15 @@ for the common case.
   same-name `.prss`. Need more styles? Either import additional
   PRSS files via `<import>` (§5.4) or move shared theme tokens to
   a project-root `theme.prss`.
-- **0..1 Luau sibling.** Same constraint. Multi-file Luau
-  decomposes through Luau's own `require` rather than ad-hoc
-  PRUI imports.
+- **0..1 *flat* Luau sibling.** A `.prui` file pairs with at
+  most one same-name `.prui`-flat `widget.luau` (its top-level
+  locals merge straight into document scope — zero ceremony, for
+  component-local behaviour). The 1-1 sibling is the *default*,
+  **not the ceiling**: a widget that wants modular behaviour pulls
+  in any number of *named* Luau modules via `<import script="…"
+  as="…">` (§5.9), and modules pull each other in via Luau's own
+  `require` (§5.9 tier 3). The sibling stays 0..1 on purpose — it
+  is the un-namespaced merge slot; everything modular is named.
 
 **Override:** if a directory contains both `task-card.prui` with
 an inline `<script lang="luau">` *and* a sibling `task-card.luau`
@@ -522,6 +529,109 @@ authoring ergonomics:
 file, reload) with zero changes to the PRUI body. Same for
 `<script lang="luau">`. The parser produces the same intermediate
 representation either way.
+
+### 5.9 Multi-Luau modularity — named modules + `require`
+
+A 1-1 `widget.prui` ↔ `widget.luau` pairing is the on-ramp, not
+the destination. Real component libraries share formatters, query
+helpers, and state machines across dozens of widgets; forcing all
+of that through one flat sibling per widget either duplicates code
+or grows a single unscoped god-module. The file model therefore
+exposes **three escalating tiers**, each strictly more modular
+than the last, all riding the one `ImportResolver` host hook
+(§5.4) so there is exactly one resolution + caching path.
+
+**Tier 1 — flat sibling (`0..1`, zero ceremony).** `widget.luau`
+next to `widget.prui`. Its top-level `local`s merge straight into
+document scope (`{priority_color(p)}` just works). No namespace,
+no `return`. The right tool for behaviour that exists only to
+serve this one widget. This is the *only* un-namespaced Luau slot
+— deliberately capped at one file so "where is this helper
+defined" never has more than one flat answer.
+
+**Tier 2 — named module import (the modularity primitive).**
+
+```prui
+<import script="./fmt.luau"        as="fmt"/>
+<import script="prism://lib/dates" as="dates"/>
+<import script="./task-machine.luau" as="machine"/>
+
+<text>{fmt.currency(task.budget)}</text>
+<text>{dates.relative(task.due)}</text>
+<button on:click="luau { machine.advance(task) }">Next</button>
+```
+
+Each *named* import is evaluated as an **isolated module**: the
+value it `return`s (Luau's own module convention) becomes a single
+table bound under the `as=` name. Many imports → many namespaces,
+**no global collision possible** — `fmt.currency` and
+`dates.currency` coexist because neither leaks a bare `currency`.
+A module exports several helpers by returning a table:
+
+```luau
+-- fmt.luau
+local function currency(n) return ("$%.2f"):format(n) end
+local function pct(n)      return ("%d%%"):format(n * 100) end
+return { currency = currency, pct = pct }
+```
+
+Named modules are referenceable from every Luau seam uniformly:
+`{expr}` slots, `<script>` bodies, `luau {…}` actions, `class`
+`{lua=…}` PRSS values. They sit at **frame 4** of the §5.6
+identifier stack (named modules), so an inner `for`/`let`/route
+binding lexically shadows them — same intuition as Lua locals
+shadowing an upvalue.
+
+An **un-named** `<import script="./x.luau"/>` (no `as=`) keeps the
+legacy *flat-merge* behaviour: equivalent to concatenating the
+file into the document script, last-wins on collision, ordered
+*after* the tier-1 sibling and *before* the inline `<script>`.
+This is the back-compat escape hatch and the "just give me these
+helpers globally" shortcut — but every reusable module *should*
+be named, because the namespace is the modularity.
+
+**Tier 3 — Luau-native `require` (deep graphs).**
+
+```luau
+-- inside any module / <script> / sibling
+local fmt   = require("prism://lib/fmt.luau")
+local money = require("./money.luau")   -- money.luau itself requires fmt
+```
+
+`require` resolves through the **same** `ImportResolver` and the
+**same** per-document module cache as tier 2. This is the path
+for a module that depends on a module that depends on a module —
+Luau's own dependency mechanism, no PRUI `<import>` ceremony at
+every hop. A widget's `.luau` graph can be arbitrarily deep while
+its `.prui` stays declarative.
+
+**Cross-tier invariants:**
+
+- **Module identity = resolved absolute path.** The resolver
+  canonicalises `./fmt.luau`, `prism://lib/fmt.luau`, and a
+  sibling probe to a single key. A module imported under two
+  different `as=` names, or pulled by both `<import>` and
+  `require`, **evaluates exactly once**; importers share the
+  one returned table.
+- **Isolation.** Every module runs in the per-document Lua state
+  (Resolved Decision 4 — per-document `_ENV`) but its top-level
+  `local`s never leak; only its `return` value is visible. No
+  Prism-specific rule — this *is* Luau's module convention.
+- **Capability scope.** An imported module inherits the importing
+  document's `PrismContext` capability set (principle 4).
+  Capabilities are the caller's, fixed at resolve time; a module
+  cannot widen them by being imported somewhere more privileged.
+- **Cycles.** A module re-entered mid-evaluation yields its
+  partial table (Lua-standard `require` behaviour); a hard
+  structural cycle in `<import>` graphs is a load error surfaced
+  as an inline diagnostic, never a non-terminating walk
+  (principle 1).
+
+**Why not a `scripts=[…]` manifest list or `src=`?** Rejected
+(see §11). `<import>` already carries the four-projection shape;
+a parallel list attribute would be a second mechanism for one
+job, and per-line `as=` keeps each module's namespace legible at
+the reference site instead of hidden in a manifest.
 
 ---
 
@@ -1611,12 +1721,19 @@ exactly as an unknown tag does today.
 **Unlocks:** §7.11, §7.12.
 
 ### Wave H — File model & multi-projection authoring — ◑ partial 2026-05-15
-- H.1 ⚠️ Sibling-pairing (`widget.prui` ↔ `widget.prss` ↔
-  `widget.luau`) needs a filesystem + the document's path. The
-  string-only `interpret()` has neither; landed instead as the
-  `ImportResolver` host hook (below) which the shell/relay
-  drives — true convention-based sibling probing is a
-  prism-shell loader follow-up on top of that hook.
+- H.1 ✅ Host resolver landed: prism-shell ships
+  `FsImportResolver` (filesystem-backed `ImportResolver`) —
+  per-kind extension contract + canonicalised path-escape gate +
+  `sibling_source` convention probe. Resolves relative paths from
+  the document's directory *and* `prism://<root>/…` against
+  registered roots; the active app's resolver (keyed off
+  `LoadedApp.base_dir`) is threaded through `render_tree_with` →
+  `LowerScope::with_import_resolver` each frame. Relative /
+  sibling resolution is live; per-app `prism://` root
+  registration (from `.prism.json scripts.*`) is the remaining
+  wire-up — the resolver already supports it, nothing declares
+  roots yet. wasm has no FS → resolver is `None`, imports
+  degrade to skipped (graceful).
 - H.2 ✅ Inline `<style lang="prss">` blocks (grammar already
   raw-texts `<style>`): `collect_inline_stylesheets` →
   `prism_core::language::prss::parse` → `StyleSheet::merged_with`
@@ -1628,16 +1745,33 @@ exactly as an unknown tag does today.
   `ImportResolver` trait (`LowerScope::with_import_resolver`).
   `stylesheet` merges into the document sheet; `script` /
   `dialect` feed the Luau frame. `widget` import + `as=`
-  namespacing are parsed but not yet applied (documented
-  follow-ups). FS / `prism://` resolution is the host's job by
-  design (the runtime has no filesystem).
+  namespacing for stylesheets/dialects are parsed but not yet
+  applied (documented follow-ups). FS / `prism://` resolution is
+  the host's job by design (the runtime has no filesystem).
 - H.4 ⚠️ FingerprintCache virtual-file keys — a
   `prism-ui-build` / hot-reload concern, deferred.
 - H.5 ⚠️ `prism new widget` template — a `prism-cli` concern,
   deferred.
+- H.6 ✅ **Tier 2 — named module imports (§5.9).**
+  `collect_imports` now carries `as=`; `LuauScopeFrame` evaluates
+  each `<import script="…" as="ns">` as an isolated module
+  (`local ns = (function() … end)()`), binding the module's
+  `return` value as a single namespace table. The expression
+  resolver gained a dotted-call arm so `{ns.fn(args)}` and
+  `{ns.value}` resolve against module tables (functions held in
+  the registry, values in the snapshot). Un-named `<import
+  script>` keeps the flat-merge path. Module identity is keyed by
+  resolver-canonicalised path so one file imported twice
+  evaluates once.
+- H.7 ⚠️ **Tier 3 — Luau-native `require` (§5.9).** Needs a
+  sandbox-safe `require` shim delegating to `ImportResolver` +
+  the shared module cache + structural-cycle detection. The
+  cache + resolver substrate H.6 landed is the foundation; the
+  `require` shim itself is the next increment.
 
-**Unlocks:** §5.3 + §5.4 (inline blocks + imports); §5.2
-sibling-pairing rides the H.3 hook.
+**Unlocks:** §5.3 + §5.4 (inline blocks + imports); §5.2 + §5.9
+sibling-pairing and tier-1/tier-2 modularity ride the H.1 + H.6
+work; tier-3 `require` is H.7.
 
 ### Wave I — Type system end-to-end — ◑ partial 2026-05-15
 - I.2 ✅ `prism.scope.<name>` runtime bridge:
@@ -1770,6 +1904,13 @@ isn't relitigated.
 - **Imperative `<while>` / `<break>` (the request from §16).** No
   — and adding Luau doesn't change this. The DSL stays bounded
   declarative; imperative bodies live in `<script>` or `luau {…}`.
+
+- **A `scripts=["a.luau","b.luau"]` manifest list (or `src=`) on
+  the `.prui` root.** Rejected in favour of per-line
+  `<import script="…" as="…">` (§5.9 tier 2). A list attribute
+  hides each module's namespace away from its reference site and
+  duplicates the projection-selecting job `<import>` already does.
+  One mechanism, named at the point of use.
 
 - **Auto-`for` over Luau iterators.** `for="i in iterator"`
   where `iterator` is a Lua function with `__call` semantics.

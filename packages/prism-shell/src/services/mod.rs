@@ -35,6 +35,7 @@ pub mod base;
 pub mod builder;
 pub mod clipboard;
 pub mod code_editor;
+pub mod editor_files;
 pub mod field_focus;
 pub mod help;
 pub mod input;
@@ -53,6 +54,7 @@ pub use base::ShellBaseService;
 pub use builder::BuilderService;
 pub use clipboard::{Clipboard, ClipboardService};
 pub use code_editor::CodeEditorService;
+pub use editor_files::EditorFilesService;
 pub use field_focus::FieldFocusService;
 pub use help::HelpService;
 pub use input::{InputScheme, InputService};
@@ -567,6 +569,13 @@ pub fn register_shell_services(reg: &mut ServiceRegistry) {
     // events through `state.canvas.code_buffer.editor` when the
     // editor body has been clicked into focus.
     reg.add_scoped(Universal, CodeEditorService);
+    // Editor file commands — Ctrl+N/O/S/Shift+S/W and Ctrl+Tab /
+    // Ctrl+Shift+Tab for multi-file tabs. Registers *after*
+    // `CodeEditorService` so the editor's own key handling sees
+    // every keystroke first; the file service only fires on the
+    // chord-style command shortcuts that the editor itself doesn't
+    // claim.
+    reg.add_scoped(Universal, EditorFilesService);
     // §25 — `CommandPaletteService` MUST register ahead of `InputService`
     // so its modal-capture `on_event` (returns `Handled` while open)
     // short-circuits Ctrl+S / Ctrl+F / etc. before InputService can

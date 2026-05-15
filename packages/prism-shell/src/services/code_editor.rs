@@ -40,6 +40,7 @@ impl ShellService for CodeEditorService {
         match event {
             Event::Text { text } => {
                 ctx.state.canvas.code_buffer.editor.apply_text(text);
+                ctx.state.canvas.mark_active_tab_dirty();
                 ensure_caret_visible(ctx);
                 EventOutcome::Handled
             }
@@ -57,6 +58,7 @@ impl ShellService for CodeEditorService {
             }
             Event::ImeCommit { text } => {
                 ctx.state.canvas.code_buffer.editor.apply_ime_commit(text);
+                ctx.state.canvas.mark_active_tab_dirty();
                 ensure_caret_visible(ctx);
                 EventOutcome::Handled
             }
@@ -76,6 +78,15 @@ impl ShellService for CodeEditorService {
                 }
                 if modifiers.ctrl || modifiers.meta {
                     match code.as_str() {
+                        // Editor doesn't claim these — they belong to
+                        // the file / tab service one layer up. Pass
+                        // them through so Ctrl+N / Ctrl+O / Ctrl+S /
+                        // Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab fire
+                        // their file-management commands instead of
+                        // mutating the buffer.
+                        "n" | "o" | "s" | "w" | "tab" => {
+                            return EventOutcome::Pass;
+                        }
                         // Override Ctrl+/ — route through the buffer's
                         // language-aware toggle so the prefix matches
                         // the active language (Luau `--`, JS `//`,
@@ -83,6 +94,7 @@ impl ShellService for CodeEditorService {
                         // would otherwise default to `--`.
                         "/" => {
                             ctx.state.canvas.code_buffer.toggle_line_comment();
+                            ctx.state.canvas.mark_active_tab_dirty();
                             ensure_caret_visible(ctx);
                             return EventOutcome::Handled;
                         }
@@ -98,6 +110,7 @@ impl ShellService for CodeEditorService {
                                 let s = s.to_string();
                                 ctx.clipboard.set_string(s);
                                 ctx.state.canvas.code_buffer.editor.insert("", true);
+                                ctx.state.canvas.mark_active_tab_dirty();
                             }
                             ensure_caret_visible(ctx);
                             return EventOutcome::Handled;
@@ -105,6 +118,7 @@ impl ShellService for CodeEditorService {
                         "v" => {
                             if let Some(text) = ctx.clipboard.get_string() {
                                 ctx.state.canvas.code_buffer.editor.insert(&text, true);
+                                ctx.state.canvas.mark_active_tab_dirty();
                             }
                             ensure_caret_visible(ctx);
                             return EventOutcome::Handled;
@@ -112,13 +126,23 @@ impl ShellService for CodeEditorService {
                         _ => {}
                     }
                 }
+                // Detect *text* mutations vs pure caret nav by
+                // comparing the buffer's raw bytes before / after.
+                // Caret + selection moves return `Mutated` too, so
+                // a raw outcome check would false-positive every
+                // arrow key.
+                let before_len = ctx.state.canvas.code_buffer.editor.text().len();
                 let outcome = ctx
                     .state
                     .canvas
                     .code_buffer
                     .editor
                     .apply_key(code, *modifiers);
+                let after_len = ctx.state.canvas.code_buffer.editor.text().len();
                 if outcome.mutated() {
+                    if before_len != after_len {
+                        ctx.state.canvas.mark_active_tab_dirty();
+                    }
                     ensure_caret_visible(ctx);
                     EventOutcome::Handled
                 } else if modifiers.ctrl || modifiers.meta || modifiers.alt {

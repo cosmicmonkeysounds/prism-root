@@ -3861,6 +3861,23 @@ pub struct CanvasSlot {
     pub viewport: CanvasViewport,
     pub picker: PickerState,
     pub code_buffer: CodeBuffer,
+    /// Per-tab metadata for the currently active buffer (path,
+    /// title, dirty flag). Mirrors what would otherwise live on
+    /// `code_buffer` itself; kept separate so the `CodeBuffer` type
+    /// can stay a pure editor state without file-system concerns.
+    pub code_buffer_meta: EditorTabMeta,
+    /// Inactive editor tabs. The active tab's live editing state is
+    /// in `code_buffer`; this vector carries every *other* open
+    /// file (or untitled scratch buffer) as a snapshot pair.
+    /// Visual tab order is `[..code_tabs[..active]] + active +
+    /// [code_tabs[active..]]` — i.e. the active tab logically sits
+    /// at `code_active_tab` in the combined display order.
+    pub code_tabs: Vec<EditorTab>,
+    /// Logical index of the active tab in the *display* list (which
+    /// is `code_tabs` with the active tab spliced in at this index).
+    /// In `[0..=code_tabs.len()]` — `0` means active is first;
+    /// `code_tabs.len()` means active is last. Always in range.
+    pub code_active_tab: usize,
     /// §43 D2: active responsive preview mode. Drives the
     /// Desktop/Tablet/Mobile button cluster in `shell.builder-toolbar`
     /// and (eventually) constrains the canvas page width when the
@@ -4053,6 +4070,69 @@ pub struct PickerCandidate {
     pub id: String,
     pub label: String,
     pub icon: String,
+}
+
+/// Per-tab metadata — path on disk, display title, dirty flag.
+/// Sits *next to* [`CodeBuffer`] (which carries the live editor
+/// state) so the buffer type stays free of file-system concerns.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EditorTabMeta {
+    /// Filesystem path the tab loaded from / saves to. `None` for
+    /// untitled scratch buffers and freshly-opened `editor.file.new`
+    /// tabs.
+    pub path: Option<std::path::PathBuf>,
+    /// Display label shown on the tab pill. Defaults to the path's
+    /// file stem or `"Untitled"` for untitled tabs.
+    pub title: String,
+    /// `true` when the buffer has changes that haven't been flushed
+    /// to disk. Cleared on save / load; set by any edit through the
+    /// shell's mutator surface.
+    pub dirty: bool,
+}
+
+impl EditorTabMeta {
+    pub fn untitled() -> Self {
+        Self {
+            path: None,
+            title: "Untitled".into(),
+            dirty: false,
+        }
+    }
+
+    /// Construct meta from a path; the title defaults to the file's
+    /// stem (or full file_name when no stem can be extracted).
+    pub fn for_path(path: std::path::PathBuf) -> Self {
+        let title = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Untitled".into());
+        Self {
+            path: Some(path),
+            title,
+            dirty: false,
+        }
+    }
+}
+
+/// One inactive open file. Pairs [`EditorTabMeta`] (path / title /
+/// dirty) with [`CodeBuffer`] (the buffer's caret / selection /
+/// undo / scroll). The shell snapshots the active tab into one of
+/// these on every switch, so cycling through tabs round-trips every
+/// editor concern.
+#[derive(Clone, Debug)]
+pub struct EditorTab {
+    pub meta: EditorTabMeta,
+    pub buffer: CodeBuffer,
+}
+
+impl EditorTab {
+    pub fn untitled() -> Self {
+        Self {
+            meta: EditorTabMeta::untitled(),
+            buffer: CodeBuffer::default(),
+        }
+    }
 }
 
 /// Backing buffer for the in-shell code editor. Owns a multi-line
@@ -4305,6 +4385,220 @@ struct DragState {
 }
 
 impl CanvasSlot {
+    // ── editor tabs ───────────────────────────────────────────────
+
+    /// Total number of open editor tabs (active + inactive).
+    pub fn editor_tab_count(&self) -> usize {
+        self.code_tabs.len() + 1
+    }
+
+    /// JSON shape of every open tab in display order, for the tab-
+    /// strip binding. Each entry carries `title`, `dirty`, and a
+    /// position index the click router uses to switch active.
+    pub fn editor_tab_strip(&self) -> Vec<Value> {
+        let mut out = Vec::with_capacity(self.editor_tab_count());
+        for (idx, tab) in self.code_tabs.iter().enumerate() {
+            if idx == self.code_active_tab {
+                out.push(self.tab_entry(idx, &self.code_buffer_meta, true));
+            }
+            out.push(self.tab_entry(out.len(), &tab.meta, false));
+        }
+        // Active tab at the end?
+        if self.code_active_tab >= self.code_tabs.len() {
+            out.push(self.tab_entry(out.len(), &self.code_buffer_meta, true));
+        }
+        out
+    }
+
+    fn tab_entry(&self, idx: usize, meta: &EditorTabMeta, active: bool) -> Value {
+        json!({
+            "index": idx,
+            "title": meta.title,
+            "dirty": meta.dirty,
+            "active": active,
+            "path": meta.path.as_ref().map(|p| p.display().to_string()),
+        })
+    }
+
+    /// Snapshot the live editing state into the active slot of
+    /// `code_tabs`. Cheap (`code_buffer.clone()`), invoked on every
+    /// tab switch + every save so the inactive vec stays current.
+    fn stash_active_into_tabs(&mut self) {
+        let tab = EditorTab {
+            meta: self.code_buffer_meta.clone(),
+            buffer: self.code_buffer.clone(),
+        };
+        let active = self.code_active_tab.min(self.code_tabs.len());
+        if active < self.code_tabs.len() {
+            self.code_tabs[active] = tab;
+        } else {
+            self.code_tabs.push(tab);
+        }
+    }
+
+    /// Switch the active tab to display index `target`. Saves the
+    /// current live buffer back into its slot, then pulls the
+    /// target slot's buffer + meta into the active position.
+    /// Returns `true` when the switch actually moved.
+    pub fn switch_editor_tab(&mut self, target: usize) -> bool {
+        if target >= self.editor_tab_count() || target == self.code_active_tab {
+            return false;
+        }
+        // Snapshot the live buffer into the inactive vec at the
+        // *current* active slot, then take the target tab out of the
+        // vec and install it as the new active buffer. The inactive
+        // vec ends up with: [old_inactive_before, …, snapshot of
+        // previous active, …, old_inactive_after] minus the target.
+        let prev_active = self.code_active_tab;
+        let snapshot = EditorTab {
+            meta: self.code_buffer_meta.clone(),
+            buffer: self.code_buffer.clone(),
+        };
+        // Convert the display-list index `target` to a slot in
+        // `code_tabs`. Display indices below the active map 1:1;
+        // display indices above the active are off by one.
+        let pop_at = if target < prev_active {
+            target
+        } else {
+            target - 1
+        };
+        let target_tab = self.code_tabs.remove(pop_at);
+        // Insert the snapshot at the position the previously-active
+        // tab logically occupied in `code_tabs`. That's `prev_active`
+        // when active was first (or in the middle below the target),
+        // and `prev_active - 1` when target sat below active.
+        let insert_at = if target < prev_active {
+            // The active is shifting up — its old display slot is at
+            // `prev_active - 1` after the removal.
+            prev_active.saturating_sub(1)
+        } else {
+            prev_active
+        };
+        self.code_tabs
+            .insert(insert_at.min(self.code_tabs.len()), snapshot);
+        self.code_buffer = target_tab.buffer;
+        self.code_buffer_meta = target_tab.meta;
+        self.code_active_tab = target;
+        true
+    }
+
+    /// Open a fresh untitled tab and make it active.
+    pub fn new_editor_tab(&mut self) {
+        self.stash_active_into_tabs();
+        // Insert the new tab right after the current active.
+        let insert_at = self.code_active_tab + 1;
+        self.code_tabs
+            .insert(insert_at.min(self.code_tabs.len()), EditorTab::untitled());
+        // Pull the new tab into active.
+        let new_tab = self.code_tabs.remove(insert_at.min(self.code_tabs.len()));
+        self.code_buffer = new_tab.buffer;
+        self.code_buffer_meta = new_tab.meta;
+        self.code_active_tab = insert_at;
+    }
+
+    /// Open a file as a new tab. If the same path is already open,
+    /// switches to that tab instead of opening a duplicate.
+    pub fn open_editor_tab(
+        &mut self,
+        path: std::path::PathBuf,
+        source: impl Into<String>,
+        language: impl Into<String>,
+    ) {
+        // De-dupe: if the path is already open, just switch.
+        for (idx, tab) in self.code_tabs.iter().enumerate() {
+            if tab.meta.path.as_ref() == Some(&path) {
+                let display_idx = if idx < self.code_active_tab {
+                    idx
+                } else {
+                    idx + 1
+                };
+                self.switch_editor_tab(display_idx);
+                return;
+            }
+        }
+        if self.code_buffer_meta.path.as_ref() == Some(&path) {
+            return;
+        }
+        self.stash_active_into_tabs();
+        let mut buffer = CodeBuffer::default();
+        buffer.load(source, language);
+        let insert_at = self.code_active_tab + 1;
+        let new_tab = EditorTab {
+            meta: EditorTabMeta::for_path(path),
+            buffer,
+        };
+        self.code_tabs
+            .insert(insert_at.min(self.code_tabs.len()), new_tab);
+        let pulled = self.code_tabs.remove(insert_at.min(self.code_tabs.len()));
+        self.code_buffer = pulled.buffer;
+        self.code_buffer_meta = pulled.meta;
+        self.code_active_tab = insert_at;
+    }
+
+    /// Close the active tab. If it's the only one open, leaves a
+    /// fresh untitled tab in its place (the editor always has at
+    /// least one tab — the panel never goes "empty"). Returns
+    /// `true` when something actually closed.
+    pub fn close_active_editor_tab(&mut self) -> bool {
+        if self.editor_tab_count() <= 1 {
+            // Last tab — reset to a fresh untitled.
+            self.code_buffer = CodeBuffer::default();
+            self.code_buffer_meta = EditorTabMeta::untitled();
+            self.code_active_tab = 0;
+            return true;
+        }
+        // Pull the next tab in. Prefer the one that visually slid
+        // into the active position (the one *after* the closed
+        // tab); fall back to the previous tab when the active was
+        // the last in the display list.
+        let new_active = if self.code_active_tab < self.code_tabs.len() {
+            self.code_tabs.remove(self.code_active_tab)
+        } else {
+            self.code_tabs.pop().unwrap()
+        };
+        self.code_buffer = new_active.buffer;
+        self.code_buffer_meta = new_active.meta;
+        if self.code_active_tab > self.code_tabs.len() {
+            self.code_active_tab = self.code_tabs.len();
+        }
+        true
+    }
+
+    pub fn next_editor_tab(&mut self) -> bool {
+        let total = self.editor_tab_count();
+        if total < 2 {
+            return false;
+        }
+        let next = (self.code_active_tab + 1) % total;
+        self.switch_editor_tab(next)
+    }
+
+    pub fn prev_editor_tab(&mut self) -> bool {
+        let total = self.editor_tab_count();
+        if total < 2 {
+            return false;
+        }
+        let prev = if self.code_active_tab == 0 {
+            total - 1
+        } else {
+            self.code_active_tab - 1
+        };
+        self.switch_editor_tab(prev)
+    }
+
+    /// Mark the active tab as dirty. Called by every editor
+    /// mutation (key route / IME commit / file load is the inverse
+    /// — it clears).
+    pub fn mark_active_tab_dirty(&mut self) {
+        self.code_buffer_meta.dirty = true;
+    }
+
+    /// Apply a successful save: the active tab's path is now `path`
+    /// and its dirty flag clears. Title rederives from the new path.
+    pub fn record_active_tab_saved(&mut self, path: std::path::PathBuf) {
+        self.code_buffer_meta = EditorTabMeta::for_path(path);
+    }
+
     // ── read side ─────────────────────────────────────────────────
 
     /// JSON for `shell.code-editor`. Wave 11.4 migration to DSL —
@@ -4393,6 +4687,7 @@ impl CanvasSlot {
                         };
                     (own, partner)
                 });
+        let tabs = self.editor_tab_strip();
         let mut props = json!({
             "source": source,
             "caret": caret,
@@ -4405,6 +4700,8 @@ impl CanvasSlot {
             "scroll-x": self.code_buffer.scroll_x,
             "scroll-y": self.code_buffer.scroll_y,
             "highlight-current-line": true,
+            "tabs": tabs,
+            "active-tab": self.code_active_tab,
         });
         if let Some(sel) = selection_attr {
             props["selection"] = Value::String(sel);
@@ -7808,6 +8105,9 @@ mod tests {
                     cached_spans: std::cell::RefCell::new(SpansCache::default()),
                 }
             },
+            code_buffer_meta: EditorTabMeta::untitled(),
+            code_tabs: Vec::new(),
+            code_active_tab: 0,
             device: Device::Desktop,
             drag: None,
             bindings: prism_builder::DocumentBindings::new(),
