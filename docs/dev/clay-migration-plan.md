@@ -1,5 +1,24 @@
 # Clay Migration Plan
 
+> **STATUS 2026-05-15 — the migration has landed.** Slint is fully
+> exorcised; Taffy + the `prism-ui` DSL + retained `Surface` + three
+> render backends (femtovg native, web, semantic-HTML SSR) all ship.
+> Phases 0–5 are closed; Phase 6 (mobile/packaging) is the only
+> open phase, tracked separately.
+>
+> **For live work, read [`ui-migration-followups.md`](ui-migration-followups.md).**
+> That doc is the active punch list; this one is the chronological
+> decision record. The 6000+ lines below are kept because they
+> answer *why* structural choices got made — section ids are
+> referenced from CLAUDE.md files and ADRs — but they aren't a
+> punch list any more.
+>
+> **Quick navigation:**
+> - §§0–7: framing (decisions, scope, design principles)
+> - §8: phase roadmap (closed)
+> - §§9–10: decision log + Slint inventory (archive)
+> - §§11–43: implementation chapters, chronological (closed)
+
 > Migrating Prism's UI layer off [Slint](https://github.com/slint-ui/slint)
 > onto [Clay](https://github.com/nicbarker/clay) (with Rust bindings),
 > wrapped in a Prism-native declarative DSL — `prism-ui` — so every

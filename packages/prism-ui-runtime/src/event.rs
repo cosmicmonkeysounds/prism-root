@@ -50,6 +50,33 @@ pub enum Event {
     Focus {
         gained: bool,
     },
+    /// IME composition is open — usually triggers a UI hint (the OS
+    /// composition window will be positioned over the active caret).
+    /// Hosts use this to switch from "raw key handling" to "preedit
+    /// display" mode.
+    ImeEnabled,
+    /// IME composition closed — drop any preedit state.
+    ImeDisabled,
+    /// Preedit text — the partial composition the user is in the
+    /// middle of typing (Japanese / Chinese / Korean kana, dead-key
+    /// accent stacks, etc.). The host displays this in-line at the
+    /// caret, usually with an underline. Replacing a previous
+    /// preedit; an empty `text` clears the preedit. `cursor_byte` is
+    /// the OS-reported caret position *within* the preedit string,
+    /// in byte offsets; `None` means "no cursor inside preedit".
+    ImePreedit {
+        text: String,
+        cursor_byte: Option<usize>,
+    },
+    /// Commit — the IME has finalised a composition. The host
+    /// inserts `text` at the caret as a normal edit and clears any
+    /// active preedit. This is the *normal* path most printable
+    /// keystrokes flow through on platforms where winit reports
+    /// IME (macOS + recent Linux) — the `Event::Text` arm covers
+    /// dead-key-free typing on Windows.
+    ImeCommit {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

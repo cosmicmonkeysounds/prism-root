@@ -57,6 +57,15 @@ use crate::variant::VariantAxis;
 /// Node descriptor returned by a Luau `render` function. Same shape as
 /// [`Node`] minus the persistent `id` (the host mints synthetic ids on
 /// the fly so the source map stays consistent).
+///
+/// > **Not the same as [`prism_core::luau_runtime::VirtualNode`].**
+/// > That sibling type is the semantic-HTML shape
+/// > (`Element { tag, attrs, children } | Text(s)`) used by the
+/// > persistent runtime for scripts that emit HTML directly. *This*
+/// > type is the component-ref shape used by builder-scope render
+/// > functions that go back through `ComponentRegistry::lower_ui`.
+/// > The two shapes coexist on purpose — the seams chose different
+/// > abstraction levels — so don't try to merge them.
 #[derive(Debug, Clone, Default)]
 pub struct VirtualNode {
     pub component: String,

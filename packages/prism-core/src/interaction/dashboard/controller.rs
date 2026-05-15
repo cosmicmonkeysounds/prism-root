@@ -299,160 +299,6 @@ pub fn grid_row_count(widgets: &[WidgetSlot]) -> usize {
     layout_rows(widgets).len()
 }
 
-/// Returns the 12 built-in widget definitions.
-pub fn built_in_widgets() -> Vec<WidgetDef> {
-    use crate::widget::{FieldSpec, NumericBounds, SelectOption};
-
-    vec![
-        WidgetDef {
-            id: "stats".into(),
-            label: "Stats".into(),
-            description: Some("Key metrics at a glance".into()),
-            default_col_span: 1,
-            default_row_span: 1,
-            min_col_span: 1,
-            max_col_span: 3,
-            config_schema: vec![],
-        },
-        WidgetDef {
-            id: "databases".into(),
-            label: "Databases".into(),
-            description: Some("Database overview".into()),
-            default_col_span: 2,
-            default_row_span: 1,
-            min_col_span: 1,
-            max_col_span: 3,
-            config_schema: vec![],
-        },
-        WidgetDef {
-            id: "tasks".into(),
-            label: "Tasks".into(),
-            description: Some("Active task list".into()),
-            default_col_span: 1,
-            default_row_span: 1,
-            min_col_span: 1,
-            max_col_span: 3,
-            config_schema: vec![FieldSpec::select(
-                "filter",
-                "Filter",
-                vec![
-                    SelectOption::new("all", "All"),
-                    SelectOption::new("today", "Today"),
-                    SelectOption::new("overdue", "Overdue"),
-                ],
-            )],
-        },
-        WidgetDef {
-            id: "reminders".into(),
-            label: "Reminders".into(),
-            description: Some("Upcoming reminders".into()),
-            default_col_span: 1,
-            default_row_span: 1,
-            min_col_span: 1,
-            max_col_span: 2,
-            config_schema: vec![],
-        },
-        WidgetDef {
-            id: "capture".into(),
-            label: "Capture".into(),
-            description: Some("Quick capture input".into()),
-            default_col_span: 1,
-            default_row_span: 1,
-            min_col_span: 1,
-            max_col_span: 2,
-            config_schema: vec![],
-        },
-        WidgetDef {
-            id: "goals".into(),
-            label: "Goals".into(),
-            description: Some("Goal progress tracker".into()),
-            default_col_span: 1,
-            default_row_span: 1,
-            min_col_span: 1,
-            max_col_span: 3,
-            config_schema: vec![],
-        },
-        WidgetDef {
-            id: "finance".into(),
-            label: "Finance".into(),
-            description: Some("Financial summary".into()),
-            default_col_span: 2,
-            default_row_span: 1,
-            min_col_span: 1,
-            max_col_span: 3,
-            config_schema: vec![FieldSpec::select(
-                "period",
-                "Period",
-                vec![
-                    SelectOption::new("week", "This week"),
-                    SelectOption::new("month", "This month"),
-                    SelectOption::new("year", "This year"),
-                ],
-            )],
-        },
-        WidgetDef {
-            id: "quick-links".into(),
-            label: "Quick Links".into(),
-            description: Some("Bookmarked shortcuts".into()),
-            default_col_span: 1,
-            default_row_span: 1,
-            min_col_span: 1,
-            max_col_span: 2,
-            config_schema: vec![],
-        },
-        WidgetDef {
-            id: "timer".into(),
-            label: "Timer".into(),
-            description: Some("Pomodoro / focus timer".into()),
-            default_col_span: 1,
-            default_row_span: 1,
-            min_col_span: 1,
-            max_col_span: 1,
-            config_schema: vec![FieldSpec::number(
-                "duration_minutes",
-                "Duration (minutes)",
-                NumericBounds::unbounded(),
-            )
-            .with_default(serde_json::Value::from(25))],
-        },
-        WidgetDef {
-            id: "recent".into(),
-            label: "Recent".into(),
-            description: Some("Recently visited items".into()),
-            default_col_span: 1,
-            default_row_span: 1,
-            min_col_span: 1,
-            max_col_span: 3,
-            config_schema: vec![FieldSpec::number(
-                "limit",
-                "Items to show",
-                NumericBounds::unbounded(),
-            )
-            .with_default(serde_json::Value::from(10))],
-        },
-        WidgetDef {
-            id: "graph".into(),
-            label: "Graph".into(),
-            description: Some("Knowledge graph view".into()),
-            default_col_span: 2,
-            default_row_span: 2,
-            min_col_span: 2,
-            max_col_span: 3,
-            config_schema: vec![],
-        },
-        WidgetDef {
-            id: "custom".into(),
-            label: "Custom".into(),
-            description: Some("User-defined widget".into()),
-            default_col_span: 1,
-            default_row_span: 1,
-            min_col_span: 1,
-            max_col_span: 3,
-            config_schema: vec![FieldSpec::text("content", "Content")],
-        },
-    ]
-}
-
 /// Returns 3 default dashboard presets: Home, Focus, Finance.
 pub fn create_default_presets() -> Vec<DashboardPreset> {
     vec![
@@ -589,55 +435,12 @@ fn deep_clone_presets(presets: &[DashboardPreset]) -> Vec<DashboardPreset> {
     presets.to_vec()
 }
 
-use super::types::WidgetDef;
-use indexmap::IndexMap;
-
-pub struct WidgetRegistry {
-    defs: IndexMap<String, WidgetDef>,
-}
-
-impl WidgetRegistry {
-    pub fn new() -> Self {
-        Self {
-            defs: IndexMap::new(),
-        }
-    }
-
-    pub fn register(&mut self, def: WidgetDef) -> &mut Self {
-        self.defs.insert(def.id.clone(), def);
-        self
-    }
-
-    pub fn register_all(&mut self, defs: Vec<WidgetDef>) -> &mut Self {
-        for def in defs {
-            self.defs.insert(def.id.clone(), def);
-        }
-        self
-    }
-
-    pub fn get(&self, id: &str) -> Option<&WidgetDef> {
-        self.defs.get(id)
-    }
-
-    pub fn has(&self, id: &str) -> bool {
-        self.defs.contains_key(id)
-    }
-
-    pub fn all_defs(&self) -> Vec<&WidgetDef> {
-        self.defs.values().collect()
-    }
-
-    pub fn all_ids(&self) -> Vec<&str> {
-        self.defs.keys().map(|k| k.as_str()).collect()
-    }
-}
-
-impl Default for WidgetRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
+/// Every dashboard widget, declared as a [`WidgetContribution`] so it
+/// flows through `prism_builder::CoreWidgetBlock` →
+/// `ComponentRegistry` like any other block. IDs are the bare names
+/// the [`create_default_presets`] preset slots reference
+/// (`widget_type: "stats"`, etc.) — no parallel registry, no parallel
+/// schema, one declaration per widget.
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
         widget, DataQuery, FieldSpec, NumericBounds, SelectOption, SignalSpec, TemplateNode,
@@ -646,10 +449,11 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use serde_json::json;
 
     vec![
-        widget("dashboard-stats", "Stats")
+        widget("stats", "Stats")
             .description("Key metrics at a glance")
             .category(WidgetCategory::Display)
             .size(1, 1)
+            .max_size(3, 1)
             .signal(SignalSpec::new("clicked", "Widget clicked"))
             .template(TemplateNode::vertical(
                 4,
@@ -665,10 +469,26 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                 ],
             ))
             .build(),
-        widget("dashboard-tasks", "Tasks")
+        widget("databases", "Databases")
+            .description("Database overview")
+            .category(WidgetCategory::DataTable)
+            .size(2, 1)
+            .max_size(3, 1)
+            .signal(SignalSpec::selection("database"))
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Databases"})),
+                    TemplateNode::text_binding("summary"),
+                ],
+            ))
+            .build(),
+        widget("tasks", "Tasks")
             .description("Active task list")
             .category(WidgetCategory::Display)
-            .size(2, 1)
+            .size(1, 1)
+            .max_size(3, 1)
             .query(DataQuery::for_type("task").sort_desc("updated_at"))
             .data_key("tasks")
             .data_fields(vec![
@@ -699,10 +519,110 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                 ],
             ))
             .build(),
-        widget("dashboard-timer", "Timer")
+        widget("reminders", "Reminders")
+            .description("Upcoming reminders")
+            .category(WidgetCategory::Temporal)
+            .size(1, 1)
+            .max_size(2, 1)
+            .signal(SignalSpec::selection("reminder"))
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Reminders"})),
+                    TemplateNode::repeater(
+                        "reminders",
+                        TemplateNode::text_binding("title"),
+                        "No reminders",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("capture", "Capture")
+            .description("Quick capture input")
+            .category(WidgetCategory::Input)
+            .size(1, 1)
+            .max_size(2, 1)
+            .signal(
+                SignalSpec::new("captured", "Capture submitted")
+                    .payload_text("text", "Captured text"),
+            )
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Capture"})),
+                    TemplateNode::component("input", json!({"placeholder": "Type to capture…"})),
+                ],
+            ))
+            .build(),
+        widget("goals", "Goals")
+            .description("Goal progress tracker")
+            .category(WidgetCategory::Display)
+            .size(1, 1)
+            .max_size(3, 1)
+            .signal(SignalSpec::selection("goal"))
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Goals"})),
+                    TemplateNode::repeater(
+                        "goals",
+                        TemplateNode::text_binding("title"),
+                        "No goals",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("finance", "Finance")
+            .description("Financial summary")
+            .category(WidgetCategory::Finance)
+            .size(2, 1)
+            .max_size(3, 1)
+            .field(FieldSpec::select(
+                "period",
+                "Period",
+                vec![
+                    SelectOption::new("week", "This week"),
+                    SelectOption::new("month", "This month"),
+                    SelectOption::new("year", "This year"),
+                ],
+            ))
+            .signal(SignalSpec::new("clicked", "Summary clicked"))
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Finance"})),
+                    TemplateNode::text_binding("summary"),
+                ],
+            ))
+            .build(),
+        widget("quick-links", "Quick Links")
+            .description("Bookmarked shortcuts")
+            .category(WidgetCategory::Navigation)
+            .size(1, 1)
+            .max_size(2, 1)
+            .signal(SignalSpec::selection("link"))
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Quick Links"})),
+                    TemplateNode::repeater(
+                        "links",
+                        TemplateNode::text_binding("label"),
+                        "No links",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("timer", "Timer")
             .description("Pomodoro / focus timer")
             .category(WidgetCategory::Temporal)
             .size(1, 1)
+            .max_size(1, 1)
             .field(
                 FieldSpec::number(
                     "duration_minutes",
@@ -724,10 +644,11 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                 ],
             ))
             .build(),
-        widget("dashboard-recent", "Recent")
+        widget("recent", "Recent")
             .description("Recently visited items")
             .category(WidgetCategory::Display)
-            .size(2, 1)
+            .size(1, 1)
+            .max_size(3, 1)
             .query(DataQuery {
                 sort: vec![crate::widget::QuerySort {
                     field: "updated_at".into(),
@@ -761,10 +682,12 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                 ],
             ))
             .build(),
-        widget("dashboard-graph", "Graph")
+        widget("graph", "Graph")
             .description("Knowledge graph visualization")
             .category(WidgetCategory::Display)
             .size(2, 2)
+            .min_size(2, 1)
+            .max_size(3, 3)
             .signal(SignalSpec::selection("node"))
             .template(TemplateNode::vertical(
                 8,
@@ -773,6 +696,18 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                     TemplateNode::component("heading", json!({"body": "Knowledge Graph"})),
                     TemplateNode::text_binding("graph_data"),
                 ],
+            ))
+            .build(),
+        widget("custom", "Custom")
+            .description("User-defined widget")
+            .category(WidgetCategory::Custom)
+            .size(1, 1)
+            .max_size(3, 3)
+            .field(FieldSpec::text("content", "Content"))
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![TemplateNode::text_binding("content")],
             ))
             .build(),
     ]
@@ -810,19 +745,6 @@ mod tests {
             col_span: col,
             row_span: 1,
             config: None,
-        }
-    }
-
-    fn make_widget_def(id: &str) -> WidgetDef {
-        WidgetDef {
-            id: id.to_string(),
-            label: id.to_string(),
-            description: None,
-            default_col_span: 1,
-            default_row_span: 1,
-            min_col_span: 1,
-            max_col_span: 3,
-            config_schema: vec![],
         }
     }
 
@@ -1248,96 +1170,45 @@ mod tests {
         assert_eq!(a[0].tabs[0].widgets.len(), b[0].tabs[0].widgets.len());
     }
 
-    // ── WidgetRegistry ───────────────────────────────────────────
+    // ── widget_contributions ─────────────────────────────────────
 
     #[test]
-    fn registry_register_and_get() {
-        let mut reg = WidgetRegistry::new();
-        reg.register(make_widget_def("stats"));
-        assert!(reg.has("stats"));
-        assert_eq!(reg.get("stats").unwrap().label, "stats");
-    }
-
-    #[test]
-    fn registry_has_returns_false_for_unknown() {
-        let reg = WidgetRegistry::new();
-        assert!(!reg.has("nonexistent"));
-    }
-
-    #[test]
-    fn registry_chaining() {
-        let mut reg = WidgetRegistry::new();
-        reg.register(make_widget_def("a"))
-            .register(make_widget_def("b"));
-        assert_eq!(reg.all_ids().len(), 2);
-    }
-
-    #[test]
-    fn registry_register_all() {
-        let mut reg = WidgetRegistry::new();
-        reg.register_all(vec![make_widget_def("x"), make_widget_def("y")]);
-        assert!(reg.has("x"));
-        assert!(reg.has("y"));
-    }
-
-    #[test]
-    fn registry_all_defs_returns_all() {
-        let mut reg = WidgetRegistry::new();
-        reg.register_all(built_in_widgets());
-        assert_eq!(reg.all_defs().len(), 12);
-    }
-
-    #[test]
-    fn registry_all_ids_returns_all() {
-        let mut reg = WidgetRegistry::new();
-        reg.register_all(built_in_widgets());
-        let ids = reg.all_ids();
-        assert_eq!(ids.len(), 12);
-        assert!(ids.contains(&"stats"));
-        assert!(ids.contains(&"custom"));
-    }
-
-    #[test]
-    fn registry_preserves_insertion_order() {
-        let mut reg = WidgetRegistry::new();
-        reg.register(make_widget_def("z"))
-            .register(make_widget_def("a"))
-            .register(make_widget_def("m"));
-        let ids = reg.all_ids();
-        assert_eq!(ids, vec!["z", "a", "m"]);
-    }
-
-    // ── built_in_widgets ─────────────────────────────────────────
-
-    #[test]
-    fn built_in_widgets_has_12_entries() {
-        let widgets = built_in_widgets();
-        assert_eq!(widgets.len(), 12);
-        let ids: Vec<&str> = widgets.iter().map(|w| w.id.as_str()).collect();
-        assert!(ids.contains(&"stats"));
-        assert!(ids.contains(&"databases"));
-        assert!(ids.contains(&"tasks"));
-        assert!(ids.contains(&"reminders"));
-        assert!(ids.contains(&"capture"));
-        assert!(ids.contains(&"goals"));
-        assert!(ids.contains(&"finance"));
-        assert!(ids.contains(&"quick-links"));
-        assert!(ids.contains(&"timer"));
-        assert!(ids.contains(&"recent"));
-        assert!(ids.contains(&"graph"));
-        assert!(ids.contains(&"custom"));
-    }
-
-    #[test]
-    fn widget_contributions_has_5_entries() {
+    fn widget_contributions_covers_every_preset_widget_type() {
         let contributions = widget_contributions();
-        assert_eq!(contributions.len(), 5);
+        assert_eq!(contributions.len(), 12);
         let ids: Vec<&str> = contributions.iter().map(|c| c.id.as_str()).collect();
-        assert!(ids.contains(&"dashboard-stats"));
-        assert!(ids.contains(&"dashboard-tasks"));
-        assert!(ids.contains(&"dashboard-timer"));
-        assert!(ids.contains(&"dashboard-recent"));
-        assert!(ids.contains(&"dashboard-graph"));
+        for expected in [
+            "stats",
+            "databases",
+            "tasks",
+            "reminders",
+            "capture",
+            "goals",
+            "finance",
+            "quick-links",
+            "timer",
+            "recent",
+            "graph",
+            "custom",
+        ] {
+            assert!(ids.contains(&expected), "missing widget id: {expected}");
+        }
+
+        // Every widget_type referenced in the default presets must
+        // resolve to a contribution.
+        let presets = create_default_presets();
+        for preset in &presets {
+            for tab in &preset.tabs {
+                for slot in &tab.widgets {
+                    assert!(
+                        ids.contains(&slot.widget_type.as_str()),
+                        "preset {} references unknown widget_type {}",
+                        preset.id,
+                        slot.widget_type,
+                    );
+                }
+            }
+        }
     }
 
     #[test]

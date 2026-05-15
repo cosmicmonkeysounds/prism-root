@@ -151,7 +151,19 @@ getrandom = "0.2"
 # visual diff images highlighting regressions. Also the decoder
 # femtovg's `image-loading` feature leans on for PNG / JPEG `Image`
 # render-command sources in `prism-ui-runtime`.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    # Wave 14.7 — animated + extra still formats for the
+    # `RenderCommand::Image` paint path. `gif` carries the most
+    # common user-supplied "video" form; `webp` handles modern
+    # animated + still; `bmp` / `tiff` cover desktop drag-and-drop.
+    # All pure-Rust — no new system deps.
+    "gif",
+    "webp",
+    "bmp",
+    "tiff",
+] }
 
 # SVG rasterisation — `prism-ui-runtime`'s `ImageCache` decodes SVG
 # icon sources through resvg / usvg / tiny-skia, then hands the

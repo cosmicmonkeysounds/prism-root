@@ -7,7 +7,7 @@
 
 use femtovg::{Canvas, Color as FemtoColor, Paint, Path, Renderer};
 
-use crate::command::{Color, RenderCommand};
+use crate::command::{Color, RenderCommand, TextSelection, TextSpan};
 use crate::images::ImageCache;
 use crate::layout::Viewport;
 use crate::text::TextSystem;
@@ -16,12 +16,36 @@ use crate::text::TextSystem;
 /// against `canvas`. The caller is responsible for `set_size` /
 /// `clear_rect` / `flush_to_output` around the call — `draw` only
 /// touches paths, paints, scissors, and images.
+///
+/// Animated image sources hard-pin to their first frame; the
+/// animation-aware [`draw_at`] variant takes a monotonic `now_ms`
+/// and rotates GIF / animated-WebP / APNG frames against it.
 pub fn draw<R: Renderer>(
+    canvas: &mut Canvas<R>,
+    viewport: Viewport,
+    commands: &[RenderCommand],
+    text: &mut TextSystem,
+    images: &mut ImageCache,
+) {
+    draw_at(canvas, viewport, commands, text, images, 0);
+}
+
+/// Wave 14.7 — animation-aware variant of [`draw`]. `now_ms` is a
+/// monotonic millisecond clock from the host (typically
+/// `Instant::now().duration_since(epoch).as_millis()`). Each
+/// `RenderCommand::Image` whose source resolves to an animated
+/// entry in `images` paints the frame appropriate to `now_ms`;
+/// static sources ignore the clock and paint their sole `ImageId`
+/// unchanged. Hosts merge `ImageCache::has_animations()` into their
+/// per-frame "request redraw" bit so loops keep ticking without an
+/// explicit timer.
+pub fn draw_at<R: Renderer>(
     canvas: &mut Canvas<R>,
     _viewport: Viewport,
     commands: &[RenderCommand],
     text: &mut TextSystem,
     images: &mut ImageCache,
+    now_ms: u64,
 ) {
     for cmd in commands {
         match cmd {
@@ -78,6 +102,12 @@ pub fn draw<R: Renderer>(
                 color,
                 font_size,
                 caret,
+                caret_byte,
+                selection,
+                selection_color,
+                spans,
+                underline,
+                underline_color,
             } => {
                 draw_text(
                     canvas,
@@ -89,6 +119,12 @@ pub fn draw<R: Renderer>(
                     *color,
                     bounds.width,
                     *caret,
+                    *caret_byte,
+                    *selection,
+                    *selection_color,
+                    spans,
+                    *underline,
+                    *underline_color,
                     bounds.height,
                 );
             }
@@ -98,7 +134,7 @@ pub fn draw<R: Renderer>(
                 radius,
                 tint,
             } => {
-                let Some(image_id) = images.ensure(canvas, source) else {
+                let Some(image_id) = images.ensure_frame(canvas, source, now_ms) else {
                     continue;
                 };
                 let mut path = Path::new();
@@ -178,6 +214,32 @@ fn femto(c: Color) -> FemtoColor {
 /// insertion point — unlike a chars-times-font-size estimate, which
 /// drifts past the real glyph end and gives the user the impression
 /// that Backspace deletes the wrong character.
+struct GlyphSpan {
+    line_idx: usize,
+    start: usize,
+    end: usize,
+    x_min: f32,
+    x_max: f32,
+}
+
+/// Look up the per-byte colour override for a glyph at byte
+/// `offset`. Returns the *first* span whose `[start_byte, end_byte)`
+/// range covers the offset. Spans are expected non-overlapping
+/// (see [`TextSpan`]'s contract); a linear scan is fine — a code
+/// editor's span list is line-local and short.
+fn colour_for_byte(offset: usize, spans: &[TextSpan]) -> Option<Color> {
+    spans
+        .iter()
+        .find(|s| offset >= s.start_byte && offset < s.end_byte)
+        .map(|s| s.color)
+}
+
+struct LineMetrics {
+    line_top: f32,
+    line_height: f32,
+    x_end: f32,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_text<R: Renderer>(
     canvas: &mut Canvas<R>,
@@ -189,6 +251,12 @@ fn draw_text<R: Renderer>(
     colour: Color,
     width: f32,
     caret: Option<Color>,
+    caret_byte: Option<usize>,
+    selection: Option<TextSelection>,
+    selection_color: Option<Color>,
+    spans: &[TextSpan],
+    underline: Option<TextSelection>,
+    underline_color: Option<Color>,
     box_height: f32,
 ) {
     // Heuristic natural width — same `chars * font_size * 0.55`
@@ -200,44 +268,150 @@ fn draw_text<R: Renderer>(
     } else {
         f32::INFINITY
     };
+    // Precompute per-source-line byte offsets — cosmic-text reports
+    // `glyph.start` / `glyph.end` relative to the *buffer line*, not
+    // the global text. Caret + selection + span lookups all compare
+    // against global byte offsets, so we stamp the line's origin onto
+    // every glyph below.
+    let mut line_offsets: Vec<usize> = Vec::with_capacity(8);
+    line_offsets.push(0);
+    for (i, b) in content.bytes().enumerate() {
+        if b == b'\n' {
+            line_offsets.push(i + 1);
+        }
+    }
     let buffer = text.shape(content, font_size, shape_width);
-    // Collect placements first so we drop the buffer borrow before we
-    // re-enter `text` for glyph baking. We also track the rightmost
-    // glyph end on the first line — that's the pixel offset the caret
-    // bar should sit at (immediately after the last shaped glyph).
     struct Placement {
         x: f32,
         y: f32,
         cache: cosmic_text::CacheKey,
+        /// Resolved colour for this glyph — looked up against
+        /// `spans` by the glyph's global byte offset. `colour` is
+        /// the fallback when no span covers the offset.
+        colour: Color,
     }
     let mut placements: Vec<Placement> = Vec::new();
+    let mut glyph_spans: Vec<GlyphSpan> = Vec::new();
+    let mut line_metrics: Vec<LineMetrics> = Vec::new();
     let mut shaped_end_x: f32 = 0.0;
     let mut first_line_top: f32 = 0.0;
     for (line_idx, run) in buffer.layout_runs().enumerate() {
         if line_idx == 0 {
             first_line_top = run.line_top;
         }
+        let line_base = line_offsets
+            .get(line_idx)
+            .copied()
+            .unwrap_or_else(|| *line_offsets.last().unwrap_or(&0));
+        let mut row_x_max = 0.0f32;
         for glyph in run.glyphs.iter() {
             let physical = glyph.physical((0.0, 0.0), 1.0);
+            let global_start = line_base + glyph.start;
+            let global_end = line_base + glyph.end;
+            let glyph_colour = colour_for_byte(global_start, spans).unwrap_or(colour);
             placements.push(Placement {
                 x: physical.x as f32,
                 y: run.line_y + physical.y as f32,
                 cache: physical.cache_key,
+                colour: glyph_colour,
             });
-            if line_idx == 0 {
-                // glyph.x is the horizontal advance origin within the
-                // run; adding glyph.w gives the post-glyph cursor
-                // position the caret should land at.
-                let end = glyph.x + glyph.w;
-                if end > shaped_end_x {
-                    shaped_end_x = end;
+            let gx_min = glyph.x;
+            let gx_max = glyph.x + glyph.w;
+            glyph_spans.push(GlyphSpan {
+                line_idx,
+                start: global_start,
+                end: global_end,
+                x_min: gx_min,
+                x_max: gx_max,
+            });
+            if gx_max > row_x_max {
+                row_x_max = gx_max;
+            }
+            if line_idx == 0 && gx_max > shaped_end_x {
+                shaped_end_x = gx_max;
+            }
+        }
+        line_metrics.push(LineMetrics {
+            line_top: run.line_top,
+            line_height: run.line_height,
+            x_end: row_x_max,
+        });
+    }
+    if line_metrics.is_empty() {
+        line_metrics.push(LineMetrics {
+            line_top: 0.0,
+            line_height: font_size * 1.2,
+            x_end: 0.0,
+        });
+    }
+    drop(buffer);
+
+    // ── Selection highlight (painted under the glyphs) ─────────
+    if let (Some(sel), Some(sel_colour)) = (selection, selection_color) {
+        if sel.start_byte < sel.end_byte {
+            for (row_idx, row) in line_metrics.iter().enumerate() {
+                let mut row_min = f32::INFINITY;
+                let mut row_max = f32::NEG_INFINITY;
+                for span in &glyph_spans {
+                    if span.line_idx != row_idx {
+                        continue;
+                    }
+                    if span.end > sel.start_byte && span.start < sel.end_byte {
+                        if span.x_min < row_min {
+                            row_min = span.x_min;
+                        }
+                        if span.x_max > row_max {
+                            row_max = span.x_max;
+                        }
+                    }
+                }
+                if row_min.is_finite() && row_max > row_min {
+                    let mut path = Path::new();
+                    path.rect(
+                        left + row_min,
+                        top + row.line_top,
+                        row_max - row_min,
+                        row.line_height,
+                    );
+                    canvas.fill_path(&path, &Paint::color(femto(sel_colour)));
+                }
+                // Multi-line selection: when the trailing `\n` of this
+                // row falls inside the selection range, draw a small
+                // tail past the last glyph so users see the newline
+                // is included.
+                if row_idx + 1 < line_metrics.len() {
+                    let row_last_end = glyph_spans
+                        .iter()
+                        .filter(|s| s.line_idx == row_idx)
+                        .map(|s| s.end)
+                        .max()
+                        .unwrap_or(0);
+                    if row_last_end > sel.start_byte && row_last_end < sel.end_byte {
+                        let tail_w = font_size * 0.4;
+                        let mut path = Path::new();
+                        path.rect(
+                            left + row.x_end,
+                            top + row.line_top,
+                            tail_w,
+                            row.line_height,
+                        );
+                        canvas.fill_path(&path, &Paint::color(femto(sel_colour)));
+                    }
                 }
             }
         }
     }
-    drop(buffer);
+
+    // ── Glyphs ─────────────────────────────────────────────────
     for p in placements {
-        let Some(g) = text.glyph_image(canvas, p.cache, colour) else {
+        // Each glyph's colour comes from its `Placement.colour`,
+        // resolved against the syntax-highlighting spans at shape
+        // time. Glyphs outside every span pick up the command's
+        // base `colour`. The glyph cache is keyed by
+        // `(cache_key, rgba)`, so different colours rebake the
+        // texture lazily — no per-frame re-rasterisation when the
+        // span palette is stable.
+        let Some(g) = text.glyph_image(canvas, p.cache, p.colour) else {
             continue;
         };
         let dst_x = left + p.x + g.left as f32;
@@ -255,20 +429,107 @@ fn draw_text<R: Renderer>(
         );
         canvas.fill_path(&path, &paint);
     }
+
+    // ── Underline (IME preedit) ────────────────────────────────
+    if let (Some(ul), Some(ul_colour)) = (underline, underline_color) {
+        if ul.start_byte < ul.end_byte {
+            for (row_idx, row) in line_metrics.iter().enumerate() {
+                let mut row_min = f32::INFINITY;
+                let mut row_max = f32::NEG_INFINITY;
+                for span in &glyph_spans {
+                    if span.line_idx != row_idx {
+                        continue;
+                    }
+                    if span.end > ul.start_byte && span.start < ul.end_byte {
+                        if span.x_min < row_min {
+                            row_min = span.x_min;
+                        }
+                        if span.x_max > row_max {
+                            row_max = span.x_max;
+                        }
+                    }
+                }
+                if row_min.is_finite() && row_max > row_min {
+                    // Draw a 1.5-px bar near the bottom of the row.
+                    // Sits just *under* the baseline so it reads as an
+                    // underline rather than a strikethrough or a
+                    // border.
+                    let stroke_h = 1.5_f32;
+                    let stroke_y = top + row.line_top + row.line_height - stroke_h - 1.0;
+                    let mut path = Path::new();
+                    path.rect(left + row_min, stroke_y, row_max - row_min, stroke_h);
+                    canvas.fill_path(&path, &Paint::color(femto(ul_colour)));
+                }
+            }
+        }
+    }
+
+    // ── Caret ──────────────────────────────────────────────────
     if let Some(caret_color) = caret {
-        // Paint a 1.5-px-wide caret bar at the shaped-text end. The
-        // x lands one pixel after the last glyph's advance so the bar
-        // sits in the "next insertion point" slot, exactly matching
-        // Backspace's "delete the previous character" semantic. The
-        // bar height tracks the box with 2-px padding so it doesn't
-        // crowd the input's border.
-        let caret_x = left + shaped_end_x + 1.0;
-        let pad_y = 2.0;
-        let caret_top = top + first_line_top + pad_y;
-        let caret_height = (box_height - pad_y * 2.0).max(font_size * 0.9);
+        let (caret_x_local, caret_row_top, caret_row_height) = match caret_byte {
+            Some(byte) => resolve_caret_pos(byte, &glyph_spans, &line_metrics, font_size),
+            None => (
+                shaped_end_x + 1.0,
+                first_line_top,
+                line_metrics
+                    .first()
+                    .map(|m| m.line_height)
+                    .unwrap_or(box_height),
+            ),
+        };
+        let (caret_top, caret_height) = if caret_byte.is_some() {
+            (top + caret_row_top, caret_row_height.max(font_size * 0.9))
+        } else {
+            let pad = 2.0;
+            (
+                top + caret_row_top + pad,
+                (box_height - pad * 2.0).max(font_size * 0.9),
+            )
+        };
+        let caret_x = left + caret_x_local;
         let mut path = Path::new();
         path.rect(caret_x, caret_top, 1.5, caret_height);
         let paint = Paint::color(femto(caret_color));
         canvas.fill_path(&path, &paint);
     }
+}
+
+/// Resolve a byte offset to its `(x_local, row_top, row_height)`
+/// triple. Handles caret-before-glyph, caret-after-glyph (cluster
+/// boundary), end-of-line, and beyond-text cases.
+fn resolve_caret_pos(
+    byte: usize,
+    glyph_spans: &[GlyphSpan],
+    line_metrics: &[LineMetrics],
+    font_size: f32,
+) -> (f32, f32, f32) {
+    // 1. Caret at the start of some glyph → that glyph's x_min.
+    if let Some(span) = glyph_spans.iter().find(|s| s.start == byte) {
+        let row = &line_metrics[span.line_idx];
+        return (span.x_min, row.line_top, row.line_height);
+    }
+    // 2. Caret at the end of a glyph. Prefer the latest line so a
+    //    caret at the end of a line (just before the `\n`) lands
+    //    there, not at column 0 of the next line.
+    let mut best: Option<(usize, f32)> = None;
+    for span in glyph_spans {
+        if span.end == byte {
+            match best {
+                None => best = Some((span.line_idx, span.x_max)),
+                Some((line, _)) if span.line_idx >= line => {
+                    best = Some((span.line_idx, span.x_max));
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Some((line_idx, x)) = best {
+        let row = &line_metrics[line_idx];
+        return (x, row.line_top, row.line_height);
+    }
+    // 3. Caret beyond every glyph (empty buffer, trailing newline).
+    if let Some(row) = line_metrics.last() {
+        return (row.x_end, row.line_top, row.line_height);
+    }
+    (0.0, 0.0, font_size * 1.2)
 }

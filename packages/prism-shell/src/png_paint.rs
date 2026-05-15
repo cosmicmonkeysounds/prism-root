@@ -52,6 +52,12 @@ pub fn rasterize(commands: &[RenderCommand], width: u32, height: u32) -> Vec<u8>
                 caret,
                 content: _,
                 font_size: _,
+                caret_byte: _,
+                selection: _,
+                selection_color: _,
+                spans: _,
+                underline: _,
+                underline_color: _,
             } => {
                 // Glyph rasterisation isn't in scope for the
                 // software path. Paint a single-pixel-tall accent

@@ -228,24 +228,36 @@ button — but the click does nothing.
   `prism-shell/src/events.rs` — a parallel path that should
   collapse onto the action grammar once it works.
 
-### A2. Two-way binding (`bind:*`)
-- **Status:** classified in the AST, no lowering. The sugared
-  signal-pair (`Connection` for read + write-back) does not exist.
-- **Lands in:** the same files as A1 — `bind:value="form.email"`
-  desugars to `on:change="set form.email = event.value"` plus a
-  read-binding for the initial value.
-- **Dependency:** ships *after* A1.
+### A2. Two-way binding (`bind:*`) — PARTIAL
+- **Status:** the parser classifies `bind:*` into
+  `AttributeNamespace::Bind` (`packages/prism-core/src/language/prism_ui/ast.rs:82`)
+  and the runtime carries every binding through to the lowered
+  container as a `data-bind-<key>` semantic attribute
+  (`packages/prism-ui-runtime/src/interpret.rs:2168`). The
+  installer that consumes `data-bind-*` and wires it to an
+  `Effect` / `Connection` against the shell skeleton scope is
+  the missing piece. (`prism_builder::ActionKind::Bind` +
+  `DocumentBindings` already cover the canvas-document path, so
+  the seam is "skeleton bindings install path" not "language
+  feature".)
+- **Lands in:** new shell-side installer that walks the parsed
+  skeleton for `data-bind-*` semantic attrs and registers an
+  `Effect` per binding against the live signal scope. Same
+  shape as `BuilderDocument::install_bindings`, scoped to the
+  shell skeleton instead of the canvas document.
 
-### A3. Style tokens (`style:*`)
-- **Status:** partial. The interpreter handles
-  `style:color` / `style:background` / `style:radius` over hex
-  strings (`interpret.rs:573-690`). Token resolution
-  (`style:background="{tokens.colors.surface}"`) is **not** wired
-  — `{tokens.x}` interpolation reads the binding scope, not the
-  `prism_core::design_tokens` table.
-- **Lands in:** `interpret.rs::lookup_expression` (route
-  `tokens.*` to `prism_core::DesignTokens`), and the
-  `LowerScope` builder picks up a `&DesignTokens` reference.
+### A3. Style tokens (`style:*`) — LANDED
+- **Status:** Fully wired. Wave 14.1 seeded the design-token
+  table into the lowering scope via
+  `LowerScope::with_design_tokens`
+  (`packages/prism-ui-runtime/src/interpret.rs:421`). Authors
+  write `style:background="{tokens.colors.accent}"` /
+  `padding="{tokens.spacing.md}"` and the dotted-path resolver
+  hands the value back as a colour / px length. PRSS
+  `[tokens.*]` overrides merge on top via
+  `LowerScope::with_stylesheet`. Regression test:
+  `tokens_binding_resolves_color_in_style_namespace` in
+  `interpret.rs`.
 
 ### A4. Facets (`fct:*`) and signal declarations (`sig:*`)
 - **Status:** classified, not lowered. `<facet name="items"
@@ -259,15 +271,12 @@ button — but the click does nothing.
   infrastructure. Re-evaluate once the first authored Studio
   page wants a list bound to a resource.
 
-### A5. Comment scanner UTF-8 bug
-- **Status:** `consume_until_gt` in
-  `packages/prism-core/src/language/prism_ui/grammar.rs:600` slices
-  by byte offset without char-boundary checks. An em-dash (or any
-  multi-byte glyph) inside `<!-- … -->` panics the parser.
-- **Lands in:** two-line `char_indices` boundary check.
-- **Filed:** plan §15 caveat. The current `app.prism-ui` skeleton
-  sidesteps the bug by sticking to ASCII; author-written prose
-  with typographic punctuation will trip it.
+### A5. Comment scanner UTF-8 bug — LANDED
+- **Status:** Fixed. The comment scanner now walks char boundaries
+  via `char_indices` so multibyte content (em-dash, curly quotes,
+  accented chars) round-trips without panicking. Regression test:
+  `comment_with_non_ascii_content_round_trips` in
+  `packages/prism-core/src/language/prism_ui/grammar.rs`.
 
 ---
 
@@ -292,29 +301,27 @@ button — but the click does nothing.
   path. SSR shows them correctly; the native window is blank
   where glyphs should be.
 
-### B2. Image-tint runtime extension
-- **Status:** noted as the lone deferred runtime gap at the
-  close of plan §12. `Node::Image` has no `tint: Option<Color>`
-  field, so the same monochrome glyph cannot be re-coloured per
-  state (resting / hover / active) without N copies of the SVG.
-- **Lands in:** one field on `Node::Image`, one branch in the
-  femtovg paint pass (multiply against the decoded glyph), one
-  CSS `filter: …` mapping in `semantic_html`.
-- **Dependency:** ships after B1.
+### B2. Image-tint runtime extension — LANDED
+- **Status:** `Node::Image` carries `tint: Option<Color>`
+  (`packages/prism-ui-runtime/src/layout/mod.rs:109`),
+  `RenderCommand::Image` carries it through
+  (`command.rs:138`), and the femtovg paint pass multiplies the
+  tint colour against the decoded glyph as a mask
+  (`paint.rs:171`). The semantic-HTML backend currently emits
+  `tint: None` — the CSS `filter: …` mapping is the one piece
+  still pending if SSR icon recolouring becomes important.
 
-### B3. Web backend frame loop
-- **Status:** `backends::web::mount` grabs an existing
-  `<canvas>` and renders **one frame**
-  (`packages/prism-ui-runtime/src/backends/web.rs:49`). No rAF
-  loop, no event pump.
-- **Lands in:** mirror the native backend's
-  `ApplicationHandler` + `EventLoopExtWebSys::spawn_app` path
-  the Phase-1 update already documented. The shell's
-  `web_start` (`prism-shell/src/lib.rs`) hands the Surface to
-  the new pumped loop.
-- **Why it matters:** `prism build --target web` produces a
-  binary that paints once and never updates. Every interaction
-  the native window handles is dead in the browser.
+### B3. Web backend frame loop — LANDED
+- **Status:** Fully wired. `backends::web::mount` builds a winit
+  `EventLoop`, attaches a `WebApp: ApplicationHandler` to the
+  canvas via `EventLoopExtWebSys::spawn_app`, and pumps
+  `WindowEvent::RedrawRequested` through `paint::draw_at` on
+  every rAF tick. The handler ends with
+  `if surface.is_dirty() || images.has_animations() {
+  window.request_redraw() }` so signal-driven redraws and
+  animated images both schedule the next frame correctly. The
+  shell's `web_start` hands the `Surface` straight to this
+  pumped loop.
 
 ### B4. Text-input focus / IME / drag scrubber — LANDED
 - **Status:** every shipped field-editor kind is now click-
@@ -464,19 +471,13 @@ button — but the click does nothing.
   emission re-validates against the resolver registry shape
   so unknown shell tags fail the build.
 
-### C2. Shell binary `--scene` / `--screenshot` flags
-- **Status:** `prism visual --scene <name>` is the documented
-  harness; `commands/visual.rs` lists `"builder"` /
-  `"builder-empty"` / per-viewport variants. The CLI shells
-  out to a flag set the shell binary doesn't accept, so
-  screenshots are captured manually via `cargo run` + OS
-  screencapture.
-- **Plan §:** §43 Phase E "Not in this phase".
-- **Lands in:** `prism-shell/src/bin/native.rs` learns
-  `--scene <id>` and `--screenshot <path>`; the native backend
-  gains a one-frame offscreen capture path that writes a PNG
-  and exits.
-- **Dependency:** trivial — does not block any phase.
+### C2. Shell binary `--scene` / `--screenshot` flags — LANDED
+- **Status:** `prism-shell/src/bin/native.rs` accepts `--scene
+  <name>` (with `--scene list` to enumerate),
+  `--screenshot <path>` (one-frame offscreen capture), and
+  `--app <id>` / `--panel <id>`. `prism visual` shells out
+  through these. Unknown scenes fail with an enumeration of
+  available names.
 
 ### C3. Live edit / hot reload of `.prism-ui`
 - **Plan §:** §4.6 and the "What breaks (and is fine)" list in
@@ -550,19 +551,16 @@ button — but the click does nothing.
   `state.project.current_file` from a `<input type=file>`
   click and dispatches into the same service.
 
-### D4. Per-app shells
-- **Status:** the canonical `app.prism-ui` skeleton is one
-  composition (`<shell.app-window><shell.dock-workspace/>`).
-  The four apps (Lattice, Musica, Flux, Studio) currently
-  share that frame, with content discrimination living
-  inside the dock panels. Plan §32 ("Starter catalog")
-  documents the four-apps story but the per-app skeleton
-  swap is not implemented.
-- **Lands in:** `Shell::new` picks a skeleton based on the
-  active `AppId` from `BootConfig`; per-app `app-<id>.prism-ui`
-  files live next to the canonical one. No new infrastructure
-  — the resolver, the registry, and every service stay
-  identical.
+### D4. Per-app shells — LANDED
+- **Status:** Each app ships its own `shell.prism-ui` skeleton
+  (`apps/flux/shell.prism-ui`, `apps/lattice/shell.prism-ui`,
+  `apps/musica/shell.prism-ui`; Studio uses the default
+  `packages/prism-shell/ui/app.prism-ui`). `Shell::new` loads
+  every app manifest, parses its skeleton into
+  `ShellInner.app_skeletons: HashMap<String, Skeleton>`, and
+  `current_skeleton()` picks the active app's entry —
+  falling back to the default when an app doesn't declare
+  one. ADR-009 calls this complete.
 
 ---
 
@@ -608,38 +606,41 @@ of truth. A single cleanup PR retires every one.
 
 ---
 
-## Priority recommendation
+## Priority recommendation (refreshed 2026-05-15)
 
-For the most impact-per-PR, the suggested order is:
+Most of the original punch list has landed. The historical
+priority order (A1 → B1 → D1 → B5 → C1+C3 → B3 → F) shipped
+in roughly that sequence. The accurate-as-of-today picture:
 
-1. **A1 (action grammar)** — unblocks every authored signal
-   handler in `.prism-ui` source. Today the host hand-rolls
-   parallel `data-role` routes in `events.rs`; landing A1
-   collapses that duplication onto one declarative path.
-2. **B1 (femtovg image)** — every chrome glyph is invisible
-   on the native window until this lands. SSR already
-   works; the discrepancy is the visible regression.
-3. **D1 (registry merge)** — full property-row derivation
-   for builder nodes is one line of `Shell::new`. Today the
-   E3 e2e test fakes this; the production shell silently
-   shows empty property panels when a builder node is
-   selected.
-4. **B5 (pointer canvas selection)** — clicking a rendered
-   document node should select it. ~15 LoC against the
-   already-shipped `Surface::hit_test_at`.
-5. **C1 + C3 (build.rs + hot reload)** — together they
-   move `.prism-ui` from "include_str + runtime parse +
-   recompile to edit" to "validated at build, hot-reloaded
-   at runtime." Best done as one pair so the validation
-   path and the live-edit path share a single re-parse
-   entry.
-6. **B3 (web frame loop)** — necessary before any web
-   demo. Mechanical port of the native backend's pumped
-   loop.
-7. **F (docs cleanup)** — single cosmetic PR, low cost,
-   high readability win for any newcomer.
+**LANDED:** A1, A3, A5, B1, B2, B3, B4, B5, B6 (mostly — a few
+dock-tab affordances still dead-click), C2, D1, D4, plus the F
+docs cleanup (banner headers on superseded plans, slint string
+residue removed). See each section for evidence.
 
-Everything else (A2-A5, B2, B4, C2, D2-D4, E) is a
-deliberate "next year" set — the contracts are in place and
-the gaps are documented; they ship as authoring demand
-materialises.
+**Remaining (in suggested order):**
+
+1. **A2 finish** — the skeleton-side `data-bind-*` installer
+   that walks the lowered tree and registers an `Effect`
+   per binding against the live signal scope. Parser +
+   carry-through is already in; this is the
+   `BuilderDocument::install_bindings` shape, scoped to the
+   parsed shell skeleton. ~1 day.
+2. **C1 + C3 — `.prism-ui` build validation + hot reload.**
+   `prism-ui-build::compile` and `template_watch` already
+   ship; the missing piece is a `prism-shell/build.rs` that
+   calls one, plus a notify-driven dev-loop consumer that
+   calls the other. Pair them so they share the re-parse
+   entry point. ~2 days together.
+3. **D2 — real `mlua`-backed `LuauHost` in the shell.** The
+   `NoopLuauHost` stub silently no-ops every authored Luau
+   handler. Needs a new `luau` feature on `prism-shell` (or a
+   sibling `prism-shell-luau` crate). ~3 days.
+4. **D3 — file-picker / clipboard wiring on the desktop bin.**
+   `rfd::FileDialog` against Ctrl+O / Ctrl+S that drives the
+   already-present `file.open` / `file.save` commands.
+   ~1 day.
+5. **A4 — `fct:*` / `sig:*` lowering.** Deliberately deferred
+   until a consumer wants it. ~unscoped; ships against the
+   first authored Studio page that needs it.
+6. **Phase 6 (E) — mobile + packaging.** Pure build
+   configuration work; no shell source changes.

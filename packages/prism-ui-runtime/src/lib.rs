@@ -23,12 +23,14 @@
 pub mod animator;
 pub mod backends;
 pub mod command;
+pub mod editor;
 pub mod event;
 pub mod interpret;
 pub mod layout;
 #[cfg(feature = "luau")]
 pub mod luau;
 pub mod luau_types;
+pub mod syntax;
 
 // Render-command → femtovg paint translation + cosmic-text glyph
 // cache. Shared by the native (`femtovg`) and web (`web`) backends;

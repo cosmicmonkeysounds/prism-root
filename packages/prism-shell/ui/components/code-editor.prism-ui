@@ -1,18 +1,26 @@
 <!--
-  shell.code-editor — code editor panel content. Wave 11.4 migration
-  of code_editor.rs. The block is a deterministic retained tree
-  (line-numbered gutter + per-row body + status strip); the actual
-  syntax-highlight pass + caret rendering are the renderer's job.
+  shell.code-editor — code editor panel. A real editor on top of
+  prism-ui-runtime's `TextEditor`: a per-line numbered gutter on the
+  left and one editable multi-line `<input>` on the right that paints
+  the whole buffer (caret + selection ride on the shaped glyph run).
 
-  The binding (`state::code_editor_props`) pre-computes:
-   * `lines` — `[{number, text}]` (the Rust block previously
-     `split('\n')`-ed itself; now in the binding so the DSL is one
-     `for=` loop).
-   * `cursor-line` / `cursor-column` — 1-based positions derived
-     from the byte-offset `caret`.
-   * `status-label` — the "lang · Ln X, Col Y" string the status
-     strip renders. Pre-formatted so the DSL stays one `{status-label}`
-     interpolation instead of an inline ternary cascade.
+  The binding (`CanvasSlot::code_editor_props`) feeds:
+   * `source` — the whole buffer (one big string, `\n`-separated).
+   * `caret-byte` — byte offset of the caret. The runtime input
+     parser converts this to a per-glyph position in cosmic-text.
+   * `selection` — optional `"start,end"` byte range. Omitted when
+     no selection is active so the resting render carries no noise.
+   * `lines` — one row per source line, `{number}`-only. Drives the
+     gutter via a `for=` loop; the body needs no per-line authoring.
+   * `cursor-line` / `cursor-column` / `status-label` — for the
+     bottom strip.
+
+  Click-to-focus + keyboard route through the shell's
+  `field_focus` / code-buffer paths once the click router learns to
+  resolve a `data-role="code-editor-body"` hit to a byte offset.
+  Until then, programmatic edits (Luau host, paste, undo via the
+  global Edit menu) drive the buffer; the editor still renders the
+  caret + selection from the current state.
 -->
 <container
     tag="section"
@@ -47,32 +55,24 @@
           font-size="11"
           style:color="#80000000">{ln.number}</text>
     </container>
-    <container
+    <input
         id="{id}::body"
-        direction="column"
+        value="{source}"
+        placeholder=""
         width="grow"
         height="grow"
-        padding-top="6"
-        padding-bottom="6"
-        role="rowgroup"
-        data:role="code-body">
-      <container
-          for="ln, idx in lines"
-          id="{id}::line::{idx}"
-          direction="row"
-          height="18"
-          padding-left="8"
-          padding-right="8"
-          role="row"
-          data:role="code-line"
-          data:line="{ln.number}"
-          data:cursor="{ln.number == cursor-line && cursor-line > 0 ? 'true' : ''}">
-        <text
-            id="{id}::line::{idx}::text"
-            font-size="12"
-            style:color="#101218">{ln.text}</text>
-      </container>
-    </container>
+        multiline="true"
+        caret-byte="{caret-byte}"
+        selection="{selection}"
+        underline="{underline}"
+        syntax-language="{language}"
+        scroll-x="{scroll-x}"
+        scroll-y="{scroll-y}"
+        font-size="13"
+        style:color="#101218"
+        data:role="code-editor-body"
+        data:cursor-line="{cursor-line}"
+        data:cursor-column="{cursor-column}"/>
   </container>
   <container
       id="{id}::status"

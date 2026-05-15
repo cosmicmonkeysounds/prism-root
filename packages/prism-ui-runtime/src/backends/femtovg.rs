@@ -15,6 +15,7 @@
 //! 3. Walk the stream through `paint::draw` and swap GL buffers.
 
 use std::num::NonZeroU32;
+use std::time::Instant;
 
 use femtovg::{renderer::OpenGl, Canvas, Color as FemtoColor};
 use glutin::config::{ConfigTemplateBuilder, GlConfig};
@@ -71,6 +72,11 @@ struct App {
     handler: EventHandler,
     input: InputState,
     state: Option<RenderState>,
+    /// Wave 14.7 — monotonic epoch the per-frame `now_ms` is
+    /// expressed against. Constructed once at `App::new` so every
+    /// `draw_at` call shares the same origin and animated-image
+    /// frame indices stay stable across redraws.
+    epoch: Instant,
 }
 
 struct RenderState {
@@ -89,6 +95,7 @@ impl App {
             handler,
             input: InputState::default(),
             state: None,
+            epoch: Instant::now(),
         }
     }
 }
@@ -166,6 +173,13 @@ impl ApplicationHandler for App {
             width: size.width as f32,
             height: size.height as f32,
         });
+        // Enable IME composition so the OS reports `Ime::Preedit` /
+        // `Ime::Commit` events whenever a CJK / dead-key composition
+        // is in progress. Without this winit never delivers IME
+        // events; the editor's preedit machinery has nothing to
+        // route. macOS and Wayland honour this immediately; X11
+        // composition uses XIM under the hood.
+        window.set_ime_allowed(true);
         self.state = Some(RenderState {
             window,
             gl_surface,
@@ -207,7 +221,23 @@ impl ApplicationHandler for App {
                     .set_size(size.width, size.height, state.window.scale_factor() as f32);
             }
             WindowEvent::RedrawRequested => {
-                redraw(state, &mut self.surface, &mut self.text, &mut self.images);
+                let now_ms = self.epoch.elapsed().as_millis() as u64;
+                redraw(
+                    state,
+                    &mut self.surface,
+                    &mut self.text,
+                    &mut self.images,
+                    now_ms,
+                );
+                // Wave 14.7 — animated image sources keep the
+                // surface "logically dirty" between authoring
+                // changes so GIF / animated-WebP / APNG frames
+                // advance. We schedule the next redraw here when
+                // any animation is in-flight; clean frames (no
+                // animation, no event) stay clean.
+                if self.images.has_animations() {
+                    state.window.request_redraw();
+                }
                 return;
             }
             _ => {}
@@ -220,7 +250,7 @@ impl ApplicationHandler for App {
         // The retained-mode contract: only request a repaint when the
         // surface is actually dirty (handler mutation, viewport
         // resize, etc.). Clean frames stay clean.
-        if self.surface.is_dirty() {
+        if self.surface.is_dirty() || self.images.has_animations() {
             state.window.request_redraw();
         }
     }
@@ -231,6 +261,7 @@ fn redraw(
     surface: &mut Surface,
     text: &mut TextSystem,
     images: &mut ImageCache,
+    now_ms: u64,
 ) {
     let viewport = surface.viewport();
     let cmds: Vec<_> = surface.commands().to_vec();
@@ -242,7 +273,7 @@ fn redraw(
         canvas.height(),
         FemtoColor::rgbf(1.0, 1.0, 1.0),
     );
-    paint::draw(canvas, viewport, &cmds, text, images);
+    paint::draw_at(canvas, viewport, &cmds, text, images, now_ms);
     canvas.flush_to_output(());
     let _ = state.gl_surface.swap_buffers(&state.gl_ctx);
 }

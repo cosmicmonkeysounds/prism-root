@@ -1658,6 +1658,17 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
     let mut width = Sizing::default();
     let mut height = Sizing::default();
     let mut focused = false;
+    let mut multiline = false;
+    let mut caret_byte: Option<usize> = None;
+    let mut selection: Option<(usize, usize)> = None;
+    let mut spans: Vec<crate::command::TextSpan> = Vec::new();
+    let mut scroll_x: f32 = 0.0;
+    let mut scroll_y: f32 = 0.0;
+    let mut underline: Option<(usize, usize)> = None;
+    // `syntax-language` chooses the tokenizer the interpret pass
+    // runs against the input's `value`. Set by the code editor's
+    // DSL (`<input syntax-language="luau"/>`); ignored when empty.
+    let mut syntax_language: Option<String> = None;
     let mut semantic = Semantic::default();
     for attr in &el.attributes {
         let local = attr.name.local.as_str();
@@ -1686,6 +1697,82 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
                 // live edit target without a Rust helper.
                 "focused" => {
                     focused = matches!(raw.as_deref(), Some("true"));
+                }
+                // Editor support: `multiline="true"` flips the input
+                // from string-property mode (single line, newlines
+                // stripped) to code-editor mode (`\n` is real, Up/Down
+                // arrows navigate rows). `caret-byte` + `selection`
+                // surface the host's editor state so the renderer can
+                // paint caret + selection at the exact byte offsets.
+                "multiline" => {
+                    multiline = matches!(raw.as_deref(), Some("true"));
+                }
+                "caret-byte" => {
+                    if let Some(n) = raw.as_deref().and_then(|s| s.parse::<usize>().ok()) {
+                        caret_byte = Some(n);
+                    }
+                }
+                // `selection="<start>,<end>"` — two non-negative byte
+                // offsets, comma-separated, with `start <= end`. The
+                // shell binding emits this only when an active
+                // selection is non-empty.
+                "selection" => {
+                    if let Some(s) = raw.as_deref() {
+                        if let Some((a, b)) = s.split_once(',') {
+                            if let (Ok(a), Ok(b)) =
+                                (a.trim().parse::<usize>(), b.trim().parse::<usize>())
+                            {
+                                if a < b {
+                                    selection = Some((a, b));
+                                }
+                            }
+                        }
+                    }
+                }
+                // `scroll-x` / `scroll-y` — host-controlled
+                // viewport offsets. Subtracted from the text's
+                // draw origin and combined with a scissor at
+                // emit time so glyphs outside the bounds are
+                // clipped. The shell auto-updates these to keep
+                // the caret visible on every editor mutation.
+                "scroll-x" => {
+                    if let Some(v) = raw.as_deref().and_then(parse_f32) {
+                        scroll_x = v;
+                    }
+                }
+                "scroll-y" => {
+                    if let Some(v) = raw.as_deref().and_then(parse_f32) {
+                        scroll_y = v;
+                    }
+                }
+                // `underline="<start>,<end>"` — byte range the
+                // renderer should paint an underline through. Used
+                // by IME preedit decoration; same parser shape as
+                // `selection`.
+                "underline" => {
+                    if let Some(s) = raw.as_deref() {
+                        if let Some((a, b)) = s.split_once(',') {
+                            if let (Ok(a), Ok(b)) =
+                                (a.trim().parse::<usize>(), b.trim().parse::<usize>())
+                            {
+                                if a < b {
+                                    underline = Some((a, b));
+                                }
+                            }
+                        }
+                    }
+                }
+                // `syntax-language="luau"` — the input's value is
+                // tokenized against this language and the resulting
+                // [`TextSpan`]s ride the runtime node into the paint
+                // pass. Empty / unknown languages produce no spans
+                // (the input paints in `style:color`).
+                "syntax-language" => {
+                    if let Some(s) = raw {
+                        if !s.is_empty() {
+                            syntax_language = Some(s);
+                        }
+                    }
                 }
                 _ => {}
             },
@@ -1730,6 +1817,17 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
             _ => {}
         }
     }
+    // Resolve `syntax-language` against the input's `value` to
+    // produce per-byte spans. Done at DSL-lower time (rather than
+    // at paint time) so the same shape JSON-snapshots / SSR
+    // emitters reach can carry the highlighted ranges unchanged —
+    // and so a code-editor input that's bound to a 5000-line
+    // buffer doesn't retokenize on every animator tick.
+    if let Some(lang) = syntax_language.as_deref() {
+        if !value.is_empty() {
+            spans = crate::syntax::highlight(&value, lang);
+        }
+    }
     Node::TextInput {
         id,
         value,
@@ -1740,6 +1838,13 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
         radius: CornerRadius::default(),
         semantic,
         focused,
+        multiline,
+        caret_byte,
+        selection,
+        spans,
+        scroll_x,
+        scroll_y,
+        underline,
     }
 }
 
@@ -2005,6 +2110,34 @@ fn apply_container_attributes(
                         .semantic
                         .attrs
                         .push((format!("data-transition-{}", local), value));
+                }
+            }
+            // Wave 14.6 — `animate:<prop>="<from> <duration>"`
+            // records the entry-transition hint as
+            // `data-animate-in-<prop>`. The runtime animator
+            // (`prism-ui-runtime::animator`) reads this attr on the
+            // first observation of the node and starts a transition
+            // from the parsed `from` to the prop's declared value.
+            // No behaviour change on re-render — the entry runs once
+            // per mount lifecycle.
+            //
+            // Wave 14.8 — explicit `animate:in-<prop>` and
+            // `animate:out-<prop>` differentiate entry vs unmount
+            // transitions; the bare `animate:<prop>` form remains a
+            // shorthand for `animate:in-<prop>` so existing call
+            // sites continue to work. `out` lowers to
+            // `data-animate-out-<prop>` for the animator's pending
+            // node-retention path to consume.
+            AttributeNamespace::Animate => {
+                if let Some(value) = raw {
+                    let attr = if let Some(prop) = local.strip_prefix("in-") {
+                        format!("data-animate-in-{}", prop)
+                    } else if let Some(prop) = local.strip_prefix("out-") {
+                        format!("data-animate-out-{}", prop)
+                    } else {
+                        format!("data-animate-in-{}", local)
+                    };
+                    props.semantic.attrs.push((attr, value));
                 }
             }
             // Wave 13.3: `use:<id>[="<value>"]` directive sugar for
@@ -3663,6 +3796,17 @@ pub fn apply_style_override(props: &mut ContainerProps, local: &str, value: &str
                 props.height = s;
             }
         }
+        // Wave 14.6 — `style:opacity="0.5"` lowers to the
+        // `ContainerProps::opacity` field. Clamped to `[0.0, 1.0]`;
+        // malformed values silently drop (same pattern as the rest
+        // of this vocabulary). `None` (the default) means "fully
+        // opaque" — set to a float to fade the container's own
+        // paint and cascade into children at command-emit time.
+        ("opacity", None) => {
+            if let Some(v) = parse_f32(value) {
+                props.opacity = Some(v.clamp(0.0, 1.0));
+            }
+        }
         ("background", Some("hovered")) => {
             if let Some(c) = parse_color(value) {
                 props
@@ -4712,6 +4856,119 @@ mod tests {
         );
         // The dedicated fields don't double-write into `attrs`.
         assert!(props.semantic.attrs.is_empty());
+    }
+
+    /// Wave 14.6 — `animate:<prop>="<from> <duration>"` lowers to
+    /// a `data-animate-in-<prop>` semantic attribute the runtime
+    /// animator consumes on first observe to start an entry
+    /// transition.
+    #[test]
+    fn animate_namespace_lowers_to_data_animate_in_attr() {
+        let nodes =
+            interpret(r#"<container animate:opacity="0 200ms" animate:gap="0 120ms"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            attrs.get("data-animate-in-opacity").map(String::as_str),
+            Some("0 200ms")
+        );
+        assert_eq!(
+            attrs.get("data-animate-in-gap").map(String::as_str),
+            Some("0 120ms")
+        );
+    }
+
+    /// Wave 14.8 — `animate:in-<prop>` is the explicit spelling for
+    /// the entry-transition hint; it lowers to the same
+    /// `data-animate-in-<prop>` attr the bare `animate:<prop>`
+    /// shorthand uses. Mixing the two forms on one element is
+    /// supported (the shell uses the bare form on most blocks but
+    /// `animate:in-opacity` is what authors will reach for once the
+    /// `animate:out-*` sister exists).
+    #[test]
+    fn animate_in_prefix_lowers_to_data_animate_in_attr() {
+        let nodes = interpret(r#"<container animate:in-opacity="0 200ms"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            attrs.get("data-animate-in-opacity").map(String::as_str),
+            Some("0 200ms")
+        );
+        // No accidental `data-animate-out-*` emission.
+        assert!(!attrs.keys().any(|k| k.starts_with("data-animate-out-")));
+    }
+
+    /// Wave 14.8 — `animate:out-<prop>` lowers to
+    /// `data-animate-out-<prop>` for the runtime animator's pending
+    /// retention path. Substrate-only today: the data round-trip
+    /// lands, the painter-side node retention is the next step.
+    #[test]
+    fn animate_out_prefix_lowers_to_data_animate_out_attr() {
+        let nodes = interpret(
+            r#"<container animate:out-opacity="0 250ms" animate:out-padding="0 150ms"/>"#,
+        )
+        .unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            attrs.get("data-animate-out-opacity").map(String::as_str),
+            Some("0 250ms")
+        );
+        assert_eq!(
+            attrs.get("data-animate-out-padding").map(String::as_str),
+            Some("0 150ms")
+        );
+        assert!(!attrs.keys().any(|k| k.starts_with("data-animate-in-")));
+    }
+
+    /// Wave 14.6 — `style:opacity="0.5"` lowers to
+    /// `ContainerProps::opacity`. Default `None` means fully
+    /// opaque; bare values clamp to `[0, 1]`.
+    #[test]
+    fn style_opacity_lowers_to_container_opacity() {
+        let nodes = interpret(r#"<container style:opacity="0.4"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!((props.opacity.unwrap() - 0.4).abs() < 1e-5);
+    }
+
+    /// Wave 14.6 — out-of-range opacity values clamp into the
+    /// `[0, 1]` band so the painter never multiplies by negative
+    /// or super-unity factors.
+    #[test]
+    fn style_opacity_clamps_out_of_range_values() {
+        let too_high = interpret(r#"<container style:opacity="1.7"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &too_high[0] else {
+            panic!()
+        };
+        assert_eq!(props.opacity, Some(1.0));
+        let too_low = interpret(r#"<container style:opacity="-0.3"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &too_low[0] else {
+            panic!()
+        };
+        assert_eq!(props.opacity, Some(0.0));
     }
 
     /// Wave 9.4 — `transition:<prop>="<duration>"` lowers to a

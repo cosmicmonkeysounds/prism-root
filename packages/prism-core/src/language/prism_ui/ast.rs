@@ -126,6 +126,16 @@ pub enum AttributeNamespace {
     /// degrades to. Distinct from [`Self::Identifier`], which
     /// classifies bare `class="..."` (the static class list).
     Class,
+    /// **Wave 14.6** — `animate:<prop>="<from> <duration>"` declares
+    /// an entry transition that fires on the first frame the node
+    /// appears: the animator interpolates the prop from `<from>` to
+    /// its declared (or default) value over `<duration>`. Lowers to
+    /// `data-animate-in-<prop>` semantic attr the runtime animator
+    /// reads at observe time. `animate:opacity="0 200ms"` on a
+    /// toast / overlay produces a fade-in; `animate:height="0 250ms"`
+    /// produces a slide-down expand. Companion to the `transition:`
+    /// namespace which owns the mid-life value-change case.
+    Animate,
     /// `class` / `id` — CSS-style addressing for inspector + HTML.
     Identifier,
 }
@@ -215,6 +225,7 @@ impl AttributeNamespace {
                 "data" => AttributeNamespace::Data,
                 "route" => AttributeNamespace::Route,
                 "transition" => AttributeNamespace::Transition,
+                "animate" => AttributeNamespace::Animate,
                 "use" => AttributeNamespace::Use,
                 "class" => AttributeNamespace::Class,
                 _ => return (AttributeNamespace::Bare, raw.to_string()),

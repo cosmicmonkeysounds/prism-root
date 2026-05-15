@@ -191,8 +191,28 @@ impl ApplicationHandler for WebApp {
                     canvas.height(),
                     FemtoColor::rgbf(1.0, 1.0, 1.0),
                 );
-                paint::draw(canvas, viewport, &cmds, &mut self.text, &mut self.images);
+                // Wave 14.7 — `performance.now()` is the wasm32
+                // monotonic clock; the femtovg backend uses
+                // `Instant::now()` against an `epoch` for the same
+                // purpose. Both feed `paint::draw_at` an `u64` of
+                // milliseconds-since-epoch, the unit the animated
+                // image cache wraps frame indices around.
+                let now_ms = web_sys::window()
+                    .and_then(|w| w.performance())
+                    .map(|p| p.now() as u64)
+                    .unwrap_or(0);
+                paint::draw_at(
+                    canvas,
+                    viewport,
+                    &cmds,
+                    &mut self.text,
+                    &mut self.images,
+                    now_ms,
+                );
                 canvas.flush_to_output(());
+                if self.images.has_animations() {
+                    state.window.request_redraw();
+                }
                 return;
             }
             _ => {}
@@ -200,7 +220,7 @@ impl ApplicationHandler for WebApp {
         if let Some(prism_event) = translate(&event, &mut self.input) {
             (self.handler)(&prism_event, &mut self.surface);
         }
-        if self.surface.is_dirty() {
+        if self.surface.is_dirty() || self.images.has_animations() {
             state.window.request_redraw();
         }
     }

@@ -54,6 +54,11 @@ pub enum BuiltinScene {
     /// The connection picker overlay open with default fields.
     /// Exercises the Wave 4.3 form rendering.
     ConnectionPicker,
+    /// The in-shell code editor open on a sample multi-line Luau
+    /// script with the caret + a selection live. Exercises the
+    /// `shell.code-editor` block and the runtime's caret-at-byte
+    /// + selection rendering end-to-end.
+    CodeEditor,
 }
 
 impl BuiltinScene {
@@ -67,6 +72,7 @@ impl BuiltinScene {
         Self::ContextMenu,
         Self::PaletteDrag,
         Self::ConnectionPicker,
+        Self::CodeEditor,
     ];
 
     /// Kebab-case CLI identifier — the bytes the user types after
@@ -79,6 +85,7 @@ impl BuiltinScene {
             Self::ContextMenu => "context-menu",
             Self::PaletteDrag => "palette-drag",
             Self::ConnectionPicker => "connection-picker",
+            Self::CodeEditor => "code-editor",
         }
     }
 
@@ -147,6 +154,30 @@ impl Shell {
             BuiltinScene::ConnectionPicker => {
                 let mut guard = self.inner.borrow_mut();
                 guard.state.open_connection_picker();
+            }
+            BuiltinScene::CodeEditor => {
+                let mut guard = self.inner.borrow_mut();
+                let g = &mut *guard;
+                // Switch to the Code workflow page (Explorer | CodeEditor)
+                // so the editor panel is actually visible. Routing also
+                // works via `navigate_to_panel("code-editor")`.
+                g.state.workspace.workspace.navigate_to_panel("code-editor");
+                let source = "local function greet(name)\n  print(\"hello \" .. name)\n  return name\nend\n\ngreet(\"prism\")\n";
+                g.state.canvas.code_buffer.load(source, "luau");
+                // Selection covers the literal "hello" on line 2.
+                let sel_start = source.find("hello").unwrap_or(0);
+                let sel_end = sel_start + 5;
+                g.state
+                    .canvas
+                    .code_buffer
+                    .editor
+                    .place_caret_at(sel_start, false);
+                g.state
+                    .canvas
+                    .code_buffer
+                    .editor
+                    .place_caret_at(sel_end, true);
+                g.state.code_editor_focused = true;
             }
         }
     }

@@ -1,21 +1,14 @@
 //! Shared dashboard data shapes.
+//!
+//! Widget definitions themselves live as
+//! [`crate::widget::WidgetContribution`]s declared in
+//! [`super::controller::widget_contributions`] — see that function for
+//! the unified registration path. These types describe how widgets get
+//! laid out inside a dashboard tab (slots, tabs, presets); they don't
+//! describe the widgets themselves.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-use crate::widget::FieldSpec;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WidgetDef {
-    pub id: String,
-    pub label: String,
-    pub description: Option<String>,
-    pub default_col_span: u8,
-    pub default_row_span: u8,
-    pub min_col_span: u8,
-    pub max_col_span: u8,
-    pub config_schema: Vec<FieldSpec>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WidgetSlot {

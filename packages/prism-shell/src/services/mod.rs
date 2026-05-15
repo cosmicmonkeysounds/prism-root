@@ -34,6 +34,7 @@ use crate::AppState;
 pub mod base;
 pub mod builder;
 pub mod clipboard;
+pub mod code_editor;
 pub mod field_focus;
 pub mod help;
 pub mod input;
@@ -51,6 +52,7 @@ pub mod vfs;
 pub use base::ShellBaseService;
 pub use builder::BuilderService;
 pub use clipboard::{Clipboard, ClipboardService};
+pub use code_editor::CodeEditorService;
 pub use field_focus::FieldFocusService;
 pub use help::HelpService;
 pub use input::{InputScheme, InputService};
@@ -556,6 +558,13 @@ pub fn register_shell_services(reg: &mut ServiceRegistry) {
     // global shortcut, palette, or search modal interprets them.
     // Modifier-bearing keys (Ctrl+S etc.) still pass through.
     reg.add_scoped(Universal, FieldFocusService);
+    // The in-shell code editor (`shell.code-editor`) keyboard router.
+    // Registers after `FieldFocusService` so an open property-row
+    // text field still wins fan-out — typing into a property cell
+    // over a code-editor panel doesn't double up. Routes Text / Key
+    // events through `state.canvas.code_buffer.editor` when the
+    // editor body has been clicked into focus.
+    reg.add_scoped(Universal, CodeEditorService);
     // §25 — `CommandPaletteService` MUST register ahead of `InputService`
     // so its modal-capture `on_event` (returns `Handled` while open)
     // short-circuits Ctrl+S / Ctrl+F / etc. before InputService can

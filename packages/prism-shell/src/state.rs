@@ -121,6 +121,14 @@ pub struct AppState {
     /// rendered value stays in sync without a separate "commit on
     /// blur" path.
     pub field_focus: Option<FieldFocus>,
+    /// `true` while the in-shell code editor (`shell.code-editor`) has
+    /// keyboard focus. Clicks on the editor body flip this on; clicks
+    /// elsewhere (or Esc) flip it off. Keystrokes route through the
+    /// `code_buffer.editor` instead of the per-row field-focus path
+    /// — the code editor's larger buffer + multi-line key set (Ctrl+K,
+    /// Ctrl+D, etc.) needs the engine's full surface, not the inline-
+    /// field subset.
+    pub code_editor_focused: bool,
     /// Active pointer-drag for the number-scrubber (`number` /
     /// `integer` field-edits). `None` means no scrub in progress — the
     /// router's pointer-down on a number field-edit initialises this
@@ -151,13 +159,35 @@ pub struct AppState {
 /// one place. `original` lets `Esc` restore the prop the user was
 /// editing; without it abandoning a half-typed change would still
 /// leave the document dirty.
+///
+/// The `editor` field carries the live edit session: buffer + caret +
+/// selection + undo history. The same engine powers single-line
+/// string fields (kind `text` / `color` / `file`) and multi-line code
+/// editors (kind `textarea` / `code`) — the only difference is
+/// `editor.is_multiline()`, set at session start by [`AppState::begin_field_focus`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldFocus {
     pub target_id: String,
     pub key: String,
     pub kind: String,
-    pub draft: String,
     pub original: String,
+    pub editor: prism_ui_runtime::editor::TextEditor,
+}
+
+impl FieldFocus {
+    /// Current draft text — i.e. what the field would commit if the
+    /// user pressed Enter right now.
+    pub fn draft(&self) -> &str {
+        self.editor.text()
+    }
+
+    pub fn caret_byte(&self) -> usize {
+        self.editor.caret_byte()
+    }
+
+    pub fn selection(&self) -> Option<(usize, usize)> {
+        self.editor.selection()
+    }
 }
 
 /// Number-scrubber state. Stored on `AppState` (not the canvas slot)
@@ -950,12 +980,15 @@ impl AppState {
             .and_then(|n| n.props.get(key))
             .map(value_as_string)
             .unwrap_or_default();
+        let multiline = matches!(kind, "textarea" | "code");
+        let editor =
+            prism_ui_runtime::editor::TextEditor::with_text(original.clone()).multiline(multiline);
         self.field_focus = Some(FieldFocus {
             target_id: target_id.into(),
             key: key.into(),
             kind: kind.into(),
-            draft: original.clone(),
             original,
+            editor,
         });
         true
     }
@@ -971,13 +1004,8 @@ impl AppState {
         let Some(focus) = self.field_focus.as_mut() else {
             return false;
         };
-        focus.draft.push_str(text);
-        let (target, key, draft) = (
-            focus.target_id.clone(),
-            focus.key.clone(),
-            focus.draft.clone(),
-        );
-        self.set_node_prop(&target, &key, Value::String(draft), registry);
+        focus.editor.apply_text(text);
+        self.flush_focus_to_prop(registry);
         true
     }
 
@@ -989,16 +1017,79 @@ impl AppState {
         let Some(focus) = self.field_focus.as_mut() else {
             return false;
         };
-        if focus.draft.pop().is_none() {
+        let outcome = focus
+            .editor
+            .apply_key("backspace", prism_ui_runtime::event::Modifiers::default());
+        if !outcome.mutated() {
             return false;
         }
-        let (target, key, draft) = (
-            focus.target_id.clone(),
-            focus.key.clone(),
-            focus.draft.clone(),
-        );
-        self.set_node_prop(&target, &key, Value::String(draft), registry);
+        self.flush_focus_to_prop(registry);
         true
+    }
+
+    /// Route an arbitrary editor key combo (arrows, delete, home/end,
+    /// ctrl-z/y, ctrl-d, ctrl-k, …) through the focused field's
+    /// editor and flush the new text into the bound prop. Returns
+    /// `true` when the editor mutated state. The host's keyboard
+    /// service calls this for any key code the editor knows about;
+    /// codes it doesn't recognise pass through (Inert) so global
+    /// shortcuts still get a chance to fire.
+    pub fn apply_field_key(
+        &mut self,
+        code: &str,
+        mods: prism_ui_runtime::event::Modifiers,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> prism_ui_runtime::editor::EditOutcome {
+        let Some(focus) = self.field_focus.as_mut() else {
+            return prism_ui_runtime::editor::EditOutcome::Inert;
+        };
+        let outcome = focus.editor.apply_key(code, mods);
+        if outcome.mutated() {
+            self.flush_focus_to_prop(registry);
+        }
+        outcome
+    }
+
+    /// Set the caret of the focused field to a specific byte offset,
+    /// optionally extending the selection from the previous caret.
+    /// Used by pointer routing — a click in the middle of a focused
+    /// input lands here with the resolved byte offset.
+    pub fn place_field_caret_at(&mut self, byte: usize, extend: bool) -> bool {
+        let Some(focus) = self.field_focus.as_mut() else {
+            return false;
+        };
+        focus.editor.place_caret_at(byte, extend);
+        true
+    }
+
+    /// Replace the focused field's draft with `text` (paste / external
+    /// rewrite). Flushed to the bound prop afterwards. Returns `true`
+    /// when a focus session was active.
+    pub fn insert_field_text(
+        &mut self,
+        text: &str,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        let Some(focus) = self.field_focus.as_mut() else {
+            return false;
+        };
+        let outcome = focus.editor.insert(text, true);
+        if outcome.mutated() {
+            self.flush_focus_to_prop(registry);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn flush_focus_to_prop(&mut self, registry: Option<&prism_builder::ComponentRegistry>) {
+        let Some(focus) = self.field_focus.as_ref() else {
+            return;
+        };
+        let target = focus.target_id.clone();
+        let key = focus.key.clone();
+        let draft = focus.editor.text().to_string();
+        self.set_node_prop(&target, &key, Value::String(draft), registry);
     }
 
     /// Commit the focused field. The draft is already flushed into the
@@ -1020,7 +1111,7 @@ impl AppState {
         // Restore — but only if the draft actually diverged. Skipping
         // the write on no-op edits keeps the resync pass off the
         // happy path.
-        if focus.draft != focus.original {
+        if focus.editor.text() != focus.original {
             self.set_node_prop(
                 &focus.target_id,
                 &focus.key,
@@ -1207,6 +1298,24 @@ fn derive_property_rows(
     for spec in schema {
         rows.push(property_row_from_spec(&spec, &node.props, &node.id));
     }
+    // ── Section 1.5: facet template (inline vs component-ref) ────
+    //
+    // When the selection is a `facet` block, surface the structure
+    // of its `FacetDef.template` underneath the config rows so
+    // authors can see what they're binding to without leaving the
+    // panel. Read-only for now — the actual edit surface for an
+    // `Inline` template is the inspector tree + canvas (a follow-up
+    // tied to `docs/dev/data-template-system.md`), and `ComponentRef`
+    // templates are edited by picking a registered component. Both
+    // surfaces still need wiring; this section is the data
+    // exposure that unblocks the visual half.
+    if node.component == "facet" {
+        if let Some(facet_id) = node.props.get("facet_id").and_then(|v| v.as_str()) {
+            if let Some(facet) = doc.facets.get(facet_id) {
+                rows.extend(facet_template_rows(facet, &node.id));
+            }
+        }
+    }
     // ── Section 2..N: one per attached modifier ──────────────────
     //
     // Wave 1: each attached `node.modifiers` entry produces a
@@ -1262,6 +1371,79 @@ fn derive_property_rows(
             }),
         });
     }
+    rows
+}
+
+/// Emit a "Template" section for a facet node's `FacetDef.template`.
+/// Inline templates surface the root component + each immediate child
+/// as a read-only inspector row; component-ref templates emit a single
+/// row showing the referenced component id.
+///
+/// Follow-up (`docs/dev/data-template-system.md`): the next step is
+/// canvas-side selection of inline template descendants so the
+/// existing field-editor pipeline reaches them through one path.
+/// Mutators live on `apply_facet_edit` in `events.rs`; the missing
+/// piece is the click router branch that routes
+/// `node-id=<facet_node_id> + template-path=<…>` to a facet template
+/// edit instead of a regular node prop write.
+fn facet_template_rows(facet: &prism_builder::FacetDef, facet_node_id: &str) -> Vec<PropertyRow> {
+    let mut rows = Vec::new();
+    let (header_label, body_rows): (&str, Vec<PropertyRow>) = match &facet.template {
+        prism_builder::FacetTemplate::ComponentRef { component_id } => (
+            "Template (component ref)",
+            vec![PropertyRow {
+                component: "shell.inspector-row".into(),
+                props: json!({
+                    "id": format!("{facet_node_id}::facet-template-ref"),
+                    "kind": "row",
+                    "component-id": component_id,
+                    "node-id": "",
+                    "depth": 0,
+                    "selected": false,
+                    "show-delete": false,
+                }),
+            }],
+        ),
+        prism_builder::FacetTemplate::Inline { root } => {
+            let mut inner = Vec::with_capacity(1 + root.children.len());
+            inner.push(PropertyRow {
+                component: "shell.inspector-row".into(),
+                props: json!({
+                    "id": format!("{facet_node_id}::facet-template-root"),
+                    "kind": "row",
+                    "component-id": root.component,
+                    "node-id": root.id,
+                    "depth": 0,
+                    "selected": false,
+                    "show-delete": false,
+                }),
+            });
+            for (idx, child) in root.children.iter().enumerate() {
+                inner.push(PropertyRow {
+                    component: "shell.inspector-row".into(),
+                    props: json!({
+                        "id": format!("{facet_node_id}::facet-template-{idx}"),
+                        "kind": "row",
+                        "component-id": child.component,
+                        "node-id": child.id,
+                        "depth": 1,
+                        "selected": false,
+                        "show-delete": false,
+                    }),
+                });
+            }
+            ("Template (inline)", inner)
+        }
+    };
+    rows.push(PropertyRow {
+        component: "shell.section-header".into(),
+        props: json!({
+            "label": header_label,
+            "section-id": format!("{facet_node_id}::facet-template"),
+            "collapsed": false,
+        }),
+    });
+    rows.extend(body_rows);
     rows
 }
 
@@ -1427,30 +1609,6 @@ fn property_row_from_spec(
         component: "shell.field-editor".into(),
         props: row_props,
     }
-}
-
-/// Wave 11.4 — convert a byte-offset caret position to a
-/// `(line, column)` pair (both 1-based) for the code-editor
-/// status strip. Walks the source counting `\n` boundaries; the
-/// column is the number of chars since the last newline + 1.
-/// Returns `(0, 0)` when `caret == 0` so the binding can elide
-/// the cursor line from the status label.
-fn byte_offset_to_line_col(source: &str, caret: usize) -> (usize, usize) {
-    if caret == 0 {
-        return (0, 0);
-    }
-    let mut line = 1usize;
-    let mut last_break = 0usize;
-    let bytes = source.as_bytes();
-    let end = caret.min(bytes.len());
-    for (i, b) in bytes.iter().enumerate().take(end) {
-        if *b == b'\n' {
-            line += 1;
-            last_break = i + 1;
-        }
-    }
-    let column = source[last_break..end].chars().count() + 1;
-    (line, column)
 }
 
 /// Wave 11.3 — `chrome::format_drag_value` lifted out of the
@@ -3389,11 +3547,151 @@ pub struct PickerCandidate {
     pub icon: String,
 }
 
-#[derive(Clone, Debug, Default)]
+/// Backing buffer for the in-shell code editor. Owns a multi-line
+/// `TextEditor` plus a language tag (used by the status strip + the
+/// future syntax-highlight pass). Single editor type powers both
+/// this and `FieldFocus`, so the same caret / selection / undo /
+/// key-handling code paths drive every editable text surface in the
+/// shell.
+#[derive(Clone, Debug)]
 pub struct CodeBuffer {
-    pub source: String,
+    pub editor: prism_ui_runtime::editor::TextEditor,
     pub language: String,
-    pub caret: usize,
+    /// Horizontal viewport scroll in CSS pixels — auto-updated by
+    /// [`Self::ensure_caret_visible`] after edits / nav so the
+    /// caret stays inside the editor's text area, and by the wheel
+    /// event path for explicit user scrolling. Clamped to
+    /// non-negative.
+    pub scroll_x: f32,
+    pub scroll_y: f32,
+    /// Cached syntax-highlight spans keyed by a `(text, language)`
+    /// fingerprint. The render walk lifts spans straight off this
+    /// cache instead of re-running the tokenizer on every frame —
+    /// once a buffer is tokenized, idle redraws (caret blink, scroll,
+    /// hover) cost zero tokenization work. Invalidated by any
+    /// mutation that changes the text or the language.
+    cached_spans: std::cell::RefCell<SpansCache>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SpansCache {
+    /// `(text_hash, language)` fingerprint of the cache entry. A
+    /// real hash (not just length + endpoints) so mid-buffer edits
+    /// that preserve length still bust the cache. `None` means the
+    /// cache is empty.
+    fingerprint: Option<(u64, String)>,
+    spans: Vec<prism_ui_runtime::command::TextSpan>,
+}
+
+impl Default for CodeBuffer {
+    fn default() -> Self {
+        Self {
+            editor: prism_ui_runtime::editor::TextEditor::new_multi_line(),
+            language: String::new(),
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            cached_spans: std::cell::RefCell::new(SpansCache::default()),
+        }
+    }
+}
+
+impl CodeBuffer {
+    pub fn source(&self) -> &str {
+        self.editor.text()
+    }
+
+    pub fn caret(&self) -> usize {
+        self.editor.caret_byte()
+    }
+
+    /// Replace the entire buffer (e.g. on file open). Resets undo
+    /// history *and* the viewport scroll — the new content is the
+    /// new baseline. Invalidates the syntax-highlight cache.
+    pub fn load(&mut self, source: impl Into<String>, language: impl Into<String>) {
+        self.editor.set_text(source);
+        self.language = language.into();
+        self.scroll_x = 0.0;
+        self.scroll_y = 0.0;
+        self.cached_spans.borrow_mut().fingerprint = None;
+    }
+
+    /// Highlight spans for the current buffer + language. Memoised:
+    /// re-uses the previous span list when neither the buffer nor
+    /// the language have changed (the typical case once a buffer
+    /// has been tokenized once and is repainting on caret blinks /
+    /// scroll). Returns a clone of the cached list — the runtime
+    /// node consumes it by value.
+    pub fn highlight_spans(&self) -> Vec<prism_ui_runtime::command::TextSpan> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.editor.text().hash(&mut hasher);
+        let text_hash = hasher.finish();
+        {
+            let cache = self.cached_spans.borrow();
+            if let Some((hash, lang)) = &cache.fingerprint {
+                if *hash == text_hash && lang == &self.language {
+                    return cache.spans.clone();
+                }
+            }
+        }
+        // Cache miss — retokenize.
+        let language = if self.language.is_empty() {
+            "luau"
+        } else {
+            self.language.as_str()
+        };
+        let spans = prism_ui_runtime::syntax::highlight(self.editor.text(), language);
+        let mut cache = self.cached_spans.borrow_mut();
+        cache.fingerprint = Some((text_hash, self.language.clone()));
+        cache.spans = spans.clone();
+        spans
+    }
+
+    /// Auto-scroll the viewport so the caret stays visible after an
+    /// edit or navigation. `viewport_width` / `viewport_height` are
+    /// the editor's text-area dimensions in CSS pixels (the input's
+    /// inner area, padding subtracted). Returns `true` when the
+    /// scroll changed.
+    ///
+    /// The estimate uses the same `font_size * 0.55` / `font_size *
+    /// 1.2` heuristic the runtime measure pass uses — perfect for
+    /// the monospace font the code editor renders with, and good
+    /// enough for variable-width fallbacks.
+    pub fn ensure_caret_visible(
+        &mut self,
+        viewport_width: f32,
+        viewport_height: f32,
+        font_size: f32,
+    ) -> bool {
+        let (line, col) = self.editor.caret_line_col();
+        if line == 0 {
+            return false;
+        }
+        let caret_x = (col.saturating_sub(1)) as f32 * font_size * 0.55;
+        let caret_y_top = (line.saturating_sub(1)) as f32 * font_size * 1.2;
+        let caret_y_bottom = caret_y_top + font_size * 1.2;
+        let prev_x = self.scroll_x;
+        let prev_y = self.scroll_y;
+        // Horizontal: scroll right if caret is past the right edge;
+        // scroll left if it's behind the left edge. Leave a small
+        // gutter so the caret doesn't sit flush against either side.
+        let h_gutter = font_size * 2.0;
+        if caret_x > self.scroll_x + viewport_width - h_gutter {
+            self.scroll_x = (caret_x - viewport_width + h_gutter).max(0.0);
+        } else if caret_x < self.scroll_x + h_gutter {
+            self.scroll_x = (caret_x - h_gutter).max(0.0);
+        }
+        // Vertical: scroll down if the caret's row would land below
+        // the viewport bottom; scroll up otherwise. One-line gutter
+        // top + bottom.
+        let v_gutter = font_size * 1.2;
+        if caret_y_bottom > self.scroll_y + viewport_height - v_gutter {
+            self.scroll_y = (caret_y_bottom - viewport_height + v_gutter).max(0.0);
+        } else if caret_y_top < self.scroll_y + v_gutter {
+            self.scroll_y = (caret_y_top - v_gutter).max(0.0);
+        }
+        self.scroll_x != prev_x || self.scroll_y != prev_y
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3499,35 +3797,80 @@ impl CanvasSlot {
     /// renders). The DSL block iterates `lines` with a `for=` loop
     /// and renders the status strip as a single `<text>{status-label}</text>`.
     pub fn code_editor_props(&self) -> Value {
-        let source = &self.code_buffer.source;
-        let caret = self.code_buffer.caret.min(source.len());
+        // Render the *display* text — buffer + any active IME preedit
+        // spliced in at the caret. The shell renderer underlines the
+        // preedit range via the `selection` channel (the colour layer
+        // already separates from caret/selection in the runtime).
+        let source = self.code_buffer.editor.display_text().into_owned();
+        let caret = self
+            .code_buffer
+            .editor
+            .display_caret_byte()
+            .min(source.len());
         let language = if self.code_buffer.language.is_empty() {
-            "slint"
+            "prui"
         } else {
             self.code_buffer.language.as_str()
         };
-        let mut lines: Vec<Value> = Vec::new();
-        for (idx, line) in source.split('\n').enumerate() {
-            lines.push(json!({
-                "number": (idx + 1) as i64,
-                "text": line,
-            }));
+        // Per-line entries still feed the gutter (one numbered row
+        // per source line). The editor body itself now renders the
+        // whole buffer through a single multi-line input — the
+        // shaped glyph run carries the caret + selection — so the
+        // DSL no longer needs the per-line `text` payload.
+        let mut line_numbers: Vec<Value> = Vec::new();
+        for (idx, _) in source.split('\n').enumerate() {
+            line_numbers.push(json!({ "number": (idx + 1) as i64 }));
         }
-        let (cursor_line, cursor_column) = byte_offset_to_line_col(source, caret);
+        let (cursor_line, cursor_column) =
+            prism_ui_runtime::editor::byte_offset_to_line_col(&source, caret);
+        // Preedit range — when present, the underlying selection
+        // attribute carries it so the renderer paints a highlight
+        // through the in-progress composition. Cosmic-text doesn't
+        // expose a per-glyph underline directly; selection's
+        // translucent fill stands in until we wire a proper
+        // underline span. (User selections are suppressed while a
+        // preedit is active — pressing arrows during composition
+        // is OS-level UB anyway.)
+        let preedit_range = self.code_buffer.editor.preedit_range();
         let status_label = if cursor_line > 0 {
             format!("{language} · Ln {cursor_line}, Col {cursor_column}")
         } else {
             language.to_string()
         };
-        json!({
+        // Selection lowers as a comma-pair attr the runtime input
+        // parser already consumes; omit when empty so the resting
+        // render has no inert `data-selection="0,0"` noise.
+        let selection_attr = self
+            .code_buffer
+            .editor
+            .selection()
+            .map(|(s, e)| format!("{s},{e}"));
+        // Preedit rides on a separate `underline="start,end"` attr
+        // so the in-progress IME composition reads as "tentative"
+        // (a thin underline) without overloading the selection
+        // highlight. Selection + underline coexist freely — pressing
+        // arrows during composition leaves the previous selection
+        // alone.
+        let underline_attr = preedit_range.map(|(s, e)| format!("{s},{e}"));
+        let mut props = json!({
             "source": source,
             "caret": caret,
+            "caret-byte": caret,
             "language": language,
-            "lines": lines,
+            "lines": line_numbers,
             "cursor-line": cursor_line,
             "cursor-column": cursor_column,
             "status-label": status_label,
-        })
+            "scroll-x": self.code_buffer.scroll_x,
+            "scroll-y": self.code_buffer.scroll_y,
+        });
+        if let Some(sel) = selection_attr {
+            props["selection"] = Value::String(sel);
+        }
+        if let Some(ul) = underline_attr {
+            props["underline"] = Value::String(ul);
+        }
+        props
     }
 
     /// JSON for `shell.builder-canvas`. The block reads the selection
@@ -4527,6 +4870,78 @@ mod tests {
             .map(|n| n.id.as_str())
             .collect();
         assert_eq!(selected_ids, vec!["btn"]);
+    }
+
+    #[test]
+    fn property_rows_surface_facet_inline_template_after_schema() {
+        use prism_builder::{BuilderDocument, ComponentRegistry, FacetDef, FacetTemplate, Node};
+
+        let mut reg = ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+
+        let mut doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                children: vec![Node {
+                    id: "facet-node".into(),
+                    component: "facet".into(),
+                    props: json!({ "facet_id": "f1", "max_items": 5 }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        doc.facets.insert(
+            "f1".into(),
+            FacetDef {
+                id: "f1".into(),
+                label: "Tasks".into(),
+                template: FacetTemplate::Inline {
+                    root: Box::new(Node {
+                        id: "tpl-root".into(),
+                        component: "card".into(),
+                        children: vec![Node {
+                            id: "tpl-title".into(),
+                            component: "text".into(),
+                            props: json!({ "body": "{{record.title}}" }),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }),
+                },
+                ..Default::default()
+            },
+        );
+
+        let rows = derive_property_rows(Some(&reg), None, &doc, Some("facet-node"));
+
+        // A "Template (inline)" section header appears after the
+        // facet's schema rows.
+        let header = rows.iter().find(|r| {
+            r.component == "shell.section-header"
+                && r.props
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| s.contains("Template (inline)"))
+        });
+        assert!(header.is_some(), "missing Template (inline) header");
+
+        // The root + one child appear as inspector-rows.
+        let inspector_rows: Vec<&PropertyRow> = rows
+            .iter()
+            .filter(|r| r.component == "shell.inspector-row")
+            .collect();
+        assert_eq!(inspector_rows.len(), 2, "expected root + 1 child");
+        assert_eq!(
+            inspector_rows[0].props.get("component-id"),
+            Some(&json!("card"))
+        );
+        assert_eq!(
+            inspector_rows[1].props.get("component-id"),
+            Some(&json!("text"))
+        );
     }
 
     #[test]
@@ -5858,8 +6273,8 @@ mod tests {
             target_id: "demo-heading".into(),
             key: "body".into(),
             kind: "text".into(),
-            draft: "hi".into(),
             original: "hi".into(),
+            editor: prism_ui_runtime::editor::TextEditor::with_text("hi"),
         };
         let props = builder.properties_panel_props_with(Some(&focus));
         let rows = props["rows"].as_array().unwrap();
@@ -6448,10 +6863,17 @@ mod tests {
                     icon: "icons/heading.svg".into(),
                 }],
             },
-            code_buffer: CodeBuffer {
-                source: "Window {}".into(),
-                language: "slint".into(),
-                caret: 7,
+            code_buffer: {
+                let mut editor = prism_ui_runtime::editor::TextEditor::new_multi_line();
+                editor.set_text("<container/>");
+                editor.place_caret_at(7, false);
+                CodeBuffer {
+                    editor,
+                    language: "prui".into(),
+                    scroll_x: 0.0,
+                    scroll_y: 0.0,
+                    cached_spans: std::cell::RefCell::new(SpansCache::default()),
+                }
             },
             device: Device::Desktop,
             drag: None,
@@ -6464,9 +6886,9 @@ mod tests {
     #[test]
     fn code_editor_props_carry_source_caret_and_language() {
         let props = sample_canvas().code_editor_props();
-        assert_eq!(props["source"], "Window {}");
+        assert_eq!(props["source"], "<container/>");
         assert_eq!(props["caret"], 7);
-        assert_eq!(props["language"], "slint");
+        assert_eq!(props["language"], "prui");
     }
 
     #[test]

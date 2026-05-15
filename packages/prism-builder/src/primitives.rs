@@ -109,6 +109,13 @@ fn text_input_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -
         },
         semantic,
         focused: false,
+        multiline,
+        caret_byte: None,
+        selection: None,
+        spans: Vec::new(),
+        scroll_x: 0.0,
+        scroll_y: 0.0,
+        underline: None,
     }
 }
 /// Wave 10.5 — `prism.drag-scrub`. The runtime emits a styled
@@ -569,6 +576,16 @@ fn text_buffer_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) 
         },
         semantic,
         focused: false,
+        // `text-buffer` is the multi-line primitive — code editors,
+        // note bodies, anywhere a `\n` should be a real line break
+        // rather than stripped.
+        multiline: true,
+        caret_byte: None,
+        selection: None,
+        spans: Vec::new(),
+        scroll_x: 0.0,
+        scroll_y: 0.0,
+        underline: None,
     }
 }
 

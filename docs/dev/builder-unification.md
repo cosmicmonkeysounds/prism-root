@@ -1,5 +1,12 @@
 # Builder Unification Plan
 
+> ⚠️ **Superseded by the Phase 5 cutover to `prism-ui-runtime`
+> (Taffy + `prism-ui` DSL).** This plan assumed a Slint-native
+> system; that base was replaced wholesale. Phase B4 (HTML SSR
+> separation) landed in the new architecture via
+> `ui_runtime::lower_semantic_html`; B1–B3 are no longer
+> relevant. Retained as history.
+
 > Collapsing the Shell + Builder into one Slint-native system.
 > Slint's `std-widgets` and property bindings replace hand-rolled
 > primitives and the `sync_ui_from_shared` rebuild loop.

@@ -672,10 +672,19 @@ impl Shell {
         // rewrites them to the interpolated sample at `now_ms`, and
         // `tick` prunes finished transitions so the next frame
         // skips them.
+        //
+        // **Wave 14.8** — phantom-node graft. Any container that
+        // carried `animate:out-<prop>` and has since left the tree
+        // re-appears at its previous parent's child list (or at the
+        // root when the parent vanished too) with its eased prop
+        // values already written in, so the painter can fade it
+        // out in place. `tick` drains the phantom once every
+        // out-transition for its id has elapsed.
         let now_ms = now_ms();
         let mut animator = inner.animator.borrow_mut();
         animator.observe(&tree, now_ms);
         animator.apply(&mut tree, now_ms);
+        graft_phantoms(&mut tree, animator.phantom_nodes_with_parent(now_ms));
         animator.tick(now_ms);
         tree
     }
@@ -754,6 +763,7 @@ impl Shell {
                 let mut animator = guard.animator.borrow_mut();
                 animator.observe(&tree, now_ms);
                 animator.apply(&mut tree, now_ms);
+                graft_phantoms(&mut tree, animator.phantom_nodes_with_parent(now_ms));
                 animator.tick(now_ms);
                 surface.set_tree(wrap_root(tree));
             }
@@ -797,6 +807,44 @@ fn now_ms() -> u64 {
     static EPOCH: OnceLock<Instant> = OnceLock::new();
     let epoch = EPOCH.get_or_init(Instant::now);
     epoch.elapsed().as_millis() as u64
+}
+
+/// Wave 14.8 — graft animator phantoms into the live render tree.
+/// Each `(parent_id, node)` pair looks up its parent container by id
+/// and appends the phantom there; phantoms whose parent has also
+/// left the tree (or that were root-level snapshots, `parent_id =
+/// None`) fall through to the root sibling list. The lookup is a
+/// single recursive walk that short-circuits on the first match per
+/// phantom — sufficient for the handful of phantoms a typical frame
+/// carries.
+fn graft_phantoms(tree: &mut Vec<UiNode>, phantoms: Vec<(Option<String>, UiNode)>) {
+    for (parent_id, phantom) in phantoms {
+        match parent_id {
+            None => tree.push(phantom),
+            Some(pid) => {
+                if !graft_into_parent(tree, &pid, &phantom) {
+                    tree.push(phantom);
+                }
+            }
+        }
+    }
+}
+
+/// Recursive helper: walk `nodes` looking for a container whose id
+/// equals `parent_id`. Returns `true` when the phantom was placed.
+fn graft_into_parent(nodes: &mut [UiNode], parent_id: &str, phantom: &UiNode) -> bool {
+    for node in nodes.iter_mut() {
+        if let UiNode::Container { id, children, .. } = node {
+            if id == parent_id {
+                children.push(phantom.clone());
+                return true;
+            }
+            if graft_into_parent(children, parent_id, phantom) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn wrap_root(children: Vec<UiNode>) -> UiNode {
@@ -1050,6 +1098,105 @@ mod tests {
             .current("anim-target", "padding", 100)
             .expect("mid-flight padding");
         assert!(mid > 10.0 && mid < 30.0);
+    }
+
+    /// Wave 14.8 — phantom nodes registered by the animator graft
+    /// into the rendered tree at the end of the root sibling list.
+    /// Pushed manually through the live shell's animator: a node
+    /// carrying `data-animate-out-*` observed in the first call
+    /// disappears in the second, and `phantom_nodes` returns the
+    /// snapshot the painter would graft in `Shell::render`.
+    #[test]
+    fn animator_phantom_nodes_surface_through_shell_handle() {
+        use prism_ui_runtime::layout::{ContainerProps, Node as UiNode, Semantic};
+        let shell = Shell::new().expect("boot");
+        let _ = shell.render();
+        let baseline = vec![UiNode::Container {
+            id: "ephemeral-toast".into(),
+            props: ContainerProps {
+                opacity: Some(1.0),
+                semantic: Semantic {
+                    attrs: vec![("data-animate-out-opacity".into(), "0 200ms".into())],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            children: vec![],
+        }];
+        let inner = shell.inner.borrow();
+        let mut animator = inner.animator.borrow_mut();
+        animator.observe(&baseline, 0);
+        // Vanish on the next frame — phantom should appear.
+        animator.observe(&[], 50);
+        let phantoms = animator.phantom_nodes(100);
+        assert_eq!(phantoms.len(), 1, "vanished node produces one phantom");
+        let UiNode::Container { id, props, .. } = &phantoms[0] else {
+            panic!("phantom must keep its container shape")
+        };
+        assert_eq!(id, "ephemeral-toast");
+        let opacity = props.opacity.unwrap_or(1.0);
+        assert!(
+            opacity < 1.0 && opacity > 0.0,
+            "phantom opacity should ease toward zero, got {opacity}"
+        );
+    }
+
+    /// Wave 14.8 — `graft_phantoms` places each phantom into the
+    /// live tree at its previous parent's child list. Phantoms whose
+    /// parent has also vanished fall back to the root sibling list.
+    /// Phantoms with no parent_id (root-level snapshots) likewise
+    /// land at the root.
+    #[test]
+    fn graft_phantoms_drops_each_phantom_into_its_recorded_parent() {
+        use prism_ui_runtime::layout::{ContainerProps, Node as UiNode};
+        let mut tree = vec![UiNode::Container {
+            id: "host".into(),
+            props: ContainerProps::default(),
+            children: vec![],
+        }];
+        let phantom = UiNode::Container {
+            id: "ghost".into(),
+            props: ContainerProps::default(),
+            children: vec![],
+        };
+        super::graft_phantoms(&mut tree, vec![(Some("host".into()), phantom.clone())]);
+        // Phantom landed inside `host`, not at root.
+        assert_eq!(tree.len(), 1);
+        let UiNode::Container { children, .. } = &tree[0] else {
+            panic!()
+        };
+        assert_eq!(children.len(), 1);
+        let UiNode::Container { id, .. } = &children[0] else {
+            panic!()
+        };
+        assert_eq!(id, "ghost");
+    }
+
+    /// Wave 14.8 — when the recorded parent isn't in the live tree
+    /// any more (e.g. an entire workspace section collapsed), the
+    /// phantom falls back to the root sibling list so it still
+    /// paints during its fade-out.
+    #[test]
+    fn graft_phantoms_falls_back_to_root_when_parent_is_missing() {
+        use prism_ui_runtime::layout::{ContainerProps, Node as UiNode};
+        let mut tree = vec![UiNode::Container {
+            id: "unrelated".into(),
+            props: ContainerProps::default(),
+            children: vec![],
+        }];
+        let phantom = UiNode::Container {
+            id: "ghost".into(),
+            props: ContainerProps::default(),
+            children: vec![],
+        };
+        super::graft_phantoms(&mut tree, vec![(Some("vanished-parent".into()), phantom)]);
+        // Two root-level siblings now: the unrelated container and
+        // the phantom (orphan fallback).
+        assert_eq!(tree.len(), 2);
+        let UiNode::Container { id, .. } = &tree[1] else {
+            panic!()
+        };
+        assert_eq!(id, "ghost");
     }
 
     /// Wave 14.3 — the shared `MemoCache` lives on `ShellInner` and

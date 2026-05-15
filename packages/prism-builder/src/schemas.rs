@@ -132,8 +132,8 @@ pub(crate) struct CodeProps {
     pub(crate) code: String,
     #[field(label = "Language")]
     pub(crate) language: String,
-    /// Empty defers to the style cascade (slint) or to a dark-theme
-    /// default (html). Set explicitly to override either path.
+    /// Empty defers to the style cascade or to a dark-theme default
+    /// (html SSR). Set explicitly to override either path.
     #[field(label = "Background color", kind = "color")]
     pub(crate) bg: String,
     #[field(label = "Text color", kind = "color")]

@@ -55,12 +55,52 @@ pub fn filesystem_loader(roots: Vec<std::path::PathBuf>) -> AssetLoader {
 /// logical source string. Re-creating the cache invalidates every
 /// id — the host's owning struct (e.g. `App` in the femtovg
 /// backend) recreates the cache when the canvas is rebuilt.
+///
+/// **Wave 14.7 — animated formats**: GIF / animated WebP / APNG
+/// decode into a [`AnimatedEntry`] (`Vec<(ImageId, delay_ms)>` plus
+/// total duration). The painter samples the current frame via
+/// [`Self::ensure_frame`], passing `now_ms` from the backend's
+/// monotonic clock. Static formats (PNG / JPEG / single-frame WebP
+/// / BMP / TIFF / SVG) cache as a single `ImageId` and ignore the
+/// clock argument.
 pub struct ImageCache {
     loader: AssetLoader,
-    // Outer entry: "we have tried"; inner Option: "decode succeeded".
-    // Negative caching keeps a missing icon from re-hitting the
-    // filesystem (and re-failing through resvg) every redraw.
-    entries: HashMap<String, Option<ImageId>>,
+    /// Outer entry: "we have tried"; inner enum: per-source decode
+    /// state. Negative caching keeps a missing asset from
+    /// re-hitting the filesystem (and re-failing through resvg)
+    /// every redraw.
+    entries: HashMap<String, CacheEntry>,
+}
+
+/// One slot in [`ImageCache::entries`]. `Missing` captures the
+/// negative-cache case so retries don't re-walk the filesystem;
+/// `Static` and `Animated` carry the live `ImageId`(s).
+enum CacheEntry {
+    Missing,
+    Static(ImageId),
+    Animated(AnimatedEntry),
+}
+
+/// Multi-frame container decoded once per source. Frames keep their
+/// per-frame delay so the painter can advance through GIF / APNG /
+/// animated-WebP loops at author-declared cadence.
+struct AnimatedEntry {
+    frames: Vec<AnimatedFrame>,
+    /// Sum of every frame's `delay_ms` — used by `frame_index_at`
+    /// to wrap a monotonic clock into a loop position. `0` means
+    /// the decoded file declared only zero-duration frames, in
+    /// which case we hold on the first frame (avoids div-by-zero).
+    total_ms: u32,
+}
+
+struct AnimatedFrame {
+    id: ImageId,
+    /// Per-frame display duration in milliseconds. GIFs encode
+    /// delay in centiseconds (1/100s); WebP / APNG carry it as a
+    /// fraction with an explicit denominator. Both round to whole
+    /// milliseconds here — sub-millisecond timing is below the
+    /// repaint cadence anyway.
+    delay_ms: u32,
 }
 
 impl ImageCache {
@@ -77,32 +117,228 @@ impl ImageCache {
     /// the same source — including the negative case — skip the
     /// loader and decoder; a missing icon doesn't re-hit the
     /// filesystem every frame.
+    ///
+    /// For animated sources, returns the **first** frame's id.
+    /// Callers that want to play the animation use
+    /// [`Self::ensure_frame`] with a monotonic clock.
     pub fn ensure<R: Renderer>(&mut self, canvas: &mut Canvas<R>, source: &str) -> Option<ImageId> {
-        if let Some(slot) = self.entries.get(source) {
-            return *slot;
+        match self.populate(canvas, source) {
+            CacheLookup::Static(id) => Some(*id),
+            CacheLookup::Animated(a) => a.frames.first().map(|f| f.id),
+            CacheLookup::Missing => None,
         }
-        let bytes = (self.loader)(source);
-        let id = bytes.and_then(|b| decode_and_upload(canvas, source, &b));
-        self.entries.insert(source.to_owned(), id);
-        id
+    }
+
+    /// Wave 14.7 — same as [`Self::ensure`] but rotates through
+    /// animated frames against the supplied monotonic clock. For
+    /// static sources `now_ms` is ignored. Returns `None` when the
+    /// source decoded to zero frames (treated as Missing).
+    pub fn ensure_frame<R: Renderer>(
+        &mut self,
+        canvas: &mut Canvas<R>,
+        source: &str,
+        now_ms: u64,
+    ) -> Option<ImageId> {
+        match self.populate(canvas, source) {
+            CacheLookup::Static(id) => Some(*id),
+            CacheLookup::Animated(a) => {
+                let idx = frame_index_at(a, now_ms);
+                a.frames.get(idx).map(|f| f.id)
+            }
+            CacheLookup::Missing => None,
+        }
+    }
+
+    /// Wave 14.7 — does any entry hold an animated source? The host
+    /// merges this into its per-frame "request a redraw" bit so
+    /// GIF / APNG loops keep ticking without an explicit timer.
+    pub fn has_animations(&self) -> bool {
+        self.entries
+            .values()
+            .any(|e| matches!(e, CacheEntry::Animated(_)))
+    }
+
+    fn populate<R: Renderer>(&mut self, canvas: &mut Canvas<R>, source: &str) -> CacheLookup<'_> {
+        if !self.entries.contains_key(source) {
+            let bytes = (self.loader)(source);
+            let entry = match bytes {
+                Some(b) => decode_entry(canvas, source, &b).unwrap_or(CacheEntry::Missing),
+                None => CacheEntry::Missing,
+            };
+            self.entries.insert(source.to_owned(), entry);
+        }
+        match self.entries.get(source).expect("just inserted") {
+            CacheEntry::Static(id) => CacheLookup::Static(id),
+            CacheEntry::Animated(a) => CacheLookup::Animated(a),
+            CacheEntry::Missing => CacheLookup::Missing,
+        }
     }
 }
 
-fn decode_and_upload<R: Renderer>(
+enum CacheLookup<'a> {
+    Missing,
+    Static(&'a ImageId),
+    Animated(&'a AnimatedEntry),
+}
+
+/// Wrap `now_ms` into the animation's loop and return the index of
+/// the frame that should currently paint. Walks the cumulative
+/// delays from frame 0; the linear scan is fine for sensible frame
+/// counts (a typical GIF has 10–200 frames). Zero-duration loops
+/// hold on frame 0.
+fn frame_index_at(a: &AnimatedEntry, now_ms: u64) -> usize {
+    frame_index_in_delays(
+        a.frames.iter().map(|f| f.delay_ms),
+        a.total_ms,
+        a.frames.len(),
+        now_ms,
+    )
+}
+
+/// Pure-data helper extracted so the math is testable without
+/// allocating real `ImageId`s (femtovg's id type is `NonZero` and
+/// rejects zero-init). Takes the per-frame delays as an iterator,
+/// the precomputed total duration, and the frame count.
+fn frame_index_in_delays<I>(delays: I, total_ms: u32, len: usize, now_ms: u64) -> usize
+where
+    I: IntoIterator<Item = u32>,
+{
+    if len == 0 || total_ms == 0 {
+        return 0;
+    }
+    let mut t = (now_ms % total_ms as u64) as u32;
+    for (i, delay) in delays.into_iter().enumerate() {
+        let step = delay.max(1);
+        if t < step {
+            return i;
+        }
+        t = t.saturating_sub(step);
+    }
+    len - 1
+}
+
+fn decode_entry<R: Renderer>(
     canvas: &mut Canvas<R>,
     source: &str,
     bytes: &[u8],
-) -> Option<ImageId> {
+) -> Option<CacheEntry> {
     let ext = source.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
-        "svg" => decode_svg_and_upload(canvas, bytes),
+        "svg" => decode_svg_and_upload(canvas, bytes).map(CacheEntry::Static),
+        // Wave 14.7 — animated formats. The `image` crate's
+        // `AnimationDecoder` trait yields a frame iterator with
+        // per-frame delays. We decode once and upload each frame as
+        // its own `ImageId`; the painter rotates between them via
+        // `ensure_frame`. Multi-frame GIF / animated WebP / APNG
+        // all flow through here; static single-frame files in those
+        // formats degrade to the `Static` arm below.
+        "gif" => decode_gif_animation(canvas, bytes).or_else(|| {
+            canvas
+                .load_image_mem(bytes, ImageFlags::empty())
+                .ok()
+                .map(CacheEntry::Static)
+        }),
+        "apng" => decode_apng_animation(canvas, bytes).or_else(|| {
+            canvas
+                .load_image_mem(bytes, ImageFlags::empty())
+                .ok()
+                .map(CacheEntry::Static)
+        }),
+        "webp" => decode_webp_animation(canvas, bytes).or_else(|| {
+            canvas
+                .load_image_mem(bytes, ImageFlags::empty())
+                .ok()
+                .map(CacheEntry::Static)
+        }),
         // Everything else routes through femtovg's `load_image_mem`,
         // which sniffs the format byte and decodes via the `image`
-        // crate (PNG + JPEG are enabled in the workspace dep). The
-        // mapping is deliberately permissive: extensions like `webp`
-        // would fall through here and either decode (if the feature
-        // is on) or return `None` (decode error → cache miss).
-        _ => canvas.load_image_mem(bytes, ImageFlags::empty()).ok(),
+        // crate (PNG + JPEG + BMP + TIFF are enabled in the
+        // workspace dep). Unknown extensions still try this path —
+        // a misnamed PNG (`.bin`) still loads.
+        _ => canvas
+            .load_image_mem(bytes, ImageFlags::empty())
+            .ok()
+            .map(CacheEntry::Static),
+    }
+}
+
+/// Decode an animated GIF into a sequence of `(ImageId, delay_ms)`
+/// frames. Single-frame GIFs return `Some(CacheEntry::Animated{
+/// frames: 1, total_ms: <delay or 0> })` — callers can detect via
+/// `frames.len() == 1` if they want to treat it as static.
+/// Returns `None` when the decode fails (format mismatch, corrupted
+/// bytes, zero frames).
+fn decode_gif_animation<R: Renderer>(canvas: &mut Canvas<R>, bytes: &[u8]) -> Option<CacheEntry> {
+    use image::codecs::gif::GifDecoder;
+    use image::AnimationDecoder;
+    let decoder = GifDecoder::new(std::io::Cursor::new(bytes)).ok()?;
+    let frames = decoder.into_frames().collect_frames().ok()?;
+    decode_frames_to_entry(canvas, frames)
+}
+
+/// APNG animations route through `PngDecoder::apng()` which itself
+/// returns an `ApngDecoder` that implements `AnimationDecoder`.
+/// Static PNGs fall through this arm via the `_ => Static` branch
+/// (the `.apng` extension is the opt-in marker).
+fn decode_apng_animation<R: Renderer>(canvas: &mut Canvas<R>, bytes: &[u8]) -> Option<CacheEntry> {
+    use image::codecs::png::PngDecoder;
+    use image::AnimationDecoder;
+    let decoder = PngDecoder::new(std::io::Cursor::new(bytes)).ok()?;
+    let apng = decoder.apng().ok()?;
+    let frames = apng.into_frames().collect_frames().ok()?;
+    decode_frames_to_entry(canvas, frames)
+}
+
+/// Animated WebP via `WebPDecoder`. Single-frame WebP falls back to
+/// the static `load_image_mem` arm.
+fn decode_webp_animation<R: Renderer>(canvas: &mut Canvas<R>, bytes: &[u8]) -> Option<CacheEntry> {
+    use image::codecs::webp::WebPDecoder;
+    use image::AnimationDecoder;
+    let decoder = WebPDecoder::new(std::io::Cursor::new(bytes)).ok()?;
+    let frames = decoder.into_frames().collect_frames().ok()?;
+    decode_frames_to_entry(canvas, frames)
+}
+
+/// Common upload + cache shape — takes the decoded `Vec<Frame>` and
+/// emits a `CacheEntry::Animated` with each frame uploaded once.
+/// Returns `None` when the frame list is empty or every individual
+/// upload failed.
+fn decode_frames_to_entry<R: Renderer>(
+    canvas: &mut Canvas<R>,
+    frames: Vec<image::Frame>,
+) -> Option<CacheEntry> {
+    if frames.is_empty() {
+        return None;
+    }
+    let mut out: Vec<AnimatedFrame> = Vec::with_capacity(frames.len());
+    let mut total_ms = 0u32;
+    for frame in frames {
+        let delay = frame.delay();
+        let (num, den) = delay.numer_denom_ms();
+        let delay_ms = if den == 0 {
+            0
+        } else {
+            (num as f64 / den as f64).round() as u32
+        };
+        let rgba = frame.into_buffer();
+        let dyn_img = image::DynamicImage::ImageRgba8(rgba);
+        let src = match ImageSource::try_from(&dyn_img) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let Ok(id) = canvas.create_image(src, ImageFlags::empty()) else {
+            continue;
+        };
+        out.push(AnimatedFrame { id, delay_ms });
+        total_ms = total_ms.saturating_add(delay_ms);
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(CacheEntry::Animated(AnimatedEntry {
+            frames: out,
+            total_ms,
+        }))
     }
 }
 
@@ -155,6 +391,50 @@ fn unpremultiply_rgba(buf: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Wave 14.7 — `frame_index_in_delays` wraps a monotonic clock
+    /// into a loop position. Pure-data test against the extracted
+    /// math helper so the `Canvas`/`ImageId` allocator doesn't need
+    /// to participate.
+    #[test]
+    fn frame_index_in_delays_wraps_monotonic_clock_into_loop() {
+        // Three-frame entry: 100ms, 200ms, 100ms (total 400ms).
+        let delays = [100u32, 200, 100];
+        let total = delays.iter().sum::<u32>();
+        let len = delays.len();
+        // First frame: 0..100ms.
+        assert_eq!(frame_index_in_delays(delays, total, len, 0), 0);
+        assert_eq!(frame_index_in_delays(delays, total, len, 99), 0);
+        // Second frame: 100..300ms.
+        assert_eq!(frame_index_in_delays(delays, total, len, 100), 1);
+        assert_eq!(frame_index_in_delays(delays, total, len, 299), 1);
+        // Third frame: 300..400ms.
+        assert_eq!(frame_index_in_delays(delays, total, len, 300), 2);
+        assert_eq!(frame_index_in_delays(delays, total, len, 399), 2);
+        // Wrap: 400ms == 0ms; 800ms wraps twice.
+        assert_eq!(frame_index_in_delays(delays, total, len, 400), 0);
+        assert_eq!(frame_index_in_delays(delays, total, len, 800), 0);
+    }
+
+    /// Wave 14.7 — zero-duration animations hold on frame 0 instead
+    /// of div-by-zero. GIFs declaring 0-cs delays are common
+    /// (synthetic exporters that don't realise the spec interprets
+    /// 0 as "very fast").
+    #[test]
+    fn frame_index_in_delays_holds_on_zero_duration_animation() {
+        let delays = [0u32];
+        assert_eq!(frame_index_in_delays(delays, 0, 1, 0), 0);
+        assert_eq!(frame_index_in_delays(delays, 0, 1, 1_000_000), 0);
+    }
+
+    /// Empty animations also hold on frame 0 — a defensive guard
+    /// against pathological decode output. The painter still treats
+    /// a length-0 entry as Missing higher up.
+    #[test]
+    fn frame_index_in_delays_returns_zero_for_empty_animation() {
+        let delays: [u32; 0] = [];
+        assert_eq!(frame_index_in_delays(delays, 0, 0, 100), 0);
+    }
 
     #[test]
     fn noop_loader_returns_none_for_every_source() {

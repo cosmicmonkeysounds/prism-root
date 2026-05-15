@@ -99,9 +99,27 @@ pub fn translate(event: &WindowEvent, state: &mut InputState) -> Option<Event> {
                 modifiers: state.modifiers,
             })
         }
+        // IME composition lifecycle. Commit is the finalised text;
+        // Preedit is the in-progress composition (kana stack, dead-
+        // key accents). Enabled / Disabled bracket a composition
+        // session so hosts can clear preedit state on switch-out.
         WindowEvent::Ime(winit::event::Ime::Commit(text)) => {
-            Some(Event::Text { text: text.clone() })
+            Some(Event::ImeCommit { text: text.clone() })
         }
+        WindowEvent::Ime(winit::event::Ime::Preedit(text, range)) => {
+            // winit reports the cursor range inside the preedit as
+            // `Option<(usize, usize)>` (start, end). We forward only
+            // the start as the caret byte — selection inside preedit
+            // is rare and the editor's own selection model already
+            // surrounds it.
+            let cursor_byte = range.map(|(s, _e)| s);
+            Some(Event::ImePreedit {
+                text: text.clone(),
+                cursor_byte,
+            })
+        }
+        WindowEvent::Ime(winit::event::Ime::Enabled) => Some(Event::ImeEnabled),
+        WindowEvent::Ime(winit::event::Ime::Disabled) => Some(Event::ImeDisabled),
         WindowEvent::Resized(size) => Some(Event::Resize {
             width: size.width,
             height: size.height,

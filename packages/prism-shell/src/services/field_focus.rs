@@ -65,9 +65,50 @@ impl ShellService for FieldFocusService {
             return EventOutcome::Pass;
         }
         let registry = ctx.registry;
+        let focus_kind = ctx
+            .state
+            .field_focus
+            .as_ref()
+            .map(|f| f.kind.clone())
+            .unwrap_or_default();
         match event {
             Event::Text { text } => {
+                // Number / integer fields don't route through the
+                // text editor — drag-scrub / typed digits go through
+                // a different path (`nudge_focused_number` + the
+                // prop-write seam). Letting raw text reach the editor
+                // would dump non-digit chars into the bound prop.
+                if matches!(focus_kind.as_str(), "number" | "integer") {
+                    return EventOutcome::Handled;
+                }
                 ctx.state.type_field_text(text, registry);
+                EventOutcome::Handled
+            }
+            // IME composition routes through the focused field's
+            // editor — preedit doesn't mutate the bound prop;
+            // commit flushes the finalised composition through
+            // `insert_field_text` so the prop updates atomically.
+            Event::ImePreedit { text, cursor_byte } => {
+                if matches!(focus_kind.as_str(), "number" | "integer") {
+                    return EventOutcome::Handled;
+                }
+                if let Some(focus) = ctx.state.field_focus.as_mut() {
+                    focus.editor.apply_ime_preedit(text, *cursor_byte);
+                }
+                EventOutcome::Handled
+            }
+            Event::ImeCommit { text } => {
+                if matches!(focus_kind.as_str(), "number" | "integer") {
+                    return EventOutcome::Handled;
+                }
+                ctx.state.insert_field_text(text, registry);
+                EventOutcome::Handled
+            }
+            Event::ImeEnabled => EventOutcome::Handled,
+            Event::ImeDisabled => {
+                if let Some(focus) = ctx.state.field_focus.as_mut() {
+                    focus.editor.clear_preedit();
+                }
                 EventOutcome::Handled
             }
             Event::Key {
@@ -75,54 +116,52 @@ impl ShellService for FieldFocusService {
                 pressed: true,
                 modifiers,
             } => {
-                // Modifier-bearing key combos pass through so global
-                // shortcuts (Ctrl+S etc.) still work while typing.
-                // Plain Esc/Enter/Backspace are owned by the focus.
-                if modifiers.ctrl || modifiers.meta || modifiers.alt {
-                    return EventOutcome::Pass;
-                }
                 // Wave 2.2: arrow-key nudging for number / integer
-                // fields. ±1 by default, ±10 when shift is held.
-                // Min / max clamp piggybacks on `set_node_prop`'s
-                // `NumberDrag` clamp path indirectly — but since the
-                // field-focus path doesn't carry min/max state, we
-                // re-read them off the focus prop's `data-min` /
-                // `data-max` attrs via the focus session at click time;
-                // for now we nudge unbounded, and rely on the
-                // drag-scrub path to enforce bounds when scrubbing.
-                let focus_kind = ctx
-                    .state
-                    .field_focus
-                    .as_ref()
-                    .map(|f| f.kind.clone())
-                    .unwrap_or_default();
-                if matches!(focus_kind.as_str(), "number" | "integer")
-                    && matches!(code.as_str(), "arrowup" | "arrowdown")
-                {
-                    let step: f64 = if modifiers.shift { 10.0 } else { 1.0 };
-                    let signed = if code == "arrowup" { step } else { -step };
-                    nudge_focused_number(ctx, signed, &focus_kind);
+                // fields — ±1 by default, ±10 with shift. Number
+                // fields never reach the text-editor key path; their
+                // bound prop is an f64, not a string.
+                if matches!(focus_kind.as_str(), "number" | "integer") {
+                    if matches!(code.as_str(), "arrowup" | "arrowdown") {
+                        let step: f64 = if modifiers.shift { 10.0 } else { 1.0 };
+                        let signed = if code == "arrowup" { step } else { -step };
+                        nudge_focused_number(ctx, signed, &focus_kind);
+                        return EventOutcome::Handled;
+                    }
+                    // Modifier-bearing combos (Ctrl+S etc.) need to
+                    // reach the global shortcuts even with a number
+                    // field focused.
+                    if modifiers.ctrl || modifiers.meta || modifiers.alt {
+                        return EventOutcome::Pass;
+                    }
+                    if matches!(code.as_str(), "enter" | "escape") {
+                        if code == "enter" {
+                            ctx.state.commit_field_focus();
+                        } else {
+                            ctx.state.cancel_field_focus(registry);
+                        }
+                        return EventOutcome::Handled;
+                    }
                     return EventOutcome::Handled;
                 }
+
+                let is_multiline = matches!(focus_kind.as_str(), "textarea" | "code");
                 match code.as_str() {
-                    "backspace" => {
-                        ctx.state.backspace_field(registry);
-                        EventOutcome::Handled
-                    }
-                    "enter" => {
-                        // Wave 2.1: Shift-Enter inserts a literal
-                        // newline for textarea-kind fields (multi-
-                        // line text). Plain Enter commits. The
-                        // distinction is made on the focus's kind +
-                        // the shift modifier, so single-line text
-                        // fields still commit on Enter regardless.
-                        let is_multiline = ctx
-                            .state
-                            .field_focus
-                            .as_ref()
-                            .map(|f| f.kind == "textarea")
-                            .unwrap_or(false);
-                        if modifiers.shift && is_multiline {
+                    // Property-row Enter convention:
+                    //
+                    // * Single-line text field — plain Enter commits;
+                    //   Shift-Enter also commits (no multi-line escape
+                    //   for a single-line cell).
+                    // * Multi-line textarea / code property — plain
+                    //   Enter commits (the click-to-edit affordance
+                    //   stays gesture-equivalent across kinds);
+                    //   Shift-Enter inserts a newline so users can
+                    //   build up paragraphs without leaving the cell.
+                    //
+                    // The full-screen code editor uses a separate path
+                    // (`code_buffer`) and gets a code-editor-y Enter →
+                    // newline policy there.
+                    "enter" | "return" => {
+                        if is_multiline && modifiers.shift {
                             ctx.state.type_field_text("\n", registry);
                             EventOutcome::Handled
                         } else {
@@ -134,11 +173,61 @@ impl ShellService for FieldFocusService {
                         ctx.state.cancel_field_focus(registry);
                         EventOutcome::Handled
                     }
-                    // Every other plain-key event terminates here so
-                    // it can't fire a global shortcut while the user
-                    // is in a field — but doesn't write anything,
-                    // the matching `Event::Text` arm above does.
-                    _ => EventOutcome::Handled,
+                    // Ctrl/Cmd+C / V / X — clipboard. Delegated to the
+                    // shared `clipboard` resource so paste sources
+                    // round-trip across OS-level cut/paste too once
+                    // the clipboard service grows OS integration.
+                    "c" if modifiers.ctrl || modifiers.meta => {
+                        let copied = ctx
+                            .state
+                            .field_focus
+                            .as_ref()
+                            .and_then(|f| f.editor.selected_text().map(|s| s.to_string()));
+                        if let Some(text) = copied {
+                            ctx.clipboard.set_string(text);
+                        }
+                        EventOutcome::Handled
+                    }
+                    "x" if modifiers.ctrl || modifiers.meta => {
+                        let copied = ctx
+                            .state
+                            .field_focus
+                            .as_ref()
+                            .and_then(|f| f.editor.selected_text().map(|s| s.to_string()));
+                        if let Some(text) = copied {
+                            ctx.clipboard.set_string(text);
+                            // Replace selection with empty → deletes it.
+                            ctx.state.insert_field_text("", registry);
+                        }
+                        EventOutcome::Handled
+                    }
+                    "v" if modifiers.ctrl || modifiers.meta => {
+                        if let Some(text) = ctx.clipboard.get_string() {
+                            ctx.state.insert_field_text(&text, registry);
+                        }
+                        EventOutcome::Handled
+                    }
+                    // Every other key — let the editor decide. Plain
+                    // printable chars come via `Event::Text` so this
+                    // routes navigation (arrows / home / end), edits
+                    // (backspace / delete / ctrl+backspace), and
+                    // editor shortcuts (ctrl+a, ctrl+z, ctrl+d,
+                    // ctrl+k). Anything the editor doesn't recognise
+                    // returns `Inert` — and *modifier-bearing* inert
+                    // keys (ctrl+s and friends) pass through to the
+                    // global shortcut router. Plain inert keys stay
+                    // handled so they can't trigger global shortcuts
+                    // while typing.
+                    _ => {
+                        let outcome = ctx.state.apply_field_key(code, *modifiers, registry);
+                        if outcome.mutated() {
+                            EventOutcome::Handled
+                        } else if modifiers.ctrl || modifiers.meta || modifiers.alt {
+                            EventOutcome::Pass
+                        } else {
+                            EventOutcome::Handled
+                        }
+                    }
                 }
             }
             _ => EventOutcome::Pass,
@@ -218,7 +307,7 @@ mod tests {
         state.begin_field_focus("target", "body", "text");
         let out = fan_out(&mut state, &Event::Text { text: "ya".into() });
         assert!(matches!(out, EventOutcome::Handled));
-        assert_eq!(state.field_focus.as_ref().unwrap().draft, "hiya");
+        assert_eq!(state.field_focus.as_ref().unwrap().draft(), "hiya");
         let body = state
             .canvas
             .document
@@ -244,7 +333,7 @@ mod tests {
             modifiers: Modifiers::default(),
         };
         fan_out(&mut state, &key);
-        assert_eq!(state.field_focus.as_ref().unwrap().draft, "h");
+        assert_eq!(state.field_focus.as_ref().unwrap().draft(), "h");
     }
 
     #[test]
@@ -352,7 +441,7 @@ mod tests {
         };
         fan_out(&mut state, &shift_enter);
         assert!(state.field_focus.is_some(), "Shift-Enter must NOT commit");
-        let draft = state.field_focus.as_ref().unwrap().draft.clone();
+        let draft = state.field_focus.as_ref().unwrap().draft().to_string();
         assert!(draft.ends_with('\n'), "trailing newline missing: {draft:?}");
         assert!(
             draft.contains("line1\n"),
@@ -457,6 +546,192 @@ mod tests {
             state.field_focus.is_none(),
             "Shift-Enter commits text fields"
         );
+    }
+
+    /// New editor wiring: a focused text field's arrow keys move the
+    /// caret inside the draft, they don't bleed into global
+    /// shortcuts. The bound prop stays put (caret nav doesn't mutate
+    /// text).
+    #[test]
+    fn arrow_left_inside_focused_text_field_moves_caret_without_mutating_prop() {
+        let mut state = AppState::default();
+        state.canvas.document = seeded_doc();
+        state.canvas.selection = Some("target".into());
+        state.begin_field_focus("target", "body", "text");
+        // Caret starts at end of original draft ("hi", caret=2).
+        let left = Event::Key {
+            code: "arrowleft".into(),
+            pressed: true,
+            modifiers: Modifiers::default(),
+        };
+        fan_out(&mut state, &left);
+        let focus = state.field_focus.as_ref().unwrap();
+        assert_eq!(focus.draft(), "hi");
+        assert_eq!(focus.caret_byte(), 1);
+    }
+
+    /// New editor wiring: Ctrl+A from inside a focused field selects
+    /// the entire draft. Subsequent typing replaces it.
+    #[test]
+    fn ctrl_a_then_type_replaces_focused_field_value() {
+        let mut state = AppState::default();
+        state.canvas.document = seeded_doc();
+        state.canvas.selection = Some("target".into());
+        state.begin_field_focus("target", "body", "text");
+        let ctrl_a = Event::Key {
+            code: "a".into(),
+            pressed: true,
+            modifiers: Modifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        };
+        fan_out(&mut state, &ctrl_a);
+        assert_eq!(
+            state.field_focus.as_ref().unwrap().selection(),
+            Some((0, 2))
+        );
+        fan_out(&mut state, &Event::Text { text: "X".into() });
+        assert_eq!(state.field_focus.as_ref().unwrap().draft(), "X");
+        // And the bound prop reflects the replacement (per-keystroke flush).
+        let body = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find("target"))
+            .and_then(|n| n.props.get("body"))
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        assert_eq!(body, "X");
+    }
+
+    /// New editor wiring: Ctrl+Z undoes a typing run.
+    #[test]
+    fn ctrl_z_inside_focused_field_undoes_typing() {
+        let mut state = AppState::default();
+        state.canvas.document = seeded_doc();
+        state.canvas.selection = Some("target".into());
+        state.begin_field_focus("target", "body", "text");
+        fan_out(&mut state, &Event::Text { text: "abc".into() });
+        assert_eq!(state.field_focus.as_ref().unwrap().draft(), "hiabc");
+        let ctrl_z = Event::Key {
+            code: "z".into(),
+            pressed: true,
+            modifiers: Modifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        };
+        fan_out(&mut state, &ctrl_z);
+        assert_eq!(state.field_focus.as_ref().unwrap().draft(), "hi");
+        // And the prop flushes back to "hi" too.
+        let body = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find("target"))
+            .and_then(|n| n.props.get("body"))
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        assert_eq!(body, "hi");
+    }
+
+    /// Backspace deletes at the caret, not at the end. Pre-editor
+    /// implementation always popped the last char; this is the new
+    /// behaviour readers actually expect.
+    #[test]
+    fn backspace_deletes_at_caret_not_at_end() {
+        let mut state = AppState::default();
+        state.canvas.document = seeded_doc();
+        state.canvas.selection = Some("target".into());
+        state.begin_field_focus("target", "body", "text");
+        // Type "abc" → draft = "hiabc", caret at end (5).
+        fan_out(&mut state, &Event::Text { text: "abc".into() });
+        // Move caret left twice → caret at byte 3 (after "hia").
+        fan_out(
+            &mut state,
+            &Event::Key {
+                code: "arrowleft".into(),
+                pressed: true,
+                modifiers: Modifiers::default(),
+            },
+        );
+        fan_out(
+            &mut state,
+            &Event::Key {
+                code: "arrowleft".into(),
+                pressed: true,
+                modifiers: Modifiers::default(),
+            },
+        );
+        // Backspace removes the "a" at byte 2 (between "hi" and "bc").
+        fan_out(
+            &mut state,
+            &Event::Key {
+                code: "backspace".into(),
+                pressed: true,
+                modifiers: Modifiers::default(),
+            },
+        );
+        assert_eq!(state.field_focus.as_ref().unwrap().draft(), "hibc");
+    }
+
+    /// IME preedit shows inline in a focused text field without
+    /// mutating the bound prop.
+    #[test]
+    fn ime_preedit_in_text_field_doesnt_mutate_prop() {
+        let mut state = AppState::default();
+        state.canvas.document = seeded_doc();
+        state.canvas.selection = Some("target".into());
+        state.begin_field_focus("target", "body", "text");
+        fan_out(
+            &mut state,
+            &Event::ImePreedit {
+                text: "ん".into(),
+                cursor_byte: None,
+            },
+        );
+        // The bound prop stays at the original draft.
+        let body = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find("target"))
+            .and_then(|n| n.props.get("body"))
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        assert_eq!(body, "hi");
+        // Editor surfaces the preedit.
+        let focus = state.field_focus.as_ref().unwrap();
+        assert!(focus.editor.has_preedit());
+    }
+
+    /// IME commit flushes the finalised composition through to the
+    /// bound prop.
+    #[test]
+    fn ime_commit_in_text_field_writes_through_to_prop() {
+        let mut state = AppState::default();
+        state.canvas.document = seeded_doc();
+        state.canvas.selection = Some("target".into());
+        state.begin_field_focus("target", "body", "text");
+        fan_out(&mut state, &Event::ImeCommit { text: "漢".into() });
+        let body = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find("target"))
+            .and_then(|n| n.props.get("body"))
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        assert_eq!(body, "hi漢");
     }
 
     #[test]

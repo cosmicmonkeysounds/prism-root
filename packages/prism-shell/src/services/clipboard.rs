@@ -33,6 +33,27 @@ impl Clipboard {
     pub fn get(&self) -> Option<&Value> {
         self.contents.as_ref()
     }
+
+    /// Convenience for the text-editor path: `clipboard.set_string(s)` /
+    /// `clipboard.get_string()` round-trip a `String` through the
+    /// underlying `Value::String` cell. Lets cut/copy/paste from the
+    /// editor share the same backing store as the canvas-node clipboard
+    /// shape (selection serialised as `Value::Object`) without forcing
+    /// the caller to handle two stores.
+    pub fn set_string(&mut self, text: impl Into<String>) {
+        self.contents = Some(Value::String(text.into()));
+    }
+
+    pub fn get_string(&self) -> Option<String> {
+        match self.contents.as_ref()? {
+            Value::String(s) => Some(s.clone()),
+            // Fallback for canvas-node copies: render as the wire JSON,
+            // so pasting a copied container into a text field at least
+            // yields something inspectable rather than nothing. Niche
+            // path; mostly we expect `Value::String` here.
+            other => Some(other.to_string()),
+        }
+    }
 }
 
 #[derive(Default)]

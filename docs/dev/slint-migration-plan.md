@@ -1,11 +1,18 @@
 # Slint Migration Plan
 
+> ⚠️ **Superseded by [`clay-migration-plan.md`](clay-migration-plan.md)
+> and [ADR-008](../adr/008-clay-prism-ui-dsl.md).** Slint was fully
+> retired in the Phase 5 cutover (2026-05-10). This plan is retained
+> as history; do not use it to navigate current code. The boot
+> sequence, panel architecture, and host/daemon split it sketched
+> were carried forward into the Taffy + `prism-ui` DSL stack.
+
 > Migrating Prism's UI layer off React / TypeScript / Tailwind onto
 > [Slint](https://github.com/slint-ui/slint) so that Studio, the page
 > builder, and every Lens can run cross-platform from a single
 > codebase — while still shipping a first-class web target via WASM.
 
-**Status:** **Phase 0 closed 2026-04-15.** **Phase 1 closed 2026-04-15**
+**Status:** Superseded by `clay-migration-plan.md`. Phases 0–3 closed in 2026-04.
 end-to-end — `prism-shell::telemetry::FirstPaint` (first-paint
 telemetry wired into `Shell::run` via Slint's rendering notifier),
 `prism-cli::watch::WatchLoop` (notify-driven debounced file watcher),

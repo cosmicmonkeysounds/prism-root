@@ -201,6 +201,12 @@ mod tests {
             },
             font_size: 14.0,
             caret: None,
+            caret_byte: None,
+            selection: None,
+            selection_color: None,
+            spans: Vec::new(),
+            underline: None,
+            underline_color: None,
         };
         let html = lower(&[cmd]);
         assert!(html.contains("&lt;script&gt;"));

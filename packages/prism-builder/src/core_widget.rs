@@ -279,7 +279,9 @@ mod tests {
     #[test]
     fn collect_all_contributions_returns_all_engines() {
         let contributions = collect_all_contributions();
-        assert_eq!(contributions.len(), 45);
+        // 45 prior + 7 dashboard widgets folded in from the legacy
+        // built_in_widgets() path = 52.
+        assert_eq!(contributions.len(), 52);
         assert!(contributions.iter().any(|c| c.id == "calendar-month-view"));
         assert!(contributions.iter().any(|c| c.id == "stopwatch"));
         assert!(contributions
@@ -289,7 +291,11 @@ mod tests {
             .iter()
             .any(|c| c.id == "spreadsheet-data-table"));
         assert!(contributions.iter().any(|c| c.id == "comment-thread"));
-        assert!(contributions.iter().any(|c| c.id == "dashboard-stats"));
+        // Dashboard widgets now register with bare ids matching preset
+        // slot widget_types.
+        assert!(contributions.iter().any(|c| c.id == "stats"));
+        assert!(contributions.iter().any(|c| c.id == "tasks"));
+        assert!(contributions.iter().any(|c| c.id == "custom"));
     }
 
     #[test]

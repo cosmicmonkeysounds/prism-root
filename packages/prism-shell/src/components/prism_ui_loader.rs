@@ -819,7 +819,15 @@ fn code_editor_schema() -> Vec<FieldSpec> {
         FieldSpec::text("source", "Source text"),
         FieldSpec::number("caret", "Caret byte offset", NumericBounds::min(0.0))
             .with_default(Value::from(0.0)),
-        FieldSpec::text("lines", "Lines (JSON array of {number, text})"),
+        FieldSpec::number(
+            "caret-byte",
+            "Caret byte offset (editor)",
+            NumericBounds::min(0.0),
+        )
+        .with_default(Value::from(0.0)),
+        FieldSpec::text("selection", "Active selection (`start,end` bytes)")
+            .with_default(Value::String("".into())),
+        FieldSpec::text("lines", "Lines (JSON array of {number})"),
         FieldSpec::number(
             "cursor-line",
             "Cursor line (1-based)",

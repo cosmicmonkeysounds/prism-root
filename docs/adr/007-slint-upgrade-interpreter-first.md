@@ -1,6 +1,11 @@
 # ADR-007: Slint 1.16 Upgrade — Interpreter Scoped to Builder
 
-**Status:** Accepted (updated 2026-04-22)
+> ⚠️ **Superseded by [ADR-008](008-clay-prism-ui-dsl.md).** Slint was
+> fully retired in the Phase 5 cutover (2026-05-10). This ADR is
+> retained as history — it documents the waypoint between
+> "interpreter everywhere" and "Slint replaced wholesale."
+
+**Status:** Superseded by ADR-008
 **Date:** 2026-04-22
 
 ## Context

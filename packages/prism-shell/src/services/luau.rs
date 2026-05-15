@@ -63,7 +63,7 @@ impl ShellService for LuauService {
             // `luau.run-selection` — execute the active code-buffer as
             // a script. The result lands as a toast.
             cmd!("luau.run-selection", "Run Luau Selection", "Tools", |ctx| {
-                let script = ctx.state.canvas.code_buffer.source.clone();
+                let script = ctx.state.canvas.code_buffer.source().to_string();
                 match ctx.luau.exec(&script, &Value::Object(Default::default())) {
                     Ok(v) => ctx.state.overlay.toasts.push(crate::state::Toast {
                         title: "Luau".into(),
@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn run_selection_pushes_toast_via_noop_host() {
         let mut state = AppState::default();
-        state.canvas.code_buffer.source = "return 1".into();
+        state.canvas.code_buffer.load("return 1", "luau");
         let mut undo = UndoStack::default();
         let mut vfs = OsVfs;
         let mut luau = NoopLuauHost::default();

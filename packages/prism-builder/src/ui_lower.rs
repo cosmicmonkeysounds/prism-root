@@ -791,6 +791,13 @@ pub fn with_semantic(node: UiNode, semantic: Semantic) -> UiNode {
             height,
             radius,
             focused,
+            multiline,
+            caret_byte,
+            selection,
+            spans,
+            scroll_x,
+            scroll_y,
+            underline,
             ..
         } => UiNode::TextInput {
             id,
@@ -802,6 +809,13 @@ pub fn with_semantic(node: UiNode, semantic: Semantic) -> UiNode {
             radius,
             semantic,
             focused,
+            multiline,
+            caret_byte,
+            selection,
+            spans,
+            scroll_x,
+            scroll_y,
+            underline,
         },
         UiNode::Spacer { .. } => node,
     }
@@ -1049,6 +1063,67 @@ pub fn text_input_node_with_focus(
         radius: style.border_radius.map(uniform_radius).unwrap_or_default(),
         semantic: Semantic::default(),
         focused,
+        multiline: false,
+        caret_byte: None,
+        selection: None,
+        spans: Vec::new(),
+        scroll_x: 0.0,
+        scroll_y: 0.0,
+        underline: None,
+    }
+}
+
+/// Editor-grade variant of [`text_input_node_with_focus`]. Threads
+/// the host's editor model (caret byte offset, optional selection,
+/// multi-line flag, syntax-highlight spans) straight into the
+/// runtime node so a single editable primitive backs both single-
+/// line string-property rows and multi-line code editors. The
+/// shell calls this from `code_editor_props` / the field-focus path.
+#[allow(clippy::too_many_arguments)]
+pub fn text_input_editor_node(
+    node_id: String,
+    value: String,
+    placeholder: String,
+    style: &StyleProperties,
+    width: Sizing,
+    height: Sizing,
+    default_size: f32,
+    focused: bool,
+    multiline: bool,
+    caret_byte: Option<usize>,
+    selection: Option<(usize, usize)>,
+    spans: Vec<prism_ui_runtime::command::TextSpan>,
+    scroll_x: f32,
+    scroll_y: f32,
+    underline: Option<(usize, usize)>,
+) -> UiNode {
+    let font_size = style.font_size.unwrap_or(default_size);
+    let color = style
+        .color
+        .as_deref()
+        .and_then(parse_color)
+        .unwrap_or(DEFAULT_TEXT_COLOR);
+    UiNode::TextInput {
+        id: node_id,
+        value,
+        placeholder,
+        props: TextProps {
+            font_size,
+            color,
+            ..Default::default()
+        },
+        width,
+        height,
+        radius: style.border_radius.map(uniform_radius).unwrap_or_default(),
+        semantic: Semantic::default(),
+        focused,
+        multiline,
+        caret_byte,
+        selection,
+        spans,
+        scroll_x,
+        scroll_y,
+        underline,
     }
 }
 

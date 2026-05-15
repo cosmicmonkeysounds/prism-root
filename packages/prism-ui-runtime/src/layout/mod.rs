@@ -148,7 +148,58 @@ pub enum Node {
         /// to `false` so headless / SSR paths render the resting box.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         focused: bool,
+        /// `true` for code editors / textareas — `\n` is laid out as
+        /// a hard line break, the input grows vertically with content,
+        /// and Up/Down arrows navigate lines rather than the field's
+        /// caret jumping to the doc start / end. Defaults to single-
+        /// line behaviour so the existing string-property rows keep
+        /// their current shape with zero JSON noise.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        multiline: bool,
+        /// Caret position as a *byte* offset into `value`. Carried so
+        /// the paint pass can place the bar in the middle of the
+        /// shaped text (arrow-key navigation, click-to-position,
+        /// selection collapse) instead of always at the end. `None`
+        /// preserves the legacy "caret at shaped-text end" behaviour
+        /// — used by inline rows that don't manage caret state yet.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caret_byte: Option<usize>,
+        /// Active selection as `(start_byte, end_byte)` with `start
+        /// < end`. The paint pass highlights the matching glyph
+        /// ranges. `None` means no selection.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selection: Option<(usize, usize)>,
+        /// Syntax-highlight spans — per-byte-range colour overrides.
+        /// Empty for plain text inputs; populated by the code editor's
+        /// tokenizer for the active language. Glyphs outside every
+        /// span paint in `props.color`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        spans: Vec<crate::command::TextSpan>,
+        /// Horizontal scroll offset in CSS pixels. Subtracted from
+        /// every shaped glyph's x-position at paint time; the
+        /// renderer scissor-clips to the input's bounds so glyphs
+        /// outside the viewport stay hidden. `0.0` matches the
+        /// non-scrolling resting case (single-line property fields).
+        #[serde(default, skip_serializing_if = "f32_is_zero")]
+        scroll_x: f32,
+        /// Vertical scroll offset in CSS pixels. Hosts auto-scroll
+        /// on caret moves through the shell's editor service so the
+        /// caret stays visible.
+        #[serde(default, skip_serializing_if = "f32_is_zero")]
+        scroll_y: f32,
+        /// Byte range to underline. Used for IME preedit decoration
+        /// — the in-progress composition reads as "tentative". Lives
+        /// on the input node (not just the underlying Text command)
+        /// so a host can express the preedit independently of the
+        /// real user selection: both can coexist, painting the
+        /// preedit underline and the selection highlight together.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        underline: Option<(usize, usize)>,
     },
+}
+
+fn f32_is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 impl Node {
@@ -255,6 +306,16 @@ pub struct ContainerProps {
     /// imperative state machine, no shadow render path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hover: Option<HoverOverrides>,
+    /// Per-container opacity multiplier in `[0.0, 1.0]`. `None`
+    /// behaves like `Some(1.0)` (fully opaque) and skips the
+    /// multiply path so existing nodes stay byte-identical.
+    /// Cascades into children at command-emit time — text, images,
+    /// borders, and nested container backgrounds all paint at
+    /// `parent_opacity * own_opacity`. Mirrors CSS `opacity` and
+    /// is the prop the animator's `animate:in` / `animate:out`
+    /// substrate transitions for fade entrances and exits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
 }
 
 /// Sparse override bundle applied when a node is hovered. Each field
@@ -783,6 +844,10 @@ enum NodeContext {
     Container {
         background: Option<Color>,
         radius: CornerRadius,
+        /// Per-container opacity multiplier (1.0 = fully opaque).
+        /// Cascades into children at command-emit time. See
+        /// [`ContainerProps::opacity`] for the authoring shape.
+        opacity: f32,
     },
     Text {
         content: String,
@@ -804,6 +869,17 @@ enum NodeContext {
         props: TextProps,
         radius: CornerRadius,
         focused: bool,
+        multiline: bool,
+        /// Caret byte offset into `text`. `None` falls back to the
+        /// "caret at end" rendering — only inline rows still rely on
+        /// that, and only when an editor session isn't active. Tied
+        /// to the same node-context lifecycle as `text`.
+        caret_byte: Option<usize>,
+        selection: Option<(usize, usize)>,
+        spans: Vec<crate::command::TextSpan>,
+        scroll_x: f32,
+        scroll_y: f32,
+        underline: Option<(usize, usize)>,
     },
 }
 
@@ -836,7 +912,12 @@ fn build_taffy_subtree(
                 ),
                 _ => (props.background, props.radius),
             };
-            let ctx = NodeContext::Container { background, radius };
+            let opacity = props.opacity.unwrap_or(1.0).clamp(0.0, 1.0);
+            let ctx = NodeContext::Container {
+                background,
+                radius,
+                opacity,
+            };
             taffy
                 .new_with_children(style, &child_ids)
                 .and_then(|id| {
@@ -886,6 +967,13 @@ fn build_taffy_subtree(
             height,
             radius,
             focused,
+            multiline,
+            caret_byte,
+            selection,
+            spans,
+            scroll_x,
+            scroll_y,
+            underline,
             ..
         } => {
             // Same Grow→flex_grow rule the container/image arms use — a
@@ -924,6 +1012,13 @@ fn build_taffy_subtree(
                 props: props.clone(),
                 radius: *radius,
                 focused: *focused,
+                multiline: *multiline,
+                caret_byte: *caret_byte,
+                selection: *selection,
+                spans: spans.clone(),
+                scroll_x: *scroll_x,
+                scroll_y: *scroll_y,
+                underline: *underline,
             };
             taffy
                 .new_leaf_with_context(style, ctx)
@@ -1072,18 +1167,38 @@ fn measure_text(
             let height = known_dimensions.height.unwrap_or(props.font_size * 1.2);
             Size { width, height }
         }
-        Some(NodeContext::TextInput { text, props, .. }) => {
+        Some(NodeContext::TextInput {
+            text,
+            props,
+            multiline,
+            ..
+        }) => {
             // Same anti-shrink rule as Text leaves, plus the 12px / 8px
             // input padding so empty inputs still have clickable extent.
-            let glyph_count = text.chars().count().max(1);
-            let natural_w = glyph_count as f32 * props.font_size * 0.55 + 12.0;
+            // Multi-line inputs grow vertically with each `\n` so a
+            // code editor reaches its natural height inside a flex
+            // parent that lets it.
+            let line_count = if *multiline {
+                1 + text.bytes().filter(|b| *b == b'\n').count()
+            } else {
+                1
+            };
+            let widest_line = if *multiline {
+                text.split('\n')
+                    .map(|line| line.chars().count())
+                    .max()
+                    .unwrap_or(0)
+                    .max(1)
+            } else {
+                text.chars().count().max(1)
+            };
+            let natural_w = widest_line as f32 * props.font_size * 0.55 + 12.0;
             let width = match known_dimensions.width {
                 Some(w) if w >= natural_w => w,
                 _ => natural_w,
             };
-            let height = known_dimensions
-                .height
-                .unwrap_or(props.font_size * 1.2 + 8.0);
+            let natural_h = line_count as f32 * props.font_size * 1.2 + 8.0;
+            let height = known_dimensions.height.unwrap_or(natural_h);
             Size { width, height }
         }
         _ => {
@@ -1106,6 +1221,23 @@ fn emit_commands(
     parent_y: f32,
     out: &mut Vec<RenderCommand>,
 ) {
+    emit_commands_with_opacity(taffy, id, parent_x, parent_y, 1.0, out);
+}
+
+/// Internal recursion variant that threads a cumulative
+/// `parent_opacity` multiplier into every emitted colour. A
+/// container's own [`ContainerProps::opacity`] composes with its
+/// parent's, so opacity cascades CSS-style through the tree. The
+/// public `emit_commands` is the `parent_opacity = 1.0` entry
+/// point.
+fn emit_commands_with_opacity(
+    taffy: &TaffyTree<NodeContext>,
+    id: NodeId,
+    parent_x: f32,
+    parent_y: f32,
+    parent_opacity: f32,
+    out: &mut Vec<RenderCommand>,
+) {
     let layout: &Layout = taffy.layout(id).expect("taffy: layout missing");
     let bounds = Rect {
         x: parent_x + layout.location.x,
@@ -1114,25 +1246,36 @@ fn emit_commands(
         height: layout.size.height,
     };
     match taffy.get_node_context(id) {
-        Some(NodeContext::Container { background, radius }) => {
+        Some(NodeContext::Container {
+            background,
+            radius,
+            opacity,
+        }) => {
+            let effective = (parent_opacity * *opacity).clamp(0.0, 1.0);
             if let Some(bg) = background {
                 out.push(RenderCommand::Rectangle {
                     bounds,
-                    color: *bg,
+                    color: scale_color_alpha(*bg, effective),
                     radius: *radius,
                 });
             }
             for child in taffy.children(id).unwrap_or_default() {
-                emit_commands(taffy, child, bounds.x, bounds.y, out);
+                emit_commands_with_opacity(taffy, child, bounds.x, bounds.y, effective, out);
             }
         }
         Some(NodeContext::Text { content, props }) => {
             out.push(RenderCommand::Text {
                 bounds,
                 content: content.clone(),
-                color: props.color,
+                color: scale_color_alpha(props.color, parent_opacity),
                 font_size: props.font_size,
                 caret: None,
+                caret_byte: None,
+                selection: None,
+                selection_color: None,
+                spans: Vec::new(),
+                underline: None,
+                underline_color: None,
             });
         }
         Some(NodeContext::Image {
@@ -1150,7 +1293,7 @@ fn emit_commands(
                 bounds,
                 source: source.clone(),
                 radius: *radius,
-                tint: *tint,
+                tint: tint.map(|c| scale_color_alpha(c, parent_opacity)),
             });
         }
         // Composed leaf — paint a background Rectangle, a 1px Border,
@@ -1163,15 +1306,25 @@ fn emit_commands(
             props,
             radius,
             focused,
+            multiline,
+            caret_byte,
+            selection,
+            spans,
+            scroll_x,
+            scroll_y,
+            underline,
         }) => {
             out.push(RenderCommand::Rectangle {
                 bounds,
-                color: Color {
-                    r: 255,
-                    g: 255,
-                    b: 255,
-                    a: 255,
-                },
+                color: scale_color_alpha(
+                    Color {
+                        r: 255,
+                        g: 255,
+                        b: 255,
+                        a: 255,
+                    },
+                    parent_opacity,
+                ),
                 radius: *radius,
             });
             // Border colour bumps to the accent when the input is the
@@ -1197,7 +1350,7 @@ fn emit_commands(
             let border_width = if *focused { 2.0 } else { 1.0 };
             out.push(RenderCommand::Border {
                 bounds,
-                color: border,
+                color: scale_color_alpha(border, parent_opacity),
                 width: border_width,
                 radius: *radius,
             });
@@ -1237,21 +1390,111 @@ fn emit_commands(
             } else {
                 None
             };
+            // The selection highlight has the accent's hue with a low
+            // alpha so glyphs read on top. Only painted when the input
+            // has a non-empty range; the renderer ignores it otherwise.
+            let selection_color = Some(Color {
+                r: 0,
+                g: 96,
+                b: 192,
+                a: 64,
+            });
+            let selection_cmd = selection.filter(|_| !*is_placeholder).map(|(s, e)| {
+                crate::command::TextSelection {
+                    start_byte: s,
+                    end_byte: e,
+                }
+            });
+            // Multi-line inputs reserve vertical padding the same as
+            // single-line (4 / 4); they simply have multiple shaped
+            // rows inside that. The renderer reads `caret_byte` and
+            // walks cosmic-text's per-glyph byte ranges, so it places
+            // the bar exactly where the editor model wants it.
+            let _ = multiline; // currently used only at measure time
+                               // Cascade parent opacity into every span's alpha so a
+                               // dimmed editor stays internally consistent — the
+                               // base text + caret + selection + per-span tints all
+                               // fade together.
+            let cascaded_spans: Vec<crate::command::TextSpan> = spans
+                .iter()
+                .map(|s| crate::command::TextSpan {
+                    start_byte: s.start_byte,
+                    end_byte: s.end_byte,
+                    color: scale_color_alpha(s.color, parent_opacity),
+                })
+                .collect();
+            // Scroll: shift the Text command's draw origin *out* of
+            // the visible box (subtracting the offset) and wrap it
+            // in a scissor sized to the input's text-area. Glyphs
+            // past either edge get clipped; the caret + selection
+            // inherit the same shift because they're computed
+            // relative to the shaped run's origin.
+            let scroll_active = *scroll_x != 0.0 || *scroll_y != 0.0;
+            if scroll_active {
+                out.push(RenderCommand::ScissorStart {
+                    bounds: Rect {
+                        x: text_left,
+                        y: text_top,
+                        width: text_width,
+                        height: text_height,
+                    },
+                });
+            }
             out.push(RenderCommand::Text {
                 bounds: Rect {
-                    x: text_left,
-                    y: text_top,
+                    x: text_left - *scroll_x,
+                    y: text_top - *scroll_y,
                     width: text_width,
                     height: text_height,
                 },
                 content: text.clone(),
-                color: text_color,
+                color: scale_color_alpha(text_color, parent_opacity),
                 font_size: props.font_size,
-                caret,
+                caret: caret.map(|c| scale_color_alpha(c, parent_opacity)),
+                caret_byte: *caret_byte,
+                selection: selection_cmd,
+                selection_color: selection_color
+                    .map(|c| scale_color_alpha(c, parent_opacity))
+                    .filter(|_| selection_cmd.is_some()),
+                spans: cascaded_spans,
+                underline: underline.map(|(s, e)| crate::command::TextSelection {
+                    start_byte: s,
+                    end_byte: e,
+                }),
+                // Match the caret accent so the preedit decoration
+                // reads as "this is being authored" without inventing
+                // a new token in the shell's palette.
+                underline_color: underline.map(|_| {
+                    scale_color_alpha(
+                        Color {
+                            r: 0,
+                            g: 96,
+                            b: 192,
+                            a: 255,
+                        },
+                        parent_opacity,
+                    )
+                }),
             });
+            if scroll_active {
+                out.push(RenderCommand::ScissorEnd);
+            }
         }
         Some(NodeContext::Spacer) | None => {}
     }
+}
+
+/// Multiply a colour's alpha channel by `multiplier ∈ [0, 1]`,
+/// rounding to the nearest u8. Used by `emit_commands_with_opacity`
+/// to cascade container opacity into every emitted Colour.
+fn scale_color_alpha(c: Color, multiplier: f32) -> Color {
+    if multiplier >= 1.0 - f32::EPSILON {
+        return c;
+    }
+    let a = ((c.a as f32) * multiplier.clamp(0.0, 1.0))
+        .round()
+        .clamp(0.0, 255.0) as u8;
+    Color { a, ..c }
 }
 
 /// Retained-mode rendering surface.
@@ -1689,6 +1932,111 @@ mod tests {
                 _ => None,
             })
             .expect("at least one rectangle")
+    }
+
+    /// Wave 14.6 — container `opacity` cascades into every emitted
+    /// colour. A 0.5 opacity on the parent halves both its own
+    /// background alpha and every text/border/rectangle alpha in
+    /// its subtree.
+    #[test]
+    fn opacity_cascades_into_child_colours() {
+        let tree = Node::Container {
+            id: "root".into(),
+            props: ContainerProps {
+                direction: Direction::Column,
+                width: Sizing::Grow,
+                height: Sizing::Grow,
+                background: Some(rgb(255, 255, 255)),
+                opacity: Some(0.5),
+                ..Default::default()
+            },
+            children: vec![Node::Text {
+                id: "label".into(),
+                content: "x".into(),
+                props: TextProps {
+                    font_size: 16.0,
+                    color: rgb(20, 20, 20),
+                    ..Default::default()
+                },
+            }],
+        };
+        let cmds = compute(
+            &tree,
+            Viewport {
+                width: 100.0,
+                height: 100.0,
+            },
+        );
+        // Background rectangle: alpha was 0xff, opacity 0.5 → ≈ 0x7f.
+        let rect_alpha = cmds
+            .iter()
+            .find_map(|c| match c {
+                RenderCommand::Rectangle { color, .. } => Some(color.a),
+                _ => None,
+            })
+            .expect("rectangle emitted");
+        assert!(
+            (rect_alpha as i32 - 0x80).abs() <= 1,
+            "expected ~0x80, got {rect_alpha:#x}"
+        );
+        // Text colour inherits the cascaded opacity too.
+        let text_alpha = cmds
+            .iter()
+            .find_map(|c| match c {
+                RenderCommand::Text { color, .. } => Some(color.a),
+                _ => None,
+            })
+            .expect("text emitted");
+        assert!(
+            (text_alpha as i32 - 0x80).abs() <= 1,
+            "text expected ~0x80, got {text_alpha:#x}"
+        );
+    }
+
+    /// Wave 14.6 — nested containers compose their opacity
+    /// multiplicatively (0.5 × 0.5 = 0.25), matching CSS.
+    #[test]
+    fn nested_opacity_multiplies_through_subtree() {
+        let tree = Node::Container {
+            id: "outer".into(),
+            props: ContainerProps {
+                direction: Direction::Column,
+                width: Sizing::Grow,
+                height: Sizing::Grow,
+                opacity: Some(0.5),
+                ..Default::default()
+            },
+            children: vec![Node::Container {
+                id: "inner".into(),
+                props: ContainerProps {
+                    width: Sizing::Grow,
+                    height: Sizing::Grow,
+                    background: Some(rgb(255, 0, 0)),
+                    opacity: Some(0.5),
+                    ..Default::default()
+                },
+                children: vec![],
+            }],
+        };
+        let cmds = compute(
+            &tree,
+            Viewport {
+                width: 100.0,
+                height: 100.0,
+            },
+        );
+        let inner_alpha = cmds
+            .iter()
+            .find_map(|c| match c {
+                RenderCommand::Rectangle { color, .. } => Some(color.a),
+                _ => None,
+            })
+            .expect("inner rect");
+        // 0xff * 0.5 * 0.5 = ~0x40
+        assert!(
+            (inner_alpha as i32 - 0x40).abs() <= 2,
+            "expected ~0x40, got {inner_alpha:#x}"
+        );
     }
 
     #[test]

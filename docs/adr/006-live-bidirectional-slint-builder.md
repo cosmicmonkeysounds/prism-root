@@ -1,6 +1,11 @@
 # ADR-006: Live Bidirectional Slint Builder
 
-**Status:** Implemented  
+> ⚠️ **Superseded by [ADR-008](008-clay-prism-ui-dsl.md).** Slint was
+> fully retired in the Phase 5 cutover (2026-05-10). This ADR is
+> retained as history — the bidirectional source-first idea informs
+> the `prism-ui` DSL design, but no current code depends on it.
+
+**Status:** Superseded by ADR-008
 **Date:** 2026-04-20
 
 ## Context

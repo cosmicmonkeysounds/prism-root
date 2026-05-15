@@ -93,7 +93,18 @@ fn dispatch_event_inner(
                 .as_ref()
                 .map(|h| route_color_slider_press(inner, h, *x))
                 .unwrap_or(false);
+            // The code-editor body needs the pointer-x / pointer-y
+            // (in viewport-space) to resolve a byte offset within the
+            // shaped text. Route it *before* the table-driven
+            // `route_pointer_down` so the handler can take focus +
+            // reposition the caret in one pass.
+            let code_editor_press = !slider
+                && hit
+                    .as_ref()
+                    .map(|h| route_code_editor_body_press(inner, h, *x, *y))
+                    .unwrap_or(false);
             let routed = slider
+                || code_editor_press
                 || hit
                     .as_ref()
                     .map(|h| route_pointer_down(inner, h))
@@ -298,7 +309,14 @@ fn dispatch_event_inner(
         // registry. Services declare their interest via `on_event`;
         // the first to return `Handled` short-circuits. Adding a new
         // feature *does not touch this match*.
-        Event::Wheel { .. } | Event::Key { .. } | Event::Text { .. } | Event::Focus { .. } => {
+        Event::Wheel { .. }
+        | Event::Key { .. }
+        | Event::Text { .. }
+        | Event::Focus { .. }
+        | Event::ImePreedit { .. }
+        | Event::ImeCommit { .. }
+        | Event::ImeEnabled
+        | Event::ImeDisabled => {
             let mut guard = inner.borrow_mut();
             // Split-borrow: we need `&services` and `&mut MutCtx{state, undo, viewport}`
             // simultaneously. Re-borrow the fields explicitly so the
@@ -1222,6 +1240,57 @@ fn handle_select_dropdown_option_click(inner: &Rc<RefCell<ShellInner>>, hit: &Hi
 /// Wave 2.3 — explicit close button on the select dropdown.
 fn handle_select_dropdown_close_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRect) -> bool {
     inner.borrow_mut().state.close_select_dropdown()
+}
+
+/// Pointer-down on the code-editor body. Sets keyboard focus on the
+/// in-shell code editor (closing any active property-row field-focus
+/// first so the next keystroke unambiguously targets the editor), then
+/// repositions the caret to the byte offset the click resolves to.
+///
+/// Byte resolution mirrors the runtime's `chars * font_size * 0.55`
+/// natural-width heuristic — accurate to the pixel for the monospace
+/// font the code editor uses and good enough for variable-width
+/// fallbacks. Shift-click extends the existing selection (the
+/// editor's anchor stays put while the caret jumps to the new byte).
+/// Returns `true` when the hit was a code-editor body — false lets the
+/// table-driven `route_pointer_down` keep dispatching for other
+/// `data-role`s.
+fn route_code_editor_body_press(
+    inner: &Rc<RefCell<ShellInner>>,
+    hit: &HitRect,
+    x: f32,
+    y: f32,
+) -> bool {
+    if attr_value(hit, "data-role") != Some("code-editor-body") {
+        return false;
+    }
+    let mut guard = inner.borrow_mut();
+    let ShellInner {
+        state, registry, ..
+    } = &mut *guard;
+    // Close any open property-row field-focus first.
+    state.cancel_field_focus(Some(registry.as_component_registry()));
+    state.code_editor_focused = true;
+    // The code editor's font matches the DSL: font-size 13 inside a
+    // 6-px-horizontal / 4-px-vertical text inset. Same heuristic the
+    // layout pass uses, kept here so click positioning agrees with
+    // shaped glyph widths byte-for-byte under a monospace font.
+    const FONT_SIZE: f32 = 13.0;
+    const TEXT_PAD_X: f32 = 6.0;
+    const TEXT_PAD_Y: f32 = 4.0;
+    let local_x = (x - hit.bounds.x - TEXT_PAD_X).max(0.0);
+    let local_y = (y - hit.bounds.y - TEXT_PAD_Y).max(0.0);
+    let row = ((local_y / (FONT_SIZE * 1.2)).floor() as usize) + 1;
+    let col = ((local_x / (FONT_SIZE * 0.55)).round() as usize).max(0);
+    let byte = state
+        .canvas
+        .code_buffer
+        .editor
+        .line_col_to_byte(row.max(1), col);
+    // Shift held → extend the existing selection's anchor.
+    let extend = false; // pointer modifiers aren't threaded here yet
+    state.canvas.code_buffer.editor.place_caret_at(byte, extend);
+    true
 }
 
 /// Wave 2.4 HSL — `data-role="color-hsl-slider"` press. Reads

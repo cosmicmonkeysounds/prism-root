@@ -125,6 +125,202 @@ impl TextSystem {
     pub fn font_system_mut(&mut self) -> &mut FontSystem {
         &mut self.font_system
     }
+
+    /// Resolve a pixel offset within a shaped text box to the byte
+    /// index inside `text` the click is closest to. `local_x` /
+    /// `local_y` are **relative to the text's shaped origin** —
+    /// i.e. the same coordinate space the per-glyph
+    /// `physical()` placements land in. Callers translate the
+    /// global pointer position into this space by subtracting the
+    /// text's bounds origin plus any in-box padding.
+    ///
+    /// Resolution rules:
+    /// * The row whose `[line_top, line_top + line_height)` covers
+    ///   `local_y` wins; clicks above the first row snap to the
+    ///   first row, clicks below the last row to the last row.
+    /// * On that row, the glyph whose horizontal span covers
+    ///   `local_x` wins. Within a covered glyph, the byte returned
+    ///   is `start` when the click lands in the glyph's left half,
+    ///   `end` otherwise.
+    /// * Clicks to the left of every glyph on the row land on the
+    ///   row's first byte; clicks to the right land on the row's
+    ///   last byte.
+    /// * Empty buffers return `0`.
+    pub fn byte_at(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        width: f32,
+        local_x: f32,
+        local_y: f32,
+    ) -> usize {
+        if text.is_empty() {
+            return 0;
+        }
+        let natural_w = text.chars().count() as f32 * font_size * 0.55;
+        let shape_width = if width + 0.5 >= natural_w {
+            width
+        } else {
+            f32::INFINITY
+        };
+        let buffer = self.shape(text, font_size, shape_width);
+        // Cosmic-text reports `glyph.start` / `glyph.end` *relative
+        // to the buffer line* (the slice between `\n`s), not the
+        // global buffer. Walk the source once to learn each line's
+        // starting byte and stamp the offset onto every glyph as we
+        // collect placements.
+        let mut line_offsets: Vec<usize> = Vec::with_capacity(8);
+        line_offsets.push(0);
+        for (i, b) in text.bytes().enumerate() {
+            if b == b'\n' {
+                line_offsets.push(i + 1);
+            }
+        }
+        #[derive(Clone, Copy)]
+        struct LineRow {
+            line_top: f32,
+            line_height: f32,
+        }
+        let mut rows: Vec<LineRow> = Vec::new();
+        // `(global_start, global_end, x_min, x_max)`
+        let mut row_glyphs: Vec<Vec<(usize, usize, f32, f32)>> = Vec::new();
+        for (idx, run) in buffer.layout_runs().enumerate() {
+            rows.push(LineRow {
+                line_top: run.line_top,
+                line_height: run.line_height,
+            });
+            let base = line_offsets.get(idx).copied().unwrap_or_else(|| {
+                // Fallback for wrapped lines (more runs than `\n`s):
+                // pin to the last known offset.
+                *line_offsets.last().unwrap_or(&0)
+            });
+            let mut row = Vec::new();
+            for glyph in run.glyphs.iter() {
+                row.push((
+                    base + glyph.start,
+                    base + glyph.end,
+                    glyph.x,
+                    glyph.x + glyph.w,
+                ));
+            }
+            row_glyphs.push(row);
+        }
+        drop(buffer);
+        if rows.is_empty() {
+            return 0;
+        }
+        // Snap row.
+        let mut chosen = 0usize;
+        for (idx, r) in rows.iter().enumerate() {
+            if local_y >= r.line_top && local_y < r.line_top + r.line_height {
+                chosen = idx;
+                break;
+            }
+            if local_y >= r.line_top + r.line_height {
+                chosen = idx;
+            }
+        }
+        let glyphs = &row_glyphs[chosen];
+        if glyphs.is_empty() {
+            // Empty source line (just a `\n`). Use the precomputed
+            // line offset directly.
+            return line_offsets.get(chosen).copied().unwrap_or(text.len());
+        }
+        if local_x <= glyphs[0].2 {
+            return glyphs[0].0;
+        }
+        if local_x >= glyphs.last().unwrap().3 {
+            return glyphs.last().unwrap().1;
+        }
+        for (start, end, x0, x1) in glyphs {
+            if local_x >= *x0 && local_x <= *x1 {
+                let mid = (*x0 + *x1) * 0.5;
+                return if local_x < mid { *start } else { *end };
+            }
+        }
+        glyphs.last().unwrap().1
+    }
+
+    /// Pixel position of the caret bar for byte offset `caret_byte`
+    /// within `text` shaped at `font_size` / `width`. Returns the
+    /// triple `(x_local, y_local, row_height)` in the same shaped
+    /// origin space [`byte_at`] consumes. Used by the host to auto-
+    /// scroll an editor viewport so the caret stays visible after
+    /// an edit.
+    pub fn caret_pixel_pos(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        width: f32,
+        caret_byte: usize,
+    ) -> (f32, f32, f32) {
+        let natural_w = text.chars().count() as f32 * font_size * 0.55;
+        let shape_width = if width + 0.5 >= natural_w {
+            width
+        } else {
+            f32::INFINITY
+        };
+        // Per-line byte offsets — cosmic-text reports glyph.start /
+        // .end relative to its `BufferLine`, so the comparison
+        // against `caret_byte` (a global offset) needs the line's
+        // origin added.
+        let mut line_offsets: Vec<usize> = Vec::with_capacity(8);
+        line_offsets.push(0);
+        for (i, b) in text.bytes().enumerate() {
+            if b == b'\n' {
+                line_offsets.push(i + 1);
+            }
+        }
+        let buffer = self.shape(text, font_size, shape_width);
+        // Prefer the *last* row whose glyph ends at `caret_byte` (so
+        // a caret parked on a `\n` boundary sits at the end of the
+        // previous line, not column 0 of the next).
+        let mut last_top: f32 = 0.0;
+        let mut last_height: f32 = font_size * 1.2;
+        let mut last_x: f32 = 0.0;
+        let mut found = false;
+        let mut start_match: Option<(f32, f32, f32)> = None;
+        for (idx, run) in buffer.layout_runs().enumerate() {
+            last_top = run.line_top;
+            last_height = run.line_height;
+            let base = line_offsets.get(idx).copied().unwrap_or(0);
+            let mut row_x_end = 0.0f32;
+            // If the caret lies on a row's start byte but the row has
+            // no glyphs (empty line), still register the row.
+            if base == caret_byte && run.glyphs.iter().next().is_none() {
+                start_match = Some((0.0, run.line_top, run.line_height));
+            }
+            for glyph in run.glyphs.iter() {
+                let global_start = base + glyph.start;
+                let global_end = base + glyph.end;
+                let x_min = glyph.x;
+                let x_max = glyph.x + glyph.w;
+                if global_start == caret_byte && start_match.is_none() {
+                    start_match = Some((x_min, run.line_top, run.line_height));
+                }
+                if global_end == caret_byte {
+                    last_x = x_max;
+                    last_top = run.line_top;
+                    last_height = run.line_height;
+                    found = true;
+                }
+                if x_max > row_x_end {
+                    row_x_end = x_max;
+                }
+            }
+            if !found && caret_byte > 0 {
+                last_x = row_x_end;
+            }
+        }
+        drop(buffer);
+        if let Some(t) = start_match {
+            return t;
+        }
+        if found {
+            return (last_x, last_top, last_height);
+        }
+        (0.0, 0.0, last_height)
+    }
 }
 
 /// Borrow-friendly view of a [`GlyphImage`] handed back to paint code.
@@ -220,4 +416,76 @@ fn bake_glyph<R: Renderer>(
 
 fn rgba_pack(c: Color) -> u32 {
     (c.r as u32) | ((c.g as u32) << 8) | ((c.b as u32) << 16) | ((c.a as u32) << 24)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn byte_at_empty_buffer_returns_zero() {
+        let mut sys = TextSystem::new();
+        assert_eq!(sys.byte_at("", 13.0, 200.0, 0.0, 0.0), 0);
+    }
+
+    #[test]
+    fn byte_at_negative_y_snaps_to_first_row() {
+        let mut sys = TextSystem::new();
+        let b = sys.byte_at("hello", 13.0, f32::INFINITY, 0.0, -10.0);
+        assert_eq!(b, 0);
+    }
+
+    #[test]
+    fn byte_at_left_of_text_returns_first_byte() {
+        let mut sys = TextSystem::new();
+        let b = sys.byte_at("hello", 13.0, f32::INFINITY, -100.0, 6.0);
+        assert_eq!(b, 0);
+    }
+
+    #[test]
+    fn byte_at_far_right_returns_last_byte() {
+        let mut sys = TextSystem::new();
+        let b = sys.byte_at("hello", 13.0, f32::INFINITY, 1000.0, 6.0);
+        // End of "hello" — 5 bytes.
+        assert_eq!(b, 5);
+    }
+
+    #[test]
+    fn byte_at_multiline_resolves_to_second_line() {
+        let mut sys = TextSystem::new();
+        let buf = sys.shape("aaa\nbbb", 13.0, f32::INFINITY);
+        let row_metrics: Vec<(f32, f32)> = buf
+            .layout_runs()
+            .map(|r| (r.line_top, r.line_height))
+            .collect();
+        drop(buf);
+        if row_metrics.len() < 2 {
+            // Some font systems may not emit per-line runs; skip
+            // rather than fail a build-machine variant.
+            return;
+        }
+        // Click in the centre of the second row.
+        let (top, height) = row_metrics[1];
+        let y_centre = top + height * 0.5;
+        let b = sys.byte_at("aaa\nbbb", 13.0, f32::INFINITY, 0.0, y_centre);
+        // "aaa\nbbb" — line 1 starts at byte 4.
+        assert_eq!(b, 4);
+    }
+
+    #[test]
+    fn caret_pixel_pos_first_byte_is_zero_x() {
+        let mut sys = TextSystem::new();
+        let (x, _y, _h) = sys.caret_pixel_pos("hello", 13.0, f32::INFINITY, 0);
+        assert!(x < 1.0, "expected x ≈ 0, got {x}");
+    }
+
+    #[test]
+    fn caret_pixel_pos_monotonic_across_bytes() {
+        let mut sys = TextSystem::new();
+        let (x0, _, _) = sys.caret_pixel_pos("hello world", 13.0, f32::INFINITY, 0);
+        let (x6, _, _) = sys.caret_pixel_pos("hello world", 13.0, f32::INFINITY, 6);
+        let (x11, _, _) = sys.caret_pixel_pos("hello world", 13.0, f32::INFINITY, 11);
+        assert!(x0 < x6);
+        assert!(x6 < x11);
+    }
 }
