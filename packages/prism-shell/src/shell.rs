@@ -844,6 +844,10 @@ impl Shell {
                     Some(Rc::clone(&cache)),
                     effective_stylesheet.as_ref(),
                     app_import_resolver.clone(),
+                    // Boot / full render: no dirty set — walk
+                    // everything and (re)populate the per-id cache so
+                    // subsequent reactive frames can splice.
+                    None,
                 )
             })
         });
@@ -917,14 +921,15 @@ impl Shell {
             // the queue regardless so per-block lowering can wire
             // up against it once that lands; today the whole tree
             // re-renders either way.
-            let reactive_dirty = {
+            let drained: Option<Vec<String>> = {
                 let guard = inner.borrow();
-                let needs = guard.render_scope.needs_redraw();
-                if needs {
-                    let _drained = guard.render_scope.drain_dirty();
+                if guard.render_scope.needs_redraw() {
+                    Some(guard.render_scope.drain_dirty())
+                } else {
+                    None
                 }
-                needs
             };
+            let reactive_dirty = drained.is_some();
             // **Wave 14.3** — animator wants its own frame while
             // transitions are in flight. Even when nothing else
             // changed (no event, no signal write), a running
@@ -936,19 +941,64 @@ impl Shell {
                 let cache = Rc::clone(&guard.memo_cache);
                 let stylesheet = stylesheet_handle.borrow().clone();
                 let app_import_resolver = guard.active_app_import_resolver();
-                let mut tree = guard.render_scope.run_in_render_pass(|| {
-                    render_with_hot_reload(|| {
-                        render_tree_with(
-                            &skeleton,
-                            &guard.bindings,
-                            Arc::clone(&guard.resolver),
-                            &guard.prop_ctx(),
-                            Some(Rc::clone(&cache)),
-                            stylesheet.as_ref(),
-                            app_import_resolver.clone(),
-                        )
+
+                // **Phase 3** — localise the re-walk to the dirty
+                // NodeIds *only* when the redraw is purely reactive
+                // (we know precisely which blocks changed). Event /
+                // animator redraws, or a `FRAME_DIRTY_SENTINEL`
+                // (frame-scope signal read, not localisable), do a
+                // full walk — which also repopulates the per-id cache
+                // so the next reactive frame can splice.
+                let dirty_set: Option<Rc<std::collections::HashSet<String>>> =
+                    if reactive_dirty && !event_dirty && !animator_dirty {
+                        let ids = drained.as_deref().unwrap_or(&[]);
+                        if ids
+                            .iter()
+                            .any(|d| d == crate::render_scope::FRAME_DIRTY_SENTINEL)
+                        {
+                            None
+                        } else {
+                            Some(Rc::new(ids.iter().cloned().collect()))
+                        }
+                    } else {
+                        None
+                    };
+                if dirty_set.is_some() {
+                    cache.borrow_mut().begin_pass();
+                }
+                let render = |dirty: Option<Rc<std::collections::HashSet<String>>>| {
+                    guard.render_scope.run_in_render_pass(|| {
+                        render_with_hot_reload(|| {
+                            // `render_with_hot_reload` accepts FnMut so
+                            // the patch pipeline can re-invoke us; clone
+                            // the dirty handle each call so the inner
+                            // closure doesn't move it out of its capture.
+                            render_tree_with(
+                                &skeleton,
+                                &guard.bindings,
+                                Arc::clone(&guard.resolver),
+                                &guard.prop_ctx(),
+                                Some(Rc::clone(&cache)),
+                                stylesheet.as_ref(),
+                                app_import_resolver.clone(),
+                                dirty.clone(),
+                            )
+                        })
                     })
-                });
+                };
+                let mut tree = render(dirty_set.clone());
+                // **Phase 3 non-lossy guard.** If any drained dirty
+                // id mapped to no element this pass (an unknown /
+                // renamed id), the splice may have skipped a needed
+                // update — redo a full walk this same frame. Worst
+                // case equals the pre-Phase-3 behaviour; a correct
+                // splice never reaches here.
+                if let Some(ds) = &dirty_set {
+                    let missed = cache.borrow().untouched(ds.iter());
+                    if !missed.is_empty() {
+                        tree = render(None);
+                    }
+                }
                 let now_ms = now_ms();
                 let mut animator = guard.animator.borrow_mut();
                 animator.observe(&tree, now_ms);

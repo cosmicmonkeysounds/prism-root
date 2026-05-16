@@ -128,11 +128,33 @@ prism_state_read_subscribes_and_write_marks_dirty,
 prism_derive_memoises_and_recomputes_on_state_change,
 plain_array_local_still_snapshots_after_phase5,
 closure_call_still_works_after_phase5}` + the full 370-test suite.
-Remaining in 3.1: Phase 3 selective re-lowering (the dirty-NodeId
-splice) and per-class PRSS invalidation, which now genuinely "fall
-out" — the reactive subscription edge from a block to its state
-signals exists; Phase 3 is the consumer that walks only the dirty
-subset instead of the whole tree.
+**Phase 3 status — ✅ landed 2026-05-16.** The shell no longer
+re-walks the whole tree on a reactive redraw. `shell.rs` drains the
+`RenderScope` `DirtyQueue` and, when the redraw is *purely* reactive
+(no event / animator / `FRAME_DIRTY_SENTINEL`), passes the dirty
+NodeId set into `render_tree_with` → `LowerScope::with_dirty_nodes`.
+`interpret::lower_element` then reuses the cached subtree of any
+id'd element whose id is not dirty *and* whose cached subtree holds
+no dirty descendant (`subtree_has_dirty`); only dirty NodeIds and
+their ancestor paths re-lower, the recursion pruning at the highest
+clean boundary. The existing Wave 14.3 `MemoCache` is the cache
+substrate (reused, not duplicated — id resolution consolidated into
+`resolve_element_id`); full passes populate it per-id so the next
+reactive frame can splice. **Strictly non-lossy:** a `touched` set
+records every (re)lowered id, and the shell falls back to a full
+walk that same frame if any drained dirty id mapped to no element
+(unknown/renamed id) — worst case equals the pre-Phase-3 behaviour,
+a correct splice never triggers it. Pinned by
+`interpret::tests::phase3_dirty_set_splices_clean_subtree_relowers_dirty`
++ the full 371-test prism-ui-runtime suite + prism-shell lib (the 3
+`app_registry` failures are pre-existing, from unrelated
+uncommitted WIP — verified by stash bisect).
+
+Remaining in 3.1: per-class PRSS invalidation (fusion F.3), which
+now rides the same machinery — a class read inside a block already
+subscribes that block's NodeId via Phase 5, so a PRSS literal swap
+just needs to mark the dependent NodeIds dirty and Phase 3 splices
+the rest.
 
 **Sequencing.** First. It unblocks Tier 2's animator (Effect
 scheduling), suspense (resume notification), and the hot-reload

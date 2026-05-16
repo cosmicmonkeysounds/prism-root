@@ -372,7 +372,7 @@ pub fn render_tree(
     resolver: Arc<dyn TagResolver>,
     ctx: &PropCtx,
 ) -> Vec<UiNode> {
-    render_tree_with(skeleton, bindings, resolver, ctx, None, None, None)
+    render_tree_with(skeleton, bindings, resolver, ctx, None, None, None, None)
 }
 
 /// **Wave 14.3** — same as [`render_tree`] but threads a host-owned
@@ -395,6 +395,7 @@ pub fn render_tree_with(
     memo_cache: Option<std::rc::Rc<std::cell::RefCell<prism_ui_runtime::interpret::MemoCache>>>,
     stylesheet: Option<&Stylesheet>,
     import_resolver: Option<Arc<dyn ImportResolver>>,
+    dirty_nodes: Option<std::rc::Rc<std::collections::HashSet<String>>>,
 ) -> Vec<UiNode> {
     let emissions = bindings.snapshot(ctx);
     let doc = fill_compositions(skeleton, &emissions);
@@ -430,6 +431,9 @@ pub fn render_tree_with(
         );
     if let Some(cache) = memo_cache {
         scope = scope.with_memo_cache(cache);
+    }
+    if let Some(dirty) = dirty_nodes {
+        scope = scope.with_dirty_nodes(dirty);
     }
     if let Some(sheet) = stylesheet {
         // PRSS install runs *after* `with_design_tokens` so the

@@ -222,6 +222,17 @@ pub struct LowerScope {
     /// build without the `luau` feature. `Arc`-cheap to fork.
     #[cfg(feature = "luau")]
     luau_scope: Option<crate::luau_scope::LuauScopeFrame>,
+    /// **Phase 3 of `docs/dev/dioxus-inspiration.md`** — the set of
+    /// builder NodeIds the reactive substrate marked dirty this frame
+    /// (drained from the shell's `RenderScope` `DirtyQueue`). When
+    /// installed alongside [`Self::with_memo_cache`], `lower_element`
+    /// reuses the cached subtree of any id'd element whose id is not
+    /// dirty *and* whose cached subtree contains no dirty descendant;
+    /// only the dirty NodeIds (and their ancestor paths) re-lower.
+    /// `None` = full walk (the event / animator / first-frame path),
+    /// which also (re)populates the per-id cache so the next reactive
+    /// frame can splice. `Rc` so scope forks stay cheap.
+    dirty_nodes: Option<std::rc::Rc<std::collections::HashSet<String>>>,
 }
 
 /// **Wave 14.3** — per-element memo cache keyed by `id`. Hosts that
@@ -232,6 +243,16 @@ pub struct LowerScope {
 #[derive(Debug, Default)]
 pub struct MemoCache {
     entries: HashMap<String, (Vec<serde_json::Value>, Vec<Node>)>,
+    /// **Phase 3** — every element id that was *(re)lowered* (rather
+    /// than spliced from cache) during the current render pass. The
+    /// shell reads this after a reactive (dirty-set) render to verify
+    /// every drained dirty NodeId actually mapped to a real element;
+    /// any dirty id that was *not* touched means the splice may have
+    /// skipped a needed update (an unknown / renamed id), so the
+    /// shell safely re-renders that frame with a full walk. This
+    /// makes the optimisation strictly non-lossy: worst case equals
+    /// today's behaviour.
+    touched: std::collections::HashSet<String>,
 }
 
 impl MemoCache {
@@ -247,10 +268,33 @@ impl MemoCache {
     /// shape changes drastically (panel swap, hot reload).
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.touched.clear();
     }
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// **Phase 3** — reset the per-pass touched set. The shell calls
+    /// this immediately before a dirty-set render so the post-render
+    /// [`Self::untouched`] check sees only this frame's re-lowers.
+    pub fn begin_pass(&mut self) {
+        self.touched.clear();
+    }
+
+    /// **Phase 3** — every id in `dirty` that was *not* (re)lowered
+    /// this pass. Empty result ⇒ the spliced render addressed every
+    /// dirty NodeId and is safe to present; non-empty ⇒ the shell
+    /// must fall back to a full walk this frame.
+    pub fn untouched<'a>(
+        &self,
+        dirty: impl IntoIterator<Item = &'a String>,
+    ) -> Vec<String> {
+        dirty
+            .into_iter()
+            .filter(|d| !self.touched.contains(*d))
+            .cloned()
+            .collect()
     }
 }
 
@@ -482,6 +526,23 @@ impl LowerScope {
     /// by the lowering pass to look up and store memoised subtrees.
     pub fn memo_cache(&self) -> Option<&std::rc::Rc<std::cell::RefCell<MemoCache>>> {
         self.memo_cache.as_ref()
+    }
+
+    /// **Phase 3** — install the per-frame dirty NodeId set. Only
+    /// meaningful with a [`Self::with_memo_cache`] also installed;
+    /// the splice path keys off the cache. See [`Self::dirty_nodes`].
+    pub fn with_dirty_nodes(
+        mut self,
+        dirty: std::rc::Rc<std::collections::HashSet<String>>,
+    ) -> Self {
+        self.dirty_nodes = Some(dirty);
+        self
+    }
+
+    /// **Phase 3** — the per-frame dirty NodeId set, if the host
+    /// installed one this render.
+    pub fn dirty_nodes(&self) -> Option<&std::collections::HashSet<String>> {
+        self.dirty_nodes.as_deref()
     }
 
     /// **Wave 14.1** — seed the design-token table as a `tokens`
@@ -1401,6 +1462,37 @@ fn lower_element(el: &Element, scope: &LowerScope) -> Vec<Node> {
     // Authors without an id, or running on a host that didn't
     // install a cache, see `memo` round-trip as a no-op.
     if let Some(cache_handle) = scope.memo_cache() {
+        // **Phase 3** — reactive dirty-set splice. When the shell
+        // installed the per-frame dirty NodeId set, the signal graph
+        // is authoritative: an id'd element is reused verbatim from
+        // cache iff its own id is not dirty *and* its cached subtree
+        // contains no dirty descendant. Anything dirty (or on its
+        // ancestor path) re-lowers; the recursion prunes at the
+        // highest clean boundary. Supersedes the authored-`memo=`
+        // path while a dirty set is active.
+        if let Some(dirty) = scope.dirty_nodes() {
+            if let Some(id) = resolve_element_id(el, scope) {
+                let reuse = !dirty.contains(&id)
+                    && cache_handle
+                        .borrow()
+                        .entries
+                        .get(&id)
+                        .is_some_and(|(_, nodes)| !subtree_has_dirty(nodes, dirty));
+                if reuse {
+                    return cache_handle.borrow().entries[&id].1.clone();
+                }
+                let lowered = lower_element_body(el, scope);
+                let mut cache = cache_handle.borrow_mut();
+                cache.entries.insert(id.clone(), (Vec::new(), lowered.clone()));
+                cache.touched.insert(id);
+                return lowered;
+            }
+            return lower_element_body(el, scope);
+        }
+
+        // **Wave 14.3** — no dirty set: the authored `memo="[…]"`
+        // dep-tuple cache. A match returns the cached subtree; a
+        // mismatch re-lowers and stores.
         if let Some((deps, id)) = extract_memo_and_id(el, scope) {
             {
                 let cache = cache_handle.borrow();
@@ -1417,8 +1509,46 @@ fn lower_element(el: &Element, scope: &LowerScope) -> Vec<Node> {
                 .insert(id, (deps, lowered.clone()));
             return lowered;
         }
+
+        // **Phase 3** — even with no authored `memo=`, populate the
+        // per-id cache on a full (dirty-set-less) pass so the *next*
+        // reactive frame can splice this subtree. Elements without a
+        // resolvable id can't be keyed and always re-lower.
+        if let Some(id) = resolve_element_id(el, scope) {
+            let lowered = lower_element_body(el, scope);
+            cache_handle
+                .borrow_mut()
+                .entries
+                .insert(id, (Vec::new(), lowered.clone()));
+            return lowered;
+        }
     }
     lower_element_body(el, scope)
+}
+
+/// **Phase 3** — does any node in `nodes` (recursively) carry an id
+/// in `dirty`? Used to decide whether a cached subtree is safe to
+/// splice: a clean cached subtree is reused; one containing a dirty
+/// descendant re-lowers so the change propagates.
+fn subtree_has_dirty(nodes: &[Node], dirty: &std::collections::HashSet<String>) -> bool {
+    nodes.iter().any(|n| {
+        let id = n.id();
+        (!id.is_empty() && dirty.contains(id))
+            || matches!(n, Node::Container { children, .. } if subtree_has_dirty(children, dirty))
+    })
+}
+
+/// **Wave 14.3 / Phase 3** — resolve an element's `id` attribute to
+/// a non-empty string, or `None`. Shared by the memo-dep path and
+/// the reactive dirty-set splice so id resolution lives once.
+fn resolve_element_id(el: &Element, scope: &LowerScope) -> Option<String> {
+    el.attributes
+        .iter()
+        .find(|a| {
+            matches!(a.name.namespace, AttributeNamespace::Identifier) && a.name.local == "id"
+        })
+        .and_then(|a| resolved_attribute_string(&a.value, scope))
+        .filter(|s| !s.is_empty())
 }
 
 /// **Wave 14.3** — extract the memo dep tuple and the resolved id
@@ -1429,21 +1559,17 @@ fn extract_memo_and_id(
     el: &Element,
     scope: &LowerScope,
 ) -> Option<(Vec<serde_json::Value>, String)> {
-    let mut memo: Option<Vec<serde_json::Value>> = None;
-    let mut id: Option<String> = None;
-    for attr in &el.attributes {
+    let memo = el.attributes.iter().find_map(|attr| {
         match attr.name.namespace {
             AttributeNamespace::Bare if attr.name.local == "memo" => {
                 let body = attribute_string(&attr.value).unwrap_or_default();
-                memo = Some(eval_memo_deps(&body, scope));
+                Some(eval_memo_deps(&body, scope))
             }
-            AttributeNamespace::Identifier if attr.name.local == "id" => {
-                id = resolved_attribute_string(&attr.value, scope).filter(|s| !s.is_empty());
-            }
-            _ => {}
+            _ => None,
         }
-    }
-    Some((memo?, id?))
+    })?;
+    let id = resolve_element_id(el, scope)?;
+    Some((memo, id))
 }
 
 /// **Wave 14.3** — evaluate a `memo="[a, b]"` body to a list of
@@ -6049,6 +6175,67 @@ mod tests {
             panic!()
         };
         assert_eq!(content, "second", "dep change invalidated the cache");
+    }
+
+    /// **Phase 3** — with a dirty NodeId set installed, a clean
+    /// id'd subtree is spliced verbatim from cache (its body is not
+    /// re-evaluated against the fresh scope) while a dirty one
+    /// re-lowers. Mirrors the shell's reactive redraw: only the
+    /// blocks whose signals fired re-render.
+    #[test]
+    fn phase3_dirty_set_splices_clean_subtree_relowers_dirty() {
+        use std::cell::RefCell;
+        use std::collections::HashSet;
+        use std::rc::Rc;
+
+        let (doc, _) = parse(
+            r#"<container id="root">
+                 <container id="a"><text>{av}</text></container>
+                 <container id="b"><text>{bv}</text></container>
+               </container>"#,
+        );
+        let cache = Rc::new(RefCell::new(MemoCache::new()));
+
+        // Full pass (no dirty set) warms the per-id cache.
+        let _ = lower_document_with_scope(
+            &doc,
+            &LowerScope::default()
+                .with_binding("av", json!("a1"))
+                .with_binding("bv", json!("b1"))
+                .with_memo_cache(Rc::clone(&cache)),
+        );
+
+        // Reactive pass: only `b` is dirty. `av`/`bv` both change in
+        // scope, but `a` (clean) must splice its OLD subtree while
+        // `b` (dirty) re-lowers against the fresh binding.
+        let dirty: Rc<HashSet<String>> = Rc::new(["b".to_string()].into_iter().collect());
+        cache.borrow_mut().begin_pass();
+        let second = lower_document_with_scope(
+            &doc,
+            &LowerScope::default()
+                .with_binding("av", json!("a2"))
+                .with_binding("bv", json!("b2"))
+                .with_memo_cache(Rc::clone(&cache))
+                .with_dirty_nodes(Rc::clone(&dirty)),
+        );
+        let Node::Container { children: root, .. } = &second[0] else {
+            panic!()
+        };
+        let text_of = |n: &Node| -> String {
+            let Node::Container { children, .. } = n else {
+                panic!()
+            };
+            let Node::Text { content, .. } = &children[0] else {
+                panic!()
+            };
+            content.clone()
+        };
+        assert_eq!(text_of(&root[0]), "a1", "clean subtree spliced from cache");
+        assert_eq!(text_of(&root[1]), "b2", "dirty subtree re-lowered");
+        // The non-lossy guard: the dirty id `b` was re-lowered, so it
+        // is recorded as touched (the shell would present this frame
+        // without a full-walk fallback).
+        assert!(cache.borrow().untouched(dirty.iter()).is_empty());
     }
 
     /// `memo=` without an id never enters the cache — there'd be
