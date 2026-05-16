@@ -47,7 +47,7 @@ html = []
 # HTML SSR path stays mlua-free; flipped on by `prism-shell` and any
 # host that wants Luau-authored components (see
 # clay-migration-plan.md §11).
-luau = ["dep:mlua"]
+luau = ["dep:mlua", "prism-core/luau"]
 
 [dependencies]
 prism-core = { path = "../prism-core" }

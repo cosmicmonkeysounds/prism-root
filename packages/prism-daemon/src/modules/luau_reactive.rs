@@ -32,6 +32,7 @@
 //! reactive scopes past their VM lifetime.
 
 use mlua::{Function, Lua, LuaSerdeExt, Result as LuaResult, Table, Value as LuaValue};
+use prism_core::luau_reactive::lua_value_to_json;
 use prism_core::reactive::{Effect, Memo, Owner, ReactiveContext, Signal};
 use serde_json::Value;
 use std::cell::RefCell;
@@ -143,48 +144,6 @@ fn make_effect_ctor(lua: &Lua) -> LuaResult<Function> {
 
 fn make_batch_ctor(lua: &Lua) -> LuaResult<Function> {
     lua.create_function(|_, body: Function| ReactiveContext::batch(|| body.call::<LuaValue>(())))
-}
-
-/// Light-weight `mlua::Value` → `serde_json::Value` projection used by
-/// the memo body. The serde bridge in mlua handles this more
-/// thoroughly via `LuaSerdeExt`, but it requires `&Lua` — and we're
-/// inside a `Memo` body without one. The subset below covers the
-/// shape every memo author actually returns (scalars + table-as-map);
-/// userdata round-trips as `Null` so a memo that accidentally returns
-/// `signal` doesn't crash the host.
-fn lua_value_to_json(v: &LuaValue) -> Value {
-    match v {
-        LuaValue::Nil => Value::Null,
-        LuaValue::Boolean(b) => Value::Bool(*b),
-        LuaValue::Integer(i) => Value::from(*i),
-        LuaValue::Number(n) => serde_json::Number::from_f64(*n)
-            .map(Value::Number)
-            .unwrap_or(Value::Null),
-        LuaValue::String(s) => s
-            .to_str()
-            .map(|s| Value::String(s.to_string()))
-            .unwrap_or(Value::Null),
-        // Table: walk pairs in order, distinguish array-shape from
-        // object-shape by the presence of a `1`-indexed sequence.
-        LuaValue::Table(t) => {
-            let len = t.raw_len();
-            if len > 0 {
-                let mut arr = Vec::with_capacity(len);
-                for i in 1..=len {
-                    let item: LuaValue = t.raw_get(i).unwrap_or(LuaValue::Nil);
-                    arr.push(lua_value_to_json(&item));
-                }
-                Value::Array(arr)
-            } else {
-                let mut map = serde_json::Map::new();
-                for (k, val) in t.clone().pairs::<String, LuaValue>().flatten() {
-                    map.insert(k, lua_value_to_json(&val));
-                }
-                Value::Object(map)
-            }
-        }
-        _ => Value::Null,
-    }
 }
 
 #[cfg(test)]

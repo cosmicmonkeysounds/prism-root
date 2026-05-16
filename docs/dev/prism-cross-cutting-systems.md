@@ -105,6 +105,35 @@ subscribe the surrounding block context and whose writes mark that
 block's NodeId dirty; `prism.derive` a real memo. Per-class PRSS
 invalidation (fusion F.3) falls out of the same machinery.
 
+**Phase 5 status — ✅ landed 2026-05-16.** `prism.state` /
+`prism.derive` in `prism-ui-runtime::luau_scope` are now real
+reactive primitives, not identity/eager stubs. `prism.state(t)`
+returns a metatable proxy backed by one `Signal<Value>` per entry
+(allocated against a per-Lua-state `Owner` in the VM's app-data,
+mirroring the proven `prism-daemon::luau_reactive` slot pattern —
+shared `lua_value_to_json` lives once in `prism_core::luau_reactive`,
+no duplicate). Field reads route through `Signal::get` so they
+subscribe whatever `ReactiveContext` is current — i.e. the block's
+per-NodeId `BlockInvalidator` ctx during lowering — and a write
+(`state.x = …`, run via the new `LuauScopeFrame::exec_action`
+statement seam) calls `Signal::set`, marking that block's NodeId
+dirty through the existing render-scope dirty queue. `prism.derive`
+is a real `Memo`, recomputing only when a signal it read changes.
+Shape-faithful: array-shaped `prism.state { {..}, {..} }` (the
+common list form many docs rely on) rebuilds a JSON array so
+`for t in tasks` keeps iterating; records rebuild objects.
+Non-reactive locals still take the cheap snapshot path unchanged.
+Pinned by `luau_scope::tests::{prism_state_is_reactive_and_writes_through_proxy,
+prism_state_read_subscribes_and_write_marks_dirty,
+prism_derive_memoises_and_recomputes_on_state_change,
+plain_array_local_still_snapshots_after_phase5,
+closure_call_still_works_after_phase5}` + the full 370-test suite.
+Remaining in 3.1: Phase 3 selective re-lowering (the dirty-NodeId
+splice) and per-class PRSS invalidation, which now genuinely "fall
+out" — the reactive subscription edge from a block to its state
+signals exists; Phase 3 is the consumer that walks only the dirty
+subset instead of the whole tree.
+
 **Sequencing.** First. It unblocks Tier 2's animator (Effect
 scheduling), suspense (resume notification), and the hot-reload
 patch (state-preserving requires the reactive graph as the unit of

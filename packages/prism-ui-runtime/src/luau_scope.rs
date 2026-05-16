@@ -26,14 +26,65 @@
 //! schedules, or yields during the render walk — the tree-render
 //! contract stays intact.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-use mlua::{Lua, LuaSerdeExt, RegistryKey, Value as LuaValue};
+use mlua::{Lua, LuaSerdeExt, RegistryKey, Table as LuaTable, Value as LuaValue};
 use prism_core::identity::trust::types::{SandboxCapability, SandboxPolicy};
+use prism_core::luau_reactive::lua_value_to_json;
+use prism_core::reactive::{Memo, Owner, Signal};
+
+/// Normalise a Lua table key to a `String` so a `prism.state` proxy
+/// can hold one signal per entry regardless of whether the author
+/// wrote a record (`{ count = 0 }`, string keys) or a list
+/// (`{ {..}, {..} }`, integer keys). `None` for key shapes that
+/// can't address a field (tables, booleans, nil).
+fn lua_key_to_string(k: &LuaValue) -> Option<String> {
+    match k {
+        LuaValue::Integer(i) => Some(i.to_string()),
+        LuaValue::Number(n) if n.fract() == 0.0 => Some((*n as i64).to_string()),
+        LuaValue::String(s) => s.to_str().ok().map(|s| s.to_string()),
+        _ => None,
+    }
+}
+
 use serde_json::Value as JsonValue;
+
+/// Phase 5 of `docs/dev/dioxus-inspiration.md` — per-Lua-state
+/// reactive scope behind `prism.state` / `prism.derive`.
+///
+/// Stored in the document's `Lua` app-data so its lifetime tracks the
+/// VM: when the `LuauScopeFrame` (and its `Lua`) drops, the `Owner`
+/// drops and every `Signal` / `Memo` allocated through it is
+/// reclaimed — scripts can't leak reactive scopes past the document.
+/// Mirrors the proven `prism-daemon::modules::luau_reactive` slot
+/// pattern; the construction glue has to live next to each VM
+/// because `Owner` is `!Send`.
+struct ScopeReactive {
+    owner: Rc<Owner>,
+    /// `prism.derive` memos, keyed by the opaque id the returned proxy
+    /// table carries in its `__prism_derive` metafield. Resolved to a
+    /// binding name at harvest time.
+    memos: RefCell<HashMap<u64, Memo<JsonValue>>>,
+    next_id: Cell<u64>,
+}
+
+impl ScopeReactive {
+    fn get_or_install(lua: &Lua) -> Rc<ScopeReactive> {
+        if let Some(slot) = lua.app_data_ref::<Rc<ScopeReactive>>() {
+            return slot.clone();
+        }
+        let slot = Rc::new(ScopeReactive {
+            owner: Rc::new(Owner::new()),
+            memos: RefCell::new(HashMap::new()),
+            next_id: Cell::new(0),
+        });
+        lua.set_app_data(slot.clone());
+        slot
+    }
+}
 
 /// The capability slice the per-document Luau seam can actually
 /// enforce today (§4.4 of `docs/dev/prism-cross-cutting-systems.md`).
@@ -111,6 +162,15 @@ struct LuauScopeInner {
     /// to `data-probe-<name>`; a host event router fires matching
     /// probes through [`Self::fire_probe`]. Load-once / immutable.
     probes: HashMap<String, RegistryKey>,
+    /// **Phase 5** — top-level `local`s bound to a `prism.state`
+    /// proxy. Their reads resolve **live** through the Lua metatable
+    /// (subscribing the current reactive context) instead of the
+    /// frozen `snapshot`.
+    reactive_state: HashSet<String>,
+    /// **Phase 5** — top-level `local`s bound to a `prism.derive`
+    /// memo, resolved by recomputing the memo (PartialEq-gated) and
+    /// subscribing the current reactive context.
+    derives: HashMap<String, Memo<JsonValue>>,
 }
 
 impl std::fmt::Debug for LuauScopeFrame {
@@ -373,11 +433,32 @@ impl LuauScopeFrame {
         let globals = lua.globals();
         let mut functions = HashMap::new();
         let mut snapshot = HashMap::new();
+        // **Phase 5** — reactive heads. `prism.state` proxies and
+        // `prism.derive` memos are not JSON-snapshotted (a snapshot
+        // would freeze them at load); `lookup` resolves them live so
+        // every read subscribes the current reactive context.
+        let mut reactive_state: HashSet<String> = HashSet::new();
+        let mut derives: HashMap<String, Memo<JsonValue>> = HashMap::new();
+        let reactive_slot = ScopeReactive::get_or_install(&lua);
         for name in harvested {
             let value: LuaValue = match globals.get(name.as_str()) {
                 Ok(v) => v,
                 Err(_) => continue,
             };
+            if let LuaValue::Table(tbl) = &value {
+                if let Some(mt) = tbl.metatable() {
+                    if matches!(mt.raw_get::<Option<bool>>("__prism_state"), Ok(Some(true))) {
+                        reactive_state.insert(name.clone());
+                        continue;
+                    }
+                    if let Ok(Some(id)) = mt.raw_get::<Option<u64>>("__prism_derive") {
+                        if let Some(memo) = reactive_slot.memos.borrow().get(&id).cloned() {
+                            derives.insert(name.clone(), memo);
+                        }
+                        continue;
+                    }
+                }
+            }
             // **§5.9 tier 2** — a named module binding. A returned
             // *table* is exploded into `ns.field` callables + a `ns`
             // data snapshot; a bare returned function/value falls
@@ -434,6 +515,8 @@ impl LuauScopeFrame {
                 macros,
                 dialects,
                 probes,
+                reactive_state,
+                derives,
             }),
         })
     }
@@ -622,16 +705,90 @@ impl LuauScopeFrame {
         let path = path.trim();
         let mut parts = path.split('.');
         let head = parts.next()?.trim();
+        let rest: Vec<&str> = parts.map(str::trim).collect();
+
+        // **Phase 5** — reactive heads resolve live so the read
+        // subscribes the current reactive context (the block's
+        // per-NodeId `BlockInvalidator` ctx during lowering). A later
+        // write to the signal/memo marks that NodeId dirty.
+        if self.inner.derives.contains_key(head) {
+            let memo = self.inner.derives.get(head)?;
+            return walk_json_segments(memo.get(), &rest);
+        }
+        if self.inner.reactive_state.contains(head) {
+            // Live read through the `prism.state` proxy metatable:
+            // `globals.get(head)` → proxy, `.get(seg)` fires
+            // `__index` → `Signal::get` (subscribing). When `rest`
+            // is empty we still want the whole table, so read each
+            // field through the proxy.
+            return self.read_reactive(head, &rest);
+        }
+
         let mut cursor = self.inner.snapshot.get(head)?;
-        for seg in parts {
-            let key = seg.trim();
+        for seg in &rest {
             cursor = match cursor {
-                JsonValue::Object(map) => map.get(key)?,
-                JsonValue::Array(arr) => arr.get(key.parse::<usize>().ok()?)?,
+                JsonValue::Object(map) => map.get(*seg)?,
+                JsonValue::Array(arr) => arr.get(seg.parse::<usize>().ok()?)?,
                 _ => return None,
             };
         }
         Some(cursor.clone())
+    }
+
+    /// Live-read a `prism.state` path through the proxy metatable so
+    /// every field read subscribes the current reactive context.
+    fn read_reactive(&self, head: &str, rest: &[&str]) -> Option<JsonValue> {
+        let lua = &self.inner.lua;
+        let proxy: LuaTable = lua.globals().get(head).ok()?;
+        if let Some((first, tail)) = rest.split_first() {
+            // `state.field[.deeper…]` — `proxy[first]` triggers
+            // `__index` → `Signal::get` (subscribes), then walk the
+            // remaining segments into the returned JSON value.
+            let v: LuaValue = proxy.get(*first).ok()?;
+            walk_json_segments(lua.from_value(v).ok()?, tail)
+        } else {
+            // Bare `state` — materialise every declared field. Each
+            // `proxy.get(k)` fires `__index` → `Signal::get`, so the
+            // whole-table read subscribes every field's signal. A
+            // sequence-shaped state rebuilds a JSON array so
+            // `for t in tasks` keeps iterating; a record rebuilds an
+            // object.
+            let mt = proxy.metatable()?;
+            let is_array = mt.raw_get::<Option<bool>>("__prism_state_array").ok()? == Some(true);
+            let keys: LuaTable = mt.raw_get("__prism_state_keys").ok()?;
+            if is_array {
+                let mut arr = Vec::new();
+                for pair in keys.pairs::<i64, String>() {
+                    let (_, k) = pair.ok()?;
+                    let v: LuaValue = proxy.get(k.as_str()).ok()?;
+                    arr.push(lua.from_value(v).ok()?);
+                }
+                Some(JsonValue::Array(arr))
+            } else {
+                let mut obj = serde_json::Map::new();
+                for pair in keys.pairs::<i64, String>() {
+                    let (_, k) = pair.ok()?;
+                    let v: LuaValue = proxy.get(k.as_str()).ok()?;
+                    obj.insert(k, lua.from_value(v).ok()?);
+                }
+                Some(JsonValue::Object(obj))
+            }
+        }
+    }
+
+    /// **Phase 5** — run a Luau *statement* (`$state.x = !state.x`,
+    /// `state.count = state.count + 1`, an inline `luau { … }` action
+    /// body) against the live per-document VM. Writes flow through the
+    /// `prism.state` proxy's `__newindex` → `Signal::set`, which marks
+    /// every subscribing block dirty. Bounded: one chunk, runs to
+    /// completion, no scheduling — design principle 1 holds.
+    pub fn exec_action(&self, src: &str) -> Result<(), String> {
+        self.inner
+            .lua
+            .load(src)
+            .set_name("action")
+            .exec()
+            .map_err(|e| format!("action: {e}"))
     }
 
     /// True when `name` is a harvested top-level callable — the call
@@ -776,10 +933,127 @@ fn install_prism_helpers(
 ) -> mlua::Result<()> {
     let prism = lua.create_table()?;
 
-    let state = lua.create_function(|_, t: LuaValue| Ok(t))?;
+    // **Phase 5** — `prism.state(t)` returns a *reactive* table.
+    // Each top-level field is a `Signal<JsonValue>` allocated against
+    // the per-document `Owner`; the proxy's metatable routes field
+    // reads through `Signal::get` (subscribing the surrounding
+    // `BlockInvalidator` reactive context — Phase 3b) and writes
+    // through `Signal::set` (which marks every subscriber dirty, so
+    // the block re-lowers). The proxy carries `__prism_state` so the
+    // binding harvester records it as a reactive head.
+    let state = lua.create_function(|lua, t: LuaTable| {
+        let slot = ScopeReactive::get_or_install(lua);
+        let signals: Rc<RefCell<HashMap<String, Signal<JsonValue>>>> =
+            Rc::new(RefCell::new(HashMap::new()));
+        // Accept *any* key shape — a `prism.state` argument is just as
+        // often an array of items (`prism.state { {..}, {..} }`) as a
+        // keyed record (`prism.state { count = 0 }`). Iterating with a
+        // `String` key type would error on the integer keys of an
+        // array and fail the whole script (the old identity stub
+        // returned arrays verbatim, so existing docs rely on this).
+        let mut ordered_keys: Vec<String> = Vec::new();
+        for pair in t.clone().pairs::<LuaValue, LuaValue>() {
+            let (k, v) = pair?;
+            let Some(key) = lua_key_to_string(&k) else {
+                continue;
+            };
+            let sig: Signal<JsonValue> = slot.owner.insert(lua_value_to_json(&v));
+            signals.borrow_mut().insert(key.clone(), sig);
+            ordered_keys.push(key);
+        }
+        // Sequence shape (`raw_len > 0`): a bare read must reconstruct
+        // a JSON *array* so `for t in tasks` keeps iterating.
+        let seq_len = t.raw_len();
+        let is_array = seq_len > 0;
+        if is_array {
+            // Deterministic 1..=len ordering for the array rebuild.
+            ordered_keys = (1..=seq_len).map(|i| i.to_string()).collect();
+        }
+
+        let proxy = lua.create_table()?;
+        let meta = lua.create_table()?;
+        let keys_tbl = lua.create_table()?;
+        for (i, k) in ordered_keys.iter().enumerate() {
+            keys_tbl.set(i + 1, k.as_str())?;
+        }
+        meta.set("__prism_state_keys", keys_tbl)?;
+        meta.set("__prism_state_array", is_array)?;
+        meta.set("__prism_state_len", seq_len)?;
+        let read_signals = Rc::clone(&signals);
+        meta.set(
+            "__index",
+            lua.create_function(move |lua, (_t, k): (LuaTable, LuaValue)| {
+                let Some(key) = lua_key_to_string(&k) else {
+                    return Ok(LuaValue::Nil);
+                };
+                // Copy the `Signal` handle out and drop the `RefCell`
+                // borrow *before* `get()`: a subscribing read can
+                // drive a reactive recompute that re-enters this very
+                // closure (a memo reading the same `prism.state`), so
+                // holding the borrow across `get()` would deadlock the
+                // RefCell. `Signal` is `Copy`, so this is free.
+                let sig = read_signals.borrow().get(&key).copied();
+                match sig {
+                    Some(sig) => lua.to_value(&sig.get()),
+                    None => Ok(LuaValue::Nil),
+                }
+            })?,
+        )?;
+        let write_signals = Rc::clone(&signals);
+        meta.set(
+            "__newindex",
+            lua.create_function(move |lua, (_t, k, v): (LuaTable, LuaValue, LuaValue)| {
+                let Some(key) = lua_key_to_string(&k) else {
+                    return Ok(());
+                };
+                let json = lua_value_to_json(&v);
+                // Same re-entrancy discipline as `__index`: resolve
+                // the `Signal` and release the borrow before `set()`,
+                // which notifies subscribers (memos) that may read
+                // this map back synchronously.
+                let existing = write_signals.borrow().get(&key).copied();
+                if let Some(sig) = existing {
+                    sig.set(json);
+                } else {
+                    // A field assigned that wasn't in the initial
+                    // table still becomes a tracked signal so later
+                    // reads are reactive too.
+                    let slot = ScopeReactive::get_or_install(lua);
+                    let sig: Signal<JsonValue> = slot.owner.insert(json);
+                    write_signals.borrow_mut().insert(key, sig);
+                }
+                Ok(())
+            })?,
+        )?;
+        meta.set("__prism_state", true)?;
+        proxy.set_metatable(Some(meta));
+        Ok(proxy)
+    })?;
     prism.set("state", state)?;
 
-    let derive = lua.create_function(|_, f: mlua::Function| f.call::<LuaValue>(()))?;
+    // **Phase 5** — `prism.derive(fn)` is a real memo. The body
+    // re-runs only when a signal it read changes (PartialEq-gated);
+    // the returned proxy carries the memo's opaque id in
+    // `__prism_derive` so the harvester binds the memo to the
+    // surrounding `local` name and resolves reads through it.
+    let derive = lua.create_function(|lua, f: mlua::Function| {
+        let slot = ScopeReactive::get_or_install(lua);
+        let body = f.clone();
+        let memo: Memo<JsonValue> =
+            slot.owner
+                .insert_memo(move || match body.call::<LuaValue>(()) {
+                    Ok(v) => lua_value_to_json(&v),
+                    Err(_) => JsonValue::Null,
+                });
+        let id = slot.next_id.get();
+        slot.next_id.set(id + 1);
+        slot.memos.borrow_mut().insert(id, memo);
+        let proxy = lua.create_table()?;
+        let meta = lua.create_table()?;
+        meta.set("__prism_derive", id)?;
+        proxy.set_metatable(Some(meta));
+        Ok(proxy)
+    })?;
     prism.set("derive", derive)?;
 
     for hook in ["on_mount", "on_update", "on_cleanup"] {
@@ -872,6 +1146,28 @@ fn install_prism_helpers(
 /// `local function f` → `function f` (global function declaration).
 /// `local x = 1` → `x = 1`. Nested locals are untouched — only
 /// chunk-level statements are reported.
+/// Walk an owned JSON value through dotted/indexed segments
+/// (`["filter"]`, `["0"]`). Returns `None` when a segment doesn't
+/// resolve. Shared by the `prism.derive` (memo value) and
+/// `prism.state` (field value) live-read paths in [`LuauScopeFrame::lookup`].
+fn walk_json_segments(mut cur: JsonValue, segs: &[&str]) -> Option<JsonValue> {
+    for seg in segs {
+        cur = match cur {
+            JsonValue::Object(mut map) => map.remove(*seg)?,
+            JsonValue::Array(mut arr) => {
+                let idx = seg.parse::<usize>().ok()?;
+                if idx < arr.len() {
+                    arr.swap_remove(idx)
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        };
+    }
+    Some(cur)
+}
+
 fn strip_top_level_locals(source: &str) -> String {
     let mut decls = prism_core::language::luau::top_level_locals(source);
     decls.sort_by(|a, b| b.local_keyword_offset.cmp(&a.local_keyword_offset));
@@ -1014,6 +1310,105 @@ mod tests {
             .expect("callable")
             .expect("ok");
         assert_eq!(got, JsonValue::from("#ff0000"));
+    }
+
+    #[test]
+    fn plain_array_local_still_snapshots_after_phase5() {
+        // Regression guard: a non-reactive script local (plain array)
+        // must still resolve through the snapshot path unchanged
+        // after the Phase 5 reactive-head additions.
+        let src = r#"
+            local tasks = {
+              { title = "hi",  prio = 9, open = true },
+              { title = "mid", prio = 5, open = true },
+              { title = "done",prio = 7, open = false },
+            }
+        "#;
+        let frame = LuauScopeFrame::from_scripts(&[src], None).expect("frame");
+        let v = frame.lookup("tasks").expect("tasks resolves");
+        let arr = v.as_array().expect("array");
+        assert_eq!(arr.len(), 3);
+        assert_eq!(arr[0]["title"], JsonValue::from("hi"));
+        assert_eq!(frame.lookup("tasks.0.title"), Some(JsonValue::from("hi")));
+    }
+
+    #[test]
+    fn closure_call_still_works_after_phase5() {
+        let src = r#"local tasks = { { open = true }, { open = false } }"#;
+        let frame = LuauScopeFrame::from_scripts(&[src], None).expect("frame");
+        let r = frame
+            .call_closure("|t| t.open", &[serde_json::json!({"open": true})])
+            .expect("closure resolvable")
+            .expect("closure ok");
+        assert_eq!(r, JsonValue::Bool(true));
+        let r2 = frame
+            .call_closure("|t| t.open", &[serde_json::json!({"open": false})])
+            .expect("closure resolvable")
+            .expect("closure ok");
+        assert_eq!(r2, JsonValue::Bool(false));
+    }
+
+    #[test]
+    fn prism_state_is_reactive_and_writes_through_proxy() {
+        // Phase 5: `prism.state` reads resolve live; an action body
+        // write through the proxy updates the underlying signal so a
+        // later lookup sees the new value (not a frozen snapshot).
+        let src = r#"local state = prism.state { count = 0, label = "hi" }"#;
+        let frame = LuauScopeFrame::from_scripts(&[src], None).expect("frame");
+        assert_eq!(frame.lookup("state.count"), Some(JsonValue::from(0)));
+        assert_eq!(frame.lookup("state.label"), Some(JsonValue::from("hi")));
+
+        frame
+            .exec_action("state.count = state.count + 7")
+            .expect("action runs");
+        assert_eq!(frame.lookup("state.count"), Some(JsonValue::from(7)));
+
+        // Bare `state` materialises every field through the
+        // subscribing path.
+        let whole = frame.lookup("state").expect("bare state");
+        assert_eq!(whole["count"], JsonValue::from(7));
+        assert_eq!(whole["label"], JsonValue::from("hi"));
+    }
+
+    #[test]
+    fn prism_state_read_subscribes_and_write_marks_dirty() {
+        use prism_core::reactive::ReactiveContext;
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let src = r#"local state = prism.state { n = 1 }"#;
+        let frame = LuauScopeFrame::from_scripts(&[src], None).expect("frame");
+
+        let fired = Rc::new(Cell::new(false));
+        let f = Rc::clone(&fired);
+        let ctx = ReactiveContext::new(move || f.set(true));
+        // Read inside the context — `state.n` routes through
+        // `Signal::get`, subscribing `ctx`.
+        ctx.reset_and_run_in(|| {
+            assert_eq!(frame.lookup("state.n"), Some(JsonValue::from(1)));
+        });
+        assert!(!fired.get(), "subscribe alone must not fire");
+
+        // A write through the proxy notifies subscribers → the block
+        // ctx's dirty callback fires (this is the BlockInvalidator
+        // path in the real render walk).
+        frame.exec_action("state.n = 42").expect("write");
+        assert!(fired.get(), "signal write must mark the reader dirty");
+        ctx.dispose();
+    }
+
+    #[test]
+    fn prism_derive_memoises_and_recomputes_on_state_change() {
+        let src = r#"
+            local base = prism.state { n = 2 }
+            local doubled = prism.derive(function() return base.n * 10 end)
+        "#;
+        let frame = LuauScopeFrame::from_scripts(&[src], None).expect("frame");
+        assert_eq!(frame.lookup("doubled"), Some(JsonValue::from(20)));
+
+        frame.exec_action("base.n = 5").expect("write");
+        // Memo recomputes because its body read `base.n` (a signal).
+        assert_eq!(frame.lookup("doubled"), Some(JsonValue::from(50)));
     }
 
     #[test]

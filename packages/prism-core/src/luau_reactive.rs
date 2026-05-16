@@ -103,6 +103,48 @@ impl UserData for Memo<Value> {
     }
 }
 
+/// Light-weight `mlua::Value` → `serde_json::Value` projection for
+/// reactive bodies (`Memo` / `Effect` closures) that run **without**
+/// a `&Lua` in scope, so the `LuaSerdeExt` bridge isn't reachable.
+/// Covers the shape every reactive author actually returns: scalars
+/// and array-shape / object-shape tables. Userdata and functions
+/// round-trip as `Null` so a body that accidentally returns a signal
+/// can't crash the host. Shared by every per-Lua-state reactive
+/// constructor (the daemon's `prism.reactive.*` and the scope-frame's
+/// `prism.state` / `prism.derive`) so the projection lives once.
+pub fn lua_value_to_json(v: &mlua::Value) -> Value {
+    match v {
+        mlua::Value::Nil => Value::Null,
+        mlua::Value::Boolean(b) => Value::Bool(*b),
+        mlua::Value::Integer(i) => Value::from(*i),
+        mlua::Value::Number(n) => serde_json::Number::from_f64(*n)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+        mlua::Value::String(s) => s
+            .to_str()
+            .map(|s| Value::String(s.to_string()))
+            .unwrap_or(Value::Null),
+        mlua::Value::Table(t) => {
+            let len = t.raw_len();
+            if len > 0 {
+                let mut arr = Vec::with_capacity(len);
+                for i in 1..=len {
+                    let item: mlua::Value = t.raw_get(i).unwrap_or(mlua::Value::Nil);
+                    arr.push(lua_value_to_json(&item));
+                }
+                Value::Array(arr)
+            } else {
+                let mut map = serde_json::Map::new();
+                for (k, val) in t.clone().pairs::<String, mlua::Value>().flatten() {
+                    map.insert(k, lua_value_to_json(&val));
+                }
+                Value::Object(map)
+            }
+        }
+        _ => Value::Null,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
