@@ -233,6 +233,13 @@ pub struct LowerScope {
     /// which also (re)populates the per-id cache so the next reactive
     /// frame can splice. `Rc` so scope forks stay cheap.
     dirty_nodes: Option<std::rc::Rc<std::collections::HashSet<String>>>,
+    /// **Per-class PRSS invalidation (fusion F.3)** — the class→NodeId
+    /// usage collector. When installed, `apply_container_attributes`
+    /// records every `(class, id)` it resolves so the shell's `.prss`
+    /// hot-reload consumer can mark only the affected NodeIds dirty.
+    /// `None` on headless / SSR / no-stylesheet paths. `Rc` so scope
+    /// forks stay cheap.
+    class_deps: Option<std::rc::Rc<std::cell::RefCell<ClassUsage>>>,
 }
 
 /// **Wave 14.3** — per-element memo cache keyed by `id`. Hosts that
@@ -292,6 +299,56 @@ impl MemoCache {
             .filter(|d| !self.touched.contains(*d))
             .cloned()
             .collect()
+    }
+}
+
+/// **Per-class PRSS invalidation (fusion F.3)** — the class→NodeId
+/// dependency table built during lowering. When a container with a
+/// resolvable `id` resolves one or more PRSS classes, each `(class
+/// name → NodeId)` pair is recorded here. The shell's `.prss`
+/// hot-reload consumer reads it: a `LiteralOnly` change carrying
+/// `PrssLiteralPatch { owner: Class { name, .. }, .. }` marks just
+/// the NodeIds that used `name` dirty, so Phase 3 splices the rest
+/// instead of a full re-walk. PRSS classes resolve from the plain
+/// `StyleSheet` (not a `Signal`), so this explicit usage table is
+/// the dependency edge the reactive substrate can't infer on its
+/// own. Host-owned, persisted across frames; cleared + repopulated
+/// each full render.
+#[derive(Debug, Default)]
+pub struct ClassUsage {
+    map: HashMap<String, std::collections::HashSet<String>>,
+}
+
+impl ClassUsage {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record that the element `node_id` resolved PRSS class `class`.
+    pub fn record(&mut self, class: &str, node_id: &str) {
+        self.map
+            .entry(class.to_string())
+            .or_default()
+            .insert(node_id.to_string());
+    }
+
+    /// Every NodeId that resolved `class` (insertion-agnostic).
+    pub fn nodes_for(&self, class: &str) -> Vec<String> {
+        self.map
+            .get(class)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Forget every recorded dependency — the shell calls this before
+    /// a full render pass so a removed `class="…"` doesn't keep a
+    /// stale NodeId alive across edits.
+    pub fn clear(&mut self) {
+        self.map.clear();
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
     }
 }
 
@@ -540,6 +597,20 @@ impl LowerScope {
     /// installed one this render.
     pub fn dirty_nodes(&self) -> Option<&std::collections::HashSet<String>> {
         self.dirty_nodes.as_deref()
+    }
+
+    /// **Fusion F.3** — install the class→NodeId usage collector.
+    pub fn with_class_deps(
+        mut self,
+        deps: std::rc::Rc<std::cell::RefCell<ClassUsage>>,
+    ) -> Self {
+        self.class_deps = Some(deps);
+        self
+    }
+
+    /// **Fusion F.3** — borrow the class-usage collector handle.
+    pub fn class_deps(&self) -> Option<&std::rc::Rc<std::cell::RefCell<ClassUsage>>> {
+        self.class_deps.as_ref()
     }
 
     /// **Wave 14.1** — seed the design-token table as a `tokens`
@@ -3077,6 +3148,19 @@ fn apply_container_attributes(
             apply_prss_class(sheet, class_name, props, scope);
         }
         apply_descendant_selectors(sheet, &active, scope, props);
+        // **Fusion F.3** — record the class→NodeId dependency so a
+        // later `.prss` literal swap can mark just this element dirty
+        // (Phase 3 then splices the rest). Keyed by the element's
+        // resolvable id; anonymous containers can't be targeted
+        // selectively and fall back to the broad path.
+        if let Some(deps) = scope.class_deps() {
+            if let Some(node_id) = resolve_element_id(el, scope) {
+                let mut deps = deps.borrow_mut();
+                for class_name in &active {
+                    deps.record(class_name, &node_id);
+                }
+            }
+        }
     }
     for attr in &el.attributes {
         let local = attr.name.local.as_str();
@@ -7787,6 +7871,46 @@ mod tests {
         let bg = props.background.expect("class supplied background");
         assert_eq!((bg.r, bg.g, bg.b, bg.a), (0x00, 0x60, 0xc0, 0xff));
         assert!((props.radius.tl - 8.0).abs() < f32::EPSILON);
+    }
+
+    /// **Fusion F.3** — when a `ClassUsage` collector is installed,
+    /// lowering records every `(class → resolvable NodeId)` pair so
+    /// the shell's `.prss` hot-reload consumer can mark just those
+    /// NodeIds dirty. Anonymous containers (no id) aren't recorded —
+    /// they can't be targeted selectively and fall back to the broad
+    /// invalidation path.
+    #[test]
+    fn class_usage_records_class_to_nodeid_when_collector_installed() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use std::sync::Arc;
+        let (sheet, _) = prism_core::language::prss::parse(
+            r##"
+            [class.panel]
+            background = "#101010"
+            [class.title]
+            color = "#ffffff"
+            "##,
+        );
+        let deps = Rc::new(RefCell::new(ClassUsage::new()));
+        let scope = LowerScope::default()
+            .with_stylesheet(Arc::new(sheet))
+            .with_class_deps(Rc::clone(&deps));
+        let _ = interpret_with_scope(
+            r#"<container id="card" class="panel">
+                 <container id="hdr" class="title"/>
+                 <container class="panel"/>
+               </container>"#,
+            &scope,
+        )
+        .unwrap();
+        let d = deps.borrow();
+        assert_eq!(d.nodes_for("panel"), vec!["card".to_string()]);
+        assert_eq!(d.nodes_for("title"), vec!["hdr".to_string()]);
+        // The anonymous `.panel` child has no id → not recorded, so
+        // `panel` maps to exactly the one id'd user.
+        assert_eq!(d.nodes_for("panel").len(), 1);
+        assert!(d.nodes_for("missing").is_empty());
     }
 
     /// **PRSS integration** — `extends` flattens parent properties

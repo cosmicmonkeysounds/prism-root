@@ -175,13 +175,23 @@ last good sheet (the watcher retains it) so a mid-edit save never
 blanks styling. Pinned by
 `hot_reload::tests::stylesheet_targets_coalesce_independently_of_skeletons`
 + the existing `StylesheetWatcher` literal/structural tests. The
-`.prui` `PruiDocCache` literal-slot-poke / script-frame-reload path
-and per-class selective invalidation (which needs a class→NodeId
-dependency tracker — the premise that "a PRSS class read already
-subscribes its NodeId" does *not* hold; classes resolve from the
-plain `Stylesheet`, not a `Signal`) remain as the deeper refinement;
-today the install marks `FRAME_DIRTY_SENTINEL` and Phase 3's safe
-full pass picks up the new values.
+**Per-class selective invalidation — ✅ landed 2026-05-16.** The
+class→NodeId dependency edge the reactive substrate can't infer
+(classes resolve from the plain `StyleSheet`, not a `Signal`) is now
+an explicit `interpret::ClassUsage` table, populated during lowering
+in `apply_container_attributes` for every id'd container that
+resolves a PRSS class, threaded via `RenderCaches.class_deps` and
+cleared on each full pass. The §3.2 `.prss` consumer reads it: a
+`PrssChange::LiteralOnly` patch with `PrssLiteralOwner::Class { name }`
+marks *only* `class_deps.nodes_for(name)` dirty (Phase 3 splices the
+rest); token-bucket patches + structural changes cascade broadly via
+`FRAME_DIRTY_SENTINEL`. Non-lossy fallback: a patched class with no
+recorded NodeId (not yet rendered / anonymous) also falls back to
+the sentinel so the edit is never dropped. Pinned by
+`interpret::tests::class_usage_records_class_to_nodeid_when_collector_installed`.
+The `.prui` `PruiDocCache` literal-slot-poke / script-frame-reload
+path is the one remaining deeper refinement (the `.prss` half —
+coarse *and* per-class selective — is done).
 
 ### 3.2 Hot-reload patch pipeline
 

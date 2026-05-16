@@ -393,6 +393,11 @@ pub fn render_tree(
 pub struct RenderCaches {
     pub memo: Option<std::rc::Rc<std::cell::RefCell<prism_ui_runtime::interpret::MemoCache>>>,
     pub dirty: Option<std::rc::Rc<std::collections::HashSet<String>>>,
+    /// **Fusion F.3** — class→NodeId usage collector. Populated each
+    /// full render so the `.prss` hot-reload consumer can mark only
+    /// the NodeIds that used a patched class dirty.
+    pub class_deps:
+        Option<std::rc::Rc<std::cell::RefCell<prism_ui_runtime::interpret::ClassUsage>>>,
 }
 
 /// **Wave 14.3** — same as [`render_tree`] but threads a host-owned
@@ -419,6 +424,7 @@ pub fn render_tree_with(
     let RenderCaches {
         memo: memo_cache,
         dirty: dirty_nodes,
+        class_deps,
     } = caches;
     let emissions = bindings.snapshot(ctx);
     let doc = fill_compositions(skeleton, &emissions);
@@ -457,6 +463,9 @@ pub fn render_tree_with(
     }
     if let Some(dirty) = dirty_nodes {
         scope = scope.with_dirty_nodes(dirty);
+    }
+    if let Some(deps) = class_deps {
+        scope = scope.with_class_deps(deps);
     }
     if let Some(sheet) = stylesheet {
         // PRSS install runs *after* `with_design_tokens` so the

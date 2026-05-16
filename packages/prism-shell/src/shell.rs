@@ -133,6 +133,11 @@ pub struct ShellInner {
     /// lowering pass short-circuits stable subtrees. Threaded into
     /// every render through `LowerScope::with_memo_cache`.
     pub memo_cache: Rc<RefCell<prism_ui_runtime::interpret::MemoCache>>,
+    /// **Fusion F.3** — class→NodeId usage table, rebuilt each full
+    /// render. The `.prss` hot-reload consumer reads it to mark only
+    /// the NodeIds that used a literally-patched class dirty, so
+    /// Phase 3 splices the rest instead of a full re-walk.
+    pub class_deps: Rc<RefCell<prism_ui_runtime::interpret::ClassUsage>>,
     /// Persistent-Luau runtime — the long-lived `mlua::Lua` state app
     /// `[entry] script` bodies ran in at boot. `None` when no app
     /// declared a script (or when the build doesn't pull in mlua, e.g.
@@ -482,6 +487,9 @@ impl Shell {
             render_scope: RenderScope::new(),
             animator: RefCell::new(prism_ui_runtime::animator::Animator::new()),
             memo_cache: Rc::new(RefCell::new(prism_ui_runtime::interpret::MemoCache::new())),
+            class_deps: Rc::new(RefCell::new(
+                prism_ui_runtime::interpret::ClassUsage::new(),
+            )),
             #[cfg(feature = "native")]
             luau_runtime,
         }));
@@ -857,6 +865,9 @@ impl Shell {
         // frame — no caching needed unless profiling shows it.
         let composed = self.skeleton.with_app_body(inner.active_app_skeleton());
         let app_import_resolver = inner.active_app_import_resolver();
+        // Full render — rebuild the class→NodeId table from scratch so
+        // a removed `class="…"` doesn't keep a stale NodeId alive.
+        inner.class_deps.borrow_mut().clear();
         let mut tree = inner.render_scope.run_in_render_pass(|| {
             render_with_hot_reload(|| {
                 render_tree_with(
@@ -870,6 +881,7 @@ impl Shell {
                     RenderCaches {
                         memo: Some(Rc::clone(&cache)),
                         dirty: None,
+                        class_deps: Some(Rc::clone(&inner.class_deps)),
                     },
                     effective_stylesheet.as_ref(),
                     app_import_resolver.clone(),
@@ -992,6 +1004,14 @@ impl Shell {
                     cache.borrow_mut().begin_pass();
                 }
                 let render = |dirty: Option<Rc<std::collections::HashSet<String>>>| {
+                    // A full pass (no dirty set) rebuilds the
+                    // class→NodeId table from scratch; a reactive
+                    // splice keeps the prior table (spliced elements
+                    // don't re-record, so their class deps must
+                    // persist).
+                    if dirty.is_none() {
+                        guard.class_deps.borrow_mut().clear();
+                    }
                     guard.render_scope.run_in_render_pass(|| {
                         render_with_hot_reload(|| {
                             // `render_with_hot_reload` accepts FnMut so
@@ -1006,6 +1026,7 @@ impl Shell {
                                 RenderCaches {
                                     memo: Some(Rc::clone(&cache)),
                                     dirty: dirty.clone(),
+                                    class_deps: Some(Rc::clone(&guard.class_deps)),
                                 },
                                 stylesheet.as_ref(),
                                 app_import_resolver.clone(),
@@ -1121,10 +1142,6 @@ impl Shell {
                             // `ParseError` / `ReadError` keep the last
                             // good sheet (no `stylesheet`); a literal
                             // or structural change yields a fresh one.
-                            // Per-class selective invalidation rides
-                            // on top later; today the install marks
-                            // FRAME_DIRTY_SENTINEL and Phase 3's safe
-                            // full-walk picks up the new values.
                             let key = match app_id {
                                 None => "<prss:host>".to_string(),
                                 Some(id) => format!("prss:{id}"),
@@ -1142,7 +1159,54 @@ impl Shell {
                                             .insert(id.clone(), sheet);
                                     }
                                 }
-                                dirty = true;
+                                // **Fusion F.3** — selective
+                                // invalidation. A `LiteralOnly` change
+                                // marks *only* the NodeIds that resolved
+                                // a patched class (Phase 3 then splices
+                                // the rest). Token-bucket patches and
+                                // structural changes cascade broadly →
+                                // FRAME_DIRTY_SENTINEL (safe full walk).
+                                // A class with no recorded NodeId (not
+                                // yet rendered) also falls back to the
+                                // sentinel so the edit is never dropped.
+                                let g = tick_inner.borrow();
+                                let mut broad = false;
+                                match &reload.change {
+                                    prism_ui_build::PrssChange::LiteralOnly { patches } => {
+                                        let deps = g.class_deps.borrow();
+                                        for p in patches {
+                                            match &p.owner {
+                                                prism_ui_build::PrssLiteralOwner::Class {
+                                                    name,
+                                                    ..
+                                                } => {
+                                                    let nodes = deps.nodes_for(name);
+                                                    if nodes.is_empty() {
+                                                        broad = true;
+                                                    } else {
+                                                        for nid in nodes {
+                                                            g.render_scope.mark_dirty(nid);
+                                                        }
+                                                    }
+                                                }
+                                                // Tokens cascade into
+                                                // every class that
+                                                // references them.
+                                                prism_ui_build::PrssLiteralOwner::Token {
+                                                    ..
+                                                } => broad = true,
+                                            }
+                                        }
+                                    }
+                                    // FirstSighting / Structural →
+                                    // re-walk everything.
+                                    _ => broad = true,
+                                }
+                                if broad {
+                                    g.render_scope.mark_dirty(
+                                        crate::render_scope::FRAME_DIRTY_SENTINEL,
+                                    );
+                                }
                             } else if let prism_ui_build::PrssChange::ParseError { message } =
                                 &reload.change
                             {
