@@ -133,8 +133,16 @@ expanded argv without executing anything.
 artefacts have grown large or when a build is behaving unexpectedly.
 For routine housekeeping, rely on the automatic GC described below.
 
-### `prism lint`
+### `prism lint [--types]`
 `cargo clippy --workspace --all-targets -- -D warnings`.
+
+`--types` additionally runs the Luau type pass (§3.3 of
+`docs/dev/prism-cross-cutting-systems.md`): locates `luau-analyze`
+(`LUAU_ANALYZE` env override → `PATH`) and runs it in strict mode
+over every `.luau` source in the workspace, returning its exit code
+as a real CI gate. When `luau-analyze` is not installed it prints an
+install hint and **skips** (exit 0) — never a fake pass, never a hard
+fail; the gate activates the moment the binary is on `PATH`.
 
 ### `prism fmt [--check]`
 `cargo fmt --all`, optionally `--check`.

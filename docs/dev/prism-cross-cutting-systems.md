@@ -144,12 +144,22 @@ preservation unit.
 
 ### 3.3 Type / diagnostics toolchain
 
+**Status (2026-05-16).** ✅ `prism lint --types` landed: it locates
+`luau-analyze` (`LUAU_ANALYZE` override → `PATH`), runs it in strict
+mode over every `.luau` source in the workspace, and returns its exit
+code as a genuine CI gate. When the binary is absent it prints an
+actionable install hint and *skips* (exit 0) — honestly inert, never
+a fake pass, per §7. Remaining: the `PrismUiSyntaxProvider` PRUI
+`{expr}`-slot → synthetic-Luau rewrite (so slot typos are caught too)
+and `--!strict` `load_*` defaulting; both ride this same CLI seam and
+are the documented next step.
+
 **What.** Fusion Wave I deliberately did **not** fake this: the
 value bridges (`prism.scope`, `{lua=…}` evaluator, signal
 registrations) are landed and ready to be type-checked, but the
-external `luau-analyze` pass, the PRUI-slot rewrite-and-typecheck,
-`prism lint --types`, signal-payload narrowing, and the Inspector
-type annotations need the external toolchain wired.
+PRUI-slot rewrite-and-typecheck, signal-payload narrowing, and the
+Inspector type annotations still need wiring on top of the now-landed
+`prism lint --types` external-toolchain seam.
 
 **Why it matters.** "Diagnostics-first authoring" (Roc/Grain feel) is
 a stated design goal (fusion §6). Without it, the typed seams are a

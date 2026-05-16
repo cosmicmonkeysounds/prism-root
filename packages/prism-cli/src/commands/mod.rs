@@ -50,8 +50,9 @@ pub enum Command {
     Build(build::BuildArgs),
     /// Run one or many dev servers behind a supervisor.
     Dev(dev::DevArgs),
-    /// Run `cargo clippy --workspace --all-targets -- -D warnings`.
-    Lint,
+    /// Run `cargo clippy --workspace --all-targets -- -D warnings`,
+    /// plus the optional `--types` Luau type pass.
+    Lint(lint::LintArgs),
     /// Run `cargo fmt --all`.
     Fmt {
         /// Pass `--check` to `cargo fmt` — fails if formatting drifted.
@@ -85,7 +86,7 @@ pub fn run(cli: &Cli, workspace: &Workspace) -> Result<u8> {
         Command::Test(args) => test::run(args, workspace, cli.dry_run),
         Command::Build(args) => build::run(args, workspace, cli.dry_run),
         Command::Dev(args) => dev::run(args, workspace, cli.dry_run),
-        Command::Lint => lint::run(workspace, cli.dry_run),
+        Command::Lint(args) => lint::run(args, workspace, cli.dry_run),
         Command::Fmt { check } => fmt::run(*check, workspace, cli.dry_run),
         Command::Visual(args) => visual::run(args, workspace, cli.dry_run),
         Command::E2e(args) => e2e::run(args, workspace, cli.dry_run),
