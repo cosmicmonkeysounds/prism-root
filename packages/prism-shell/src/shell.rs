@@ -23,7 +23,9 @@ use prism_ui_runtime::layout::{HitRect, Node as UiNode, Surface, Viewport};
 use crate::components::{register_document_builtins, ShellComponentRegistry};
 use crate::events::dispatch_event;
 use crate::props::{PropCtx, ShellPropBindings};
-use crate::render::{default_app_skeleton, render_tree_with, Skeleton, Stylesheet};
+use crate::render::{
+    default_app_skeleton, render_tree_with, RenderCaches, Skeleton, Stylesheet,
+};
 use crate::render_scope::RenderScope;
 use crate::services::{
     Clipboard, LuauHost, MutCtx, NoopLuauHost, OsVfs, ServiceRegistry, UndoStack, Vfs,
@@ -864,13 +866,15 @@ impl Shell {
                     &inner.bindings,
                     Arc::clone(&inner.resolver),
                     &inner.prop_ctx(),
-                    Some(Rc::clone(&cache)),
-                    effective_stylesheet.as_ref(),
-                    app_import_resolver.clone(),
                     // Boot / full render: no dirty set — walk
                     // everything and (re)populate the per-id cache so
                     // subsequent reactive frames can splice.
-                    None,
+                    RenderCaches {
+                        memo: Some(Rc::clone(&cache)),
+                        dirty: None,
+                    },
+                    effective_stylesheet.as_ref(),
+                    app_import_resolver.clone(),
                 )
             })
         });
@@ -1001,10 +1005,12 @@ impl Shell {
                                 &guard.bindings,
                                 Arc::clone(&guard.resolver),
                                 &guard.prop_ctx(),
-                                Some(Rc::clone(&cache)),
+                                RenderCaches {
+                                    memo: Some(Rc::clone(&cache)),
+                                    dirty: dirty.clone(),
+                                },
                                 stylesheet.as_ref(),
                                 app_import_resolver.clone(),
-                                dirty.clone(),
                             )
                         })
                     })
@@ -1088,17 +1094,15 @@ impl Shell {
                 for evt in pending {
                     use crate::hot_reload::ReloadTarget;
                     match &evt.target {
-                        ReloadTarget::DefaultSkeleton => {
-                            match Skeleton::from_source(&evt.source) {
-                                Ok(s) => {
-                                    tick_inner.borrow_mut().default_app_skeleton = s;
-                                    dirty = true;
-                                }
-                                Err(e) => {
-                                    eprintln!("prism-shell hot-reload: skeleton parse error: {e}");
-                                }
+                        ReloadTarget::DefaultSkeleton => match Skeleton::from_source(&evt.source) {
+                            Ok(s) => {
+                                tick_inner.borrow_mut().default_app_skeleton = s;
+                                dirty = true;
                             }
-                        }
+                            Err(e) => {
+                                eprintln!("prism-shell hot-reload: skeleton parse error: {e}");
+                            }
+                        },
                         ReloadTarget::AppSkeleton { app_id } => {
                             match Skeleton::from_source(&evt.source) {
                                 Ok(s) => {
@@ -1127,8 +1131,7 @@ impl Shell {
                                 None => "<prss:host>".to_string(),
                                 Some(id) => format!("prss:{id}"),
                             };
-                            let reload =
-                                sheet_watcher.observe_source(&key, &evt.source);
+                            let reload = sheet_watcher.observe_source(&key, &evt.source);
                             if let Some(sheet) = reload.stylesheet {
                                 match app_id {
                                     None => {
@@ -1142,13 +1145,10 @@ impl Shell {
                                     }
                                 }
                                 dirty = true;
-                            } else if let prism_ui_build::PrssChange::ParseError {
-                                message,
-                            } = &reload.change
+                            } else if let prism_ui_build::PrssChange::ParseError { message } =
+                                &reload.change
                             {
-                                eprintln!(
-                                    "prism-shell hot-reload: .prss parse error: {message}"
-                                );
+                                eprintln!("prism-shell hot-reload: .prss parse error: {message}");
                             }
                         }
                     }

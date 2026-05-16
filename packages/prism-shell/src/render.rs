@@ -372,7 +372,27 @@ pub fn render_tree(
     resolver: Arc<dyn TagResolver>,
     ctx: &PropCtx,
 ) -> Vec<UiNode> {
-    render_tree_with(skeleton, bindings, resolver, ctx, None, None, None, None)
+    render_tree_with(
+        skeleton,
+        bindings,
+        resolver,
+        ctx,
+        RenderCaches::default(),
+        None,
+        None,
+    )
+}
+
+/// The Phase-3 cache subsystem threaded into one lowering pass: the
+/// per-id [`MemoCache`](prism_ui_runtime::interpret::MemoCache) and,
+/// when the redraw is purely reactive, the dirty NodeId set that
+/// drives the selective splice. Grouped so the render entry point
+/// stays within the argument-count budget and the two
+/// always-co-travelling knobs read as one concept.
+#[derive(Default, Clone)]
+pub struct RenderCaches {
+    pub memo: Option<std::rc::Rc<std::cell::RefCell<prism_ui_runtime::interpret::MemoCache>>>,
+    pub dirty: Option<std::rc::Rc<std::collections::HashSet<String>>>,
 }
 
 /// **Wave 14.3** — same as [`render_tree`] but threads a host-owned
@@ -392,11 +412,14 @@ pub fn render_tree_with(
     bindings: &ShellPropBindings,
     resolver: Arc<dyn TagResolver>,
     ctx: &PropCtx,
-    memo_cache: Option<std::rc::Rc<std::cell::RefCell<prism_ui_runtime::interpret::MemoCache>>>,
+    caches: RenderCaches,
     stylesheet: Option<&Stylesheet>,
     import_resolver: Option<Arc<dyn ImportResolver>>,
-    dirty_nodes: Option<std::rc::Rc<std::collections::HashSet<String>>>,
 ) -> Vec<UiNode> {
+    let RenderCaches {
+        memo: memo_cache,
+        dirty: dirty_nodes,
+    } = caches;
     let emissions = bindings.snapshot(ctx);
     let doc = fill_compositions(skeleton, &emissions);
     let host_children = harvest_host_children(&emissions);
