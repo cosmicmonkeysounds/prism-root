@@ -216,14 +216,22 @@ to `PrismContext`, the `identity::trust` sandbox policy already in
 sovereignty is a core Prism promise; a bundled/imported module
 running with the document's full capability is the gap.
 
-### 4.5 Codegen breadth + CI gate
+### 4.5 Codegen breadth + CI gate — ✅ landed 2026-05-16
 
-`prism codegen luau-types` should emit stubs for every `prism.*`
-surface the fusion plan added (`prism.state`, `prism.derive`,
-`prism.macro`, `prism.dialect`, `prism.scope`, `prism.probes`,
-`prism.on_signal`, `prism.tokens`) plus PRSS value-type targets, and
-fail CI on drift. Low effort, high refactor-safety payoff; gates the
-completion experience 3.3 exposes.
+`prism codegen luau-types` now emits a `Prism` namespace stub plus
+`PrismReactive` / `PrismProbes` / `ReactiveSignal` / `ReactiveMemo`
+in `prism-ui-runtime::luau_types` (it owns `install_prism_helpers`,
+so the stub lives next to the surface it documents — no duplication).
+The drift gate is behavioral, not textual: `luau_types::PRISM_GLOBAL_MEMBERS`
+is the single source of truth, and `luau_scope::tests::prism_global_matches_stub`
+boots a real `LuauScopeFrame`, enumerates the live `prism` table with
+`pairs`, and asserts it equals the stub set — a runtime surface added
+without a stub (or a stale stub) fails CI. Per the doc's own
+anti-faking principle, `prism.on_signal` / `prism.tokens` were *not*
+stubbed: they aren't exposed on `prism` at runtime (`tokens` is a
+top-level global), and a stub for a non-existent member trains authors
+to distrust completion. `prism.scope` / `prism.reactive` are stubbed
+as optional because they're host-/daemon-seeded conditionally.
 
 ---
 

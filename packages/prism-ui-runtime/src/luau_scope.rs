@@ -951,6 +951,33 @@ mod tests {
     }
 
     #[test]
+    fn prism_global_matches_stub() {
+        // Codegen drift gate (§4.5 of
+        // `docs/dev/prism-cross-cutting-systems.md`): the live
+        // `prism` table installed by `install_prism_helpers` must
+        // carry exactly the members the codegen stub declares
+        // (`luau_types::PRISM_GLOBAL_MEMBERS`). A surface added at
+        // runtime without a stub — or a stubbed member that no longer
+        // exists — fails CI instead of silently lying to autocomplete.
+        let src = r#"
+            local __k = {}
+            for k in pairs(prism) do __k[#__k + 1] = k end
+            table.sort(__k)
+            local prism_keys = table.concat(__k, ",")
+        "#;
+        let frame = LuauScopeFrame::from_scripts(&[src], None).expect("frame");
+        let got = frame.lookup("prism_keys").expect("prism_keys bound");
+        let got = got.as_str().expect("string");
+        let live: std::collections::BTreeSet<&str> = got.split(',').collect();
+        let stub: std::collections::BTreeSet<&str> =
+            crate::luau_types::PRISM_GLOBAL_MEMBERS.iter().copied().collect();
+        assert_eq!(
+            live, stub,
+            "prism.* runtime surface drifted from luau_types::PRISM stub"
+        );
+    }
+
+    #[test]
     fn tokens_seeded_into_script_scope() {
         let tokens = serde_json::json!({ "colors": { "danger": "#e00" } });
         let src = r#"local danger = tokens.colors.danger"#;

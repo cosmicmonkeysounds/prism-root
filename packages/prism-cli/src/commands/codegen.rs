@@ -190,5 +190,17 @@ mod tests {
         assert!(ui.contains("export type Node ="));
         assert!(ui.contains("export type ContainerProps"));
         assert!(ui.contains("export type Sizing"));
+        // §4.5 codegen breadth: the `prism.*` authoring surface
+        // (state / derive / macro / dialect / probes / reactive) must
+        // ship a stub so authors get completion on it.
+        for name in [
+            "export type Prism",
+            "export type PrismReactive",
+            "export type PrismProbes",
+            "export type ReactiveSignal",
+            "export type ReactiveMemo",
+        ] {
+            assert!(ui.contains(name), "prism-ui.d.luau missing `{name}`");
+        }
     }
 }

@@ -32,8 +32,30 @@ pub fn type_defs() -> Vec<(&'static str, &'static str)> {
         ("Node", NODE),
         ("Rect", RECT),
         ("RenderCommand", RENDER_COMMAND),
+        ("ReactiveSignal", REACTIVE_SIGNAL),
+        ("ReactiveMemo", REACTIVE_MEMO),
+        ("Prism", PRISM),
+        ("PrismReactive", PRISM_REACTIVE),
+        ("PrismProbes", PRISM_PROBES),
     ]
 }
+
+/// The canonical set of members the `prism` global exposes, in the
+/// order they appear in [`PRISM`]. The codegen drift gate
+/// (`luau_scope::tests::prism_global_matches_stub`) asserts the live
+/// `prism` table installed by `install_prism_helpers` carries exactly
+/// these keys — a stub-vs-runtime mismatch fails CI rather than
+/// silently shipping a lie to autocomplete.
+pub const PRISM_GLOBAL_MEMBERS: &[&str] = &[
+    "state",
+    "derive",
+    "on_mount",
+    "on_update",
+    "on_cleanup",
+    "macro",
+    "dialect",
+    "probes",
+];
 
 /// Concatenate every entry from [`type_defs`] into a single Luau
 /// source file, prefixed with `--!strict`. Mirrors
@@ -127,6 +149,56 @@ const RENDER_COMMAND: &str = "export type RenderCommand =
     | \"ScissorEnd\"
     | { Hint: { key: string, value: string } }";
 
+// Reactive substrate userdata exposed to Luau by
+// `prism_core::luau_reactive` (the `Signal<Value>` / `Memo<Value>`
+// `mlua::UserData` impls) and constructed via `prism.reactive.*`.
+const REACTIVE_SIGNAL: &str = "export type ReactiveSignal = {
+    read: (self: ReactiveSignal) -> any,
+    peek: (self: ReactiveSignal) -> any,
+    track: (self: ReactiveSignal) -> (),
+    write: (self: ReactiveSignal, value: any) -> (),
+    set: (self: ReactiveSignal, value: any) -> (),
+}";
+
+const REACTIVE_MEMO: &str = "export type ReactiveMemo = {
+    read: (self: ReactiveMemo) -> any,
+    peek: (self: ReactiveMemo) -> any,
+}";
+
+// The `prism.reactive` constructor sub-namespace. Installed by
+// `prism-daemon::modules::luau_reactive` against a per-Lua-state
+// `Owner`. `prism.state` / `prism.derive` (below) are the
+// document-scoped sugar over these primitives.
+const PRISM_REACTIVE: &str = "export type PrismReactive = {
+    signal: (init: any) -> ReactiveSignal,
+    memo: (body: () -> any) -> ReactiveMemo,
+    effect: (body: () -> ()) -> (),
+    batch: (body: () -> ()) -> (),
+}";
+
+// `prism.probes` — Wave G probe bus. Method-call form:
+// `prism.probes:on("name", function(payload) ... end)`.
+const PRISM_PROBES: &str = "export type PrismProbes = {
+    on: (self: PrismProbes, name: string, handler: (payload: any) -> ()) -> (),
+}";
+
+// The `prism` global. `state` returns a reactive table whose field
+// reads auto-subscribe the surrounding block; `derive` a memoised
+// signal. `scope` is host-seeded (Wave I) so it's optional. `reactive`
+// is present whenever the daemon constructor module is installed.
+const PRISM: &str = "export type Prism = {
+    state: <T>(initial: T) -> T,
+    derive: <T>(body: () -> T) -> T,
+    on_mount: (body: () -> ()) -> (),
+    on_update: (body: () -> ()) -> (),
+    on_cleanup: (body: () -> ()) -> (),
+    macro: (name: string, body: (...any) -> string) -> (),
+    dialect: (spec: { name: string, parse: (source: string) -> string }) -> (),
+    probes: PrismProbes,
+    scope: { [string]: any }?,
+    reactive: PrismReactive?,
+}";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,10 +218,30 @@ mod tests {
             "Node",
             "Rect",
             "RenderCommand",
+            "ReactiveSignal",
+            "ReactiveMemo",
+            "Prism",
+            "PrismReactive",
+            "PrismProbes",
         ] {
             assert!(
                 names.contains(&expected),
                 "missing {expected} from prism-ui-runtime luau type registry"
+            );
+        }
+    }
+
+    #[test]
+    fn prism_global_stub_declares_every_documented_member() {
+        // The `Prism` stub must declare a field for every member
+        // `install_prism_helpers` installs (PRISM_GLOBAL_MEMBERS is
+        // the shared source of truth the runtime drift gate also
+        // checks against the live table).
+        for member in PRISM_GLOBAL_MEMBERS {
+            let needle = format!("{member}:");
+            assert!(
+                PRISM.contains(&needle),
+                "Prism stub missing documented member `{member}`"
             );
         }
     }
