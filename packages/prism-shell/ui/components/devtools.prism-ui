@@ -1,0 +1,172 @@
+<!--
+  shell.devtools — IDE-mode Phase 4 / cross-cutting §4.3 Inspector / DevTools.
+
+  Single panel hosting four lenses (Document, Presence, Probes,
+  Bindings) selected by a tab strip. Each tab carries
+  `data-role="devtools-tab" data-tab-id="<lens>"` so the click router
+  flips `state.devtools.active_lens` without any per-tab handler.
+
+  The filter row is a `<input>` bound to a `TextEditor` via the
+  declarative text-input system — typing into it routes through the
+  shared `dispatch_text_input` and filters whichever lens is active.
+  When the panel's `filter-focused` flag is true the input claims
+  keystrokes; otherwise typing flows through to other services.
+
+  Body rendering is data-driven: `body.items` is a JSON array whose
+  rows render per `body.kind`. The lens-specific blocks are inlined
+  here so the panel is self-contained (no per-lens block file).
+-->
+<container
+    tag="aside"
+    direction="column"
+    width="grow"
+    height="grow"
+    padding-left="6"
+    padding-right="6"
+    padding-top="6"
+    padding-bottom="6"
+    gap="6"
+    aria-label="Inspector"
+    data:role="devtools">
+
+  <!-- Tab strip. Four tabs, each routes through the click handler
+       reading data-tab-id. The active tab gets a tint. -->
+  <container
+      direction="row"
+      gap="4"
+      height="28">
+    <container
+        for="tab in tabs"
+        id="devtools-tab-{tab.tab-id}"
+        tag="button"
+        direction="row"
+        height="grow"
+        padding-left="10"
+        padding-right="10"
+        padding-top="4"
+        padding-bottom="4"
+        style:radius="4"
+        style:background="{tab.active ? '#26000000' : '#0a000000'}"
+        style:background:hovered="#1a0060c0"
+        role="tab"
+        aria:selected="{tab.active ? 'true' : 'false'}"
+        data:role="devtools-tab"
+        data:tab-id="{tab.tab-id}">
+      <text font-size="12" style:color="#000000">{tab.label}</text>
+    </container>
+  </container>
+
+  <!-- Filter row. The filter applies to whichever lens is active;
+       empty filter shows everything. -->
+  <input
+      id="devtools-filter"
+      value="{filter}"
+      placeholder="Filter…"
+      focused="{filter-focused}"
+      caret-byte="{filter-caret}"
+      width="grow"
+      height="28"
+      font-size="12"
+      data:role="devtools-filter"/>
+
+  <!-- Body. The DSL renders a flat list per lens; each row variant
+       is inlined here. Empty list renders an empty container. -->
+  <container
+      direction="column"
+      width="grow"
+      height="grow">
+
+    <!-- Document lens: depth-encoded tree of builder nodes. -->
+    <container
+        if="{body.kind == 'document'}"
+        direction="column"
+        width="grow">
+      <container
+          for="row in body.items"
+          id="devtools-doc-row-{row.node-id}"
+          tag="div"
+          direction="row"
+          height="22"
+          padding-left="{8 + row.depth * 14}"
+          padding-right="8"
+          style:radius="3"
+          style:background:hovered="#0f0060c0"
+          role="treeitem"
+          data:role="devtools-doc-row"
+          data:target-id="{row.node-id}"
+          aria:level="{row.depth + 1}">
+        <text font-size="12" style:color="#000000">{row.label}</text>
+      </container>
+    </container>
+
+    <!-- Presence lens: one row per remote peer with a color swatch. -->
+    <container
+        if="{body.kind == 'presence'}"
+        direction="column"
+        width="grow">
+      <container
+          for="row in body.items"
+          id="devtools-peer-{row.peer-id}"
+          tag="div"
+          direction="row"
+          gap="8"
+          height="26"
+          padding-left="8"
+          padding-right="8"
+          role="listitem"
+          data:role="devtools-presence-row"
+          data:peer-id="{row.peer-id}">
+        <container
+            width="10"
+            height="10"
+            style:radius="5"
+            style:background="{row.color}"/>
+        <text font-size="12" style:color="#000000">{row.display-name}</text>
+        <text font-size="11" style:color="#88000000">{row.active-view}</text>
+      </container>
+    </container>
+
+    <!-- Probes lens: name + payload preview. Newest events first. -->
+    <container
+        if="{body.kind == 'probes'}"
+        direction="column"
+        width="grow">
+      <container
+          for="row in body.items"
+          id="devtools-probe-{row.timestamp-ms}-{row.name}"
+          tag="div"
+          direction="column"
+          padding-left="8"
+          padding-right="8"
+          padding-top="3"
+          padding-bottom="3"
+          role="listitem"
+          data:role="devtools-probe-row"
+          data:probe-name="{row.name}">
+        <text font-size="12" style:color="#000000">{row.name}</text>
+        <text font-size="10" style:color="#88000000">{row.source-node-id}</text>
+      </container>
+    </container>
+
+    <!-- Bindings lens: one row per shell binding tag. -->
+    <container
+        if="{body.kind == 'bindings'}"
+        direction="column"
+        width="grow">
+      <container
+          for="row in body.items"
+          id="devtools-binding-{row.tag}"
+          tag="div"
+          direction="row"
+          gap="6"
+          height="22"
+          padding-left="8"
+          padding-right="8"
+          role="listitem"
+          data:role="devtools-binding-row"
+          data:binding-tag="{row.tag}">
+        <text font-size="12" style:color="#000000">{row.tag}</text>
+      </container>
+    </container>
+  </container>
+</container>

@@ -142,6 +142,14 @@ type SlotAccessor = fn(&AppState) -> Value;
 /// JSON construction lives on the slot method (§19 discipline), so
 /// every closure here is a one-liner forwarder. The closure body MUST
 /// stay non-capturing so it coerces to `SlotAccessor`.
+/// IDE-mode Phase 4: the static list of built-in shell binding tags
+/// (`shell.foo` ids) the [`DevToolsSlot`](crate::state::DevToolsSlot)
+/// Bindings lens iterates. Materialised by walking [`SLOT_BINDINGS`]
+/// — same list, no second source of truth.
+pub fn builtin_binding_tags() -> Vec<&'static str> {
+    SLOT_BINDINGS.iter().map(|(id, _)| *id).collect()
+}
+
 const SLOT_BINDINGS: &[(&str, SlotAccessor)] = &[
     // Chrome slot — app frame, menu bar, status bar.
     ("shell.app-window", |s| {
@@ -172,6 +180,12 @@ const SLOT_BINDINGS: &[(&str, SlotAccessor)] = &[
     // Find-in-document overlay. Reads from `state.search`, which the
     // `SearchService` mutates through the shared text-input dispatch.
     ("shell.search-overlay", |s| s.search.search_overlay_props()),
+    // IDE-mode Phase 4 / cross-cutting §4.3 — Inspector / DevTools.
+    // Walks the builder document for the Document lens; the other
+    // three lenses read pre-populated buffers off `state.devtools`.
+    ("shell.devtools", |s| {
+        s.devtools.devtools_props(&s.canvas.document)
+    }),
     ("shell.help-tooltip", |s| s.overlay.help_tooltip_props()),
     // Builder slot — inspector / properties / signals / schema. All
     // four read from the same `selection`-driven model, so cross-panel

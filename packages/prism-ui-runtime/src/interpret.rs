@@ -286,10 +286,7 @@ impl MemoCache {
     /// this pass. Empty result ⇒ the spliced render addressed every
     /// dirty NodeId and is safe to present; non-empty ⇒ the shell
     /// must fall back to a full walk this frame.
-    pub fn untouched<'a>(
-        &self,
-        dirty: impl IntoIterator<Item = &'a String>,
-    ) -> Vec<String> {
+    pub fn untouched<'a>(&self, dirty: impl IntoIterator<Item = &'a String>) -> Vec<String> {
         dirty
             .into_iter()
             .filter(|d| !self.touched.contains(*d))
@@ -1483,7 +1480,9 @@ fn lower_element(el: &Element, scope: &LowerScope) -> Vec<Node> {
                 }
                 let lowered = lower_element_body(el, scope);
                 let mut cache = cache_handle.borrow_mut();
-                cache.entries.insert(id.clone(), (Vec::new(), lowered.clone()));
+                cache
+                    .entries
+                    .insert(id.clone(), (Vec::new(), lowered.clone()));
                 cache.touched.insert(id);
                 return lowered;
             }
@@ -1559,15 +1558,16 @@ fn extract_memo_and_id(
     el: &Element,
     scope: &LowerScope,
 ) -> Option<(Vec<serde_json::Value>, String)> {
-    let memo = el.attributes.iter().find_map(|attr| {
-        match attr.name.namespace {
+    let memo = el
+        .attributes
+        .iter()
+        .find_map(|attr| match attr.name.namespace {
             AttributeNamespace::Bare if attr.name.local == "memo" => {
                 let body = attribute_string(&attr.value).unwrap_or_default();
                 Some(eval_memo_deps(&body, scope))
             }
             _ => None,
-        }
-    })?;
+        })?;
     let id = resolve_element_id(el, scope)?;
     Some((memo, id))
 }

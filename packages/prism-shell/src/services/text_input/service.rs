@@ -140,7 +140,11 @@ pub fn builtin_declarations() -> &'static [TextInputDeclaration] {
     &BUILTINS
 }
 
-static BUILTINS: [TextInputDeclaration; 2] = [palette_declaration(), search_declaration()];
+static BUILTINS: [TextInputDeclaration; 3] = [
+    palette_declaration(),
+    search_declaration(),
+    devtools_filter_declaration(),
+];
 
 const fn palette_declaration() -> TextInputDeclaration {
     TextInputDeclaration::builder(
@@ -181,6 +185,29 @@ const fn search_declaration() -> TextInputDeclaration {
         ])
         .modal()
         .build()
+}
+
+/// IDE-mode Phase 4 — the DevTools panel's filter field.
+///
+/// Sibling to the palette + search declarations, but with non-modal
+/// semantics: when the filter has focus, typing flows into the
+/// editor, but the panel doesn't swallow global shortcuts. Escape
+/// drops focus (closing the filter loop); commit is a no-op (the
+/// filter applies live, no Enter needed).
+const fn devtools_filter_declaration() -> TextInputDeclaration {
+    TextInputDeclaration::builder(
+        "devtools-filter",
+        |s| &s.devtools.filter,
+        |s| &mut s.devtools.filter,
+    )
+    .active_when(|s| s.devtools.filter_focused)
+    .on_cancel(devtools_filter_blur)
+    .passthrough_plain(&["escape"])
+    .build()
+}
+
+fn devtools_filter_blur(ctx: &mut MutCtx<'_>) {
+    ctx.state.devtools.filter_focused = false;
 }
 
 // Palette hooks ------------------------------------------------------

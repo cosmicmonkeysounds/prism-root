@@ -74,6 +74,12 @@ pub enum BuiltinScene {
     /// `shell.explorer` block's new `data-role="explorer-row"`
     /// rendering with `data-path` and `data-kind` attributes.
     IdeExplorer,
+    /// **IDE-mode Phase 4 / cross-cutting §4.3** — unified Inspector
+    /// / DevTools panel with seeded probe events + presence peers.
+    /// Active lens defaults to Probes so the buffer is visible in a
+    /// before/after diff. Exercises the `shell.devtools` block + tab
+    /// strip + lens routing end-to-end.
+    IdeDevTools,
 }
 
 impl BuiltinScene {
@@ -91,6 +97,7 @@ impl BuiltinScene {
         Self::CommandPalette,
         Self::SearchOverlay,
         Self::IdeExplorer,
+        Self::IdeDevTools,
     ];
 
     /// Kebab-case CLI identifier — the bytes the user types after
@@ -107,6 +114,7 @@ impl BuiltinScene {
             Self::CommandPalette => "command-palette",
             Self::SearchOverlay => "search-overlay",
             Self::IdeExplorer => "ide-explorer",
+            Self::IdeDevTools => "ide-devtools",
         }
     }
 
@@ -223,6 +231,47 @@ impl Shell {
                 search.query.place_caret_at(1, false);
                 search.query.place_caret_at(4, true);
                 search.selected_index = 0;
+            }
+            BuiltinScene::IdeDevTools => {
+                use crate::state::{DevToolsLens, PresencePeer, ProbeEvent};
+                let mut guard = self.inner.borrow_mut();
+                let g = &mut *guard;
+                // Surface the panel in the active workflow page so the
+                // dock-panel walker actually emits the `shell.devtools`
+                // tag. Without this, the panel binding is registered
+                // but never rendered (no element references the tag).
+                g.state.workspace.workspace.ensure_panel_visible("devtools");
+                g.state.devtools.switch_lens(DevToolsLens::Probes);
+                // Seed three probes — the buffer is rendered newest
+                // first, so this also exercises the FIFO order.
+                for (i, name) in ["render", "click", "render"].iter().enumerate() {
+                    g.state.devtools.record_probe(ProbeEvent {
+                        name: (*name).into(),
+                        payload: serde_json::json!({ "frame": i }),
+                        timestamp_ms: 1_000 + i as u64,
+                        source_node_id: Some("demo-heading".into()),
+                    });
+                }
+                // Seed two remote peers — distinct colors so the
+                // presence-lens swatch render path is exercised.
+                g.state.devtools.presence = vec![
+                    PresencePeer {
+                        peer_id: "peer-a".into(),
+                        display_name: "Alice".into(),
+                        color: "#4a90e2".into(),
+                        selection: Some("demo-heading".into()),
+                        active_view: Some("builder".into()),
+                        last_seen_ms: 10_000,
+                    },
+                    PresencePeer {
+                        peer_id: "peer-b".into(),
+                        display_name: "Bob".into(),
+                        color: "#e25a4a".into(),
+                        selection: None,
+                        active_view: Some("code-editor".into()),
+                        last_seen_ms: 9_500,
+                    },
+                ];
             }
             BuiltinScene::IdeExplorer => {
                 use crate::state::{FileKind, FileNode};

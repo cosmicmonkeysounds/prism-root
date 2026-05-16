@@ -100,6 +100,7 @@ pub fn register_builtins(catalog: &mut DockCatalog) {
     catalog.register(PanelKind::NAVIGATION);
     catalog.register(PanelKind::SCHEMA_DESIGNER);
     catalog.register(PanelKind::DOCS);
+    catalog.register(PanelKind::DEVTOOLS);
 }
 
 #[cfg(test)]

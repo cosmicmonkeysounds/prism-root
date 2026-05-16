@@ -23,9 +23,7 @@ use prism_ui_runtime::layout::{HitRect, Node as UiNode, Surface, Viewport};
 use crate::components::{register_document_builtins, ShellComponentRegistry};
 use crate::events::dispatch_event;
 use crate::props::{PropCtx, ShellPropBindings};
-use crate::render::{
-    default_app_skeleton, render_tree_with, RenderCaches, Skeleton, Stylesheet,
-};
+use crate::render::{default_app_skeleton, render_tree_with, RenderCaches, Skeleton, Stylesheet};
 use crate::render_scope::RenderScope;
 use crate::services::{
     Clipboard, LuauHost, MutCtx, NoopLuauHost, OsVfs, ServiceRegistry, UndoStack, Vfs,

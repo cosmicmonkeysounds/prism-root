@@ -179,6 +179,20 @@ impl PanelKind {
         allow_multiple: false,
         tag: Some("shell.docs-view"),
     };
+    /// **IDE-mode Phase 4 / cross-cutting §4.3** — runtime
+    /// inspector + DevTools surface. Four lenses (Document /
+    /// Presence / Probes / Bindings) packed into one tabbed panel.
+    /// Sister to `INSPECTOR` (which is the canvas-node tree) — this
+    /// one is the runtime-state lens for live debugging.
+    pub const DEVTOOLS: PanelKind = PanelKind {
+        id: "devtools",
+        label: "Inspector",
+        icon_hint: "inspector",
+        min_width: 240.0,
+        min_height: 160.0,
+        allow_multiple: false,
+        tag: Some("shell.devtools"),
+    };
 
     /// Owned `PanelId` (kebab-case `String`). Equivalent to `id.to_string()`
     /// — kept as a method so the `PanelKind::BUILDER.panel_id()` call

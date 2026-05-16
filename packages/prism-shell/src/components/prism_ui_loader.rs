@@ -999,6 +999,39 @@ fn search_overlay_signals() -> Vec<SignalDef> {
     ])
 }
 
+fn devtools_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text(
+            "active-lens",
+            "Active lens (document/presence/probes/bindings)",
+        ),
+        FieldSpec::text("tabs", "Tab strip (JSON array)"),
+        FieldSpec::text("body", "Active-lens body (JSON object)"),
+        FieldSpec::text("filter", "Filter query"),
+        FieldSpec::integer(
+            "filter-caret",
+            "Caret byte offset in the filter field",
+            NumericBounds::min(0.0),
+        )
+        .with_default(Value::from(0.0)),
+        FieldSpec::boolean("filter-focused", "Filter field has keyboard focus")
+            .with_default(Value::Bool(false)),
+    ]
+}
+
+fn devtools_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new(
+            "lens-changed",
+            "User switched between Document/Presence/Probes/Bindings.",
+        ),
+        SignalDef::new(
+            "probe-fired",
+            "A `prism.probes:on` registration matched a runtime event.",
+        ),
+    ])
+}
+
 fn component_picker_schema() -> Vec<FieldSpec> {
     vec![
         FieldSpec::boolean("open", "Open").with_default(Value::Bool(false)),
@@ -1686,6 +1719,15 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     )
     .schema(search_overlay_schema)
     .signals(search_overlay_signals),
+    // IDE-mode Phase 4 / cross-cutting §4.3 — unified
+    // Inspector / DevTools surface. Four lenses (Document, Presence,
+    // Probes, Bindings) in one tabbed panel.
+    PrismUiSpec::new(
+        "shell.devtools",
+        include_str!("../../ui/components/devtools.prism-ui"),
+    )
+    .schema(devtools_schema)
+    .signals(devtools_signals),
 ];
 
 #[cfg(test)]

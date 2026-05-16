@@ -374,6 +374,14 @@ const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
     // no-op until folding lands (the walker emits a flat depth-encoded
     // list today, so every file is already visible).
     ("explorer-row", handle_explorer_row_click),
+    // **IDE-mode Phase 4** — DevTools panel routes. Tabs switch the
+    // active lens; clicking the filter input focuses it so the
+    // declarative text-input dispatch claims keystrokes; clicking a
+    // document-row routes to canvas selection so the lens doubles as
+    // a jump-to-selection surface.
+    ("devtools-tab", handle_devtools_tab_click),
+    ("devtools-filter", handle_devtools_filter_click),
+    ("devtools-doc-row", handle_devtools_doc_row_click),
     ("field-edit", handle_field_edit_click),
     ("workflow-page-button", handle_workflow_page_button_click),
     ("dock-tab", handle_dock_tab_click),
@@ -536,6 +544,48 @@ fn handle_explorer_row_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> 
     // they just opened.
     g.state.code_editor_focused = true;
     true
+}
+
+/// IDE-mode Phase 4: tab click on the DevTools panel. Reads the
+/// `data-tab-id` attribute and switches `state.devtools.active_lens`
+/// through `DevToolsLens::from_id`. Unknown ids are ignored.
+fn handle_devtools_tab_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(tab_id) = attr_value(hit, "data-tab-id") else {
+        return false;
+    };
+    let Some(lens) = crate::state::DevToolsLens::from_id(tab_id) else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    guard.state.devtools.switch_lens(lens);
+    true
+}
+
+/// IDE-mode Phase 4: clicking the DevTools filter input focuses it
+/// so the declarative `text_input::dispatch_text_input` claims
+/// keystrokes for the filter `TextEditor`. The filter declaration's
+/// `active_when` predicate gates on this flag.
+fn handle_devtools_filter_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRect) -> bool {
+    let mut guard = inner.borrow_mut();
+    guard.state.devtools.filter_focused = true;
+    // Clear other modal-overlay focuses so this declaration wins the
+    // text-input race.
+    guard.state.overlay.command_palette.open = false;
+    guard.state.search.open = false;
+    true
+}
+
+/// IDE-mode Phase 4: clicking a document-lens row routes the
+/// `data-target-id` to canvas selection — the inspector doubles as a
+/// jump-to-selection surface for the live builder tree.
+fn handle_devtools_doc_row_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(target) = attr_value(hit, "data-target-id") else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let registry = g.registry.as_component_registry();
+    g.state.select_node(target, Some(registry))
 }
 
 /// Extension → language tag for the code editor. Matches the lookup

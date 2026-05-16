@@ -357,10 +357,10 @@ mod tests {
             out.push(evt);
         }
         assert_eq!(out.len(), 3, "host-prss, skeleton, flux-prss");
-        assert!(out.iter().any(|e| matches!(
-            &e.target,
-            ReloadTarget::Stylesheet { app_id: None }
-        ) && e.source == "host-v2"));
+        assert!(out.iter().any(
+            |e| matches!(&e.target, ReloadTarget::Stylesheet { app_id: None })
+                && e.source == "host-v2"
+        ));
         assert!(out.iter().any(|e| matches!(
             &e.target,
             ReloadTarget::Stylesheet { app_id: Some(id) } if id == "flux"

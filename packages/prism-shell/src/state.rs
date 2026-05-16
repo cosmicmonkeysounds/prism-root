@@ -113,6 +113,12 @@ pub struct AppState {
     pub canvas: CanvasSlot,
     pub project: ProjectSlot,
     pub search: SearchSlot,
+    /// **IDE-mode Phase 4 / cross-cutting §4.3** — DevTools / Inspector
+    /// panel state. Four lenses (Document / Presence / Probes / Bindings)
+    /// rendered through `shell.devtools`. The probe stream and presence
+    /// list are append-only buffers the host populates; the bindings
+    /// snapshot is captured on demand by the binding closure.
+    pub devtools: DevToolsSlot,
     /// Active text-input focus for the property-row field-edit path
     /// (`text` / `color` / `file` kinds). `None` means no field is
     /// editing — the property-row click sets it, `Enter` commits and
@@ -2075,6 +2081,272 @@ impl ProjectSlot {
         let mark = if self.dirty { " *" } else { "" };
         format!(" — {label}{mark}")
     }
+}
+
+// ── devtools / inspector ──────────────────────────────────────────
+
+/// IDE-mode Phase 4 — `shell.devtools` panel state.
+///
+/// The panel hosts four lenses; only one renders at a time. The
+/// `active_lens` field drives which one. The probe + presence buffers
+/// are append-only history (capped FIFO) populated by the host:
+/// future router wiring will fire probes off `data-probe-*` pointer
+/// hits; future presence service ingest will push remote-peer
+/// snapshots from the `PresenceManager` event bus. Today both are
+/// seeded by tests + scenes so the panel renders with realistic data.
+///
+/// The `filter` field is a single-line [`TextEditor`] routed through
+/// the declarative text-input system (one
+/// [`TextInputDeclaration`](crate::services::text_input::TextInputDeclaration)
+/// row) — it filters the probe / binding lists by substring.
+#[derive(Clone, Debug, Default)]
+pub struct DevToolsSlot {
+    pub active_lens: DevToolsLens,
+    /// Last-N probe events. New events push to the back; the buffer
+    /// caps at [`Self::PROBE_BUFFER_LIMIT`].
+    pub probes: std::collections::VecDeque<ProbeEvent>,
+    /// Remote peer presence snapshots. The presence-service ingest
+    /// (future) replaces stale entries by `peer_id`; today the buffer
+    /// is whatever the scene seeded.
+    pub presence: Vec<PresencePeer>,
+    /// Filter substring — applied to probe names + binding tags +
+    /// presence display names. Empty = no filtering.
+    pub filter: prism_ui_runtime::editor::TextEditor,
+    /// When `true` the panel is in keyboard-focus (typing routes to
+    /// the filter field through the declarative dispatch). Flipped by
+    /// the filter input's click route.
+    pub filter_focused: bool,
+    /// Cached snapshot of `ShellPropBindings::snapshot` at the last
+    /// render. The bindings lens reads from this. Populated by the
+    /// `shell.devtools` prop binding closure each frame.
+    pub binding_snapshots: indexmap::IndexMap<String, serde_json::Value>,
+}
+
+impl DevToolsSlot {
+    /// FIFO cap for the probe stream. Keeps memory bounded; recent
+    /// events stay visible while older ones drop off the back.
+    pub const PROBE_BUFFER_LIMIT: usize = 200;
+
+    /// Record one probe event. Appends to the buffer, evicting the
+    /// oldest if we'd cross the limit. Future event-router wiring
+    /// calls this with the live (name, payload, source) tuple.
+    pub fn record_probe(&mut self, event: ProbeEvent) {
+        self.probes.push_back(event);
+        while self.probes.len() > Self::PROBE_BUFFER_LIMIT {
+            self.probes.pop_front();
+        }
+    }
+
+    /// Clear every recorded probe event. Bound to a
+    /// `devtools.clear-probes` command.
+    pub fn clear_probes(&mut self) {
+        self.probes.clear();
+    }
+
+    /// Switch lenses. Side-effect-free — the binding closure does the
+    /// rendering work.
+    pub fn switch_lens(&mut self, lens: DevToolsLens) {
+        self.active_lens = lens;
+    }
+
+    /// Filter text projected from the underlying editor buffer.
+    pub fn filter_text(&self) -> &str {
+        self.filter.text()
+    }
+
+    /// JSON snapshot for `shell.devtools`. Renders the tab strip,
+    /// the active lens body, and the filter field. Each lens is a
+    /// data-driven list — the DSL's `for` loop walks the array.
+    pub fn devtools_props(&self, doc: &prism_builder::BuilderDocument) -> Value {
+        let filter = self.filter_text().to_lowercase();
+        let active = self.active_lens.id();
+        let tabs = json!([
+            { "tab-id": "document",  "label": "Document",  "active": active == "document" },
+            { "tab-id": "presence",  "label": "Presence",  "active": active == "presence" },
+            { "tab-id": "probes",    "label": "Probes",    "active": active == "probes" },
+            { "tab-id": "bindings",  "label": "Bindings",  "active": active == "bindings" },
+        ]);
+        let body = match self.active_lens {
+            DevToolsLens::Document => json!({
+                "kind": "document",
+                "items": Value::Array(flatten_doc_tree(doc.root.as_ref())),
+            }),
+            DevToolsLens::Presence => json!({
+                "kind": "presence",
+                "items": Value::Array(self.presence_items(&filter)),
+            }),
+            DevToolsLens::Probes => json!({
+                "kind": "probes",
+                "items": Value::Array(self.probe_items(&filter)),
+            }),
+            DevToolsLens::Bindings => json!({
+                "kind": "bindings",
+                "items": Value::Array(self.binding_items(&filter)),
+            }),
+        };
+        json!({
+            "active-lens": active,
+            "tabs": tabs,
+            "body": body,
+            "filter": self.filter_text(),
+            "filter-caret": self.filter.caret_byte(),
+            "filter-focused": self.filter_focused,
+        })
+    }
+
+    fn presence_items(&self, filter: &str) -> Vec<Value> {
+        self.presence
+            .iter()
+            .filter(|p| filter.is_empty() || p.display_name.to_lowercase().contains(filter))
+            .map(|p| {
+                json!({
+                    "peer-id": p.peer_id,
+                    "display-name": p.display_name,
+                    "color": p.color,
+                    "selection": p.selection.clone().unwrap_or_default(),
+                    "active-view": p.active_view.clone().unwrap_or_default(),
+                    "last-seen-ms": p.last_seen_ms,
+                })
+            })
+            .collect()
+    }
+
+    fn probe_items(&self, filter: &str) -> Vec<Value> {
+        self.probes
+            .iter()
+            .rev() // newest first
+            .filter(|e| filter.is_empty() || e.name.to_lowercase().contains(filter))
+            .map(|e| {
+                json!({
+                    "name": e.name,
+                    "payload": e.payload,
+                    "timestamp-ms": e.timestamp_ms,
+                    "source-node-id": e.source_node_id.clone().unwrap_or_default(),
+                })
+            })
+            .collect()
+    }
+
+    fn binding_items(&self, filter: &str) -> Vec<Value> {
+        // The Bindings lens enumerates every registered shell binding
+        // tag from `crate::props::builtin_binding_tags()` (the
+        // SLOT_BINDINGS table). The cached snapshot (if populated by
+        // a future host hook) wins; otherwise the value row is empty
+        // — the tag-list view alone is enough for "are my bindings
+        // even registered" debugging.
+        crate::props::builtin_binding_tags()
+            .into_iter()
+            .filter(|tag| filter.is_empty() || tag.to_lowercase().contains(filter))
+            .map(|tag| {
+                let value = self
+                    .binding_snapshots
+                    .get(tag)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                json!({
+                    "tag": tag,
+                    "value": value,
+                })
+            })
+            .collect()
+    }
+}
+
+/// Which inspector lens is currently rendered. Mirrors the four-tab
+/// surface: `Document` = CRDT / builder tree, `Presence` = remote
+/// peers, `Probes` = probe event stream, `Bindings` = live shell
+/// binding snapshots.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DevToolsLens {
+    #[default]
+    Document,
+    Presence,
+    Probes,
+    Bindings,
+}
+
+impl DevToolsLens {
+    /// Stable kebab-case id matching the tab data attribute.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Document => "document",
+            Self::Presence => "presence",
+            Self::Probes => "probes",
+            Self::Bindings => "bindings",
+        }
+    }
+
+    /// Parse from a `data-tab-id` attribute value. Returns `None` for
+    /// unknown ids so the click router can short-circuit safely.
+    pub fn from_id(s: &str) -> Option<Self> {
+        match s {
+            "document" => Some(Self::Document),
+            "presence" => Some(Self::Presence),
+            "probes" => Some(Self::Probes),
+            "bindings" => Some(Self::Bindings),
+            _ => None,
+        }
+    }
+}
+
+/// One probe event captured from the runtime / router. `name` is the
+/// `prism.probes:on(name, …)` registration key; `payload` is the
+/// JSON value the firing site emitted; `source_node_id` is the
+/// `data-probe-source` (or hit-tested node id) when the event was
+/// fired from a pointer interaction.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProbeEvent {
+    pub name: String,
+    pub payload: serde_json::Value,
+    pub timestamp_ms: u64,
+    pub source_node_id: Option<String>,
+}
+
+/// Snapshot of one remote peer's presence. Future
+/// `PresenceService::ingest` will replace these per
+/// `prism_core::network::presence::PresenceChange` event.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PresencePeer {
+    pub peer_id: String,
+    pub display_name: String,
+    /// CSS-ish color string (e.g. `"#4a90e2"`). The presence overlay
+    /// uses this to tint each peer's cursor; the devtools panel uses
+    /// it for the swatch in the peer row.
+    pub color: String,
+    /// Optional selected canvas node id — mirrors the local
+    /// `state.canvas.selection`.
+    pub selection: Option<String>,
+    /// Optional active panel / view tag, for "which lens is the peer
+    /// looking at" awareness.
+    pub active_view: Option<String>,
+    pub last_seen_ms: u64,
+}
+
+/// Flatten a builder document into a depth-encoded list of rows.
+/// Reused by the Document lens; matches the inspector-tree row shape
+/// (label / id / depth) so the same row-render block can be reused.
+fn flatten_doc_tree(root: Option<&prism_builder::Node>) -> Vec<Value> {
+    fn walk(node: &prism_builder::Node, depth: u32, out: &mut Vec<Value>) {
+        let label = if node.id.is_empty() {
+            node.component.clone()
+        } else {
+            format!("{} · {}", node.component, node.id)
+        };
+        out.push(json!({
+            "node-id": node.id,
+            "label": label,
+            "depth": depth,
+            "component": node.component,
+        }));
+        for child in &node.children {
+            walk(child, depth + 1, out);
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(root) = root {
+        walk(root, 0, &mut out);
+    }
+    out
 }
 
 // ── search ────────────────────────────────────────────────────────

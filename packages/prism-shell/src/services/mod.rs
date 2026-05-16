@@ -35,6 +35,7 @@ pub mod base;
 pub mod builder;
 pub mod clipboard;
 pub mod code_editor;
+pub mod devtools;
 pub mod editor_files;
 pub mod field_focus;
 pub mod help;
@@ -55,6 +56,7 @@ pub use base::ShellBaseService;
 pub use builder::BuilderService;
 pub use clipboard::{Clipboard, ClipboardService};
 pub use code_editor::CodeEditorService;
+pub use devtools::DevToolsService;
 pub use editor_files::EditorFilesService;
 pub use field_focus::FieldFocusService;
 pub use help::HelpService;
@@ -613,6 +615,12 @@ pub fn register_shell_services(reg: &mut ServiceRegistry) {
     reg.add_scoped(Universal, MenuService);
     reg.add_scoped(App, SignalsService);
     reg.add_scoped(App, LuauService);
+    // IDE-mode Phase 4 — DevTools / Inspector. Contributes the
+    // `devtools.{show-*, clear-probes}` commands. Event routing for
+    // the filter field is declarative (see
+    // `text_input::builtin_declarations`); tab clicks route through
+    // the pointer-route table in `events.rs`.
+    reg.add_scoped(Universal, DevToolsService);
 }
 
 // ── declarative `cmd!` macro ──────────────────────────────────────
