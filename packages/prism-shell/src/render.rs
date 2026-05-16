@@ -416,7 +416,18 @@ pub fn render_tree_with(
         // (skeleton + per-block) resolves `tokens.*` uniformly. Boot
         // tokens are the workspace default; later waves swap for a
         // user-customised palette through a settings hook.
-        .with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS);
+        .with_design_tokens(&prism_core::design_tokens::DEFAULT_TOKENS)
+        // **Wave E.3 (§7.8)** — bundled `markdown` / `mermaid` /
+        // `sql-view` dialects. Prepended (runtime-side) only for
+        // documents that actually use a `<language>` block, so a
+        // plain skeleton pays nothing; a `<markdown>` block resolves
+        // without the author hand-wiring `prism.dialect{…}`.
+        .with_builtin_scripts(
+            prism_builder::builtin_dialect_sources()
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        );
     if let Some(cache) = memo_cache {
         scope = scope.with_memo_cache(cache);
     }

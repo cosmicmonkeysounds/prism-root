@@ -31,6 +31,7 @@ use prism_core::language::prism_ui::{parse, AttributeValue, Document, Element, N
 
 pub mod prss_hash;
 pub mod prss_watch;
+pub mod prui_doc;
 pub mod template_hash;
 pub mod template_watch;
 pub use prss_hash::{
@@ -39,6 +40,7 @@ pub use prss_hash::{
     PrssTokenBucket,
 };
 pub use prss_watch::{PrssChange, PrssFingerprintCache};
+pub use prui_doc::{PruiDocCache, PruiDocChange, StyleDelta};
 pub use template_hash::{
     collect_literal_slots, compare_fingerprints, full_hash, structural_hash, LiteralPatch,
     LiteralSlot, PatchOutcome, TemplateFingerprint,

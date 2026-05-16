@@ -577,13 +577,21 @@ pub fn register_shell_services(reg: &mut ServiceRegistry) {
     // chord-style command shortcuts that the editor itself doesn't
     // claim.
     reg.add_scoped(Universal, EditorFilesService);
-    // §25 — `CommandPaletteService` MUST register ahead of `InputService`
-    // so its modal-capture `on_event` (returns `Handled` while open)
-    // short-circuits Ctrl+S / Ctrl+F / etc. before InputService can
-    // resolve them. Same constraint applies to `SearchService` — when
-    // the find overlay is open, Ctrl+S must NOT save the doc.
+    // §25 — `CommandPaletteService` + `SearchService` keep their
+    // command rows (palette.open / search.next / …) but their event
+    // handling moved to declarations on `DeclarativeTextInputService`.
+    // The single declarative service handles every modal-overlay
+    // text input through one slice of `TextInputDeclaration`s — the
+    // §25 modal-capture invariant is now expressed declaratively
+    // (`TextInputDeclaration::modal_capture`) rather than per-service.
     reg.add_scoped(Universal, CommandPaletteService);
     reg.add_scoped(Universal, SearchService);
+    reg.add_scoped(
+        Universal,
+        text_input::DeclarativeTextInputService::with_declarations(
+            text_input::builtin_declarations(),
+        ),
+    );
     reg.add_scoped(Universal, InputService::with_defaults());
     reg.add_scoped(Universal, SelectionService);
     // DSL self-bootstrap Loop 3: `App`-scoped services are dropped by
@@ -598,10 +606,6 @@ pub fn register_shell_services(reg: &mut ServiceRegistry) {
     // project-aware apps mount the explorer panel).
     reg.add_scoped(Universal, PersistenceService);
     reg.add_scoped(App, ProjectService);
-    // (SearchService moved ahead of InputService — see comment above
-    // the CommandPalette registration. The §26 "IO services" cohort
-    // still owns the find shortcut, but the modal capture has to
-    // win the fan-out race with InputService.)
     // §27 — cross-service services. `Help` + `Menu` are universal
     // (every app surfaces them); `Signals` + `Luau` are app-scoped
     // (signal-connections / .luau-script-bearing apps).

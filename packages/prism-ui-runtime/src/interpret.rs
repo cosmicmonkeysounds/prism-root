@@ -204,6 +204,14 @@ pub struct LowerScope {
     /// control-flow / slot expansion; the inner Vec is cloned only
     /// when the chain extends.
     class_chain: Arc<Vec<Vec<String>>>,
+    /// **Wave E.3 (`prui-luau-fusion.md` §7.8)** — host-supplied
+    /// builtin Luau sources (bundled dialect / macro registrations,
+    /// e.g. `prism_builder::builtin_dialect_sources()`). Prepended as
+    /// flat modules ahead of every document's own `<script>` blocks
+    /// so `<markdown>` / `~sql{…}` resolve without the author wiring
+    /// `prism.dialect{…}` by hand. `Arc`-cheap to fork; empty on the
+    /// bare `interpret()` path (no builtins, same as no resolver).
+    builtin_scripts: Arc<Vec<String>>,
     /// **Wave A (`prui-luau-fusion.md` §7.1)** — the per-document
     /// Luau state harvested from `<script>` blocks. When
     /// set, expression-slot identifier lookups and call resolution
@@ -304,6 +312,20 @@ impl LowerScope {
     /// **Wave H** — borrow the installed import resolver, if any.
     pub fn import_resolver(&self) -> Option<&Arc<dyn ImportResolver>> {
         self.import_resolver.as_ref()
+    }
+
+    /// **Wave E.3** — install host-supplied builtin Luau sources
+    /// (bundled dialect / macro registrations). They run as flat
+    /// modules ahead of the document's own `<script>` blocks.
+    pub fn with_builtin_scripts(mut self, scripts: Vec<String>) -> Self {
+        self.builtin_scripts = Arc::new(scripts);
+        self
+    }
+
+    /// **Wave E.3** — the installed builtin Luau sources (empty by
+    /// default).
+    pub fn builtin_scripts(&self) -> &[String] {
+        &self.builtin_scripts
     }
 
     /// Install a tag-keyed map of pre-lowered children. When the
@@ -851,6 +873,21 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
                 }
             }
         }
+        // **Wave E.3 (§7.8)** — prepend host-supplied builtin
+        // dialect/macro registrations *only* when the document
+        // actually uses a dialect (`<language>` / desugared `~x{…}`
+        // sigil). A plain document never pays for a Lua state just
+        // because builtins are installed; a `<markdown>` document
+        // gets `prism.dialect{…}` registered without hand-wiring.
+        if !scope.builtin_scripts().is_empty() && document_uses_dialect(&document.nodes) {
+            let mut prepended: Vec<crate::luau_scope::LuauModule> = scope
+                .builtin_scripts()
+                .iter()
+                .map(|s| crate::luau_scope::LuauModule::flat(s.clone()))
+                .collect();
+            prepended.append(&mut modules);
+            modules = prepended;
+        }
         // **Wave B** — a script-less document can still use closure
         // builtins / pipes (`for="t in tasks | filter(|t| …)"`).
         // Those need a Lua state to compile the closure in, so
@@ -1177,6 +1214,17 @@ fn resolve_require_graph(roots: &[&str], res: &dyn ImportResolver) -> Vec<(Strin
 /// interpolations, control-flow predicates) — never literal text
 /// runs — and strips `||` first so a plain logical-or never
 /// triggers a Lua state.
+/// **Wave E.3 (§7.8)** — does the document contain a `<language>`
+/// element (the desugar target of a `~name{…}` sigil too)? Gates
+/// whether host builtin dialect scripts are worth a Lua state.
+#[cfg(feature = "luau")]
+fn document_uses_dialect(nodes: &[AstNode]) -> bool {
+    nodes.iter().any(|n| match n {
+        AstNode::Element(el) => el.tag == "language" || document_uses_dialect(&el.children),
+        _ => false,
+    })
+}
+
 #[cfg(feature = "luau")]
 fn document_uses_luau_expr(nodes: &[AstNode]) -> bool {
     fn expr_has_sigil(body: &str) -> bool {
@@ -9650,6 +9698,40 @@ mod tests {
         let texts = text_contents(&nodes);
         assert!(texts.contains(&"- first".to_string()), "{texts:?}");
         assert!(texts.contains(&"- second".to_string()), "{texts:?}");
+    }
+
+    /// **Wave E.3 (§7.8)** — a document with *no* `<script>` block
+    /// still resolves `<language>` when the host installs a builtin
+    /// dialect via `LowerScope::with_builtin_scripts`. Also exercises
+    /// the enriched `prui_ast.column` / `prui_ast.text` constructors.
+    #[cfg(feature = "luau")]
+    #[test]
+    fn builtin_dialect_scripts_resolve_without_a_document_script() {
+        let builtin = r#"
+prism.dialect {
+  name = "md",
+  parse = function(source)
+    local kids = {}
+    for line in (tostring(source) .. "\n"):gmatch("([^\n]*)\n") do
+      local t = line:gsub("^%s+", ""):gsub("%s+$", "")
+      if t ~= "" then kids[#kids + 1] = prui_ast.text(t) end
+    end
+    return prui_ast.column { gap = 8, children = kids }
+  end,
+}
+"#;
+        let scope = LowerScope::default().with_builtin_scripts(vec![builtin.to_string()]);
+        // No `<script>` anywhere — only the host-supplied builtin.
+        let src = "<language name=\"md\">\nalpha\nbeta\n</language>";
+        let nodes = interpret_with_scope(src, &scope).unwrap();
+        let texts = text_contents(&nodes);
+        assert!(texts.contains(&"alpha".to_string()), "{texts:?}");
+        assert!(texts.contains(&"beta".to_string()), "{texts:?}");
+
+        // A plain document (no `<language>`) must NOT pay for a Lua
+        // state just because builtins are installed.
+        let plain = interpret_with_scope("<container><text>x</text></container>", &scope).unwrap();
+        assert_eq!(text_contents(&plain), vec!["x".to_string()]);
     }
 
     /// An unregistered dialect renders nothing (graceful) rather

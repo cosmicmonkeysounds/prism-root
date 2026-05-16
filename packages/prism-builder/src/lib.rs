@@ -17,6 +17,7 @@ pub mod block;
 pub mod color;
 pub mod component;
 pub mod core_widget;
+pub mod dialects;
 pub mod document;
 pub mod facet;
 pub mod html;
@@ -57,6 +58,7 @@ pub use block::{
 };
 pub use component::{Component, ComponentId, RenderError};
 pub use core_widget::{collect_all_contributions, register_core_widgets, CoreWidgetBlock};
+pub use dialects::builtin_dialect_sources;
 pub use document::{BuilderDocument, Node, NodeId};
 pub use facet::{
     apply_aggregate, apply_scalar_bindings, collect_expression_fields, evaluate_calculations,

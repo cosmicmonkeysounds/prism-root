@@ -38,8 +38,9 @@ H/I partial, 2026-05-15.** Runtime-complete: (A) colocated
 inline `<style>` + `<import>`/`ImportResolver` + FS
 sibling-pairing host resolver + **tier-2 named Luau module
 imports + tier-3 transitive `require` (§5.9) + `prism new
-widget` scaffold** landed; fingerprint-cache (H.4) is the only
-Wave-H follow-up; (I) `prism.scope` value bridge landed,
+widget` scaffold + H.4 inline-block fingerprint keys** landed —
+Wave H complete bar the broader Phase-10 hot-reload wiring;
+(I) `prism.scope` value bridge landed,
 the LSP / `luau-analyze` / `prism lint --types` / Inspector
 typing is external-tooling and intentionally not faked. See §9
 Waves A–I for as-built notes. Cross-wave deferrals:
@@ -52,7 +53,9 @@ animator, and bundled `prism-builder` dialect files.
 **Related docs:** `prui-reference.md` (the surface this extends),
 `prss-reference.md` (the stylesheet half), `luau-integration-plan.md`
 (the host-side Luau plumbing this rides on), `dioxus-inspiration.md`
-(fingerprint cache + reactive substrate).
+(fingerprint cache + reactive substrate),
+`prism-cross-cutting-systems.md` (the substrate roadmap — what to
+build next now the authoring surface is complete).
 
 ---
 
@@ -1728,7 +1731,7 @@ exactly as an unknown tag does today.
 
 **Unlocks:** §7.5, §7.6.
 
-### Wave E — Sub-dialects + sigils — ✅ landed 2026-05-15
+### Wave E — Sub-dialects + sigils — ✅ landed 2026-05-15 (E.3 landed 2026-05-16)
 - E.1 ✅ `prism.dialect { name = …, parse = fn }` registers a
   dialect (same script-time collector → drained
   `LuauScopeFrame.dialects` pattern as `prism.macro`).
@@ -1742,15 +1745,24 @@ exactly as an unknown tag does today.
   returned `prui[[…]]` source in the call-site scope (dialects
   are inline, so non-hygienic by design — `{tokens.*}` resolves).
   Unknown dialect / no Luau scope → renders nothing.
-- E.3 ⚠️ Partially shipped: a markdown-style dialect is
-  demonstrated as a regression test proving the "every dialect
-  is a Luau file, returns a node tree" path. Packaging
-  `markdown` / `mermaid` / `sql-view` as bundled `.luau` files
-  **in `prism-builder`** (plus a richer `prui_ast.*` constructor
-  table as an alternative to the `prui[[…]]` string return) is a
-  separate prism-builder follow-up — the runtime mechanism (E.1
-  + E.2) is complete and dialects return `prui[[…]]` source
-  today.
+- E.3 ✅ **Landed 2026-05-16.** `markdown` / `mermaid` /
+  `sql-view` ship as bundled `.luau` files in
+  `prism-builder/dialects/`, embedded via `include_str!` and
+  exposed by `prism_builder::builtin_dialect_sources()`. The
+  runtime gained the injection seam:
+  `LowerScope::with_builtin_scripts(Vec<String>)` +
+  `document_uses_dialect` gate — builtin sources are prepended as
+  flat modules ahead of a document's own `<script>` blocks **only
+  when the document actually uses a `<language>` block** (a plain
+  skeleton never pays for a Lua state). prism-shell wires
+  `builtin_dialect_sources()` into `render_tree_with`. The
+  `prui_ast.*` constructor table was enriched
+  (`button` / `input` / `list` / `link` / `row` / `column` /
+  `divider` / `node` / `raw`) so dialects build trees without
+  string-templating. Bundled `markdown` is block-level
+  (headings / bullets / paragraphs); `mermaid` / `sql-view`
+  capture intent as inspectable node trees pending renderer /
+  data backends behind the same `prism.dialect` seam.
 
 **Unlocks:** §7.8.
 
@@ -1801,7 +1813,7 @@ exactly as an unknown tag does today.
 
 **Unlocks:** §7.11, §7.12.
 
-### Wave H — File model & multi-projection authoring — ◑ partial 2026-05-15 (H.5 + H.7 landed 2026-05-16; H.4 deferred)
+### Wave H — File model & multi-projection authoring — ✅ landed 2026-05-15 (H.4 + H.5 + H.7 landed 2026-05-16)
 - H.1 ✅ Host resolver landed: prism-shell ships
   `FsImportResolver` (filesystem-backed `ImportResolver`) —
   per-kind extension contract + canonicalised path-escape gate +
@@ -1829,8 +1841,23 @@ exactly as an unknown tag does today.
   namespacing for stylesheets/dialects are parsed but not yet
   applied (documented follow-ups). FS / `prism://` resolution is
   the host's job by design (the runtime has no filesystem).
-- H.4 ⚠️ FingerprintCache virtual-file keys — a
-  `prism-ui-build` / hot-reload concern, deferred.
+- H.4 ✅ **Landed 2026-05-16.** `prism-ui-build`
+  `prui_doc::PruiDocCache` decomposes a `.prui` into three
+  independently-keyed resources (§5.7): the body-normalized
+  *template* (block bodies scrubbed so a `<script>`/`<style>`
+  edit never perturbs the markup fingerprint), each inline
+  `<script>` keyed `{path}#script:{i}` (stable FNV body hash —
+  Luau is opaque, any change = script reload), and each inline
+  `<style>` keyed `{path}#style:{i}` (classified through the
+  existing `prss_hash` so a value-only edit stays literal-only).
+  `observe_source` returns the *narrowest* change:
+  `Structural` (markup tree / block-count change → respawn) or
+  `Patches { template, scripts, styles }` — the smallest reload
+  set, composing the existing `template_hash` / `prss_hash`
+  primitives. Wiring it into the prism-cli dev loop /
+  `subsecond` patcher is the broader Phase-10 hot-reload
+  integration (the fingerprint substrate H.4 specifies is now
+  in place).
 - H.5 ✅ `prism new widget <name> [--dir] [--single-file]
   [--force]` — landed 2026-05-16 (`prism-cli`
   `commands::new`). Scaffolds the sibling-paired
@@ -1874,9 +1901,11 @@ exactly as an unknown tag does today.
 
 **Unlocks:** §5.3 + §5.4 (inline blocks + imports); §5.2 + §5.9
 sibling-pairing and tier-1/tier-2 modularity ride the H.1 + H.6
-work; tier-3 `require` (H.7) and `prism new widget` (H.5) are
-now live — the only Wave-H deferral left is H.4 (FingerprintCache
-virtual-file keys, a hot-reload concern).
+work; tier-3 `require` (H.7), `prism new widget` (H.5), and H.4
+inline-block fingerprint keys are all live. Every Wave-H item has
+landed; only the broader Phase-10 hot-reload *wiring* (feeding
+`PruiDocCache` into the dev loop / `subsecond` patcher) remains,
+tracked in `dioxus-inspiration.md`, not here.
 
 ### Wave I — Type system end-to-end — ◑ partial 2026-05-15
 - I.2 ✅ `prism.scope.<name>` runtime bridge:

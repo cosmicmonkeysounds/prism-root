@@ -40,7 +40,7 @@
 use prism_ui_runtime::editor::TextEditor;
 use prism_ui_runtime::event::Event;
 
-use super::Clipboard;
+use crate::services::Clipboard;
 
 /// Declarative behaviour knobs. Default = "the editor owns every
 /// modifier-bearing key combo it claims; nothing passes through".

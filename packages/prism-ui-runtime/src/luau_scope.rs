@@ -687,8 +687,25 @@ prui_ast.container = container_like("container")
 prui_ast.fragment  = function(c) return "<fragment>" .. children_str(c) .. "</fragment>" end
 prui_ast.text      = text_like("text")
 prui_ast.heading   = text_like("heading")
+prui_ast.button    = container_like("button")
+prui_ast.list      = container_like("container")
 prui_ast.spacer    = void_like("spacer")
 prui_ast.image     = void_like("image")
+prui_ast.input     = void_like("input")
+prui_ast.divider   = void_like("divider")
+-- A row / column is just a container with a `direction` baked in;
+-- `spec` still flows so `gap` / `class` / `style:*` compose.
+prui_ast.row    = function(spec) spec = spec or {}; spec.direction = "row";    return prui_ast.container(spec) end
+prui_ast.column = function(spec) spec = spec or {}; spec.direction = "column"; return prui_ast.container(spec) end
+-- `link` is a text node carrying an `href` attr.
+prui_ast.link = function(content, href, a)
+  a = a or {}; a.href = href
+  return text_like("text")(content, a)
+end
+-- Generic escape hatch + raw passthrough so a dialect can emit any
+-- tag (incl. `<language>` re-dispatch) or splice pre-built source.
+prui_ast.node = function(tag, spec) return container_like(tag)(spec) end
+prui_ast.raw  = function(s) return tostring(s) end
 "#;
 
 fn install_prism_helpers(
