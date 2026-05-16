@@ -204,7 +204,22 @@ declared type next to its value (rides 3.3), and supports
 filter/replay/snapshot. Impact: delivers the "one debugging surface"
 promise; printf-debugging stops leaking `data-foo` into production.
 
-### 4.4 Capability enforcement at the Luau seam
+### 4.4 Capability enforcement at the Luau seam — ✅ first cut landed 2026-05-16
+
+`LuauScopeFrame::from_modules_with_requires_and_policy` threads a
+`prism_core::identity::trust::SandboxPolicy` (the matrix already in
+`prism-core`) through the per-document seam. The reachable,
+capability-bearing surface today is **authoring registration**:
+`prism.macro` / `prism.dialect` mutate the document's component
+vocabulary, so a fragment whose `PrismContext` lacks `crdt:write`
+(facet-resolver / read-only role) is denied with a bounded sandbox
+error — a bundled/imported module can no longer silently extend the
+document with the host's full authority. The doc's role ladder maps
+onto the existing capability vocabulary with no new enum
+(`ScopeCaps::from_policy`). `policy = None` keeps full trust for
+host-internal fragments, so every current call site is unchanged.
+Remaining (rides Phase 5): once `prism.state` writes / `signal:set`
+exist at this seam, gate them on the same `CrdtWrite` bit.
 
 Design principle 4 of the fusion plan: a Luau fragment inherits the
 surrounding document's `PrismContext` capability set (facet-resolver

@@ -32,7 +32,39 @@ use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use mlua::{Lua, LuaSerdeExt, RegistryKey, Value as LuaValue};
+use prism_core::identity::trust::types::{SandboxCapability, SandboxPolicy};
 use serde_json::Value as JsonValue;
+
+/// The capability slice the per-document Luau seam can actually
+/// enforce today (§4.4 of `docs/dev/prism-cross-cutting-systems.md`).
+///
+/// A fragment inherits its surrounding document's `PrismContext`
+/// capability set. The reachable, capability-bearing surface in a
+/// `LuauScopeFrame` is **authoring registration** — `prism.macro` /
+/// `prism.dialect` mutate the document's component vocabulary, so
+/// they require write authority. The doc's role ladder maps onto the
+/// existing `prism-core` capability vocabulary with no new enum:
+///
+/// - facet-resolver (read-only) → no [`SandboxCapability::CrdtWrite`]
+///   → `allow_authoring = false`
+/// - signal-handler / admin (read/write) → has `CrdtWrite`
+///   → `allow_authoring = true`
+///
+/// `None` policy = host-internal fragment running at full trust
+/// (the pre-existing behaviour; every current call site).
+#[derive(Debug, Clone, Copy)]
+struct ScopeCaps {
+    allow_authoring: bool,
+}
+
+impl ScopeCaps {
+    fn from_policy(policy: Option<&SandboxPolicy>) -> Self {
+        Self {
+            allow_authoring: policy
+                .is_none_or(|p| p.capabilities.contains(&SandboxCapability::CrdtWrite)),
+        }
+    }
+}
 
 /// Cheap-clone handle to a document's Luau state. Cloning shares the
 /// same `Lua` + harvested-binding tables (the loader forks
@@ -194,6 +226,26 @@ impl LuauScopeFrame {
         tokens: Option<&JsonValue>,
         scope_bindings: Option<&JsonValue>,
     ) -> Result<Self, String> {
+        Self::from_modules_with_requires_and_policy(modules, requires, tokens, scope_bindings, None)
+    }
+
+    /// **§4.4 of `docs/dev/prism-cross-cutting-systems.md`** — like
+    /// [`Self::from_modules_with_requires`] but the fragment (and
+    /// every `require`d module it pulls in) runs under the document's
+    /// `PrismContext` capability `policy`. A read-only policy (no
+    /// [`SandboxCapability::CrdtWrite`]) denies `prism.macro` /
+    /// `prism.dialect` registration: a bundled/imported module can no
+    /// longer silently extend the document's component vocabulary
+    /// with the host document's full authority. `policy = None`
+    /// preserves the pre-existing full-trust behaviour for
+    /// host-internal fragments.
+    pub fn from_modules_with_requires_and_policy(
+        modules: &[LuauModule],
+        requires: &[(String, String)],
+        tokens: Option<&JsonValue>,
+        scope_bindings: Option<&JsonValue>,
+        policy: Option<&SandboxPolicy>,
+    ) -> Result<Self, String> {
         // Flat units keep source order and merge into document scope;
         // named modules append as isolating IIFE bindings. A named
         // module's inner `local`s stay nested (full-moon only reports
@@ -246,8 +298,15 @@ impl LuauScopeFrame {
         // is the Wave A capability baseline — design principle 4 of
         // `prui-luau-fusion.md` — ahead of the richer
         // `ShellHandles::install` host-handle matrix in a later wave.
-        install_prism_helpers(&lua, &macro_collector, &dialect_collector, &probe_collector)
-            .map_err(|e| format!("install prism helpers: {e}"))?;
+        let caps = ScopeCaps::from_policy(policy);
+        install_prism_helpers(
+            &lua,
+            &macro_collector,
+            &dialect_collector,
+            &probe_collector,
+            caps,
+        )
+        .map_err(|e| format!("install prism helpers: {e}"))?;
         if let Some(tokens) = tokens {
             let tokens_lua = lua
                 .to_value(tokens)
@@ -713,6 +772,7 @@ fn install_prism_helpers(
     macro_collector: &Rc<RefCell<Vec<(String, RegistryKey)>>>,
     dialect_collector: &Rc<RefCell<Vec<(String, RegistryKey)>>>,
     probe_collector: &Rc<RefCell<Vec<(String, RegistryKey)>>>,
+    caps: ScopeCaps,
 ) -> mlua::Result<()> {
     let prism = lua.create_table()?;
 
@@ -746,9 +806,19 @@ fn install_prism_helpers(
 
     // **Wave C** — `prism.macro(name, fn)`. Retains `fn` in the
     // registry and records the pair for post-exec drain into the
-    // frame's macro table.
+    // frame's macro table. §4.4 — registration mutates the document's
+    // component vocabulary, so a read-only fragment (no CrdtWrite in
+    // its `PrismContext` policy) is denied: the call raises a bounded
+    // sandbox error rather than silently extending the document.
+    let allow_authoring = caps.allow_authoring;
     let collector = Rc::clone(macro_collector);
     let macro_fn = lua.create_function(move |lua, (name, f): (String, mlua::Function)| {
+        if !allow_authoring {
+            return Err(mlua::Error::runtime(
+                "capability denied: prism.macro requires crdt:write \
+                 (this fragment runs under a read-only PrismContext)",
+            ));
+        }
         let key = lua.create_registry_value(f)?;
         collector.borrow_mut().push((name, key));
         Ok(())
@@ -760,6 +830,12 @@ fn install_prism_helpers(
     // record them like a macro.
     let dcollector = Rc::clone(dialect_collector);
     let dialect_fn = lua.create_function(move |lua, spec: mlua::Table| {
+        if !allow_authoring {
+            return Err(mlua::Error::runtime(
+                "capability denied: prism.dialect requires crdt:write \
+                 (this fragment runs under a read-only PrismContext)",
+            ));
+        }
         let name: String = spec.get("name")?;
         let parse: mlua::Function = spec.get("parse")?;
         let key = lua.create_registry_value(parse)?;
@@ -969,12 +1045,75 @@ mod tests {
         let got = frame.lookup("prism_keys").expect("prism_keys bound");
         let got = got.as_str().expect("string");
         let live: std::collections::BTreeSet<&str> = got.split(',').collect();
-        let stub: std::collections::BTreeSet<&str> =
-            crate::luau_types::PRISM_GLOBAL_MEMBERS.iter().copied().collect();
+        let stub: std::collections::BTreeSet<&str> = crate::luau_types::PRISM_GLOBAL_MEMBERS
+            .iter()
+            .copied()
+            .collect();
         assert_eq!(
             live, stub,
             "prism.* runtime surface drifted from luau_types::PRISM stub"
         );
+    }
+
+    fn policy_with(caps: Vec<SandboxCapability>) -> SandboxPolicy {
+        SandboxPolicy {
+            plugin_id: "doc-fragment".into(),
+            capabilities: caps,
+            max_duration_ms: 5000,
+            max_memory_bytes: 0,
+            allowed_urls: vec![],
+            allowed_paths: vec![],
+        }
+    }
+
+    #[test]
+    fn read_only_policy_denies_macro_registration() {
+        // §4.4 — a fragment whose PrismContext lacks crdt:write
+        // (facet-resolver role) must not be able to extend the
+        // document's component vocabulary. The denied call raises a
+        // bounded sandbox error, surfacing as a load failure.
+        let m = LuauModule::flat(r#"prism.macro("x", function() return "<text/>" end)"#);
+        let policy = policy_with(vec![SandboxCapability::CrdtRead]);
+        let err = LuauScopeFrame::from_modules_with_requires_and_policy(
+            &[m],
+            &[],
+            None,
+            None,
+            Some(&policy),
+        );
+        let msg = err.expect_err("read-only fragment must be denied");
+        assert!(
+            msg.contains("capability denied") && msg.contains("crdt:write"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn read_write_policy_allows_macro_registration() {
+        let m = LuauModule::flat(r#"prism.macro("x", function() return "<text/>" end)"#);
+        let policy = policy_with(vec![
+            SandboxCapability::CrdtRead,
+            SandboxCapability::CrdtWrite,
+        ]);
+        let frame = LuauScopeFrame::from_modules_with_requires_and_policy(
+            &[m],
+            &[],
+            None,
+            None,
+            Some(&policy),
+        )
+        .expect("read/write fragment registers");
+        assert!(frame.has_macro("x"));
+    }
+
+    #[test]
+    fn absent_policy_is_full_trust() {
+        // Host-internal fragments (every current call site) pass
+        // `None` and keep the pre-existing full-trust behaviour.
+        let m = LuauModule::flat(r#"prism.macro("x", function() return "<text/>" end)"#);
+        let frame =
+            LuauScopeFrame::from_modules_with_requires(&[m], &[], None, None).expect("frame");
+        assert!(frame.has_macro("x"));
     }
 
     #[test]
