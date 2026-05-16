@@ -1234,7 +1234,12 @@ impl AppState {
         }
     }
 
-    fn flush_focus_to_prop(&mut self, registry: Option<&prism_builder::ComponentRegistry>) {
+    /// Flush the focused field's editor text into the bound doc prop.
+    /// Called after every mutation that the shared text-input dispatch
+    /// performs directly on `field_focus.editor`. Public because
+    /// `FieldFocusService` drives the editor through the shared
+    /// helper and reaches back here for the prop side of the seam.
+    pub fn flush_focus_to_prop(&mut self, registry: Option<&prism_builder::ComponentRegistry>) {
         let Some(focus) = self.field_focus.as_ref() else {
             return;
         };
@@ -2150,11 +2155,17 @@ impl ProjectSlot {
 /// Search overlay state — query buffer, ranked hits, modal-open flag.
 /// `SearchService` owns every mutator; bindings only read.
 ///
+/// The `query` field is a full [`TextEditor`] (single-line) so the
+/// overlay gets caret, selection, arrow nav, Ctrl+A, IME, and
+/// clipboard for free — the same engine the property-row fields and
+/// the code-editor panel use. Read access is through
+/// [`Self::query_text`] which projects the underlying buffer.
+///
 /// See `docs/dev/clay-migration-plan.md` §26.
 #[derive(Clone, Debug, Default)]
 pub struct SearchSlot {
     pub open: bool,
-    pub query: String,
+    pub query: prism_ui_runtime::editor::TextEditor,
     pub results: Vec<SearchHit>,
     pub selected_index: usize,
 }
@@ -2168,10 +2179,17 @@ pub struct SearchHit {
 }
 
 impl SearchSlot {
+    /// Current query text — projected from the underlying
+    /// [`TextEditor`] buffer.
+    pub fn query_text(&self) -> &str {
+        self.query.text()
+    }
+
     pub fn search_overlay_props(&self) -> Value {
         json!({
             "open": self.open,
-            "query": self.query,
+            "query": self.query_text(),
+            "caret": self.query.caret_byte(),
             "selected-index": self.selected_index,
             "results": Value::Array(
                 self.results.iter().map(|h| json!({
@@ -2809,9 +2827,21 @@ impl ToastKind {
 #[derive(Clone, Debug, Default)]
 pub struct CommandPalette {
     pub open: bool,
-    pub query: String,
+    /// Query buffer — a full [`TextEditor`] (single-line) so the
+    /// palette inherits caret, selection, arrow nav, Ctrl+A, IME, and
+    /// clipboard from the shared text-input engine. Reads project
+    /// through [`Self::query_text`].
+    pub query: prism_ui_runtime::editor::TextEditor,
     pub results: Vec<CommandResult>,
     pub selected_index: usize,
+}
+
+impl CommandPalette {
+    /// Current query text — projected from the underlying
+    /// [`TextEditor`] buffer.
+    pub fn query_text(&self) -> &str {
+        self.query.text()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2840,7 +2870,8 @@ impl OverlaySlot {
     pub fn command_palette_props(&self) -> Value {
         json!({
             "open": self.command_palette.open,
-            "query": self.command_palette.query,
+            "query": self.command_palette.query_text(),
+            "caret": self.command_palette.query.caret_byte(),
             "results": self.results_json(),
             "selected-index": self.command_palette.selected_index,
         })
@@ -3018,7 +3049,7 @@ impl OverlaySlot {
     /// caller. No service rebuilds the command list; no service
     /// reimplements the matcher.)
     pub fn filter_commands(&self, rows: &[(&str, &str)]) -> Vec<usize> {
-        let q = self.command_palette.query.to_lowercase();
+        let q = self.command_palette.query_text().to_lowercase();
         if q.is_empty() {
             return (0..rows.len()).collect();
         }

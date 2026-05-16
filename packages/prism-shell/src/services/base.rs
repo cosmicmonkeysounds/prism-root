@@ -28,7 +28,7 @@ impl ShellService for ShellBaseService {
                     let p = &mut ctx.state.overlay.command_palette;
                     p.open = !p.open;
                     if !p.open {
-                        p.query.clear();
+                        p.query.set_text("");
                         p.selected_index = 0;
                     }
                 }
@@ -36,7 +36,7 @@ impl ShellService for ShellBaseService {
             cmd!("palette.close", "Close Command Palette", "View", |ctx| {
                 let p = &mut ctx.state.overlay.command_palette;
                 p.open = false;
-                p.query.clear();
+                p.query.set_text("");
                 p.selected_index = 0;
             }),
             cmd!("toasts.clear", "Clear Notifications", "View", |ctx| {

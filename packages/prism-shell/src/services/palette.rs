@@ -10,11 +10,30 @@
 //! (palette.toggle/close on the base scheme) still fire because
 //! `InputService` is registered ahead of the palette and the base
 //! scheme owns those combos. (§25.)
+//!
+//! The query buffer is a full [`TextEditor`](prism_ui_runtime::editor::TextEditor) routed through the
+//! shared [`text_input::dispatch_text_input`] helper, so the palette
+//! query inherits caret nav, selection, Ctrl+A, IME, and clipboard
+//! from the same engine the property-row fields and the code-editor
+//! panel use.
 
 use prism_ui_runtime::event::Event;
 
 use crate::cmd;
+use crate::services::text_input::{dispatch_text_input, TextInputBindings, TextInputOutcome};
 use crate::services::{CommandSpec, CommandTable, EventOutcome, MutCtx, ShellService};
+
+/// Keys the dispatch surfaces as Ignored so this service drives them:
+/// Enter executes the selection, Escape closes, arrows nav results.
+const PALETTE_PLAIN_PASSTHROUGH: &[&str] = &[
+    "enter",
+    "return",
+    "escape",
+    "arrowup",
+    "arrowdown",
+    "up",
+    "down",
+];
 
 #[derive(Default)]
 pub struct CommandPaletteService;
@@ -65,40 +84,59 @@ impl ShellService for CommandPaletteService {
         if !ctx.state.overlay.command_palette.open {
             return EventOutcome::Pass;
         }
-        match event {
-            Event::Text { text } => {
-                ctx.state.overlay.command_palette.query.push_str(text);
+
+        let bindings = TextInputBindings {
+            passthrough_modifier_keys: &[],
+            passthrough_plain_keys: PALETTE_PLAIN_PASSTHROUGH,
+        };
+        let outcome = dispatch_text_input(
+            event,
+            &mut ctx.state.overlay.command_palette.query,
+            ctx.clipboard,
+            &bindings,
+        );
+
+        match outcome {
+            // Typing / backspace / IME commit — refilter results from
+            // the top.
+            TextInputOutcome::BufferMutated => {
                 ctx.state.overlay.command_palette.selected_index = 0;
                 EventOutcome::Handled
             }
-            Event::Key {
-                code,
-                pressed: true,
-                ..
-            } => {
-                let id = match code.as_str() {
-                    "escape" => Some("palette.close"),
-                    "enter" | "return" => Some("palette.exec-selected"),
-                    "arrowup" | "up" => Some("palette.move-up"),
-                    "arrowdown" | "down" => Some("palette.move-down"),
-                    "backspace" => {
-                        ctx.state.overlay.command_palette.query.pop();
-                        ctx.state.overlay.command_palette.selected_index = 0;
-                        return EventOutcome::Handled;
+            // Caret nav / IME preedit — display-only, no refilter.
+            TextInputOutcome::DisplayMutated => EventOutcome::Handled,
+            TextInputOutcome::Inert => EventOutcome::Handled,
+            // Modifier-bearing combos the editor doesn't claim still
+            // get swallowed here — palette modal capture, the §24.8
+            // keystone: while open, Ctrl+S etc. must NOT save.
+            TextInputOutcome::PassToGlobal => EventOutcome::Handled,
+            // Caller-owned keys — enter / escape / arrows route through
+            // the command table so the same commands fire from the
+            // palette and from the global input scheme. Also catches
+            // non-text-shaped events (Wheel) so the modal stays put.
+            TextInputOutcome::Ignored => match event {
+                Event::Key {
+                    code,
+                    pressed: true,
+                    ..
+                } => {
+                    let id = match code.as_str() {
+                        "escape" => Some("palette.close"),
+                        "enter" | "return" => Some("palette.exec-selected"),
+                        "arrowup" | "up" => Some("palette.move-up"),
+                        "arrowdown" | "down" => Some("palette.move-down"),
+                        _ => None,
+                    };
+                    if let Some(id) = id {
+                        cmds.run(id, ctx);
                     }
-                    _ => None,
-                };
-                if let Some(id) = id {
-                    cmds.run(id, ctx);
+                    // Modal capture: every key terminates here so no
+                    // later service (Save, Find, …) sees it.
+                    EventOutcome::Handled
                 }
-                // Modal capture: every key terminates here so no later
-                // service (Save, Find, …) sees it. The palette's own
-                // navigation keys are dispatched first (above); every
-                // other key is silently consumed.
-                EventOutcome::Handled
-            }
-            Event::Wheel { .. } => EventOutcome::Handled,
-            _ => EventOutcome::Pass,
+                Event::Wheel { .. } => EventOutcome::Handled,
+                _ => EventOutcome::Pass,
+            },
         }
     }
 }
@@ -183,6 +221,98 @@ mod tests {
             svc.on_event(&Event::Text { text: "und".into() }, &mut ctx, &cmds),
             EventOutcome::Handled
         );
-        assert_eq!(state.overlay.command_palette.query, "und");
+        assert_eq!(state.overlay.command_palette.query_text(), "und");
+    }
+
+    #[test]
+    fn backspace_pops_query_char() {
+        let svc = CommandPaletteService;
+        let mut state = AppState::default();
+        state.overlay.command_palette.open = true;
+        state.overlay.command_palette.query.set_text("undo");
+        state.overlay.command_palette.query.place_caret_at(4, false);
+        let mut undo = UndoStack::default();
+        let mut vfs = InMemVfs::default();
+        let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
+        let cmds = CommandTable::default();
+        let mut ctx = MutCtx {
+            state: &mut state,
+            viewport: Viewport {
+                width: 0.0,
+                height: 0.0,
+            },
+            undo: &mut undo,
+            vfs: &mut vfs,
+            luau: &mut luau,
+            clipboard: &mut clipboard,
+            registry: None,
+            modifier_registry: None,
+        };
+        svc.on_event(&key("backspace", false, false), &mut ctx, &cmds);
+        assert_eq!(state.overlay.command_palette.query_text(), "und");
+    }
+
+    #[test]
+    fn arrow_left_inside_query_moves_caret_not_global_shortcut() {
+        // Single caret position confirms the palette buffer is a real
+        // TextEditor, not a primitive String.
+        let svc = CommandPaletteService;
+        let mut state = AppState::default();
+        state.overlay.command_palette.open = true;
+        state.overlay.command_palette.query.set_text("hi");
+        state.overlay.command_palette.query.place_caret_at(2, false);
+        let mut undo = UndoStack::default();
+        let mut vfs = InMemVfs::default();
+        let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
+        let cmds = CommandTable::default();
+        let mut ctx = MutCtx {
+            state: &mut state,
+            viewport: Viewport {
+                width: 0.0,
+                height: 0.0,
+            },
+            undo: &mut undo,
+            vfs: &mut vfs,
+            luau: &mut luau,
+            clipboard: &mut clipboard,
+            registry: None,
+            modifier_registry: None,
+        };
+        svc.on_event(&key("arrowleft", false, false), &mut ctx, &cmds);
+        assert_eq!(state.overlay.command_palette.query.caret_byte(), 1);
+    }
+
+    #[test]
+    fn ctrl_a_selects_query_then_typing_replaces() {
+        let svc = CommandPaletteService;
+        let mut state = AppState::default();
+        state.overlay.command_palette.open = true;
+        state.overlay.command_palette.query.set_text("hello");
+        let mut undo = UndoStack::default();
+        let mut vfs = InMemVfs::default();
+        let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
+        let cmds = CommandTable::default();
+        let mut ctx = MutCtx {
+            state: &mut state,
+            viewport: Viewport {
+                width: 0.0,
+                height: 0.0,
+            },
+            undo: &mut undo,
+            vfs: &mut vfs,
+            luau: &mut luau,
+            clipboard: &mut clipboard,
+            registry: None,
+            modifier_registry: None,
+        };
+        // Ctrl+A → select-all in the editor.
+        svc.on_event(&key("a", true, false), &mut ctx, &cmds);
+        // Typing replaces the selection.
+        svc.on_event(&Event::Text { text: "x".into() }, &mut ctx, &cmds);
+        // Confirm both the select-all and the replacement landed.
+        assert_eq!(state.overlay.command_palette.query_text(), "x");
     }
 }

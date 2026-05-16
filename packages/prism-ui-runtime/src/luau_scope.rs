@@ -1,8 +1,8 @@
 //! `LuauScopeFrame` — the per-document Luau state behind a
-//! `<script lang="luau">` block.
+//! `<script>` block.
 //!
 //! Wave A of `docs/dev/prui-luau-fusion.md` §7.1. A `.prui` file may
-//! host one top-level `<script lang="luau">` block; its body runs
+//! host one top-level `<script>` block; its body runs
 //! once per document load and its **top-level `local`s become
 //! document-scope bindings** reachable from every `{expr}` slot.
 //!
@@ -128,7 +128,7 @@ impl LuauModule {
 }
 
 impl LuauScopeFrame {
-    /// Build a frame from one or more `<script lang="luau">` bodies
+    /// Build a frame from one or more `<script>` bodies
     /// (multiple inline blocks concatenate in source order). `tokens`
     /// is the document's design-token JSON — seeded as a `tokens`
     /// global so a script can read `tokens.colors.danger` exactly as

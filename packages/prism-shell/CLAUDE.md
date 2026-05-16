@@ -189,6 +189,23 @@ Cross-service reach is through `MutCtx` resource fields, not
 not a registry lookup. The registry's `get` exists for the rare
 modal-capture case.
 
+### Shared text-input seam — `services/text_input.rs`
+Four services drive a `prism_ui_runtime::editor::TextEditor` —
+`FieldFocusService` (property rows), `CodeEditorService` (the
+`shell.code-editor` panel), `CommandPaletteService`, and `SearchService`.
+All four route through one helper, [`dispatch_text_input`], with the
+same engine — caret, selection, Ctrl+A, Ctrl+C/X/V, IME preedit /
+commit, arrow nav — and a small declarative bindings struct
+(`passthrough_modifier_keys`, `passthrough_plain_keys`) to express the
+service-specific opt-outs (CodeEditor lets Ctrl+S/N/O/W/Tab fall
+through to EditorFiles; FieldFocus and the modals reserve Enter /
+Escape for commit / cancel; CodeEditor lets Enter insert a newline).
+Adding a new text-input surface is one wrapper around `dispatch_text_input`
+plus the surface's own post-mutation work — flush-to-prop, refilter,
+mark-dirty — driven by the returned [`TextInputOutcome`]
+(`BufferMutated` / `DisplayMutated` / `Inert` / `PassToGlobal` /
+`Ignored`).
+
 `MutCtx<'a>` carries `state: &mut AppState`, `viewport: Viewport`,
 `undo: &mut UndoStack`, `vfs: &mut dyn Vfs`, `luau: &mut dyn LuauHost`,
 `clipboard: &mut Clipboard`. Every command body and every

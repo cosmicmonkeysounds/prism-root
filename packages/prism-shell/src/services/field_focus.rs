@@ -1,14 +1,18 @@
 //! `FieldFocusService` — owns text-input keyboard routing while
 //! `AppState::field_focus` is `Some`.
 //!
-//! Three event arms:
+//! Most of the wiring lives in the shared
+//! [`text_input::dispatch_text_input`] helper. This service owns the
+//! pieces that are property-row specific:
 //!
-//! * `Event::Text { text }` — append typed characters to the focused
-//!   field's draft and flush to the bound prop.
-//! * `Event::Key { code: "backspace" }` — pop one char.
-//! * `Event::Key { code: "enter" }` — commit (clear focus).
+//! * `Event::Key { code: "enter" }` — commit (clear focus). With
+//!   Shift held on a `textarea` / `code` kind, inserts a literal `\n`
+//!   instead.
 //! * `Event::Key { code: "escape" }` — cancel (restore the original
 //!   value and clear focus).
+//! * Number / integer field arrow-key nudges (±1, ±10 with shift).
+//! * Flush-to-bound-prop after every editor mutation so the live doc
+//!   stays in sync without a separate "commit on blur" path.
 //!
 //! Every other event short-circuits with `EventOutcome::Handled` while
 //! focus is active — typing should never bleed into global shortcuts
@@ -18,6 +22,7 @@
 use prism_ui_runtime::event::Event;
 use serde_json::json;
 
+use crate::services::text_input::{dispatch_text_input, TextInputBindings, TextInputOutcome};
 use crate::services::{CommandTable, EventOutcome, MutCtx, ShellService};
 
 /// Wave 2.2 of `docs/dev/composable-builder-plan.md`: arrow-key
@@ -71,168 +76,109 @@ impl ShellService for FieldFocusService {
             .as_ref()
             .map(|f| f.kind.clone())
             .unwrap_or_default();
-        match event {
-            Event::Text { text } => {
-                // Number / integer fields don't route through the
-                // text editor — drag-scrub / typed digits go through
-                // a different path (`nudge_focused_number` + the
-                // prop-write seam). Letting raw text reach the editor
-                // would dump non-digit chars into the bound prop.
-                if matches!(focus_kind.as_str(), "number" | "integer") {
-                    return EventOutcome::Handled;
-                }
-                ctx.state.type_field_text(text, registry);
-                EventOutcome::Handled
-            }
-            // IME composition routes through the focused field's
-            // editor — preedit doesn't mutate the bound prop;
-            // commit flushes the finalised composition through
-            // `insert_field_text` so the prop updates atomically.
-            Event::ImePreedit { text, cursor_byte } => {
-                if matches!(focus_kind.as_str(), "number" | "integer") {
-                    return EventOutcome::Handled;
-                }
-                if let Some(focus) = ctx.state.field_focus.as_mut() {
-                    focus.editor.apply_ime_preedit(text, *cursor_byte);
-                }
-                EventOutcome::Handled
-            }
-            Event::ImeCommit { text } => {
-                if matches!(focus_kind.as_str(), "number" | "integer") {
-                    return EventOutcome::Handled;
-                }
-                ctx.state.insert_field_text(text, registry);
-                EventOutcome::Handled
-            }
-            Event::ImeEnabled => EventOutcome::Handled,
-            Event::ImeDisabled => {
-                if let Some(focus) = ctx.state.field_focus.as_mut() {
-                    focus.editor.clear_preedit();
-                }
-                EventOutcome::Handled
-            }
-            Event::Key {
-                code,
-                pressed: true,
-                modifiers,
-            } => {
-                // Wave 2.2: arrow-key nudging for number / integer
-                // fields — ±1 by default, ±10 with shift. Number
-                // fields never reach the text-editor key path; their
-                // bound prop is an f64, not a string.
-                if matches!(focus_kind.as_str(), "number" | "integer") {
-                    if matches!(code.as_str(), "arrowup" | "arrowdown") {
-                        let step: f64 = if modifiers.shift { 10.0 } else { 1.0 };
-                        let signed = if code == "arrowup" { step } else { -step };
-                        nudge_focused_number(ctx, signed, &focus_kind);
-                        return EventOutcome::Handled;
-                    }
-                    // Modifier-bearing combos (Ctrl+S etc.) need to
-                    // reach the global shortcuts even with a number
-                    // field focused.
-                    if modifiers.ctrl || modifiers.meta || modifiers.alt {
-                        return EventOutcome::Pass;
-                    }
-                    if matches!(code.as_str(), "enter" | "escape") {
-                        if code == "enter" {
-                            ctx.state.commit_field_focus();
-                        } else {
-                            ctx.state.cancel_field_focus(registry);
-                        }
-                        return EventOutcome::Handled;
-                    }
-                    return EventOutcome::Handled;
-                }
 
-                let is_multiline = matches!(focus_kind.as_str(), "textarea" | "code");
+        // Number / integer fields never touch the text editor — their
+        // bound prop is an f64, not a string. Drag-scrub / typed
+        // digits go through a different path entirely. Handle the
+        // tiny per-kind key set inline and short-circuit.
+        if matches!(focus_kind.as_str(), "number" | "integer") {
+            return handle_number_field(event, ctx, &focus_kind);
+        }
+
+        let is_multiline = matches!(focus_kind.as_str(), "textarea" | "code");
+        let bindings = TextInputBindings {
+            passthrough_modifier_keys: &[],
+            // Commit / cancel keys — the dispatch surfaces them as
+            // Ignored so we can run our own commit-or-shift-enter
+            // logic.
+            passthrough_plain_keys: PLAIN_PASSTHROUGH_KEYS,
+        };
+
+        // Route through the shared dispatch first. The borrow on
+        // `field_focus.editor` ends before we touch `state.set_node_prop`,
+        // so the flush-to-prop path can re-borrow `&mut self`.
+        let outcome = if let Some(focus) = ctx.state.field_focus.as_mut() {
+            dispatch_text_input(event, &mut focus.editor, ctx.clipboard, &bindings)
+        } else {
+            return EventOutcome::Pass;
+        };
+
+        match outcome {
+            TextInputOutcome::BufferMutated => {
+                ctx.state.flush_focus_to_prop(registry);
+                EventOutcome::Handled
+            }
+            TextInputOutcome::DisplayMutated => EventOutcome::Handled,
+            TextInputOutcome::Inert => EventOutcome::Handled,
+            TextInputOutcome::PassToGlobal => EventOutcome::Pass,
+            // Caller-owned keys surface here — Enter (commit, or
+            // shift+Enter newline for textarea/code), Escape (cancel).
+            TextInputOutcome::Ignored => {
+                let Event::Key {
+                    code,
+                    pressed: true,
+                    modifiers,
+                } = event
+                else {
+                    return EventOutcome::Pass;
+                };
                 match code.as_str() {
-                    // Property-row Enter convention:
-                    //
-                    // * Single-line text field — plain Enter commits;
-                    //   Shift-Enter also commits (no multi-line escape
-                    //   for a single-line cell).
-                    // * Multi-line textarea / code property — plain
-                    //   Enter commits (the click-to-edit affordance
-                    //   stays gesture-equivalent across kinds);
-                    //   Shift-Enter inserts a newline so users can
-                    //   build up paragraphs without leaving the cell.
-                    //
-                    // The full-screen code editor uses a separate path
-                    // (`code_buffer`) and gets a code-editor-y Enter →
-                    // newline policy there.
                     "enter" | "return" => {
                         if is_multiline && modifiers.shift {
                             ctx.state.type_field_text("\n", registry);
-                            EventOutcome::Handled
                         } else {
                             ctx.state.commit_field_focus();
-                            EventOutcome::Handled
                         }
+                        EventOutcome::Handled
                     }
                     "escape" => {
                         ctx.state.cancel_field_focus(registry);
                         EventOutcome::Handled
                     }
-                    // Ctrl/Cmd+C / V / X — clipboard. Delegated to the
-                    // shared `clipboard` resource so paste sources
-                    // round-trip across OS-level cut/paste too once
-                    // the clipboard service grows OS integration.
-                    "c" if modifiers.ctrl || modifiers.meta => {
-                        let copied = ctx
-                            .state
-                            .field_focus
-                            .as_ref()
-                            .and_then(|f| f.editor.selected_text().map(|s| s.to_string()));
-                        if let Some(text) = copied {
-                            ctx.clipboard.set_string(text);
-                        }
-                        EventOutcome::Handled
-                    }
-                    "x" if modifiers.ctrl || modifiers.meta => {
-                        let copied = ctx
-                            .state
-                            .field_focus
-                            .as_ref()
-                            .and_then(|f| f.editor.selected_text().map(|s| s.to_string()));
-                        if let Some(text) = copied {
-                            ctx.clipboard.set_string(text);
-                            // Replace selection with empty → deletes it.
-                            ctx.state.insert_field_text("", registry);
-                        }
-                        EventOutcome::Handled
-                    }
-                    "v" if modifiers.ctrl || modifiers.meta => {
-                        if let Some(text) = ctx.clipboard.get_string() {
-                            ctx.state.insert_field_text(&text, registry);
-                        }
-                        EventOutcome::Handled
-                    }
-                    // Every other key — let the editor decide. Plain
-                    // printable chars come via `Event::Text` so this
-                    // routes navigation (arrows / home / end), edits
-                    // (backspace / delete / ctrl+backspace), and
-                    // editor shortcuts (ctrl+a, ctrl+z, ctrl+d,
-                    // ctrl+k). Anything the editor doesn't recognise
-                    // returns `Inert` — and *modifier-bearing* inert
-                    // keys (ctrl+s and friends) pass through to the
-                    // global shortcut router. Plain inert keys stay
-                    // handled so they can't trigger global shortcuts
-                    // while typing.
-                    _ => {
-                        let outcome = ctx.state.apply_field_key(code, *modifiers, registry);
-                        if outcome.mutated() {
-                            EventOutcome::Handled
-                        } else if modifiers.ctrl || modifiers.meta || modifiers.alt {
-                            EventOutcome::Pass
-                        } else {
-                            EventOutcome::Handled
-                        }
-                    }
+                    _ => EventOutcome::Pass,
                 }
             }
-            _ => EventOutcome::Pass,
         }
     }
+}
+
+/// Plain (non-modifier) keys the shared dispatch should surface as
+/// Ignored so this service can run its own commit / cancel logic.
+const PLAIN_PASSTHROUGH_KEYS: &[&str] = &["enter", "return", "escape"];
+
+/// Number / integer field key handler. Arrow keys nudge the bound
+/// prop; Enter commits, Escape cancels, everything else is swallowed.
+fn handle_number_field(event: &Event, ctx: &mut MutCtx<'_>, focus_kind: &str) -> EventOutcome {
+    let Event::Key {
+        code,
+        pressed: true,
+        modifiers,
+    } = event
+    else {
+        // Number fields swallow every other text-shaped event so
+        // non-digit chars don't dump into the bound prop.
+        return EventOutcome::Handled;
+    };
+    if matches!(code.as_str(), "arrowup" | "arrowdown") {
+        let step: f64 = if modifiers.shift { 10.0 } else { 1.0 };
+        let signed = if code == "arrowup" { step } else { -step };
+        nudge_focused_number(ctx, signed, focus_kind);
+        return EventOutcome::Handled;
+    }
+    // Modifier-bearing combos (Ctrl+S etc.) need to reach the global
+    // shortcuts even with a number field focused.
+    if modifiers.ctrl || modifiers.meta || modifiers.alt {
+        return EventOutcome::Pass;
+    }
+    if matches!(code.as_str(), "enter" | "escape") {
+        if code == "enter" {
+            ctx.state.commit_field_focus();
+        } else {
+            ctx.state.cancel_field_focus(ctx.registry);
+        }
+        return EventOutcome::Handled;
+    }
+    EventOutcome::Handled
 }
 
 #[cfg(test)]

@@ -202,8 +202,85 @@ struct RawClass {
 /// land and editors can show every issue at once. Hard failures
 /// (TOML syntax error) abort and surface as a single
 /// `toml-syntax` diagnostic.
+/// **§5.10** — desugar the bare-expression brace surface
+/// (`background = { darken(accent, 0.1) }`) into the TOML-valid
+/// `{ lua = "…" }` form the rest of the pipeline (and
+/// [`LUA_VALUE_SENTINEL`]) already understands. PRSS is a
+/// TOML-*shaped* superset: a brace whose body is a bare Luau
+/// expression is not valid TOML, so it is rewritten before the
+/// `toml` crate sees it. A brace whose body is `key = …` (an inline
+/// table — a state sub-table, or the legacy `{ lua = "…" }`) is left
+/// untouched.
+fn desugar_brace_exprs(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    for (i, line) in source.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(&desugar_brace_line(line));
+    }
+    out
+}
+
+fn desugar_brace_line(line: &str) -> String {
+    let trimmed = line.trim_end();
+    let body_indent = trimmed.len() - trimmed.trim_start().len();
+    let (indent, rest) = trimmed.split_at(body_indent);
+    if rest.starts_with('[') || rest.starts_with('#') {
+        return line.to_string();
+    }
+    // `key = { … }` — find the first top-level `=`, then a `{ … }`
+    // value that spans the rest of the line.
+    let Some(eq) = rest.find('=') else {
+        return line.to_string();
+    };
+    let (key, after_eq) = rest.split_at(eq);
+    let value = after_eq[1..].trim();
+    if !(value.starts_with('{') && value.ends_with('}')) {
+        return line.to_string();
+    }
+    let inner = value[1..value.len() - 1].trim();
+    if inner.is_empty() || inner_is_inline_table(inner) {
+        return line.to_string();
+    }
+    let escaped = inner.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("{indent}{} = {{ lua = \"{escaped}\" }}", key.trim_end())
+}
+
+/// True when a brace body opens like a TOML inline table — a key
+/// (`ident`) followed by `=` (and not `==`). `lua = "…"`,
+/// `background = "#fff"`, `a = 1, b = 2` all match; bare Luau like
+/// `tokens.colors.accent`, `darken(x, 0.1)`, `a == b` do not.
+fn inner_is_inline_table(inner: &str) -> bool {
+    let mut chars = inner.char_indices().peekable();
+    let mut saw_ident = false;
+    while let Some(&(_, c)) = chars.peek() {
+        if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+            saw_ident = true;
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    if !saw_ident {
+        return false;
+    }
+    while let Some(&(_, c)) = chars.peek() {
+        if c == ' ' || c == '\t' {
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    match chars.next() {
+        Some((_, '=')) => !matches!(chars.peek(), Some(&(_, '='))),
+        _ => false,
+    }
+}
+
 pub fn parse(source: &str) -> (StyleSheet, Vec<ParseError>) {
-    let raw: PrssFile = match toml::from_str(source) {
+    let source = desugar_brace_exprs(source);
+    let raw: PrssFile = match toml::from_str(&source) {
         Ok(f) => f,
         Err(e) => {
             return (
@@ -535,6 +612,41 @@ fn validate_extends_chains(sheet: &StyleSheet, errors: &mut Vec<ParseError>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn s510_bare_brace_expr_desugars_to_lua_sentinel() {
+        let src = r##"
+            [class.btn]
+            background = { tokens.colors.accent }
+            radius     = { tokens.radius.md }
+            padding    = { tokens.spacing.sm * 2 }
+        "##;
+        let (sheet, errs) = parse(src);
+        assert!(errs.is_empty(), "errors: {errs:?}");
+        let btn = sheet.classes.get("btn").expect("btn class");
+        assert_eq!(
+            btn.properties.get("background").unwrap(),
+            &format!("{LUA_VALUE_SENTINEL}tokens.colors.accent")
+        );
+        assert_eq!(
+            btn.properties.get("padding").unwrap(),
+            &format!("{LUA_VALUE_SENTINEL}tokens.spacing.sm * 2")
+        );
+        // Legacy `{ lua = "…" }` and real inline tables still parse.
+        let (sheet, errs) = parse(
+            "[class.x]\nbackground = { lua = \"tokens.colors.accent\" }\nhovered = { background = \"#fff\" }\n",
+        );
+        assert!(errs.is_empty(), "errors: {errs:?}");
+        let x = sheet.classes.get("x").unwrap();
+        assert_eq!(
+            x.properties.get("background").unwrap(),
+            &format!("{LUA_VALUE_SENTINEL}tokens.colors.accent")
+        );
+        assert_eq!(
+            x.states.get("hovered").and_then(|s| s.get("background")),
+            Some(&"#fff".to_string())
+        );
+    }
 
     #[test]
     fn empty_file_parses_to_empty_stylesheet() {

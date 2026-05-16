@@ -47,6 +47,7 @@ pub mod project;
 pub mod search;
 pub mod selection;
 pub mod signals;
+pub mod text_input;
 pub mod undo;
 pub mod vfs;
 

@@ -455,7 +455,7 @@ fn node_from_tokens(_source: &str, kind: &str, stmt: &Stmt) -> SyntaxNode {
 /// A top-level `local` declaration discovered in a Luau chunk: the
 /// bound name(s) plus the byte offset of the `local` keyword itself.
 ///
-/// Used by the PRUI `<script lang="luau">` loader
+/// Used by the PRUI `<script>` loader
 /// (`prui-luau-fusion.md` §7.1 / Wave A): to surface a script's
 /// top-level `local`s as document-scope bindings, the loader strips
 /// the `local` keyword at `local_keyword_offset` so the binding

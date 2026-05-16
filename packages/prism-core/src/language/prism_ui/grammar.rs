@@ -28,7 +28,7 @@ use super::ast::{
 
 /// Tags whose body the PRUI parser must scan verbatim (no nested
 /// elements / interpolations / comments). The Wave A landing of
-/// `prui-luau-fusion.md` §7.1 introduces `<script lang="luau">`; the
+/// `prui-luau-fusion.md` §7.1 introduces `<script>`; the
 /// same raw-text mode applies to `<style>` blocks (Wave H), so both
 /// are listed up front — mirrors HTML's "raw text element" set.
 fn is_raw_text_tag(tag: &str) -> bool {
@@ -376,7 +376,26 @@ impl<'s> Parser<'s> {
         };
 
         // Attributes.
-        let attributes = self.parse_attributes();
+        let mut attributes = self.parse_attributes();
+
+        // **§5.10** — `<script>` is Luau and `<style>` is PRSS; the
+        // block tag *is* the language. A `lang=` attribute is no
+        // longer a synonym — there is exactly one spelling. Recorded
+        // as a recoverable diagnostic (parsing continues; the body is
+        // still collected) so the one-spelling rule is enforced
+        // without detonating documents that still carry the old form.
+        if matches!(tag.as_str(), "script" | "style") {
+            if let Some(bad) = attributes.iter().find(|a| a.name.raw == "lang") {
+                self.errors.push(ParseError {
+                    message: format!(
+                        "`<{tag}>` carries no `lang=` attribute — \
+                         the block tag is the language (§5.10)"
+                    ),
+                    range: bad.name.range,
+                    code: "unexpected-lang-attr",
+                });
+            }
+        }
 
         self.scanner.skip_whitespace_and_newlines();
 
@@ -394,6 +413,28 @@ impl<'s> Parser<'s> {
         }
 
         if self_closing {
+            // **§5.10** — `<import …/> as <name>` postfix. The
+            // namespace reads at the end of the line, not buried
+            // mid-tag. Synthesised into an `as` attribute so the
+            // downstream import collector (which reads `as`) is
+            // unchanged.
+            if tag == "import" {
+                if let Some((alias, range)) = self.try_parse_import_alias() {
+                    attributes.push(Attribute {
+                        name: AttributeName {
+                            raw: "as".into(),
+                            local: "as".into(),
+                            namespace: AttributeNamespace::Bare,
+                            range,
+                        },
+                        value: AttributeValue::String {
+                            value: alias,
+                            range,
+                        },
+                        range,
+                    });
+                }
+            }
             return Some(Node::Element(Element {
                 tag,
                 attributes,
@@ -488,6 +529,16 @@ impl<'s> Parser<'s> {
         let mut attrs = Vec::new();
         loop {
             self.scanner.skip_whitespace_and_newlines();
+            // **§5.10** — attributes are comma-separated (the space
+            // that used to delimit them can no longer, now that
+            // unquoted values may themselves contain whitespace, e.g.
+            // `padding=12 16`). The comma is consumed as a separator;
+            // whitespace separation still parses so the existing
+            // single-token / quoted corpus keeps working.
+            while self.scanner.peek() == Some(',') {
+                self.scanner.advance();
+                self.scanner.skip_whitespace_and_newlines();
+            }
             match self.scanner.peek() {
                 None => break,
                 Some('/') | Some('>') => break,
@@ -563,6 +614,12 @@ impl<'s> Parser<'s> {
         attrs
     }
 
+    /// **§5.10** — six value forms. `"…"` / `{expr}` are the historic
+    /// pair; `$ stmt` is an unquoted action/handler body, `[a, b]` a
+    /// multi-value list, and a leading non-sigil char begins a bare
+    /// token value (`gap=8`, `direction=row`, `padding=12 16`). Bare /
+    /// `$` values still surface as `String` / `Template` so lowering
+    /// is unchanged — the change is purely about dropping the quotes.
     fn parse_attribute_value(&mut self) -> AttributeValue {
         match self.scanner.peek() {
             Some('"') | Some('\'') => self.parse_quoted_value(),
@@ -570,10 +627,13 @@ impl<'s> Parser<'s> {
                 let expr = self.parse_interpolation();
                 AttributeValue::Expression(expr)
             }
+            Some('[') => self.parse_list_value(),
+            Some('$') => self.parse_action_value(),
+            Some(c) if c != '/' && c != '>' && c != ',' => self.parse_bare_value(),
             _ => {
                 let start = self.scanner.position();
                 self.errors.push(ParseError {
-                    message: "Expected attribute value (quoted string or `{expr}`)".into(),
+                    message: "Expected attribute value (`\"…\"`, `{expr}`, `$stmt`, `[…]`, or a bare token)".into(),
                     range: SourceRange {
                         start,
                         end: self.scanner.position(),
@@ -583,6 +643,215 @@ impl<'s> Parser<'s> {
                 AttributeValue::Empty
             }
         }
+    }
+
+    /// Scan a raw run up to the next *top-level* attribute terminator
+    /// — `,` (separator), `>` / `/>` (tag close) — tracking
+    /// `()[]{}` nesting and quote state so commas / `>` inside a call
+    /// or string don't terminate early. Returns the trimmed slice and
+    /// its range.
+    fn scan_value_run(&mut self) -> (String, SourceRange) {
+        let start = self.scanner.position();
+        let start_off = self.scanner.offset();
+        let mut depth = 0i32;
+        let mut quote: Option<char> = None;
+        while let Some(c) = self.scanner.peek() {
+            if let Some(q) = quote {
+                self.scanner.advance();
+                if c == '\\' {
+                    self.scanner.advance();
+                } else if c == q {
+                    quote = None;
+                }
+                continue;
+            }
+            match c {
+                '"' | '\'' => {
+                    quote = Some(c);
+                    self.scanner.advance();
+                }
+                '(' | '[' | '{' => {
+                    depth += 1;
+                    self.scanner.advance();
+                }
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    self.scanner.advance();
+                }
+                ',' if depth <= 0 => break,
+                '>' if depth <= 0 => break,
+                '/' if depth <= 0 && self.scanner.peek_ahead(1) == Some('>') => break,
+                _ => {
+                    self.scanner.advance();
+                }
+            }
+        }
+        let raw = self.scanner.source()[start_off..self.scanner.offset()].to_string();
+        let trimmed = raw.trim().to_string();
+        (
+            trimmed,
+            SourceRange {
+                start,
+                end: self.scanner.position(),
+            },
+        )
+    }
+
+    /// `$ stmt` — an unquoted action/handler body. Faithful to the
+    /// pre-§5.10 `on:click="stmt"` quoted form: it surfaces as a
+    /// `String`, so the `on:` / `effect:` lowering (which already
+    /// executes the body as Luau) is untouched.
+    fn parse_action_value(&mut self) -> AttributeValue {
+        self.scanner.advance(); // `$`
+        self.scanner.skip_whitespace();
+        let (value, range) = self.scan_value_run();
+        if value.is_empty() {
+            self.errors.push(ParseError {
+                message: "Empty `$` action body".into(),
+                range,
+                code: "expected-value",
+            });
+        }
+        AttributeValue::String { value, range }
+    }
+
+    /// Bare token value — `gap=8`, `direction=row`, `padding=12 16`,
+    /// `class=card`. Equivalent to the old quoted string with the
+    /// quotes removed; surfaces as `String` so lowering is unchanged.
+    fn parse_bare_value(&mut self) -> AttributeValue {
+        let (value, range) = self.scan_value_run();
+        if value.is_empty() {
+            self.errors.push(ParseError {
+                message: "Expected attribute value".into(),
+                range,
+                code: "expected-value",
+            });
+            return AttributeValue::Empty;
+        }
+        AttributeValue::String { value, range }
+    }
+
+    /// `[a, {expr}, c]` — a comma-separated multi-value list. Lowers
+    /// to the same shape a space-joined `class="a {expr} c"` produced,
+    /// so the existing class / list handling is unchanged.
+    fn parse_list_value(&mut self) -> AttributeValue {
+        let start = self.scanner.position();
+        self.scanner.advance(); // `[`
+        let mut parts: Vec<TemplatePart> = Vec::new();
+        let mut first = true;
+        loop {
+            self.scanner.skip_whitespace_and_newlines();
+            while self.scanner.peek() == Some(',') {
+                self.scanner.advance();
+                self.scanner.skip_whitespace_and_newlines();
+            }
+            match self.scanner.peek() {
+                None => {
+                    self.errors.push(ParseError {
+                        message: "Unterminated `[…]` list value".into(),
+                        range: SourceRange {
+                            start,
+                            end: self.scanner.position(),
+                        },
+                        code: "unterminated-list",
+                    });
+                    break;
+                }
+                Some(']') => {
+                    self.scanner.advance();
+                    break;
+                }
+                _ => {}
+            }
+            if !first {
+                parts.push(TemplatePart::Literal {
+                    value: " ".into(),
+                    range: SourceRange {
+                        start: self.scanner.position(),
+                        end: self.scanner.position(),
+                    },
+                });
+            }
+            first = false;
+            if self.scanner.peek() == Some('{') {
+                parts.push(TemplatePart::Expression(self.parse_interpolation()));
+            } else {
+                let el_start = self.scanner.position();
+                let el_off = self.scanner.offset();
+                while !matches!(self.scanner.peek(), None | Some(',') | Some(']')) {
+                    self.scanner.advance();
+                }
+                let raw = self.scanner.source()[el_off..self.scanner.offset()]
+                    .trim()
+                    .to_string();
+                parts.push(TemplatePart::Literal {
+                    value: raw,
+                    range: SourceRange {
+                        start: el_start,
+                        end: self.scanner.position(),
+                    },
+                });
+            }
+        }
+        let range = SourceRange {
+            start,
+            end: self.scanner.position(),
+        };
+        let all_literal = parts
+            .iter()
+            .all(|p| matches!(p, TemplatePart::Literal { .. }));
+        if all_literal {
+            let value = parts
+                .into_iter()
+                .map(|p| match p {
+                    TemplatePart::Literal { value, .. } => value,
+                    TemplatePart::Expression(_) => unreachable!(),
+                })
+                .collect::<String>();
+            AttributeValue::String { value, range }
+        } else {
+            AttributeValue::Template { parts, range }
+        }
+    }
+
+    /// `<import …/> as <name>` — the §5.10 postfix namespace. Only
+    /// consumed when an `as` keyword is immediately followed by a
+    /// name; otherwise the scanner is left untouched so a following
+    /// sibling run is not eaten.
+    fn try_parse_import_alias(&mut self) -> Option<(String, SourceRange)> {
+        let saved = self.scanner.save();
+        let mut spaces = 0usize;
+        while matches!(self.scanner.peek(), Some(' ') | Some('\t')) {
+            self.scanner.advance();
+            spaces += 1;
+        }
+        let start = self.scanner.position();
+        if spaces == 0
+            || self.scanner.peek() != Some('a')
+            || self.scanner.peek_ahead(1) != Some('s')
+            || !matches!(self.scanner.peek_ahead(2), Some(' ') | Some('\t'))
+        {
+            self.scanner.restore(saved);
+            return None;
+        }
+        self.scanner.advance(); // a
+        self.scanner.advance(); // s
+        self.scanner.skip_whitespace();
+        let name = self
+            .scanner
+            .scan_while(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+            .to_string();
+        if name.is_empty() {
+            self.scanner.restore(saved);
+            return None;
+        }
+        Some((
+            name,
+            SourceRange {
+                start,
+                end: self.scanner.position(),
+            },
+        ))
     }
 
     fn parse_quoted_value(&mut self) -> AttributeValue {
@@ -1045,7 +1314,7 @@ mod tests {
         // PRUI parser would otherwise misinterpret. Wave A of
         // `prui-luau-fusion.md` §7.1 requires the body to survive
         // verbatim as a single text child.
-        let src = r##"<script lang="luau">
+        let src = r##"<script>
 local function priority_color(p)
   if p == "high" then return "#ff0000" end
   return "#888888"
@@ -1057,7 +1326,8 @@ local state = prism.state { expanded = false }
             panic!("expected element");
         };
         assert_eq!(el.tag, "script");
-        assert_eq!(el.attributes[0].name.raw, "lang");
+        // §5.10 — `<script>` carries no `lang=` attribute.
+        assert!(el.attributes.is_empty());
         assert_eq!(el.children.len(), 1);
         let Node::Text { value, .. } = &el.children[0] else {
             panic!("expected raw text body");
@@ -1068,7 +1338,7 @@ local state = prism.state { expanded = false }
 
     #[test]
     fn parses_style_block_as_raw_text() {
-        let src = r##"<style lang="prss">
+        let src = r##"<style>
 [class.card]
 background = "#ffffff"
 radius = 8
@@ -1084,12 +1354,100 @@ radius = 8
         assert!(value.contains("[class.card]"));
     }
 
+    fn attr<'a>(el: &'a Element, name: &str) -> &'a AttributeValue {
+        &el.attributes
+            .iter()
+            .find(|a| a.name.raw == name)
+            .unwrap_or_else(|| panic!("missing attr {name}"))
+            .value
+    }
+    fn as_str(v: &AttributeValue) -> &str {
+        match v {
+            AttributeValue::String { value, .. } => value,
+            other => panic!("expected String, got {other:?}"),
+        }
+    }
+    fn el0(doc: &Document) -> &Element {
+        match &doc.nodes[0] {
+            Node::Element(el) => el,
+            n => panic!("expected element, got {n:?}"),
+        }
+    }
+
+    #[test]
+    fn s510_comma_separated_bare_values() {
+        let doc = parse_ok(r#"<container direction=row, gap=8, padding=12 16>x</container>"#);
+        let el = el0(&doc);
+        assert_eq!(as_str(attr(el, "direction")), "row");
+        assert_eq!(as_str(attr(el, "gap")), "8");
+        assert_eq!(as_str(attr(el, "padding")), "12 16");
+    }
+
+    #[test]
+    fn s510_quoted_and_whitespace_still_parse() {
+        // Back-compat: the existing single-token / quoted,
+        // whitespace-separated corpus keeps working unchanged.
+        let doc = parse_ok(r#"<container class="card" title="Hi"/>"#);
+        let el = el0(&doc);
+        assert_eq!(as_str(attr(el, "class")), "card");
+        assert_eq!(as_str(attr(el, "title")), "Hi");
+    }
+
+    #[test]
+    fn s510_action_body_dollar() {
+        let doc = parse_ok(r#"<button on:click=$state.x = !state.x>Go</button>"#);
+        assert_eq!(as_str(attr(el0(&doc), "on:click")), "state.x = !state.x");
+        // Comma / `>` inside a string or call must not terminate.
+        let doc = parse_ok(r#"<button on:click=$emit("a, b")>Go</button>"#);
+        assert_eq!(as_str(attr(el0(&doc), "on:click")), r#"emit("a, b")"#);
+    }
+
+    #[test]
+    fn s510_list_value() {
+        let doc = parse_ok(r#"<container class=[card, {priority_class(p)}]>x</container>"#);
+        let AttributeValue::Template { parts, .. } = attr(el0(&doc), "class") else {
+            panic!("expected Template");
+        };
+        assert!(matches!(&parts[0], TemplatePart::Literal { value, .. } if value == "card"));
+        assert!(parts.iter().any(
+            |p| matches!(p, TemplatePart::Expression(e) if e.body.contains("priority_class"))
+        ));
+
+        let doc = parse_ok(r#"<container class=[a, b]>x</container>"#);
+        assert_eq!(as_str(attr(el0(&doc), "class")), "a b");
+    }
+
+    #[test]
+    fn s510_lang_attr_is_an_error() {
+        let (_, errs) = parse(r#"<script lang="luau"></script>"#);
+        assert!(
+            errs.iter().any(|e| e.code == "unexpected-lang-attr"),
+            "expected unexpected-lang-attr, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn s510_import_postfix_as() {
+        let doc = parse_ok(r#"<import script="./fmt.luau"/> as fmt"#);
+        let el = el0(&doc);
+        assert_eq!(el.tag, "import");
+        assert_eq!(as_str(attr(el, "script")), "./fmt.luau");
+        assert_eq!(as_str(attr(el, "as")), "fmt");
+
+        // No postfix → no synthetic `as`, scanner not over-consumed.
+        let doc = parse_ok(r#"<import script="./x.luau"/><spacer/>"#);
+        assert!(doc
+            .nodes
+            .iter()
+            .any(|n| matches!(n, Node::Element(e) if e.tag == "spacer")));
+    }
+
     #[test]
     fn script_block_then_sibling_element() {
         // After the raw-text body closes, the parser must resume
         // normal mode and read the sibling element. Regression guard
         // against a sticky "still in raw text" state.
-        let src = r#"<script lang="luau">local x = 1</script>
+        let src = r#"<script>local x = 1</script>
 <container/>"#;
         let doc = parse_ok(src);
         assert!(doc

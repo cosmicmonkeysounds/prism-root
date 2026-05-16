@@ -59,6 +59,11 @@ pub enum BuiltinScene {
     /// `shell.code-editor` block and the runtime's caret-at-byte
     /// + selection rendering end-to-end.
     CodeEditor,
+    /// The command palette open with a partially-typed query and the
+    /// caret positioned mid-string. Exercises the modal overlay's
+    /// `TextEditor` wiring and the input's `caret-byte` rendering
+    /// path end-to-end.
+    CommandPalette,
 }
 
 impl BuiltinScene {
@@ -73,6 +78,7 @@ impl BuiltinScene {
         Self::PaletteDrag,
         Self::ConnectionPicker,
         Self::CodeEditor,
+        Self::CommandPalette,
     ];
 
     /// Kebab-case CLI identifier — the bytes the user types after
@@ -86,6 +92,7 @@ impl BuiltinScene {
             Self::PaletteDrag => "palette-drag",
             Self::ConnectionPicker => "connection-picker",
             Self::CodeEditor => "code-editor",
+            Self::CommandPalette => "command-palette",
         }
     }
 
@@ -178,6 +185,18 @@ impl Shell {
                     .editor
                     .place_caret_at(sel_end, true);
                 g.state.code_editor_focused = true;
+            }
+            BuiltinScene::CommandPalette => {
+                let mut guard = self.inner.borrow_mut();
+                let g = &mut *guard;
+                let palette = &mut g.state.overlay.command_palette;
+                palette.open = true;
+                palette.query.set_text("undo");
+                // Caret between "un" and "do" — proves the wiring
+                // surfaces a mid-string caret offset, not just
+                // end-of-string.
+                palette.query.place_caret_at(2, false);
+                palette.selected_index = 0;
             }
         }
     }

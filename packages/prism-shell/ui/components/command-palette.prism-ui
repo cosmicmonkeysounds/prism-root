@@ -36,6 +36,8 @@
       id="{id}::input"
       value="{query}"
       placeholder="{placeholder}"
+      focused="true"
+      caret-byte="{caret}"
       width="grow"
       height="36"
       font-size="13"/>

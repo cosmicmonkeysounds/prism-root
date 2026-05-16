@@ -205,7 +205,7 @@ pub struct LowerScope {
     /// when the chain extends.
     class_chain: Arc<Vec<Vec<String>>>,
     /// **Wave A (`prui-luau-fusion.md` §7.1)** — the per-document
-    /// Luau state harvested from `<script lang="luau">` blocks. When
+    /// Luau state harvested from `<script>` blocks. When
     /// set, expression-slot identifier lookups and call resolution
     /// fall through to this frame after the binding map / functional
     /// builtins miss, so a script's top-level `local`s and helper
@@ -575,7 +575,7 @@ impl LowerScope {
     }
 
     /// **Wave A** — install the per-document Luau scope frame
-    /// harvested from `<script lang="luau">` blocks. Forks of this
+    /// harvested from `<script>` blocks. Forks of this
     /// scope (control-flow / slot expansion) inherit the frame via
     /// the `Arc` clone, so a script local resolves identically at
     /// every nesting depth.
@@ -775,14 +775,14 @@ pub fn lower_document(document: &AstDocument) -> Vec<Node> {
 
 pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> Vec<Node> {
     // **Wave A (`prui-luau-fusion.md` §7.1)** — harvest every
-    // top-level `<script lang="luau">` block before the main walk.
+    // top-level `<script>` block before the main walk.
     // The bodies run once in a per-document Lua state; the script's
     // top-level `local`s become document-scope bindings the
     // expression resolver consults. The `<script>` element itself
     // lowers to nothing (it's behaviour, not tree). Gated on the
     // `luau` feature — without it, scripts are inert (the HTML/SSR
     // path stays mlua-free).
-    // **Wave H (§5.3/§5.4)** — inline `<style lang="prss">` blocks
+    // **Wave H (§5.3/§5.4)** — inline `<style>` blocks
     // and `<import stylesheet="…">` sidecars merge into the document
     // stylesheet *before* the Luau frame is built, so a computed
     // `{ lua = "…" }` value (Wave F) in an inline sheet still
@@ -913,7 +913,7 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
 }
 
 /// **Wave A** — collect the raw body of every top-level
-/// `<script lang="luau">` element, in source order. The grammar
+/// `<script>` element, in source order. The grammar
 /// parses a `<script>` block as a raw-text element (one
 /// [`AstNode::Text`] child); multiple inline blocks concatenate at
 /// the [`crate::luau_scope::LuauScopeFrame`] seam. Non-luau
@@ -927,16 +927,9 @@ fn collect_script_bodies(nodes: &[AstNode]) -> Vec<String> {
         if el.tag != "script" {
             continue;
         }
-        let is_luau = el.attributes.iter().any(|a| {
-            a.name.local == "lang"
-                && matches!(
-                    &a.value,
-                    AttributeValue::String { value, .. } if value == "luau" || value == "lua"
-                )
-        });
-        if !is_luau {
-            continue;
-        }
+        // **§5.10** — `<script>` *is* Luau; there is no `lang=`
+        // selector any more (the grammar flags it as a recoverable
+        // diagnostic). Every `<script>` body feeds the Lua state.
         for child in &el.children {
             if let AstNode::Text { value, .. } = child {
                 out.push(value.clone());
@@ -947,7 +940,7 @@ fn collect_script_bodies(nodes: &[AstNode]) -> Vec<String> {
 }
 
 /// **Wave H (`prui-luau-fusion.md` §5.3)** — collect the body of
-/// every top-level inline `<style lang="prss">` block (or bare
+/// every top-level inline `<style>` block (or bare
 /// `<style>`, which defaults to PRSS), in source order. Grammar
 /// parses `<style>` as raw-text (one [`AstNode::Text`] child).
 fn collect_inline_stylesheets(nodes: &[AstNode]) -> Vec<String> {
@@ -957,13 +950,7 @@ fn collect_inline_stylesheets(nodes: &[AstNode]) -> Vec<String> {
         if el.tag != "style" {
             continue;
         }
-        let lang_ok = el.attributes.iter().all(|a| {
-            a.name.local != "lang"
-                || matches!(&a.value, AttributeValue::String { value, .. } if value == "prss")
-        });
-        if !lang_ok {
-            continue;
-        }
+        // **§5.10** — `<style>` *is* PRSS; no `lang=` selector.
         for child in &el.children {
             if let AstNode::Text { value, .. } = child {
                 out.push(value.clone());
@@ -3437,7 +3424,7 @@ fn lookup_path_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value
     if let Some(v) = try_call_owned(body, scope) {
         return Some(v);
     }
-    // **Wave A** — script-block scope. A `<script lang="luau">`
+    // **Wave A** — script-block scope. A `<script>`
     // block's top-level `local`s resolve here after the JSON binding
     // map and functional builtins miss (the §5.6 resolution stack:
     // script locals sit below `let`/`for` vars, above host bindings).
@@ -8991,7 +8978,7 @@ mod tests {
     #[test]
     fn for_source_pipe_closure_filter() {
         let src = r#"
-<script lang="luau">
+<script>
   local tasks = prism.state {
     { title = "A", priority = "high" },
     { title = "B", priority = "low" },
@@ -9022,7 +9009,7 @@ mod tests {
     #[test]
     fn pipeline_filter_sort_take() {
         let src = r#"
-<script lang="luau">
+<script>
   local tasks = prism.state {
     { title = "lo",  prio = 1, open = true },
     { title = "hi",  prio = 9, open = true },
@@ -9058,7 +9045,7 @@ mod tests {
     #[test]
     fn field_name_builtin_still_works_alongside_closures() {
         let src = r#"
-<script lang="luau">
+<script>
   local rows = prism.state {
     { k = "x", on = true }, { k = "y", on = false },
   }
@@ -9103,7 +9090,7 @@ mod tests {
     #[test]
     fn entries_of_group_by_closure() {
         let src = r#"
-<script lang="luau">
+<script>
   local tasks = prism.state {
     { title = "a", assignee = "ann" },
     { title = "b", assignee = "bo" },
@@ -9136,7 +9123,7 @@ mod tests {
     #[test]
     fn closure_closes_over_script_local() {
         let src = r#"
-<script lang="luau">
+<script>
   local threshold = "high"
   local tasks = prism.state {
     { title = "A", priority = "high" },
@@ -9170,7 +9157,7 @@ mod tests {
     #[test]
     fn macro_empty_state_with_attrs_and_children() {
         let src = r##"
-<script lang="luau">
+<script>
   prism.macro("empty-state", function(attrs, children)
     return prui [[
       <container direction="column" gap="8">
@@ -9216,7 +9203,7 @@ mod tests {
     #[test]
     fn macro_sees_tokens_but_not_caller_scope() {
         let src = r##"
-<script lang="luau">
+<script>
   local rows = prism.state { "SECRET" }
   prism.macro("chip", function(attrs, children)
     return prui [[
@@ -9264,7 +9251,7 @@ mod tests {
     #[test]
     fn nested_macro_expansion() {
         let src = r##"
-<script lang="luau">
+<script>
   prism.macro("inner", function(attrs, children)
     return prui [[ <text>{attrs.v}</text> ]]
   end)
@@ -9303,7 +9290,7 @@ mod tests {
         );
         let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
         let src = r##"
-<script lang="luau">
+<script>
   prism.macro("boxed", function(attrs, children)
     return prui [[ <container id="m" class="card"/> ]]
   end)
@@ -9418,7 +9405,7 @@ mod tests {
     fn suspense_shows_fallback_on_pending_marker() {
         // A script binding shaped like an unresolved async query.
         let src = r##"
-<script lang="luau">
+<script>
   local async_tasks = prism.state { tag = "Pending" }
 </script>
 <suspense>
@@ -9439,7 +9426,7 @@ mod tests {
     #[test]
     fn language_block_dispatches_to_dialect() {
         let src = r##"
-<script lang="luau">
+<script>
   prism.dialect {
     name = "upper",
     parse = function(source)
@@ -9458,7 +9445,7 @@ mod tests {
     #[test]
     fn dialect_sigil_inline() {
         let src = r##"
-<script lang="luau">
+<script>
   prism.dialect {
     name = "shout",
     parse = function(s) return "<text>" .. s .. "!!!</text>" end,
@@ -9477,7 +9464,7 @@ mod tests {
     #[test]
     fn markdown_style_dialect_emits_node_tree() {
         let src = r##"
-<script lang="luau">
+<script>
   prism.dialect {
     name = "md",
     parse = function(source)
@@ -9522,7 +9509,7 @@ mod tests {
     #[test]
     fn prui_ast_constructors_build_tree() {
         let src = r##"
-<script lang="luau">
+<script>
   prism.dialect {
     name = "card",
     parse = function(s)
@@ -9621,7 +9608,7 @@ mod tests {
         );
         let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
         let src = r##"
-<script lang="luau">
+<script>
   local function brand() return "#123456" end
 </script>
 <container id="t" class="tag"/>
@@ -9639,7 +9626,7 @@ mod tests {
     #[test]
     fn inline_style_block_applies_classes() {
         let src = r##"
-<style lang="prss">
+<style>
 [class.card]
 background = "#0060c0"
 </style>
@@ -9656,11 +9643,11 @@ background = "#0060c0"
     #[test]
     fn multiple_style_blocks_layer_later_wins() {
         let src = r##"
-<style lang="prss">
+<style>
 [class.x]
 background = "#111111"
 </style>
-<style lang="prss">
+<style>
 [class.x]
 background = "#222222"
 </style>
@@ -9681,11 +9668,11 @@ background = "#222222"
         // <script> helper — proves the style merge runs before the
         // Luau frame is built.
         let src = r##"
-<style lang="prss">
+<style>
 [class.tag]
 background = { lua = "brand()" }
 </style>
-<script lang="luau">
+<script>
   local function brand() return "#abcdef" end
 </script>
 <container id="t" class="tag"/>
@@ -9832,7 +9819,7 @@ background = { lua = "brand()" }
         // fire it from Rust (the host event-router seam) and read
         // the local back through the binding surface.
         let src = r##"
-<script lang="luau">
+<script>
   local hits = prism.state { count = 0, last = "" }
   prism.probes:on("clicked", function(ev)
     hits.count = hits.count + 1
@@ -9888,7 +9875,7 @@ background = { lua = "brand()" }
             serde_json::json!({ "title": "Ship it", "priority": "high" }),
         );
         let src = r##"
-<script lang="luau">
+<script>
   local task = prism.scope.task
   local function label() return task.title .. " (" .. task.priority .. ")" end
 </script>
@@ -9904,7 +9891,7 @@ background = { lua = "brand()" }
         // Reading an unprovided host binding is nil-safe (no panic,
         // no leak) — the script guards with `or`.
         let src = r##"
-<script lang="luau">
+<script>
   local who = prism.scope.user or "anon"
 </script>
 <text>{who}</text>
@@ -9913,7 +9900,7 @@ background = { lua = "brand()" }
         assert_eq!(text_contents(&nodes), vec!["anon".to_string()]);
     }
 
-    // ---------- Wave A: <script lang="luau"> colocated module ----------
+    // ---------- Wave A: <script> colocated module ----------
 
     /// End-to-end §7.1: a `<script>` block's top-level `local`s
     /// (helper fn + state table) resolve in `{expr}` slots, and the
@@ -9922,7 +9909,7 @@ background = { lua = "brand()" }
     #[test]
     fn script_block_locals_resolve_in_expression_slots() {
         let src = r##"
-<script lang="luau">
+<script>
   local function priority_color(p)
     if p == "high" then return "#ff0000" end
     return "#888888"

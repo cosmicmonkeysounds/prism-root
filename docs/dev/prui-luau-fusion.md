@@ -29,11 +29,11 @@
 
 **Status:** design draft (2026-05-15). **Waves A–G landed +
 H/I partial, 2026-05-15.** Runtime-complete: (A) colocated
-`<script lang="luau">`; (B) closures + `|`/`|>` pipes; (C)
+`<script>`; (B) closures + `|`/`|>` pipes; (C)
 `prui[[…]]` + `prism.macro` (hygienic); (D) `<match>`/`<case>` +
 `<suspense>`/`<fallback>`; (E) `prism.dialect` + `<language>` /
 `~name{…}` (+ `prui_ast.*` constructors); (F) computed PRSS
-`{ lua = "…" }` + native colour helpers; (G) `probe:` namespace
+`{ … }` + native colour helpers; (G) `probe:` namespace
 + `prism.probes:on` + `at:` keyframe namespace. Partial: (H)
 inline `<style>` + `<import>`/`ImportResolver` + FS
 sibling-pairing host resolver + **tier-2 named Luau module
@@ -67,7 +67,7 @@ languages with three editors, three diagnostics streams, three
 ways of expressing "the value of this thing depends on that
 thing." The seams between them are narrow:
 
-- PRUI → PRSS: `class="…"` opts into a class table.
+- PRUI → PRSS: `class=…` opts into a class table.
 - PRUI → Luau: `luau { … }` action body; `use:` modifier
   attachment; `FacetKind::Script` data facet.
 - PRSS → anything: nothing — values are static TOML literals.
@@ -105,14 +105,14 @@ The result:
 
 - An expression slot can hold a Pratt expression *or* a Luau
   function literal.
-- A `.prui` file can ship colocated `<script lang="luau">` and
-  `<style lang="prss">` blocks; their locals / classes become
+- A `.prui` file can ship colocated `<script>` and
+  `<style>` blocks; their locals / classes become
   document-scope bindings.
 - Sibling files (`widget.prss`, `widget.luau`) are picked up
   automatically; no `<import>` ceremony required.
 - A Luau file can embed PRUI literals (`prui [[ … ]]`) and load
   PRSS data programmatically (`prss "./theme.prss"`).
-- A PRSS value can call Luau (`{ lua = "darken(...)" }`) and
+- A PRSS value can call Luau (`{ darken(...) }`) and
   subscribe to the same signal graph the rest of the document
   uses.
 - New tags, sub-dialects, lifecycle hooks, suspense boundaries,
@@ -195,8 +195,8 @@ is mostly plumbing.
 ## 4. The core insight: three projections of one source
 
 PRUI, PRSS, and Luau today are three files, three parsers, three
-mental models. They cooperate at runtime — `class="…"` on a PRUI
-element resolves through PRSS; `luau { … }` on an `on:` action
+mental models. They cooperate at runtime — `class=…` on a PRUI
+element resolves through PRSS; `$stmt` on an `on:` action
 runs in Luau — but at *authoring* time they're separate worlds.
 
 The proposal makes all three **projections of one source**. Each
@@ -219,19 +219,19 @@ and a single gradual type system spanning all three projections.
        ┌─────────────────────────────────────────────┐
        │              widget.prui                    │
        │                                             │
-       │  <style lang="prss">           ← inline     │
+       │  <style>                       ← inline     │
        │    [class.card]                  PRSS       │
-       │    background = "…"                         │
+       │    background = { … }                       │
        │  </style>                                   │
        │                                             │
-       │  <script lang="luau">          ← inline     │
+       │  <script>                      ← inline     │
        │    local state = prism.state{…}  Luau       │
        │    local function color(p) … end            │
        │  </script>                                  │
        │                                             │
-       │  <container class="card"       ← PRUI       │
-       │     style:color="{color(p)}"     body       │
-       │     on:click="luau { … }">                  │
+       │  <container class=card,        ← PRUI       │
+       │     style:color={color(p)},       body       │
+       │     on:click=$handle()>                     │
        │    …                                        │
        │  </container>                               │
        └─────────────────────────────────────────────┘
@@ -240,8 +240,8 @@ and a single gradual type system spanning all three projections.
        │ widget.prui │widget.prss│  widget.luau    │
        │             │           │                 │
        │ <container  │[class.card│ local function  │
-       │   class=    │background │   color(p) …   │
-       │   "card"…>  │  = "…"    │ end             │
+       │  class=card,│background │   color(p) …   │
+       │  …>         │  = { … }  │ end             │
        │             │           │                 │
        │             │           │ prui [[ … ]]    │
        └─────────────┴───────────┴─────────────────┘
@@ -251,13 +251,13 @@ and a single gradual type system spanning all three projections.
 The three files are basename-paired by convention: `widget.prui`
 implicitly imports `widget.prss` and `widget.luau` from the same
 directory if they exist. The same content authored as
-`<style lang="prss">` and `<script lang="luau">` blocks inside
+`<style>` and `<script>` blocks inside
 the single-file PRUI yields **byte-identical** lowered output.
 
 Either projection can host inline fragments of the others.
-PRSS values can call into Luau (`{ lua = "…" }`). PRUI can quote
-Luau inline (`@click="luau { … }"`) and reference PRSS classes
-(`class="card"`). Luau can quote PRUI inline (`prui [[ … ]]`)
+PRSS values can call into Luau (`{ … }`). PRUI can quote
+Luau inline (`on:click=$luau-stmt`) and reference PRSS classes
+(`class=card`). Luau can quote PRUI inline (`prui [[ … ]]`)
 and load PRSS programmatically (`local theme = prss "./theme.prss"`).
 The bridge is symmetric.
 
@@ -320,13 +320,13 @@ for the common case.
   locals merge straight into document scope — zero ceremony, for
   component-local behaviour). The 1-1 sibling is the *default*,
   **not the ceiling**: a widget that wants modular behaviour pulls
-  in any number of *named* Luau modules via `<import script="…"
-  as="…">` (§5.9), and modules pull each other in via Luau's own
+  in any number of *named* Luau modules via `<import
+  script="…"/> as <name>` (§5.9), and modules pull each other in via Luau's own
   `require` (§5.9 tier 3). The sibling stays 0..1 on purpose — it
   is the un-namespaced merge slot; everything modular is named.
 
 **Override:** if a directory contains both `task-card.prui` with
-an inline `<script lang="luau">` *and* a sibling `task-card.luau`
+an inline `<script>` *and* a sibling `task-card.luau`
 file, the loader concatenates: sibling first, inline second, so
 the inline block's locals can reference the sibling's exports.
 Same for PRSS, but `class` definitions in the inline block win
@@ -335,20 +335,20 @@ on collision.
 ### 5.3 Single-file: inline `<script>` and `<style>` blocks
 
 The HTML-in-one-file shape. Any `.prui` file may host top-level
-`<script lang="luau">` and `<style lang="prss">` blocks:
+`<script>` and `<style>` blocks:
 
 ```prui
-<style lang="prss">
+<style>
   [tokens.colors]
   accent = "#7c3aed"
 
   [class.card]
-  background = "{tokens.colors.surface}"
+  background = {tokens.colors.surface}
   radius = 8
-  padding = "12 16"
+  padding = 12 16
 </style>
 
-<script lang="luau">
+<script>
   local state = prism.state { expanded = false }
 
   local function priority_color(p)
@@ -357,9 +357,9 @@ The HTML-in-one-file shape. Any `.prui` file may host top-level
   end
 </script>
 
-<container class="card">
-  <text style:color="{priority_color(task.priority)}">{task.title}</text>
-  <button on:click="state.expanded = !state.expanded">…</button>
+<container class=card>
+  <text style:color={priority_color(task.priority)}>{task.title}</text>
+  <button on:click=$state.expanded = !state.expanded>…</button>
 </container>
 ```
 
@@ -400,13 +400,13 @@ imports beat convention. The `<import>` element is a self-closing
 top-level tag:
 
 ```prui
-<import stylesheet="./theme.prss"/>            <!-- merge PRSS into document scope -->
-<import stylesheet="./elevations.prss" as="elev"/>  <!-- namespaced — referenced as class="elev.card" -->
-<import script="./behaviour.luau"/>            <!-- merge Luau locals into scope -->
-<import script="./fmt.luau" as="fmt"/>         <!-- namespaced — call via fmt.currency(…) -->
-<import widget="./button.prui"/>               <!-- register sibling-named tag — <button/> -->
-<import widget="./fancy-card.prui" as="card"/> <!-- register as <card/> -->
-<import dialect="./markdown.luau"/>            <!-- register a dialect (§7.8) -->
+<import stylesheet="./theme.prss"/>               <!-- merge PRSS into document scope -->
+<import stylesheet="./elevations.prss"/> as elev  <!-- namespaced — referenced as class = elev.card -->
+<import script="./behaviour.luau"/>               <!-- merge Luau locals into scope -->
+<import script="./fmt.luau"/> as fmt              <!-- namespaced — call via fmt.currency(…) -->
+<import widget="./button.prui"/>                  <!-- register sibling-named tag — <button/> -->
+<import widget="./fancy-card.prui"/> as card      <!-- register as <card/> -->
+<import dialect="./markdown.luau"/>               <!-- register a dialect (§7.8) -->
 
 <container>
   <card title="…"/>
@@ -416,7 +416,7 @@ top-level tag:
 
 Six import shapes, one element, all consistent: pick the
 projection (`stylesheet` / `script` / `widget` / `dialect`),
-optionally name it (`as=`), and the loader handles the rest.
+optionally name it (postfix `as <name>`), and the loader handles the rest.
 
 **Resolution rules:**
 
@@ -445,9 +445,9 @@ projected for it.
 
 | From → To | Mechanism | Example |
 |---|---|---|
-| PRUI → PRSS | `class="…"` opts into PRSS-defined classes | `<container class="card primary"/>` |
-| PRUI → Luau | `{expr}` expression slots resolve Luau scope identifiers; `luau { … }` action bodies; `<script>` block scope | `style:color="{priority_color(p)}"` |
-| PRSS → Luau | `{ lua = "…" }` values evaluate in document Luau scope | `background = { lua = "darken(tokens.colors.accent, 0.1)" }` |
+| PRUI → PRSS | `class=…` opts into PRSS-defined classes | `<container class=[card, primary]/>` |
+| PRUI → Luau | `{expr}` value slots / `$stmt` action bodies resolve Luau scope; `<script>` block scope | `style:color={priority_color(p)}` |
+| PRSS → Luau | `{ … }` values evaluate in document Luau scope | `background = { darken(tokens.colors.accent, 0.1) }` |
 | PRSS → PRUI | (none — stylesheets don't construct elements) | — by design |
 | Luau → PRUI | `prui [[ … ]]` quasi-quote; `prism.widget { render = … }` | `local node = prui [[ <container/> ]]` |
 | Luau → PRSS | `local style = prss "./theme.prss"` loads a stylesheet as data; `prism.tokens` reads the merged token table | `local accent = prism.tokens.colors.accent` |
@@ -469,24 +469,24 @@ expression slot {expr}
 1. let bindings (sibling-scoped, §6.3 of prui-reference)
 2. for-loop iteration variables (item, idx, key)
 3. <script> block locals (this doc §7.1)
-4. imported Luau modules (named via `as=` from <import script>)
+4. imported Luau modules (named via postfix `as` from <import script>)
 5. host_children scope / slots
 6. tokens (always present — design tokens via PRSS + runtime defaults)
 7. host bindings (props from the resolver)
 8. document globals (prism.*, ui.*, error)
 ```
 
-Inner frames shadow outer ones — a `for="task in tasks"` iteration
+Inner frames shadow outer ones — a `for={task in tasks}` iteration
 variable shadows a `<script>` block's `task` local. This matches
 Lua's own lexical scoping intuition and the PRUI reference's
 `<let>` shadowing rule.
 
-PRSS resolution is simpler: a `class="a b c"` attribute walks
+PRSS resolution is simpler: a `class=[a, b, c]` attribute walks
 the classes left-to-right, each class's `extends` chain bottom-up,
 applying `apply_style_override` in order. Imports merge classes
 into the document's class table; namespaced imports
-(`as="elev"`) keep them in a sub-table addressed via
-`class="elev.card"`.
+(`/> as elev`) keep them in a sub-table addressed via
+`class=elev.card`.
 
 Luau scope is plain Luau — `<script>` block locals plus any
 `<import script>` modules plus the `prism.*` global. The
@@ -524,10 +524,10 @@ authoring ergonomics:
 | Teaching / docs | Production component packages |
 
 **Refactoring is non-destructive.** A single-file widget's
-`<style lang="prss">` block can be moved to a sibling
+`<style>` block can be moved to a sibling
 `widget.prss` (delete the block, save the contents next to the
 file, reload) with zero changes to the PRUI body. Same for
-`<script lang="luau">`. The parser produces the same intermediate
+`<script>`. The parser produces the same intermediate
 representation either way.
 
 ### 5.9 Multi-Luau modularity — named modules + `require`
@@ -552,18 +552,18 @@ defined" never has more than one flat answer.
 **Tier 2 — named module import (the modularity primitive).**
 
 ```prui
-<import script="./fmt.luau"        as="fmt"/>
-<import script="prism://lib/dates" as="dates"/>
-<import script="./task-machine.luau" as="machine"/>
+<import script="./fmt.luau"/> as fmt
+<import script="prism://lib/dates"/> as dates
+<import script="./task-machine.luau"/> as machine
 
 <text>{fmt.currency(task.budget)}</text>
 <text>{dates.relative(task.due)}</text>
-<button on:click="luau { machine.advance(task) }">Next</button>
+<button on:click=$machine.advance(task)>Next</button>
 ```
 
 Each *named* import is evaluated as an **isolated module**: the
 value it `return`s (Luau's own module convention) becomes a single
-table bound under the `as=` name. Many imports → many namespaces,
+table bound under the postfix `as` name. Many imports → many namespaces,
 **no global collision possible** — `fmt.currency` and
 `dates.currency` coexist because neither leaks a bare `currency`.
 A module exports several helpers by returning a table:
@@ -582,7 +582,7 @@ identifier stack (named modules), so an inner `for`/`let`/route
 binding lexically shadows them — same intuition as Lua locals
 shadowing an upvalue.
 
-An **un-named** `<import script="./x.luau"/>` (no `as=`) keeps the
+An **un-named** `<import script="./x.luau"/>` (no postfix `as`) keeps the
 legacy *flat-merge* behaviour: equivalent to concatenating the
 file into the document script, last-wins on collision, ordered
 *after* the tier-1 sibling and *before* the inline `<script>`.
@@ -610,7 +610,7 @@ its `.prui` stays declarative.
 - **Module identity = resolved absolute path.** The resolver
   canonicalises `./fmt.luau`, `prism://lib/fmt.luau`, and a
   sibling probe to a single key. A module imported under two
-  different `as=` names, or pulled by both `<import>` and
+  different postfix `as` names, or pulled by both `<import>` and
   `require`, **evaluates exactly once**; importers share the
   one returned table.
 - **Isolation.** Every module runs in the per-document Lua state
@@ -629,9 +629,88 @@ its `.prui` stays declarative.
 
 **Why not a `scripts=[…]` manifest list or `src=`?** Rejected
 (see §11). `<import>` already carries the four-projection shape;
-a parallel list attribute would be a second mechanism for one
-job, and per-line `as=` keeps each module's namespace legible at
-the reference site instead of hidden in a manifest.
+a parallel postfix `as <name>` keeps each module's namespace
+legible at the reference site instead of hidden in a manifest.
+
+### 5.10 Canonical surface syntax (normative)
+
+Every example in this document, every `.prui` / `.prss` file, and
+the parser itself obey the rules below. The through-line is one
+goal: **a `"…"` string-type tag appears only where the value is
+genuinely free-form text.** Everything that is an identifier, an
+enum, a number, a numeric list, an expression, or a statement has
+its own un-stringed form. This is the "string-tag reduction" the
+rest of the doc's examples are written against.
+
+**1. Raw-text blocks carry no `lang=`.** There is one script
+language (Luau) and one style language (PRSS), so the block tag
+*is* the language: `<script> … </script>`, `<style> … </style>`.
+Only `<language name="markdown"> … </language>` keeps an
+attribute, because the dialect name is genuinely open-ended
+(§7.8). A `lang=` attribute on `<script>`/`<style>` is a parse
+error, not a synonym — there is exactly one spelling.
+
+**2. Attributes are comma-separated.** Once values may be
+unquoted and themselves contain whitespace (`padding=12 16`), the
+space that used to delimit attributes no longer can. A `,`
+separates every attribute; whitespace and newlines around the
+comma are insignificant. No trailing comma before `>` / `/>`.
+
+```prui
+<container direction=row, gap=8, padding=12 16,
+           style:radius=8, class=card>
+```
+
+**3. Six value forms, each for exactly one shape of data:**
+
+| Form | Used for | Example |
+|---|---|---|
+| **bare token** | identifiers, enum variants, numbers, numeric lists, sizing keywords, a single class name | `direction=row`, `gap=8`, `padding=12 16`, `width=grow`, `class=card` |
+| **quoted `"…"`** | genuinely free-form text, or any value containing characters outside the bare set (paths, resource ids, prose) | `label="HIGH"`, `title="No tasks"`, `src="icon:plus"`, `script="./fmt.luau"` |
+| **value expr `{ … }`** | a Luau *value* spliced into the slot | `style:color={priority_color(p)}`, `if={task.done}`, `for={t in tasks \| take(5)}`, `at:200ms={ opacity=1 }` |
+| **action body `$ …`** | a Luau *statement* run for effect — handler / lifecycle bodies. Runs to the next top-level comma or tag close | `on:click=$state.x = !state.x`, `on:click=$emit("save")`, `effect:on-mount=$load()` |
+| **list `[ … ]`** | a comma-separated multi-value; each element is a bare token or `{expr}` | `class=[card, {priority_class(p)}]` |
+| **boolean** | presence-only flags — name, no `=` | `disabled`, `<case default>` |
+
+`{ … }` *produces a value*; `$ …` *performs an action*. That is
+the whole distinction. A value slot (`style:`, `if`, `for`,
+plain `{…}` interpolation, props, `at:`, `transition:`) is never
+`$`; a side-effecting handler (`on:`, `effect:`) is never `{}`.
+Closures inside a `{ … }` value slot keep their existing sigils —
+`|args| expr` for a one-liner, `\fn(args) … end` for a block
+(§7.2) — e.g. `transition:easing={\fn(t) return 1-(1-t)^3 end}`.
+
+**4. PRSS values are literals or `{ luau-expr }`.** A brace value
+in a `.prss` rule (or inline `<style>`) is a Luau expression
+evaluated once at stylesheet load:
+
+```prss
+[class.btn-primary]
+background = { tokens.colors.accent }
+
+[class.btn-primary:hovered]
+background = { darken(tokens.colors.accent, 0.1) }
+```
+
+This means **PRSS is a TOML-*shaped* format, not strict TOML.**
+The earlier "PRSS stays pure TOML / no new file format" framing
+is retired here: a brace whose body is a bare Luau expression is
+not valid TOML, and the win — no `{ lua = "…" }` string wrapper,
+no escaping — is worth owning a TOML-shaped scanner. The internal
+`LUA_VALUE_SENTINEL` IR is unaffected; only the *surface* spelling
+changed (`{ lua = "x" }` → `{ x }`).
+
+**5. `<import>` namespacing is a postfix `as` keyword.** The tag
+selects the projection and path; an optional `as <name>` *after*
+the self-closing tag binds the namespace:
+
+```prui
+<import script="./fmt.luau"/> as fmt
+<import stylesheet="./elevations.prss"/> as elev
+```
+
+No `as=` attribute exists — the namespace reads at the end of the
+line where the eye already is, not buried mid-tag.
 
 ---
 
@@ -681,7 +760,7 @@ flips this: **every binding that crosses the PRUI / Luau seam
 has a declared type, and the LSP enforces it.**
 
 ```prui
-<script lang="luau">
+<script>
   --!strict
   type Task = {
     id: string,
@@ -709,9 +788,9 @@ has a declared type, and the LSP enforces it.**
 </script>
 
 <container>
-  <text style:color="{priority_color(task)}">{task.title}</text>
-  <text>{task.foo}</text>                  <!-- LSP error: Task has no field 'foo' -->
-  <button on:click="state.fliter = 'open'"> <!-- LSP error: typo, did you mean 'filter'? -->
+  <text style:color={priority_color(task)}>{task.title}</text>
+  <text>{task.foo}</text>                     <!-- LSP error: Task has no field 'foo' -->
+  <button on:click=$state.fliter = 'open'> <!-- LSP error: typo, did you mean 'filter'? -->
     Filter open
   </button>
 </container>
@@ -740,7 +819,7 @@ slot's expected return type (number for `width`, string for
 
 ### 6.3 PRSS values are typed too
 
-`{ lua = "…" }` PRSS values go through the same type pipeline.
+`{ … }` computed PRSS values go through the same type pipeline.
 Each PRSS field has a declared type:
 
 | PRSS key | Type |
@@ -751,7 +830,7 @@ Each PRSS field has a declared type:
 | `font-size` | `number` |
 
 Annotated upstream as Luau types in `core.d.luau`. A
-`{ lua = "darken('not-a-color', 0.1)" }` call gets a type error
+`{ darken('not-a-color', 0.1) }` call gets a type error
 at PRSS-load time, not a runtime miscompile.
 
 ### 6.4 Signal payloads are typed end-to-end
@@ -760,7 +839,7 @@ at PRSS-load time, not a runtime miscompile.
 types. The fusion extends this all the way to the handler body:
 
 ```prui
-<script lang="luau">
+<script>
   --!strict
 
   -- Inferred from signals.d.luau — no hand annotation needed.
@@ -769,11 +848,11 @@ types. The fusion extends this all the way to the handler body:
   prism.on_signal("save", function(event)
     -- event is SaveEvent — typechecked
     prism.objects:update(event.source, { savedAt = event.timestamp })
-    --                       ^^^^^^^^^ LSP knows this is a string id
+    --                         ^^^^^^^ LSP knows this is a string id
   end)
 </script>
 
-<button on:click="emit save">Save</button>
+<button on:click = $emit("save")>Save</button>
 ```
 
 The `signals.d.luau` codegen pass walks the document's component
@@ -800,10 +879,10 @@ export type EmptyStateAttrs = {
 
 return prism.macro("empty-state", function(attrs: EmptyStateAttrs, children)
   return prui [[
-    <container direction="column" gap="8" padding="32">
-      <image src="{attrs.icon or 'icon:inbox'}"/>
+    <container direction=column, gap=8, padding=32>
+      <image src={attrs.icon or 'icon:inbox'}/>
       <text>{attrs.title}</text>
-      <text if="{attrs.subtitle}">{attrs.subtitle}</text>
+      <text if={attrs.subtitle}>{attrs.subtitle}</text>
       <fragment>{children}</fragment>
     </container>
   ]]
@@ -813,10 +892,10 @@ end)
 When a PRUI file uses `<empty-state>`:
 
 ```prui
-<empty-state title="No tasks" subtitleX="Add one"/>
-<!--                          ^^^^^^^^^^ LSP error: unknown attribute, did you mean 'subtitle'? -->
-<empty-state title="{state.count}"/>
-<!--                ^^^^^^^^^^^^^ LSP error: title expects string, got number -->
+<empty-state title="No tasks", subtitleX="Add one"/>
+<!--                           ^^^^^^^^^^ LSP error: unknown attribute, did you mean 'subtitle'? -->
+<empty-state title={state.count}/>
+<!--                ^^^^^^^^^^^ LSP error: title expects string, got number -->
 ```
 
 Same for dialects: `prism.dialect { name, parse }` exports a
@@ -905,15 +984,15 @@ type system (§6). Each is independently useful and lands as its
 own implementation wave (§9). Listed roughly in order of leverage
 — §7.1 is the foundation; the rest compose on top.
 
-### 7.1 `<script lang="luau">` — colocated module
+### 7.1 `<script>` — colocated module
 
 The single biggest leverage point. A `.prui` file can host one
-top-level `<script lang="luau">` block; its body runs once per
+top-level `<script>` block; its body runs once per
 document load with the **document scope** as its return surface.
 Three kinds of declarations get hoisted:
 
 ```prui
-<script lang="luau">
+<script>
   -- (1) Helper functions — visible to every expression slot
   local function priority_color(p)
     if p == "high"   then return tokens.colors.danger end
@@ -942,14 +1021,14 @@ Three kinds of declarations get hoisted:
   return { priority_color, state, visible_tasks }
 </script>
 
-<container direction="column" gap="8">
-  <text style:color="{priority_color(task.priority)}">
+<container direction=column, gap=8>
+  <text style:color={priority_color(task.priority)}>
     {task.title}
   </text>
-  <button on:click="state.expanded = !state.expanded">
+  <button on:click=$state.expanded = !state.expanded>
     {state.expanded ? "Collapse" : "Expand"}
   </button>
-  <container if="{state.expanded}" for="t in visible_tasks">
+  <container if={state.expanded}, for={t in visible_tasks}>
     <text>{t.title}</text>
   </container>
 </container>
@@ -1002,12 +1081,12 @@ function literal sigil), the slot switches to **Luau**.
 
 ```prui
 <!-- Function literal — for ad-hoc closures. -->
-<container for="task in tasks | filter(|t| t.priority == 'high')">
+<container for={task in tasks | filter(|t| t.priority == 'high')}>
   <text>{task.title}</text>
 </container>
 
 <!-- Same idea, more readable with `\fn` for multi-line. -->
-<container for="grp in entries(group_by(tasks, \fn(t) return t.assignee end))">
+<container for={grp in entries(group_by(tasks, \fn(t) return t.assignee end))}>
   <heading>{grp.key}</heading>
 </container>
 ```
@@ -1016,10 +1095,10 @@ function literal sigil), the slot switches to **Luau**.
 and Elm. Compose pipelines without nesting:
 
 ```prui
-<container for="t in tasks
+<container for={t in tasks
     | filter(|t| t.status == 'open')
     | sort_by(\fn(t) return -t.priority end)
-    | take(5)">
+    | take(5)}>
   …
 </container>
 ```
@@ -1058,13 +1137,13 @@ return prism.widget {
   render = function(props)
     return prui [[
       <container
-          padding="4 8"
-          style:radius="999"
-          style:background="{tones[props.tone]}">
-        <text font-size="12" style:color="#fff">{props.label}</text>
+          padding=4 8,
+          style:radius=999,
+          style:background={tones[props.tone]}>
+        <text font-size=12, style:color="#fff">{props.label}</text>
       </container>
     ]]
-  end,
+  end
 }
 ```
 
@@ -1081,9 +1160,9 @@ parse time and rerouting to the PRUI parser. Luau's `string`
 hooks let us register `prui` as a Lua function whose call form
 returns a `VirtualNode` directly.
 
-**This is the inverse of `<script lang="luau">`:** instead of
+**This is the inverse of `<script>`:** instead of
 Luau inside PRUI, PRUI inside Luau. They compose. A widget
-defined in `.luau` *can* host a `<script lang="luau">` block
+defined in `.luau` *can* host a `<script>` block
 inside its `prui [[ … ]]` body for a co-located helper — it
 nests cleanly because each side parses straightforwardly into
 the other.
@@ -1102,8 +1181,8 @@ lifecycle callbacks to a specific element:
 
 ```prui
 <container
-    effect:on-mount="\fn() prism.signals:fire(self_id, 'opened', {}) end"
-    effect:on-cleanup="\fn() prism.signals:fire(self_id, 'closed', {}) end">
+    effect:on-mount=$prism.signals:fire(self_id, 'opened', {}),
+    effect:on-cleanup=$prism.signals:fire(self_id, 'closed', {})>
   …
 </container>
 ```
@@ -1135,14 +1214,14 @@ PRUI today expresses discriminated-union dispatch through chained
 element with `<case>` children:
 
 ```prui
-<match on="{event.kind}">
-  <case is="click">
+<match on={event.kind}>
+  <case is=click>
     <text>You clicked at ({event.x}, {event.y})</text>
   </case>
-  <case is="hover">
+  <case is=hover>
     <text>Hovering since {event.since}ms</text>
   </case>
-  <case is="key" if="{event.key == 'Escape'}">
+  <case is=key, if={event.key == 'Escape'}>
     <text>Escape pressed</text>
   </case>
   <case default>
@@ -1151,8 +1230,8 @@ element with `<case>` children:
 </match>
 ```
 
-Two `case` forms: `is="literal"` matches structural equality; an
-extra `if=` clause narrows further. `<case default>` is the
+Two `case` forms: `is=literal` matches structural equality; an
+extra `if={…}` clause narrows further. `<case default>` is the
 catch-all (must be last). Falls through to the existing
 `if` / `else-if` lowering — `<match>` is parser sugar.
 
@@ -1172,12 +1251,12 @@ backfill. The Luau side already has the coroutine async model
 ```prui
 <suspense>
   <fallback>
-    <text style:color="{tokens.colors.text_secondary}">Loading tasks…</text>
+    <text style:color={tokens.colors.text_secondary}>Loading tasks…</text>
   </fallback>
   <container
-      for="task in async_tasks"
-      effect:on-mount="\fn() async_tasks = prism.objects:query_async({...}) end">
-    <shell.task-row props="{task}"/>
+      for={task in async_tasks},
+      effect:on-mount=$async_tasks = prism.objects:query_async({...})>
+    <shell.task-row props={task}/>
   </container>
 </suspense>
 ```
@@ -1205,11 +1284,11 @@ PRUI AST node.
 -- macros/empty-state.luau
 return prism.macro("empty-state", function(attrs, children)
   return prui [[
-    <container direction="column" gap="8" padding="32"
-               style:background="{tokens.colors.surface}">
-      <image src="{attrs.icon or 'icon:inbox'}" width="48" height="48"/>
-      <text font-size="16">{attrs.title}</text>
-      <text font-size="14" style:color="{tokens.colors.text_secondary}">
+    <container direction=column, gap=8, padding=32,
+               style:background={tokens.colors.surface}>
+      <image src={attrs.icon or 'icon:inbox'}, width=48, height=48/>
+      <text font-size=16>{attrs.title}</text>
+      <text font-size=14, style:color={tokens.colors.text_secondary}>
         {attrs.subtitle}
       </text>
       <fragment>{children}</fragment>
@@ -1221,9 +1300,9 @@ end)
 Used in any `.prui`:
 
 ```prui
-<empty-state title="No tasks yet" subtitle="Create one to get started"
+<empty-state title="No tasks yet", subtitle="Create one to get started",
              icon="icon:plus">
-  <button on:click="cmd task.new">Create task</button>
+  <button on:click=$cmd("task.new")>Create task</button>
 </empty-state>
 ```
 
@@ -1292,29 +1371,28 @@ core PRUI parser, let the ecosystem add languages.
 
 ### 7.9 PRSS × Luau — computed stylesheets
 
-PRSS today is pure TOML — bounded, validated, no computation.
-The proposal: an opt-in TOML extension where any value may be a
-`{lua = "…"}` table whose body is a Luau expression evaluated
-once at stylesheet load.
+PRSS today is TOML-shaped — bounded, validated, no computation.
+The proposal: any value may be a `{ … }` brace whose body is a
+Luau expression evaluated once at stylesheet load.
 
-```toml
+```prss
 [class.btn-primary]
-background = { lua = "tokens.colors.accent" }
-radius     = { lua = "tokens.radius.md" }
-padding    = { lua = "tokens.spacing.sm * 2" }
+background = { tokens.colors.accent }
+radius     = { tokens.radius.md }
+padding    = { tokens.spacing.sm * 2 }
 
 [class.btn-primary:hovered]
-background = { lua = "darken(tokens.colors.accent, 0.1)" }
+background = { darken(tokens.colors.accent, 0.1) }
 ```
 
 Why this beats inline `style:`: PRSS keeps the *single seam* for
-theme variation. Inline lua in PRSS still parses through TOML
-(no new file format), still resolves through the Luau host (no
-new evaluator), and still caches through the existing
-fingerprint pipeline (Luau body hashed alongside the rest of the
-rule).
+theme variation. This is the point where PRSS stops being strict
+TOML (§5.10) — a bare-expression brace is not valid TOML — but it
+still resolves through the Luau host (no new evaluator) and still
+caches through the existing fingerprint pipeline (Luau body
+hashed alongside the rest of the rule).
 
-**Reactivity:** a `{lua = …}` body's reads of `tokens` /
+**Reactivity:** a `{ … }` body's reads of `tokens` /
 `prism.state` subscribe the stylesheet to those signals. A token
 override at runtime invalidates only the rules that depend on
 it — fingerprint cache stays warm for the rest.
@@ -1328,7 +1406,7 @@ files can *declare their scope's type* in the `<script>` block,
 and the rest of the file gets typed completions:
 
 ```prui
-<script lang="luau">
+<script>
   ---@type Task
   local task = prism.scope.task
 
@@ -1341,7 +1419,7 @@ and the rest of the file gets typed completions:
 <container>
   <text>{task.title}</text>       <!-- LSP knows .title is string -->
   <text>{task.foo}</text>          <!-- error: Task has no field 'foo' -->
-  <container for="c in children">
+  <container for={c in children}>
     <text>{c.title}</text>         <!-- c is Task, inferred -->
   </container>
 </container>
@@ -1363,8 +1441,8 @@ Inspector / DevTools panel:
 
 ```prui
 <container
-    probe:layout="card_layout"
-    probe:render-count="card_render_count">
+    probe:layout=card_layout,
+    probe:render-count=card_render_count>
   …
 </container>
 ```
@@ -1383,21 +1461,21 @@ end)
 
 The probe stream is also addressable by the dev-tools panel
 (filter, replay, snapshot). Removes the
-"add a `data-foo="{...}"` to see what the value is" workflow
+"add a `data-foo={...}` to see what the value is" workflow
 that always leaves debug attrs in production.
 
 ### 7.12 Animations as data — Luau-driven `at:` namespace
 
-Today `transition:opacity="200ms"` interpolates one prop linearly.
+Today `transition:opacity=200ms` interpolates one prop linearly.
 The proposal: an `at:<duration>` namespace that declares keyframe
 *states*, with Luau as the easing/interpolation backplane:
 
 ```prui
 <container
-    at:0s="{ opacity = 0, scale = 0.9 }"
-    at:200ms="{ opacity = 1, scale = 1.0 }"
-    at:exit="{ opacity = 0, scale = 0.95 }"
-    transition:easing="\fn(t) return 1 - (1 - t)^3 end">
+    at:0s={ opacity = 0, scale = 0.9 },
+    at:200ms={ opacity = 1, scale = 1.0 },
+    at:exit={ opacity = 0, scale = 0.95 },
+    transition:easing={\fn(t) return 1 - (1 - t)^3 end}>
   …
 </container>
 ```
@@ -1405,7 +1483,7 @@ The proposal: an `at:<duration>` namespace that declares keyframe
 The `at:` namespace evaluates each value at the matching
 timeline point; the animator interpolates between them using the
 optional Luau easing closure (or the default cubic).
-`at:exit="…"` fires when the element unmounts and delays the
+`at:exit={…}` fires when the element unmounts and delays the
 unmount until the transition completes (Vue's `v-leave` shape).
 
 **Why this is fusion-shaped:** the interpolator *is* a Luau
@@ -1422,7 +1500,7 @@ happening on first sight?
 
 ```prui
 <!-- widgets/task-card.prui -->
-<script lang="luau">
+<script>
   ---@type Task
   local task = prism.scope.task
 
@@ -1447,34 +1525,34 @@ happening on first sight?
   end)
 </script>
 
-<container class="card {priority_class(task.priority)}" gap="8"
-           effect:on-update="\fn() prism.audit:log('viewed', task.id) end">
+<container class=[card, {priority_class(task.priority)}], gap=8,
+           effect:on-update=$prism.audit:log('viewed', task.id)>
 
-  <container direction="row" gap="8">
-    <text font-size="16">{task.title}</text>
-    <fragment if="{task.priority == 'high'}">
-      <badge label="HIGH" tone="danger"/>
+  <container direction=row, gap=8>
+    <text font-size=16>{task.title}</text>
+    <fragment if={task.priority == 'high'}>
+      <badge label="HIGH", tone=danger/>
     </fragment>
   </container>
 
-  <markdown if="{task.notes}">{task.notes}</markdown>
+  <markdown if={task.notes}>{task.notes}</markdown>
 
-  <button on:click="state.expanded = !state.expanded">
+  <button on:click=$state.expanded = !state.expanded>
     {state.expanded ? "Hide" : "Show"} {children.length} subtask(s)
   </button>
 
-  <suspense if="{state.expanded}">
+  <suspense if={state.expanded}>
     <fallback><text>Loading…</text></fallback>
-    <container for="c in children
+    <container for={c in children
         | filter(|c| c.status != 'archived')
-        | sort_by(|c| -c.priority)">
-      <task-card task="{c}"/>     <!-- self-recursive via the macro form -->
+        | sort_by(|c| -c.priority)}>
+      <task-card task={c}/>     <!-- self-recursive via the macro form -->
     </container>
   </suspense>
 
-  <match on="{task.status}">
-    <case is="open"><text class="badge-open">Open</text></case>
-    <case is="done"><text class="badge-done">Done</text></case>
+  <match on={task.status}>
+    <case is=open><text class=badge-open>Open</text></case>
+    <case is=done><text class=badge-done>Done</text></case>
     <case default><text>{task.status}</text></case>
   </match>
 
@@ -1573,7 +1651,7 @@ flow into LSP).
 Beyond the sketch: a script-less document that uses a closure /
 pipe sigil auto-provisions an empty (helpers + tokens) Luau frame
 (`document_uses_luau_expr` AST scan, `||` stripped first) so
-`for="t in tasks | filter(|t| …)"` works without a `<script>`
+`for={t in tasks | filter(|t| …)}` works without a `<script>`
 block. Closure builtins are `#[cfg(feature = "luau")]`; on the
 HTML/SSR path a closure-form call resolves to nothing rather than
 mis-parsing.
@@ -1608,7 +1686,7 @@ mis-parsing.
   nodes; nested macro tags expand because the Luau frame rides
   the hygienic scope.
 
-A macro body's `class="…"` **does** resolve the call site's PRSS
+A macro body's `class=…` **does** resolve the call site's PRSS
 sheet — `LowerScope::stylesheet_arc` re-threads the sheet `Arc`
 into the hygienic scope (after the `tokens` binding so `[tokens.*]`
 overrides still cascade), regression-tested.
@@ -1624,12 +1702,12 @@ exactly as an unknown tag does today.
 
 ### Wave D — Pattern match + suspense — ✅ landed 2026-05-15
 - D.1 ✅ `expand_match` (`interpret.rs`): a `"match"` tag arm
-  rewrites `<match on="{X}">` + `<case>` children to a synthetic
-  `<let name="__match_<offset>" value="{X}"/>` plus a chained
+  rewrites `<match on={X}>` + `<case>` children to a synthetic
+  `<let name=__match_<offset>, value={X}/>` plus a chained
   `if`/`else-if`/`else` over `<fragment>` wrappers, lowered
-  through the existing control-flow expander. `is="lit"` →
-  `__match == 'lit'`; `is="{e}"` → `__match == (e)`; a case
-  `if="{c}"` narrows to `(eq) and (c)`; `<case default>` →
+  through the existing control-flow expander. `is=lit` →
+  `__match == 'lit'`; `is={e}` → `__match == (e)`; a case
+  `if={c}` narrows to `(eq) and (c)`; `<case default>` →
   `else`. First-match-wins; cases after `default` are dropped as
   unreachable. The matched expr evaluates exactly once.
 - D.2 ⚠️ Structural semantics only — first-match-wins +
@@ -1676,12 +1754,14 @@ exactly as an unknown tag does today.
 **Unlocks:** §7.8.
 
 ### Wave F — PRSS × Luau — ✅ landed 2026-05-15
-- F.1 ✅ `prism-core` PRSS parser recognises `key = { lua = "…" }`
-  single-key tables (in class properties, state sub-tables, and
-  token buckets) and encodes them with the
+- F.1 ✅ `prism-core` PRSS parser recognises `key = { <expr> }`
+  bare-expression braces (in class properties, state sub-tables,
+  and token buckets) and encodes them with the
   `LUA_VALUE_SENTINEL` prefix — the IR stays a flat
   `IndexMap<String,String>`. Checked before the state-name guard
-  so `background = { lua = … }` isn't read as a state.
+  so `background = { … }` isn't read as a state. (PRSS is parsed
+  by Prism's own TOML-shaped scanner per §5.10, not the `toml`
+  crate — a bare-expression brace is not valid TOML.)
 - F.2 ✅ Runtime `prss_value_resolved` strips the sentinel and
   evaluates the expression through the same owned-value pipeline
   class bindings use (so `tokens.*` + Luau-frame helpers
@@ -1710,7 +1790,7 @@ exactly as an unknown tag does today.
   end-to-end. Wiring the host event router to fire probes off a
   `data-probe-*` hit is the documented follow-up (same
   event-router family as `<suspense>` resume).
-- G.3 ⚠️ `at:<time>="{…}"` is a new namespace lowered to
+- G.3 ⚠️ `at:<time>={…}` is a new namespace lowered to
   `data-at-<time>` — author intent + keyframe data round-trip
   exactly as `transition:` / `animate:` already do today; the
   Effect-driven animator that *interpolates* multi-stop
@@ -1734,17 +1814,17 @@ exactly as an unknown tag does today.
   wire-up — the resolver already supports it, nothing declares
   roots yet. wasm has no FS → resolver is `None`, imports
   degrade to skipped (graceful).
-- H.2 ✅ Inline `<style lang="prss">` blocks (grammar already
+- H.2 ✅ Inline `<style>` blocks (grammar already
   raw-texts `<style>`): `collect_inline_stylesheets` →
   `prism_core::language::prss::parse` → `StyleSheet::merged_with`
   layered over any host sidecar sheet, **before** the Luau frame
   is built so a Wave-F `{lua=…}` value in an inline sheet still
   resolves. Multiple blocks layer in order (later wins).
-- H.3 ✅ `<import stylesheet|script|widget|dialect [as=]/>`
+- H.3 ✅ `<import stylesheet|script|widget|dialect/> [as <name>]`
   parsed; resolution delegated to the new
   `ImportResolver` trait (`LowerScope::with_import_resolver`).
   `stylesheet` merges into the document sheet; `script` /
-  `dialect` feed the Luau frame. `widget` import + `as=`
+  `dialect` feed the Luau frame. `widget` import + postfix `as`
   namespacing for stylesheets/dialects are parsed but not yet
   applied (documented follow-ups). FS / `prism://` resolution is
   the host's job by design (the runtime has no filesystem).
@@ -1753,8 +1833,9 @@ exactly as an unknown tag does today.
 - H.5 ⚠️ `prism new widget` template — a `prism-cli` concern,
   deferred.
 - H.6 ✅ **Tier 2 — named module imports (§5.9).**
-  `collect_imports` now carries `as=`; `LuauScopeFrame` evaluates
-  each `<import script="…" as="ns">` as an isolated module
+  `collect_imports` now carries the postfix `as` name;
+  `LuauScopeFrame` evaluates
+  each `<import script="…"/> as ns` as an isolated module
   (`local ns = (function() … end)()`), binding the module's
   `return` value as a single namespace table. The expression
   resolver gained a dotted-call arm so `{ns.fn(args)}` and
@@ -1866,7 +1947,7 @@ tooling).
 Each of these came up while drafting. Listing them so the rationale
 isn't relitigated.
 
-- **`<script lang="javascript">`.** No. One scripting language.
+- **A JavaScript `<script>` (a second scripting language).** No. One scripting language.
   Adding JS doubles the runtime, splits the type stub story, and
   Luau is already faster and safer.
 
@@ -1907,12 +1988,12 @@ isn't relitigated.
 
 - **A `scripts=["a.luau","b.luau"]` manifest list (or `src=`) on
   the `.prui` root.** Rejected in favour of per-line
-  `<import script="…" as="…">` (§5.9 tier 2). A list attribute
+  `<import script="…"/> as <name>` (§5.9 tier 2). A list attribute
   hides each module's namespace away from its reference site and
   duplicates the projection-selecting job `<import>` already does.
   One mechanism, named at the point of use.
 
-- **Auto-`for` over Luau iterators.** `for="i in iterator"`
+- **Auto-`for` over Luau iterators.** `for={i in iterator}`
   where `iterator` is a Lua function with `__call` semantics.
   Slippery slope to non-terminating render walks. The author
   must materialise the iterable to a value first (`local rows =
@@ -1928,16 +2009,16 @@ things Prism users actually want to build.
 
 | Task today | LOC | LOC with this fusion |
 |---|---|---|
-| Inline filter over a list (host pre-computes filtered array, binds as prop) | ~10 lines split across Rust + DSL | 1 line: `for="t in tasks \| filter(\|t\| t.open)"` |
+| Inline filter over a list (host pre-computes filtered array, binds as prop) | ~10 lines split across Rust + DSL | 1 line: `for={t in tasks \| filter(\|t\| t.open)}` |
 | Conditional ARIA / data attr (already idiomatic via ternary) | 1 line | 1 line (unchanged) |
-| Lifecycle hook to fire a signal on mount | 1 modifier file (~20 LOC) | 1 attr: `effect:on-mount="\fn() … end"` |
+| Lifecycle hook to fire a signal on mount | 1 modifier file (~20 LOC) | 1 attr: `effect:on-mount=$…` |
 | Discriminated-union dispatch with 4 cases | 8 lines of `if`/`else-if` | 6 lines of `<match><case>` (and exhaustiveness checked) |
 | Async query with loading state | Hand-write a coroutine wrapper + bind result | 4 lines: `<suspense>` + `<fallback>` + `prism.objects:query_async` |
 | New "empty state" tag used across the codebase | Author a Rust `Block` or a `.prui` component spec | 8 lines of `prism.macro` |
 | Markdown rendered inline | Pre-render to HTML or hand-build a parser | `<markdown>…</markdown>` after one dialect registration |
-| Themed class with token-derived hover state | PRSS class + manual hover variant | 4 lines of PRSS using `{ lua = … }` derive |
-| Live "what's this value during render" check | Add a `data-foo` attr, read in dev-tools | `probe:value="key"` + inspector panel |
-| Spring-animated mount | None — currently linear-only | `at:0s="…" at:200ms="…" transition:easing="\fn(t) spring(t) end"` |
+| Themed class with token-derived hover state | PRSS class + manual hover variant | 4 lines of PRSS using `{ … }` derive |
+| Live "what's this value during render" check | Add a `data-foo` attr, read in dev-tools | `probe:value=key` + inspector panel |
+| Spring-animated mount | None — currently linear-only | `at:0s={…}, at:200ms={…}, transition:easing={\fn(t) spring(t) end}` |
 
 The pattern: every cell where "1 modifier file" / "1 Rust block"
 / "host pre-compute" was the answer collapses to inline DSL.
@@ -1951,15 +2032,15 @@ the runtime stays bounded.
 PRUI is a good language. PRSS is a good language. Luau is a good
 language. They're already in the same codebase, with the same
 type stubs, the same trust model, and the same hot-reload
-pipeline. The interface between them today is *narrow* — `luau
-{ … }` action bodies, `class="…"` lookups, `use:` modifiers,
+pipeline. The interface between them today is *narrow* — `$stmt`
+action bodies, `class=…` lookups, `use:` modifiers,
 `FacetKind::Script`. A handful of syntaxes for a handful of
 boundaries, with the three languages otherwise sealed off from
 each other.
 
 Widening those interfaces — sibling-paired files, inline
 `<script>` and `<style>` blocks, `<import>` for explicit reuse,
-function literals, `prui [[ … ]]` quasi-quotes, `{ lua = "…" }`
+function literals, `prui [[ … ]]` quasi-quotes, `{ … }`
 PRSS values, lifecycle attrs, macro tags, dialects, and Luau
 types threading **through every seam** — turns "three languages
 bolted together" into "one language with three projections." HTML

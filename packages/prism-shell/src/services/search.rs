@@ -8,12 +8,31 @@
 //! Modal capture follows the same §25 pattern as the command
 //! palette: while `state.search.open` is true, `Text` events feed
 //! the query and Esc closes — no other service sees them.
+//!
+//! The query buffer is a [`TextEditor`](prism_ui_runtime::editor::TextEditor) routed through the
+//! shared [`text_input::dispatch_text_input`] helper, so the search
+//! overlay inherits caret nav, selection, Ctrl+A, IME, and clipboard
+//! from the same engine the property-row fields and the code-editor
+//! panel use.
 
 use prism_ui_runtime::event::Event;
 
 use crate::cmd;
+use crate::services::text_input::{dispatch_text_input, TextInputBindings, TextInputOutcome};
 use crate::services::{CommandSpec, CommandTable, EventOutcome, MutCtx, ShellService};
 use crate::state::{SearchHit, SearchSlot};
+
+/// Keys the dispatch surfaces as Ignored so this service drives them:
+/// Enter advances to next match, Escape closes, arrows nav results.
+const SEARCH_PLAIN_PASSTHROUGH: &[&str] = &[
+    "enter",
+    "return",
+    "escape",
+    "arrowup",
+    "arrowdown",
+    "up",
+    "down",
+];
 
 #[derive(Default)]
 pub struct SearchService;
@@ -31,7 +50,7 @@ impl ShellService for SearchService {
             }),
             cmd!("search.close", "Close Find", "View", |ctx| {
                 ctx.state.search.open = false;
-                ctx.state.search.query.clear();
+                ctx.state.search.query.set_text("");
                 ctx.state.search.results.clear();
                 ctx.state.search.selected_index = 0;
             }),
@@ -54,33 +73,36 @@ impl ShellService for SearchService {
         if !ctx.state.search.open {
             return EventOutcome::Pass;
         }
-        match event {
-            Event::Text { text } => {
-                ctx.state.search.query.push_str(text);
+
+        let bindings = TextInputBindings {
+            passthrough_modifier_keys: &[],
+            passthrough_plain_keys: SEARCH_PLAIN_PASSTHROUGH,
+        };
+        let outcome =
+            dispatch_text_input(event, &mut ctx.state.search.query, ctx.clipboard, &bindings);
+
+        match outcome {
+            TextInputOutcome::BufferMutated => {
                 rebuild_results(&mut ctx.state.search, &ctx.state.canvas.document);
                 EventOutcome::Handled
             }
-            Event::Key {
-                code,
-                pressed: true,
-                ..
-            } if code == "backspace" => {
-                ctx.state.search.query.pop();
-                rebuild_results(&mut ctx.state.search, &ctx.state.canvas.document);
-                EventOutcome::Handled
-            }
-            // Modal capture: while the search overlay is open, every
-            // other key event terminates here — except shortcuts
-            // resolved earlier by `InputService` (Esc/Enter/arrows
-            // fire `search.{close,next,prev}` before reaching here).
-            Event::Key { .. } => EventOutcome::Handled,
-            _ => EventOutcome::Pass,
+            TextInputOutcome::DisplayMutated => EventOutcome::Handled,
+            TextInputOutcome::Inert => EventOutcome::Handled,
+            // Modal capture: while open, Ctrl+S etc. must NOT save —
+            // the search overlay swallows every key. Esc/Enter/arrows
+            // already resolved via `InputService` (the base scheme's
+            // shortcuts) before reaching this service.
+            TextInputOutcome::PassToGlobal => EventOutcome::Handled,
+            TextInputOutcome::Ignored => match event {
+                Event::Key { .. } => EventOutcome::Handled,
+                _ => EventOutcome::Pass,
+            },
         }
     }
 }
 
 fn rebuild_results(search: &mut SearchSlot, doc: &prism_builder::BuilderDocument) {
-    let q = search.query.to_lowercase();
+    let q = search.query_text().to_lowercase();
     if q.is_empty() {
         search.results.clear();
         search.selected_index = 0;
@@ -157,7 +179,7 @@ mod tests {
     #[test]
     fn open_then_close_clears_query() {
         let mut state = AppState::default();
-        state.search.query = "stale".into();
+        state.search.query.set_text("stale");
         let mut undo = UndoStack::default();
         let mut vfs = InMemVfs::default();
         let mut luau = NoopLuauHost::default();
@@ -193,6 +215,73 @@ mod tests {
         };
         assert!(reg.commands().run("search.close", &mut ctx));
         assert!(!state.search.open);
-        assert!(state.search.query.is_empty());
+        assert!(state.search.query_text().is_empty());
+    }
+
+    #[test]
+    fn typing_updates_query_and_rebuilds_results() {
+        let svc = SearchService;
+        let mut state = AppState::default();
+        state.search.open = true;
+        let mut undo = UndoStack::default();
+        let mut vfs = InMemVfs::default();
+        let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
+        let cmds = crate::services::CommandTable::default();
+        let mut ctx = MutCtx {
+            state: &mut state,
+            viewport: Viewport {
+                width: 0.0,
+                height: 0.0,
+            },
+            undo: &mut undo,
+            vfs: &mut vfs,
+            luau: &mut luau,
+            clipboard: &mut clipboard,
+            registry: None,
+            modifier_registry: None,
+        };
+        svc.on_event(
+            &Event::Text {
+                text: "hello".into(),
+            },
+            &mut ctx,
+            &cmds,
+        );
+        assert_eq!(state.search.query_text(), "hello");
+    }
+
+    #[test]
+    fn arrow_left_moves_caret_inside_query() {
+        let svc = SearchService;
+        let mut state = AppState::default();
+        state.search.open = true;
+        state.search.query.set_text("hi");
+        state.search.query.place_caret_at(2, false);
+        let mut undo = UndoStack::default();
+        let mut vfs = InMemVfs::default();
+        let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
+        let cmds = crate::services::CommandTable::default();
+        let mut ctx = MutCtx {
+            state: &mut state,
+            viewport: Viewport {
+                width: 0.0,
+                height: 0.0,
+            },
+            undo: &mut undo,
+            vfs: &mut vfs,
+            luau: &mut luau,
+            clipboard: &mut clipboard,
+            registry: None,
+            modifier_registry: None,
+        };
+        let arrow_left = Event::Key {
+            code: "arrowleft".into(),
+            pressed: true,
+            modifiers: prism_ui_runtime::event::Modifiers::default(),
+        };
+        svc.on_event(&arrow_left, &mut ctx, &cmds);
+        assert_eq!(state.search.query.caret_byte(), 1);
     }
 }

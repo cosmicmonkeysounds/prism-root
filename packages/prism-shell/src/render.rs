@@ -855,7 +855,7 @@ mod tests {
         let bindings = ShellPropBindings::with_builtins();
         let mut state = AppState::default();
         state.overlay.command_palette.open = true;
-        state.overlay.command_palette.query = "save".into();
+        state.overlay.command_palette.query.set_text("save");
         let emissions = bindings.snapshot(&ctx(&state));
         let cp = &emissions["shell.command-palette"].props;
         assert_eq!(cp["open"], true);

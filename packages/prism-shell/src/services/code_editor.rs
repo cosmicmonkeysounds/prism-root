@@ -3,21 +3,39 @@
 //!
 //! Sister to `FieldFocusService`: when `state.code_editor_focused`
 //! is true and *no* property-row field is also focused, every
-//! `Event::Text` and `Event::Key` runs through the
-//! `state.canvas.code_buffer.editor` engine. The editor honours the
-//! full multi-line key set — arrows, home/end, ctrl+arrows, ctrl+a,
-//! ctrl+z/y, ctrl+d, ctrl+k, tab/shift-tab, backspace/delete (incl.
-//! word variants), enter (auto-indent) — without any per-key arms
-//! here. The service is essentially "if focused, forward to the
-//! editor; if Esc, drop focus".
+//! `Event::Text` and `Event::Key` runs through the shared
+//! [`text_input::dispatch_text_input`] helper. That helper drives the
+//! `state.canvas.code_buffer.editor` engine with the full multi-line
+//! key set — arrows, home/end, ctrl+arrows, ctrl+a, ctrl+z/y, ctrl+d,
+//! ctrl+k, tab/shift-tab, backspace/delete (incl. word variants),
+//! enter (auto-indent), Ctrl+C/X/V — without any per-key arms here.
 //!
 //! The service registers *after* `FieldFocusService` so an open
 //! property-row edit still wins the fan-out race (a focused property
 //! field would shadow the panel-wide editor otherwise).
+//!
+//! Two responsibilities stay in this file because they need state the
+//! shared dispatch doesn't see:
+//!
+//! 1. **Ctrl+/** — toggle line comment routed through
+//!    `code_buffer.toggle_line_comment()` so the prefix matches the
+//!    active language (Luau `--`, JS `//`, Python `#`).
+//! 2. **Wheel** — viewport scroll on the `code_buffer.scroll_{x,y}`.
 
 use prism_ui_runtime::event::Event;
 
+use crate::services::text_input::{dispatch_text_input, TextInputBindings, TextInputOutcome};
 use crate::services::{CommandTable, EventOutcome, MutCtx, ShellService};
+
+/// Modifier-bearing key combos the dispatch should NOT consume — they
+/// belong to the file / tab service one layer up so Ctrl+N / Ctrl+O /
+/// Ctrl+S / Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab fire their file-management
+/// commands instead of mutating the buffer.
+const FILE_PASSTHROUGH_KEYS: &[&str] = &["n", "o", "s", "w", "tab"];
+
+/// Plain (non-modifier) keys the dispatch should surface as Ignored
+/// so this service can handle them — Escape drops keyboard focus.
+const PLAIN_PASSTHROUGH_KEYS: &[&str] = &["escape"];
 
 #[derive(Default)]
 pub struct CodeEditorService;
@@ -37,134 +55,72 @@ impl ShellService for CodeEditorService {
         if ctx.state.field_focus.is_some() {
             return EventOutcome::Pass;
         }
-        match event {
-            Event::Text { text } => {
-                ctx.state.canvas.code_buffer.editor.apply_text(text);
+
+        // Wheel events scroll the editor while it has keyboard focus.
+        // Pre-empt the shared dispatch — the dispatch returns Ignored
+        // for wheel, but each tick adjusts state outside the editor.
+        if let Event::Wheel { dx, dy } = event {
+            ctx.state.canvas.code_buffer.scroll_x =
+                (ctx.state.canvas.code_buffer.scroll_x + *dx).max(0.0);
+            ctx.state.canvas.code_buffer.scroll_y =
+                (ctx.state.canvas.code_buffer.scroll_y + *dy).max(0.0);
+            return EventOutcome::Handled;
+        }
+
+        // Language-aware Ctrl+/ — routed through `CodeBuffer` so the
+        // prefix matches the active language. The shared dispatch's
+        // own apply_key path would otherwise default to `--`.
+        if let Event::Key {
+            code,
+            pressed: true,
+            modifiers,
+        } = event
+        {
+            if (modifiers.ctrl || modifiers.meta) && code == "/" {
+                ctx.state.canvas.code_buffer.toggle_line_comment();
+                ctx.state.canvas.mark_active_tab_dirty();
+                ensure_caret_visible(ctx);
+                return EventOutcome::Handled;
+            }
+        }
+
+        let bindings = TextInputBindings {
+            passthrough_modifier_keys: FILE_PASSTHROUGH_KEYS,
+            passthrough_plain_keys: PLAIN_PASSTHROUGH_KEYS,
+        };
+        let outcome = dispatch_text_input(
+            event,
+            &mut ctx.state.canvas.code_buffer.editor,
+            ctx.clipboard,
+            &bindings,
+        );
+        match outcome {
+            TextInputOutcome::BufferMutated => {
                 ctx.state.canvas.mark_active_tab_dirty();
                 ensure_caret_visible(ctx);
                 EventOutcome::Handled
             }
-            // IME composition. Preedit doesn't mutate the buffer
-            // (the host paints it inline via `display_text()`).
-            // Commit inserts the finalised composition at the caret
-            // and clears any preedit.
-            Event::ImePreedit { text, cursor_byte } => {
-                ctx.state
-                    .canvas
-                    .code_buffer
-                    .editor
-                    .apply_ime_preedit(text, *cursor_byte);
-                EventOutcome::Handled
-            }
-            Event::ImeCommit { text } => {
-                ctx.state.canvas.code_buffer.editor.apply_ime_commit(text);
-                ctx.state.canvas.mark_active_tab_dirty();
+            TextInputOutcome::DisplayMutated => {
                 ensure_caret_visible(ctx);
                 EventOutcome::Handled
             }
-            Event::ImeEnabled => EventOutcome::Handled,
-            Event::ImeDisabled => {
-                ctx.state.canvas.code_buffer.editor.clear_preedit();
-                EventOutcome::Handled
-            }
-            Event::Key {
-                code,
-                pressed: true,
-                modifiers,
-            } => {
-                if code == "escape" {
-                    ctx.state.code_editor_focused = false;
-                    return EventOutcome::Handled;
-                }
-                if modifiers.ctrl || modifiers.meta {
-                    match code.as_str() {
-                        // Editor doesn't claim these — they belong to
-                        // the file / tab service one layer up. Pass
-                        // them through so Ctrl+N / Ctrl+O / Ctrl+S /
-                        // Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab fire
-                        // their file-management commands instead of
-                        // mutating the buffer.
-                        "n" | "o" | "s" | "w" | "tab" => {
-                            return EventOutcome::Pass;
-                        }
-                        // Override Ctrl+/ — route through the buffer's
-                        // language-aware toggle so the prefix matches
-                        // the active language (Luau `--`, JS `//`,
-                        // Python `#`, …). The editor's own apply_key
-                        // would otherwise default to `--`.
-                        "/" => {
-                            ctx.state.canvas.code_buffer.toggle_line_comment();
-                            ctx.state.canvas.mark_active_tab_dirty();
-                            ensure_caret_visible(ctx);
-                            return EventOutcome::Handled;
-                        }
-                        "c" => {
-                            if let Some(s) = ctx.state.canvas.code_buffer.editor.selected_text() {
-                                let s = s.to_string();
-                                ctx.clipboard.set_string(s);
-                            }
-                            return EventOutcome::Handled;
-                        }
-                        "x" => {
-                            if let Some(s) = ctx.state.canvas.code_buffer.editor.selected_text() {
-                                let s = s.to_string();
-                                ctx.clipboard.set_string(s);
-                                ctx.state.canvas.code_buffer.editor.insert("", true);
-                                ctx.state.canvas.mark_active_tab_dirty();
-                            }
-                            ensure_caret_visible(ctx);
-                            return EventOutcome::Handled;
-                        }
-                        "v" => {
-                            if let Some(text) = ctx.clipboard.get_string() {
-                                ctx.state.canvas.code_buffer.editor.insert(&text, true);
-                                ctx.state.canvas.mark_active_tab_dirty();
-                            }
-                            ensure_caret_visible(ctx);
-                            return EventOutcome::Handled;
-                        }
-                        _ => {}
+            TextInputOutcome::Inert => EventOutcome::Handled,
+            TextInputOutcome::PassToGlobal => EventOutcome::Pass,
+            // Surfaced for caller-owned keys (escape).
+            TextInputOutcome::Ignored => {
+                if let Event::Key {
+                    code,
+                    pressed: true,
+                    ..
+                } = event
+                {
+                    if code == "escape" {
+                        ctx.state.code_editor_focused = false;
+                        return EventOutcome::Handled;
                     }
                 }
-                // Detect *text* mutations vs pure caret nav by
-                // comparing the buffer's raw bytes before / after.
-                // Caret + selection moves return `Mutated` too, so
-                // a raw outcome check would false-positive every
-                // arrow key.
-                let before_len = ctx.state.canvas.code_buffer.editor.text().len();
-                let outcome = ctx
-                    .state
-                    .canvas
-                    .code_buffer
-                    .editor
-                    .apply_key(code, *modifiers);
-                let after_len = ctx.state.canvas.code_buffer.editor.text().len();
-                if outcome.mutated() {
-                    if before_len != after_len {
-                        ctx.state.canvas.mark_active_tab_dirty();
-                    }
-                    ensure_caret_visible(ctx);
-                    EventOutcome::Handled
-                } else if modifiers.ctrl || modifiers.meta || modifiers.alt {
-                    EventOutcome::Pass
-                } else {
-                    EventOutcome::Handled
-                }
+                EventOutcome::Pass
             }
-            // Wheel events scroll the editor while it has keyboard
-            // focus. winit reports trackpad / mouse-wheel deltas in
-            // CSS-pixel-ish units already; clamp to non-negative
-            // scroll positions (we don't track max bounds — the
-            // scissor clips at the visible edge, so over-scroll
-            // simply shows an empty stripe rather than a stutter).
-            Event::Wheel { dx, dy } => {
-                ctx.state.canvas.code_buffer.scroll_x =
-                    (ctx.state.canvas.code_buffer.scroll_x + *dx).max(0.0);
-                ctx.state.canvas.code_buffer.scroll_y =
-                    (ctx.state.canvas.code_buffer.scroll_y + *dy).max(0.0);
-                EventOutcome::Handled
-            }
-            _ => EventOutcome::Pass,
         }
     }
 }

@@ -63,7 +63,6 @@ pub mod app_registry;
 pub mod boot_config;
 pub mod design_tokens;
 pub mod domain;
-pub mod editor;
 pub mod foundation;
 pub mod help;
 pub mod identity;
