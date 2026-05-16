@@ -369,6 +369,11 @@ type PointerHandler = fn(&Rc<RefCell<ShellInner>>, &HitRect) -> bool;
 
 const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
     ("inspector-row", handle_inspector_row_click),
+    // **IDE-mode Phase 1** — explorer file/folder click. File rows
+    // route to the editor's open-by-path path; directory rows are a
+    // no-op until folding lands (the walker emits a flat depth-encoded
+    // list today, so every file is already visible).
+    ("explorer-row", handle_explorer_row_click),
     ("field-edit", handle_field_edit_click),
     ("workflow-page-button", handle_workflow_page_button_click),
     ("dock-tab", handle_dock_tab_click),
@@ -473,6 +478,91 @@ fn handle_inspector_row_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) ->
     let g = &mut *guard;
     let registry = g.registry.as_component_registry();
     g.state.select_node(target, Some(registry))
+}
+
+/// IDE-mode Phase 1: a click on a `shell.explorer` row. For file
+/// entries (`data-kind="file"`), reads the absolute path from
+/// `data-path`, loads the source via `Vfs`, and opens the result as
+/// a new editor tab through `CanvasSlot::open_editor_tab` — the
+/// same code path `editor.file.open` uses after the file-picker.
+/// Directory rows are a no-op (folding lands in a follow-up).
+///
+/// Returns `true` when the click was consumed; the caller uses this
+/// to decide whether to request a redraw.
+fn handle_explorer_row_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let kind = attr_value(hit, "data-kind").unwrap_or("");
+    if kind != "file" {
+        // Directory rows + any unrecognised kind: consumed (so the
+        // click doesn't fall through to a deeper handler), but no
+        // state change.
+        return false;
+    }
+    let path_str = match attr_value(hit, "data-path") {
+        Some(p) if !p.is_empty() => p.to_string(),
+        _ => return false,
+    };
+    let path = std::path::PathBuf::from(path_str);
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let bytes = match g.vfs.read(&path) {
+        Ok(b) => b,
+        Err(_) => {
+            // Surface a toast so the user knows the click registered
+            // but the file couldn't be read. Mirrors the
+            // `editor.file.open` error path.
+            g.state.overlay.toasts.push(crate::state::Toast {
+                title: "Open failed".into(),
+                body: format!("could not read {}", path.display()),
+                kind: crate::state::ToastKind::Error,
+            });
+            return true;
+        }
+    };
+    let source = match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            g.state.overlay.toasts.push(crate::state::Toast {
+                title: "Open failed".into(),
+                body: "File contains non-UTF-8 bytes".into(),
+                kind: crate::state::ToastKind::Error,
+            });
+            return true;
+        }
+    };
+    let language = language_from_path(&path);
+    g.state.canvas.open_editor_tab(path, source, language);
+    // IDE-mode usability: clicking a file in the explorer should
+    // route the user into the code editor so they see the file
+    // they just opened.
+    g.state.code_editor_focused = true;
+    true
+}
+
+/// Extension → language tag for the code editor. Matches the lookup
+/// in `services::editor_files::language_from_path`. Kept local so the
+/// router doesn't reach into the file service's private helpers.
+fn language_from_path(path: &std::path::Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "luau" | "lua" => "luau",
+        "rs" => "rust",
+        "js" | "jsx" => "javascript",
+        "ts" | "tsx" => "typescript",
+        "py" => "python",
+        "sh" | "bash" => "shell",
+        "toml" => "toml",
+        "yaml" | "yml" => "yaml",
+        "json" => "json",
+        "md" => "markdown",
+        "css" => "css",
+        "html" => "html",
+        _ => "",
+    }
 }
 
 /// §43 C2: a click on a field-editor row mutates the bound

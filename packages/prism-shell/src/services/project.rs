@@ -115,6 +115,10 @@ fn walk(
             label,
             kind,
             depth,
+            // IDE-mode Phase 1: carry the absolute path so the
+            // explorer's click router can hand it to the editor's
+            // open-by-path command.
+            path: path.clone(),
         });
         if matches!(kind, FileKind::Directory) {
             walk(vfs, root, &path, depth + 1, out, skip);

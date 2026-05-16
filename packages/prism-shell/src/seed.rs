@@ -170,7 +170,9 @@ fn fallback_app_tiles() -> Vec<AppCard> {
 
 /// Placeholder project tree. The real population lands when
 /// `ProjectService` opens a folder; the seed gives the explorer
-/// panel something to render against until then.
+/// panel something to render against until then. Seed entries
+/// carry an empty `path` since they're not real files — the
+/// explorer's click router treats empty paths as no-op.
 fn seed_files() -> Vec<FileNode> {
     vec![
         FileNode {
@@ -178,30 +180,35 @@ fn seed_files() -> Vec<FileNode> {
             label: "untitled-project".into(),
             depth: 0,
             kind: FileKind::Directory,
+            path: std::path::PathBuf::new(),
         },
         FileNode {
             id: "app-flux".into(),
             label: "Flux".into(),
             depth: 1,
             kind: FileKind::Directory,
+            path: std::path::PathBuf::new(),
         },
         FileNode {
             id: "app-flux/home".into(),
             label: "Home".into(),
             depth: 2,
             kind: FileKind::File,
+            path: std::path::PathBuf::new(),
         },
         FileNode {
             id: "app-flux/settings".into(),
             label: "Settings".into(),
             depth: 2,
             kind: FileKind::File,
+            path: std::path::PathBuf::new(),
         },
         FileNode {
             id: "app-musica".into(),
             label: "Musica".into(),
             depth: 1,
             kind: FileKind::Directory,
+            path: std::path::PathBuf::new(),
         },
     ]
 }

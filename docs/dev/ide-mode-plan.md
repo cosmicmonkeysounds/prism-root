@@ -9,6 +9,18 @@ shared dispatch, palette/search through `TextEditor`).
 This doc scopes the work; it does not implement it. Phased plan at the
 end so chunks can land independently.
 
+> **Cross-cutting alignment.** `docs/dev/prism-cross-cutting-systems.md`
+> ranks the substrate work by leverage. Most IDE-mode phases below
+> are the **user-visible surface** of cross-cutting tiers: Phase 3
+> (Diagnostics panel) materialises Tier 1 §3.3 (type/diagnostics
+> toolchain); Phase 4 (Inspector) is the same panel as Tier 2 §4.3
+> (Inspector/DevTools) — they should ship as one panel hosting
+> multiple lenses (CRDT tree, presence, probe stream, binding
+> values), not as two. Phase 2 (Symbol index) is the diagnostics
+> toolchain's natural extension into navigation. The combined
+> ordering at the end of this doc reflects both this plan's UI
+> phasing and the cross-cutting doc's substrate priorities.
+
 ---
 
 ## What already works
@@ -335,22 +347,46 @@ Unlocks: a polished "IDE" experience.
 
 ---
 
+## Unified sequence (with cross-cutting)
+
+Each IDE phase maps to one or more cross-cutting tiers from
+`prism-cross-cutting-systems.md`. The phases that surface substrate
+features can't ship before the substrate work; the phases that don't
+can land in parallel.
+
+| Phase | UI surface | Substrate (cross-cutting) | Blocking |
+|---|---|---|---|
+| **1** Project tree + open-path | `shell.project-tree`, `code-editor.open-path` | — | nothing |
+| **2a** Symbol index | (no new UI, indexer subsystem) | — | Phase 1 |
+| **2b** Ctrl+P / Ctrl+Shift+O / Ctrl+click | new `TextInputDeclaration`s, click router | — | Phase 2a |
+| **3a** `luau-analyze` integration | — | Tier 1 §3.3 type/diagnostics toolchain | external bin on PATH |
+| **3b** Diagnostics panel + squiggles | `shell.diagnostics-panel`, `<input diagnostics="…"/>` | Tier 1 §3.3 | Phase 3a |
+| **4** Inspector panel | `shell.inspector` with lenses: CRDT tree, presence, probe stream, binding values + types | Tier 2 §4.3 Inspector/DevTools | probe event-router wiring (cross-cutting §4.3) |
+| **5** Folding + bracket-match + inlays | runtime renderer additions | — | Phase 2a (inlays need symbols) |
+| **6** Find/replace across project | extend `shell.search-overlay` with replace + scope | — | Phase 1 (needs file list) |
+| **7** IDE workflow + split + persistence | new `WorkflowPage::Ide`, two-pane code-editor, persisted tabs | — | 1–3 land first |
+
+**Combined high-value MVP**: Phases 1 + 2 + 3 (~2-3 weeks). With those,
+an app dev can browse their app's source, jump-by-symbol, and see
+errors at edit time. Phase 4 lands the cross-cutting Inspector
+(arguably higher leverage than 2–3 once the substrate's there).
+Phases 5–7 are polish.
+
 ## Estimate summary
 
 | Phase | Focus | Effort |
 |---|---|---|
 | 1 | Project tree + open-path | ~3-4 days |
 | 2 | Symbol index + Ctrl+P / Ctrl+Click | ~4-5 days |
-| 3 | Diagnostics panel + squiggles | ~3-4 days |
-| 4 | CRDT inspector + presence | ~3-4 days |
+| 3a | `luau-analyze` integration | ~3-4 days |
+| 3b | Diagnostics panel + squiggles | ~3-4 days |
+| 4 | Inspector panel (CRDT + probes + presence + types) | ~4-6 days |
 | 5 | Folding + bracket-match + inlays | ~3-5 days |
 | 6 | Find/replace across project | ~2-3 days |
 | 7 | IDE workflow + split + persistence | ~3-4 days |
 
-**Total**: ~3-5 weeks of focused work to a polished IDE mode. Phases
-1–3 are the high-value MVP (~2 weeks); 4–7 are layered polish.
-
-The unify-editors pass we just landed is the precondition for most of
+**Total**: ~4-6 weeks of focused work to a polished IDE mode. The
+unify-editors pass we just landed is the precondition for most of
 this — every new text input (Ctrl+P, symbol palette, replace field,
 diagnostics filter, etc.) is one `TextInputDeclaration` row, not a
 fresh service.

@@ -68,6 +68,12 @@ pub enum BuiltinScene {
     /// live. Sister to `CommandPalette` — same TextEditor wiring,
     /// renders through `shell.search-overlay`.
     SearchOverlay,
+    /// **IDE-mode Phase 1** — explorer panel populated with a sample
+    /// project tree (a few folders + files at varying depths), the
+    /// dock navigated to the Explorer panel. Exercises the
+    /// `shell.explorer` block's new `data-role="explorer-row"`
+    /// rendering with `data-path` and `data-kind` attributes.
+    IdeExplorer,
 }
 
 impl BuiltinScene {
@@ -84,6 +90,7 @@ impl BuiltinScene {
         Self::CodeEditor,
         Self::CommandPalette,
         Self::SearchOverlay,
+        Self::IdeExplorer,
     ];
 
     /// Kebab-case CLI identifier — the bytes the user types after
@@ -99,6 +106,7 @@ impl BuiltinScene {
             Self::CodeEditor => "code-editor",
             Self::CommandPalette => "command-palette",
             Self::SearchOverlay => "search-overlay",
+            Self::IdeExplorer => "ide-explorer",
         }
     }
 
@@ -215,6 +223,42 @@ impl Shell {
                 search.query.place_caret_at(1, false);
                 search.query.place_caret_at(4, true);
                 search.selected_index = 0;
+            }
+            BuiltinScene::IdeExplorer => {
+                use crate::state::{FileKind, FileNode};
+                let mut guard = self.inner.borrow_mut();
+                let g = &mut *guard;
+                g.state.workspace.workspace.navigate_to_panel("explorer");
+                g.state.catalog.files = vec![
+                    FileNode {
+                        id: "src".into(),
+                        label: "src".into(),
+                        depth: 0,
+                        kind: FileKind::Directory,
+                        path: std::path::PathBuf::from("/tmp/scene/src"),
+                    },
+                    FileNode {
+                        id: "src/main.luau".into(),
+                        label: "main.luau".into(),
+                        depth: 1,
+                        kind: FileKind::File,
+                        path: std::path::PathBuf::from("/tmp/scene/src/main.luau"),
+                    },
+                    FileNode {
+                        id: "src/lib.rs".into(),
+                        label: "lib.rs".into(),
+                        depth: 1,
+                        kind: FileKind::File,
+                        path: std::path::PathBuf::from("/tmp/scene/src/lib.rs"),
+                    },
+                    FileNode {
+                        id: "Cargo.toml".into(),
+                        label: "Cargo.toml".into(),
+                        depth: 0,
+                        kind: FileKind::File,
+                        path: std::path::PathBuf::from("/tmp/scene/Cargo.toml"),
+                    },
+                ];
             }
         }
     }

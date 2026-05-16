@@ -1,11 +1,16 @@
 <!--
-  shell.explorer — left rail file/object explorer. Hosts a column of
-  `shell.inspector-row` entries via the `nodes` JSON prop. Wave 11.2
-  migration of explorer.rs.
+  shell.explorer — left rail file/project explorer.
 
-  Each row in the `nodes` array carries `{ label, kind, depth, ... }`;
-  the `for` loop spreads typed fields onto the dispatched block
-  through the resolver's interpolation pass.
+  Each entry in `nodes` carries `{ node-id, label, depth, kind, path }`.
+  File-kind rows render with `data-role="explorer-row"` carrying the
+  absolute filesystem path so the click router (IDE-mode Phase 1) can
+  open the file as a new editor tab. Directory rows render the same
+  visual but route to a no-op handler (folding is a follow-up; today
+  the walker emits a flat depth-encoded list).
+
+  Visual shape mirrors `shell.inspector-row` (30px tall, indent dot,
+  depth-driven left padding) but binds to the explorer-side click
+  contract instead of the canvas-selection one.
 -->
 <container
     tag="aside"
@@ -18,10 +23,28 @@
     height="grow"
     aria-label="Explorer"
     data:role="explorer">
-  <shell.inspector-row
+  <container
       for="item in nodes"
-      id="{item.node-id}"
-      label="{item.label}"
-      kind="{item.kind}"
-      depth="{item.depth}"/>
+      id="explorer-row-{item.node-id}"
+      tag="div"
+      direction="row"
+      height="30"
+      padding-left="{12 + item.depth * 16}"
+      padding-right="8"
+      style:radius="4"
+      style:background:hovered="#1a0060c0"
+      role="treeitem"
+      data:role="explorer-row"
+      data:kind="{item.kind}"
+      data:path="{item.path}"
+      aria:level="{item.depth > 0 ? item.depth + 1 : ''}">
+    <container direction="row" gap="6" height="grow">
+      <container
+          width="6"
+          height="6"
+          style:radius="3"
+          style:background="{item.kind == 'directory' ? '#4040c0' : '#909090'}"/>
+      <text font-size="13" style:color="#000000">{item.label}</text>
+    </container>
+  </container>
 </container>

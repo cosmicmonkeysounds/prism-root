@@ -1161,79 +1161,6 @@ impl AppState {
         true
     }
 
-    /// Drop the last character from the focused field's draft (UTF-8
-    /// safe) and flush. Returns `true` when a focus session was active
-    /// *and* something was actually deleted (an empty draft is a
-    /// no-op so repeated backspaces don't keep firing resyncs).
-    pub fn backspace_field(&mut self, registry: Option<&prism_builder::ComponentRegistry>) -> bool {
-        let Some(focus) = self.field_focus.as_mut() else {
-            return false;
-        };
-        let outcome = focus
-            .editor
-            .apply_key("backspace", prism_ui_runtime::event::Modifiers::default());
-        if !outcome.mutated() {
-            return false;
-        }
-        self.flush_focus_to_prop(registry);
-        true
-    }
-
-    /// Route an arbitrary editor key combo (arrows, delete, home/end,
-    /// ctrl-z/y, ctrl-d, ctrl-k, …) through the focused field's
-    /// editor and flush the new text into the bound prop. Returns
-    /// `true` when the editor mutated state. The host's keyboard
-    /// service calls this for any key code the editor knows about;
-    /// codes it doesn't recognise pass through (Inert) so global
-    /// shortcuts still get a chance to fire.
-    pub fn apply_field_key(
-        &mut self,
-        code: &str,
-        mods: prism_ui_runtime::event::Modifiers,
-        registry: Option<&prism_builder::ComponentRegistry>,
-    ) -> prism_ui_runtime::editor::EditOutcome {
-        let Some(focus) = self.field_focus.as_mut() else {
-            return prism_ui_runtime::editor::EditOutcome::Inert;
-        };
-        let outcome = focus.editor.apply_key(code, mods);
-        if outcome.mutated() {
-            self.flush_focus_to_prop(registry);
-        }
-        outcome
-    }
-
-    /// Set the caret of the focused field to a specific byte offset,
-    /// optionally extending the selection from the previous caret.
-    /// Used by pointer routing — a click in the middle of a focused
-    /// input lands here with the resolved byte offset.
-    pub fn place_field_caret_at(&mut self, byte: usize, extend: bool) -> bool {
-        let Some(focus) = self.field_focus.as_mut() else {
-            return false;
-        };
-        focus.editor.place_caret_at(byte, extend);
-        true
-    }
-
-    /// Replace the focused field's draft with `text` (paste / external
-    /// rewrite). Flushed to the bound prop afterwards. Returns `true`
-    /// when a focus session was active.
-    pub fn insert_field_text(
-        &mut self,
-        text: &str,
-        registry: Option<&prism_builder::ComponentRegistry>,
-    ) -> bool {
-        let Some(focus) = self.field_focus.as_mut() else {
-            return false;
-        };
-        let outcome = focus.editor.insert(text, true);
-        if outcome.mutated() {
-            self.flush_focus_to_prop(registry);
-            true
-        } else {
-            false
-        }
-    }
-
     /// Flush the focused field's editor text into the bound doc prop.
     /// Called after every mutation that the shared text-input dispatch
     /// performs directly on `field_focus.editor`. Public because
@@ -3611,6 +3538,16 @@ pub struct FileNode {
     pub label: String,
     pub depth: u32,
     pub kind: FileKind,
+    /// Absolute filesystem path. The id field is the path *relative*
+    /// to the project root (for display + de-dupe); this carries the
+    /// full path so the explorer's click router can hand it to the
+    /// editor-file VFS read.
+    ///
+    /// IDE-mode Phase 1: `code-editor.open-path` reads this; without
+    /// it, the explorer rows have nowhere to route to. Seeded test
+    /// fixtures may leave this empty — the explorer click handler
+    /// treats an empty path as "no-op" rather than panicking.
+    pub path: std::path::PathBuf,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3705,6 +3642,10 @@ impl CatalogSlot {
                         "label": f.label,
                         "depth": f.depth,
                         "kind": f.kind.as_str(),
+                        // IDE-mode Phase 1: the explorer's click
+                        // router reads this to hand the absolute
+                        // path to `editor.file.open-path`.
+                        "path": f.path.to_string_lossy(),
                     })
                 })
                 .collect(),
@@ -7925,12 +7866,14 @@ mod tests {
                     label: "src".into(),
                     depth: 0,
                     kind: FileKind::Directory,
+                    path: std::path::PathBuf::new(),
                 },
                 FileNode {
                     id: "src/lib.rs".into(),
                     label: "lib.rs".into(),
                     depth: 1,
                     kind: FileKind::File,
+                    path: std::path::PathBuf::new(),
                 },
             ],
             palette: vec![PaletteItem {
