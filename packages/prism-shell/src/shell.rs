@@ -766,6 +766,29 @@ impl Shell {
         f(&mut self.inner.borrow_mut())
     }
 
+    /// Run a registered command by id. Returns `true` when the
+    /// command table had a matching entry. Used by tests + host glue
+    /// to invoke commands that aren't bound to keyboard shortcuts
+    /// (e.g. `devtools.clear-probes`). Builds a `MutCtx` from the
+    /// inner state the same way `dispatch_event` does.
+    pub fn run_command(&self, id: &str) -> bool {
+        // Resolve the command spec first while we still hold an
+        // immutable borrow of `services` — the registry / command
+        // handlers are `Arc<dyn Fn>` so we can clone the handler
+        // pointer out, drop the immutable borrow, and then call it
+        // with a mutable `MutCtx`. Without the clone we'd hold both
+        // an immutable borrow on `g.services` and a mutable borrow
+        // on `g` (through `mut_ctx`) at the same time.
+        let mut guard = self.inner.borrow_mut();
+        let g = &mut *guard;
+        let Some(spec) = g.services.commands().get(id).cloned() else {
+            return false;
+        };
+        let mut ctx = g.mut_ctx();
+        (spec.handler)(&mut ctx);
+        true
+    }
+
     /// Find the topmost hit-cache entry whose `data-role` matches
     /// `role`. Helper for e2e tests that need to synthesise pointer
     /// events against a known surface (e.g. the code-editor body).
@@ -1050,40 +1073,98 @@ impl Shell {
         // (via a synthetic empty handler call) when a reload landed
         // to ensure the new tree paints without an extra input event.
         let tick_inner = Rc::clone(&self.inner);
+        // §3.2 — host PRSS handle + a persistent `StylesheetWatcher`
+        // (owns the `PrssFingerprintCache`) so `.prss` literal vs
+        // structural classification stays deterministic across ticks.
+        let host_sheet = Rc::clone(&self.stylesheet);
+        let mut sheet_watcher = crate::render::StylesheetWatcher::new();
         let tick: prism_ui_runtime::backends::femtovg::TickHook =
             Box::new(move |_surface: &mut Surface| {
                 let pending = watcher.drain();
                 if pending.is_empty() {
                     return;
                 }
+                let mut dirty = false;
                 for evt in pending {
                     use crate::hot_reload::ReloadTarget;
-                    let parsed = Skeleton::from_source(&evt.source);
-                    match (parsed, &evt.target) {
-                        (Ok(s), ReloadTarget::DefaultSkeleton) => {
-                            tick_inner.borrow_mut().default_app_skeleton = s;
+                    match &evt.target {
+                        ReloadTarget::DefaultSkeleton => {
+                            match Skeleton::from_source(&evt.source) {
+                                Ok(s) => {
+                                    tick_inner.borrow_mut().default_app_skeleton = s;
+                                    dirty = true;
+                                }
+                                Err(e) => {
+                                    eprintln!("prism-shell hot-reload: skeleton parse error: {e}");
+                                }
+                            }
                         }
-                        (Ok(s), ReloadTarget::AppSkeleton { app_id }) => {
-                            tick_inner
-                                .borrow_mut()
-                                .app_skeletons
-                                .insert(app_id.clone(), s);
+                        ReloadTarget::AppSkeleton { app_id } => {
+                            match Skeleton::from_source(&evt.source) {
+                                Ok(s) => {
+                                    tick_inner
+                                        .borrow_mut()
+                                        .app_skeletons
+                                        .insert(app_id.clone(), s);
+                                    dirty = true;
+                                }
+                                Err(e) => {
+                                    eprintln!("prism-shell hot-reload: skeleton parse error: {e}");
+                                }
+                            }
                         }
-                        (Err(e), _) => {
-                            eprintln!("prism-shell hot-reload: parse error: {e}");
-                            continue;
+                        ReloadTarget::Stylesheet { app_id } => {
+                            // Classify the `.prss` change through the
+                            // `PrssFingerprintCache`. `NoChange` /
+                            // `ParseError` / `ReadError` keep the last
+                            // good sheet (no `stylesheet`); a literal
+                            // or structural change yields a fresh one.
+                            // Per-class selective invalidation rides
+                            // on top later; today the install marks
+                            // FRAME_DIRTY_SENTINEL and Phase 3's safe
+                            // full-walk picks up the new values.
+                            let key = match app_id {
+                                None => "<prss:host>".to_string(),
+                                Some(id) => format!("prss:{id}"),
+                            };
+                            let reload =
+                                sheet_watcher.observe_source(&key, &evt.source);
+                            if let Some(sheet) = reload.stylesheet {
+                                match app_id {
+                                    None => {
+                                        *host_sheet.borrow_mut() = Some(sheet);
+                                    }
+                                    Some(id) => {
+                                        tick_inner
+                                            .borrow_mut()
+                                            .app_stylesheets
+                                            .insert(id.clone(), sheet);
+                                    }
+                                }
+                                dirty = true;
+                            } else if let prism_ui_build::PrssChange::ParseError {
+                                message,
+                            } = &reload.change
+                            {
+                                eprintln!(
+                                    "prism-shell hot-reload: .prss parse error: {message}"
+                                );
+                            }
                         }
                     }
                 }
                 // Mark the render scope dirty so the femtovg backend's
                 // post-tick `surface.is_dirty() || …` check triggers
-                // a redraw. The handler then re-runs the full
-                // `render_tree_with` walk against the swapped
-                // skeleton and calls `surface.set_tree`.
-                tick_inner
-                    .borrow()
-                    .render_scope
-                    .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+                // a redraw. The handler then re-runs the
+                // `render_tree_with` walk (FRAME_DIRTY_SENTINEL forces
+                // Phase 3's safe full pass) against the swapped
+                // skeleton / stylesheet and calls `surface.set_tree`.
+                if dirty {
+                    tick_inner
+                        .borrow()
+                        .render_scope
+                        .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+                }
             });
 
         self.run_inner(Some(tick))

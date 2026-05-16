@@ -161,6 +161,28 @@ scheduling), suspense (resume notification), and the hot-reload
 patch (state-preserving requires the reactive graph as the unit of
 preservation).
 
+### 3.2 — ✅ PRSS hot-reload landed 2026-05-16
+
+The shell's `hot_reload` watcher gained a `ReloadTarget::Stylesheet
+{ app_id }` arm. `run_with_hot_reload` now owns a persistent
+`StylesheetWatcher` (the `PrssFingerprintCache` wrapper already in
+`render.rs`); a `.prss` save is classified (`NoChange` /
+`LiteralOnly` / `Structural` / `ParseError`), and a valid change
+reinstalls the host or per-app sheet in place and marks the render
+scope dirty — no kill-and-respawn. `build_watch_specs` watches
+`ui/app.prss` + each `apps/<id>/shell.prss`. A parse error keeps the
+last good sheet (the watcher retains it) so a mid-edit save never
+blanks styling. Pinned by
+`hot_reload::tests::stylesheet_targets_coalesce_independently_of_skeletons`
++ the existing `StylesheetWatcher` literal/structural tests. The
+`.prui` `PruiDocCache` literal-slot-poke / script-frame-reload path
+and per-class selective invalidation (which needs a class→NodeId
+dependency tracker — the premise that "a PRSS class read already
+subscribes its NodeId" does *not* hold; classes resolve from the
+plain `Stylesheet`, not a `Signal`) remain as the deeper refinement;
+today the install marks `FRAME_DIRTY_SENTINEL` and Phase 3's safe
+full pass picks up the new values.
+
 ### 3.2 Hot-reload patch pipeline
 
 **What.** The fingerprint *substrate* is now complete:

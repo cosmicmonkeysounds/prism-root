@@ -94,6 +94,16 @@ fn build_watch_specs() -> Vec<prism_shell::hot_reload::WatchSpec> {
         });
     }
 
+    // §3.2 — host `.prss` stylesheet. Saving it re-classifies through
+    // the `PrssFingerprintCache` and reinstalls live.
+    let host_prss = workspace_root.join("packages/prism-shell/ui/app.prss");
+    if host_prss.exists() {
+        specs.push(WatchSpec {
+            path: host_prss,
+            target: ReloadTarget::Stylesheet { app_id: None },
+        });
+    }
+
     let apps_dir = workspace_root.join("apps");
     if let Ok(entries) = std::fs::read_dir(&apps_dir) {
         for entry in entries.flatten() {
@@ -110,8 +120,20 @@ fn build_watch_specs() -> Vec<prism_shell::hot_reload::WatchSpec> {
             };
             specs.push(WatchSpec {
                 path: skeleton,
-                target: ReloadTarget::AppSkeleton { app_id },
+                target: ReloadTarget::AppSkeleton {
+                    app_id: app_id.clone(),
+                },
             });
+            // Sibling per-app stylesheet, if the app ships one.
+            let app_prss = path.join("shell.prss");
+            if app_prss.exists() {
+                specs.push(WatchSpec {
+                    path: app_prss,
+                    target: ReloadTarget::Stylesheet {
+                        app_id: Some(app_id),
+                    },
+                });
+            }
         }
     }
     specs

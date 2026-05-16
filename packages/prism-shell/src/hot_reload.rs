@@ -32,6 +32,12 @@ pub enum ReloadTarget {
     /// A per-app skeleton (`apps/<id>/shell.prism-ui`) keyed by
     /// `app_id`.
     AppSkeleton { app_id: String },
+    /// A `.prss` stylesheet. `app_id = None` is the host sheet
+    /// (`ui/app.prss`); `Some(id)` is a per-app sheet. The consumer
+    /// classifies the change through a `StylesheetWatcher`
+    /// (`PrssFingerprintCache`) and installs the fresh sheet —
+    /// §3.2 of `docs/dev/prism-cross-cutting-systems.md`.
+    Stylesheet { app_id: Option<String> },
 }
 
 /// One pending hot-reload — the watcher thread posts these as files
@@ -89,6 +95,8 @@ fn target_key(t: &ReloadTarget) -> String {
     match t {
         ReloadTarget::DefaultSkeleton => "<default>".into(),
         ReloadTarget::AppSkeleton { app_id } => format!("app:{app_id}"),
+        ReloadTarget::Stylesheet { app_id: None } => "<prss:host>".into(),
+        ReloadTarget::Stylesheet { app_id: Some(id) } => format!("prss:{id}"),
     }
 }
 
@@ -315,5 +323,53 @@ mod tests {
         assert!(out.iter().any(
             |e| matches!(&e.target, ReloadTarget::AppSkeleton { app_id } if app_id == "flux")
         ));
+    }
+
+    #[test]
+    fn stylesheet_targets_coalesce_independently_of_skeletons() {
+        // §3.2 — a `.prss` save and a `.prism-ui` save target
+        // different keys, and the host vs per-app sheets are
+        // distinct; only the freshest per key survives a drain.
+        let evts = vec![
+            ReloadEvent {
+                target: ReloadTarget::Stylesheet { app_id: None },
+                source: "host-v1".into(),
+            },
+            ReloadEvent {
+                target: ReloadTarget::DefaultSkeleton,
+                source: "skel".into(),
+            },
+            ReloadEvent {
+                target: ReloadTarget::Stylesheet { app_id: None },
+                source: "host-v2".into(),
+            },
+            ReloadEvent {
+                target: ReloadTarget::Stylesheet {
+                    app_id: Some("flux".into()),
+                },
+                source: "flux-css".into(),
+            },
+        ];
+        let mut out: Vec<ReloadEvent> = Vec::new();
+        for evt in evts {
+            let key = target_key(&evt.target);
+            out.retain(|p| target_key(&p.target) != key);
+            out.push(evt);
+        }
+        assert_eq!(out.len(), 3, "host-prss, skeleton, flux-prss");
+        assert!(out.iter().any(|e| matches!(
+            &e.target,
+            ReloadTarget::Stylesheet { app_id: None }
+        ) && e.source == "host-v2"));
+        assert!(out.iter().any(|e| matches!(
+            &e.target,
+            ReloadTarget::Stylesheet { app_id: Some(id) } if id == "flux"
+        )));
+        // The host stylesheet key must differ from the skeleton key
+        // so a `.prss` save never clobbers a pending `.prism-ui` one.
+        assert_ne!(
+            target_key(&ReloadTarget::Stylesheet { app_id: None }),
+            target_key(&ReloadTarget::DefaultSkeleton)
+        );
     }
 }
