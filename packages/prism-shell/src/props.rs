@@ -169,6 +169,9 @@ const SLOT_BINDINGS: &[(&str, SlotAccessor)] = &[
     ("shell.command-palette", |s| {
         s.overlay.command_palette_props()
     }),
+    // Find-in-document overlay. Reads from `state.search`, which the
+    // `SearchService` mutates through the shared text-input dispatch.
+    ("shell.search-overlay", |s| s.search.search_overlay_props()),
     ("shell.help-tooltip", |s| s.overlay.help_tooltip_props()),
     // Builder slot — inspector / properties / signals / schema. All
     // four read from the same `selection`-driven model, so cross-panel

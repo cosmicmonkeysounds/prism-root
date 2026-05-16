@@ -23,6 +23,8 @@ use std::collections::HashSet;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+use crate::language::syntax::Scanner;
+
 /// Canonical file extension. Hosts may accept variants; the loader
 /// in `prism-cli` watches anything under this list.
 pub const PRSS_EXTENSIONS: &[&str] = &["prss"];
@@ -211,40 +213,121 @@ struct RawClass {
 /// `toml` crate sees it. A brace whose body is `key = …` (an inline
 /// table — a state sub-table, or the legacy `{ lua = "…" }`) is left
 /// untouched.
+/// Recursive, `Scanner`-driven, quote/comment/brace-aware rewrite
+/// (the project's standing "parsers go through Prism Syntax" rule —
+/// no hand-rolled string indexing). Every brace group in *value
+/// position* (preceded by `=`) is classified: empty → left as-is; an
+/// inline table (`key = …`) → kept a table but its own values
+/// recursed into (so a `{expr}` nested inside a state sub-table is
+/// still desugared); anything else → a bare Luau expression wrapped
+/// as `{ lua = "…" }`.
 fn desugar_brace_exprs(source: &str) -> String {
+    let mut sc = Scanner::new(source);
     let mut out = String::with_capacity(source.len());
-    for (i, line) in source.split('\n').enumerate() {
-        if i > 0 {
-            out.push('\n');
+    while let Some(c) = sc.peek() {
+        match c {
+            // TOML line comment — copy verbatim to EOL.
+            '#' => {
+                while let Some(ch) = sc.peek() {
+                    if ch == '\n' {
+                        break;
+                    }
+                    out.push(ch);
+                    sc.advance();
+                }
+            }
+            '"' | '\'' => {
+                out.push(c);
+                sc.advance();
+                while let Some(ch) = sc.advance() {
+                    out.push(ch);
+                    if ch == '\\' {
+                        if let Some(n) = sc.advance() {
+                            out.push(n);
+                        }
+                        continue;
+                    }
+                    if ch == c {
+                        break;
+                    }
+                }
+            }
+            '{' if last_non_ws(&out) == Some('=') => {
+                let open = sc.offset();
+                match scan_matching_brace(&mut sc) {
+                    Some(close) => {
+                        let body = &source[open + 1..close];
+                        let trimmed = body.trim();
+                        if trimmed.is_empty() {
+                            out.push_str(&source[open..close + 1]);
+                        } else if inner_is_inline_table(trimmed) {
+                            out.push('{');
+                            out.push_str(&desugar_brace_exprs(body));
+                            out.push('}');
+                        } else {
+                            let escaped = trimmed.replace('\\', "\\\\").replace('"', "\\\"");
+                            out.push_str(&format!("{{ lua = \"{escaped}\" }}"));
+                        }
+                    }
+                    None => {
+                        out.push('{');
+                        sc.advance();
+                    }
+                }
+            }
+            _ => {
+                out.push(c);
+                sc.advance();
+            }
         }
-        out.push_str(&desugar_brace_line(line));
     }
     out
 }
 
-fn desugar_brace_line(line: &str) -> String {
-    let trimmed = line.trim_end();
-    let body_indent = trimmed.len() - trimmed.trim_start().len();
-    let (indent, rest) = trimmed.split_at(body_indent);
-    if rest.starts_with('[') || rest.starts_with('#') {
-        return line.to_string();
+/// Last non-whitespace char already emitted — used to detect that a
+/// `{` is in TOML value position (`key = {`).
+fn last_non_ws(s: &str) -> Option<char> {
+    s.chars().rev().find(|c| !c.is_whitespace())
+}
+
+/// Scanner positioned at the opening `{`; consumes through the
+/// matching `}` (nested-brace + quote aware) and returns the byte
+/// offset of that `}`. Scanner is left just past it. `None` if
+/// unbalanced.
+fn scan_matching_brace(sc: &mut Scanner) -> Option<usize> {
+    let mut depth = 0i32;
+    while let Some(c) = sc.peek() {
+        match c {
+            '"' | '\'' => {
+                sc.advance();
+                while let Some(ch) = sc.advance() {
+                    if ch == '\\' {
+                        sc.advance();
+                        continue;
+                    }
+                    if ch == c {
+                        break;
+                    }
+                }
+            }
+            '{' => {
+                depth += 1;
+                sc.advance();
+            }
+            '}' => {
+                depth -= 1;
+                let here = sc.offset();
+                sc.advance();
+                if depth == 0 {
+                    return Some(here);
+                }
+            }
+            _ => {
+                sc.advance();
+            }
+        }
     }
-    // `key = { … }` — find the first top-level `=`, then a `{ … }`
-    // value that spans the rest of the line.
-    let Some(eq) = rest.find('=') else {
-        return line.to_string();
-    };
-    let (key, after_eq) = rest.split_at(eq);
-    let value = after_eq[1..].trim();
-    if !(value.starts_with('{') && value.ends_with('}')) {
-        return line.to_string();
-    }
-    let inner = value[1..value.len() - 1].trim();
-    if inner.is_empty() || inner_is_inline_table(inner) {
-        return line.to_string();
-    }
-    let escaped = inner.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("{indent}{} = {{ lua = \"{escaped}\" }}", key.trim_end())
+    None
 }
 
 /// True when a brace body opens like a TOML inline table — a key
@@ -620,6 +703,7 @@ mod tests {
             background = { tokens.colors.accent }
             radius     = { tokens.radius.md }
             padding    = { tokens.spacing.sm * 2 }
+            hovered    = { background = { darken(tokens.colors.accent, 0.1) }, color = "#fff" }
         "##;
         let (sheet, errs) = parse(src);
         assert!(errs.is_empty(), "errors: {errs:?}");
@@ -632,6 +716,13 @@ mod tests {
             btn.properties.get("padding").unwrap(),
             &format!("{LUA_VALUE_SENTINEL}tokens.spacing.sm * 2")
         );
+        // Nested brace-expr inside a state sub-table is desugared too.
+        let hov = btn.states.get("hovered").expect("hovered state");
+        assert_eq!(
+            hov.get("background").unwrap(),
+            &format!("{LUA_VALUE_SENTINEL}darken(tokens.colors.accent, 0.1)")
+        );
+        assert_eq!(hov.get("color").map(String::as_str), Some("#fff"));
         // Legacy `{ lua = "…" }` and real inline tables still parse.
         let (sheet, errs) = parse(
             "[class.x]\nbackground = { lua = \"tokens.colors.accent\" }\nhovered = { background = \"#fff\" }\n",

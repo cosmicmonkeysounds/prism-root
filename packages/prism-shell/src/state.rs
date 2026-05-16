@@ -2186,7 +2186,7 @@ impl SearchSlot {
     }
 
     pub fn search_overlay_props(&self) -> Value {
-        json!({
+        let mut props = json!({
             "open": self.open,
             "query": self.query_text(),
             "caret": self.query.caret_byte(),
@@ -2199,7 +2199,14 @@ impl SearchSlot {
                     "score": h.score,
                 })).collect()
             ),
-        })
+        });
+        // Optional `selection="start,end"` byte range — only emitted
+        // when a non-empty selection is live so the input renderer's
+        // missing-attr branch (no highlight) is the default.
+        if let Some((a, b)) = self.query.selection() {
+            props["selection"] = json!(format!("{a},{b}"));
+        }
+        props
     }
 }
 
@@ -2868,13 +2875,17 @@ impl OverlaySlot {
     /// `results`, and `selected-index`; visibility is gated by `open`
     /// (skeleton-side `visible="…"` author attr binds against it).
     pub fn command_palette_props(&self) -> Value {
-        json!({
+        let mut props = json!({
             "open": self.command_palette.open,
             "query": self.command_palette.query_text(),
             "caret": self.command_palette.query.caret_byte(),
             "results": self.results_json(),
             "selected-index": self.command_palette.selected_index,
-        })
+        });
+        if let Some((a, b)) = self.command_palette.query.selection() {
+            props["selection"] = json!(format!("{a},{b}"));
+        }
+        props
     }
 
     /// JSON for `shell.help-tooltip`. When no tooltip is showing, all

@@ -174,6 +174,26 @@ impl LuauScopeFrame {
         tokens: Option<&JsonValue>,
         scope_bindings: Option<&JsonValue>,
     ) -> Result<Self, String> {
+        Self::from_modules_with_requires(modules, &[], tokens, scope_bindings)
+    }
+
+    /// **Wave H.7 (`prui-luau-fusion.md` §5.9 tier 3)** — like
+    /// [`Self::from_modules_with_scope`] but also seeds a per-document
+    /// `require` cache. `requires` is the transitively-resolved
+    /// `require("…")` graph (host-resolved through the *same*
+    /// [`crate::interpret::ImportResolver`] as `<import>`), ordered
+    /// **deps-first**: each `(key, source)` is evaluated once and its
+    /// `return` value stored under `key`, so a later module's
+    /// `require("key")` is a cache hit. A hard structural cycle
+    /// surfaces as a bounded "module not found" load error (the
+    /// dependency isn't cached yet when re-entered) — never a
+    /// non-terminating walk (design principle 1).
+    pub fn from_modules_with_requires(
+        modules: &[LuauModule],
+        requires: &[(String, String)],
+        tokens: Option<&JsonValue>,
+        scope_bindings: Option<&JsonValue>,
+    ) -> Result<Self, String> {
         // Flat units keep source order and merge into document scope;
         // named modules append as isolating IIFE bindings. A named
         // module's inner `local`s stay nested (full-moon only reports
@@ -251,6 +271,38 @@ impl LuauScopeFrame {
                 .set("scope", scope_lua)
                 .map_err(|e| format!("set prism.scope: {e}"))?;
         }
+        // **Wave H.7 (§5.9 tier 3)** — per-document `require` cache.
+        // The transitive `require(...)` graph is host-resolved
+        // (interpret.rs, through the same `ImportResolver` as
+        // `<import>`) and handed in deps-first; we evaluate each
+        // module once here and stash its `return` value in a global
+        // cache table. `require(p)` is a frozen prelude lookup — no
+        // Rust closure, no filesystem in the runtime, no re-entrancy
+        // (a cycle hits the not-yet-cached branch and errors, bounded
+        // per principle 1). Done pre-sandbox so a module body can see
+        // the same `prism` / `tokens` capability surface a `<script>`
+        // does; the resolver already gated which files are reachable.
+        let req_cache = lua
+            .create_table()
+            .map_err(|e| format!("create require cache: {e}"))?;
+        lua.globals()
+            .set("__prism_require_cache", req_cache.clone())
+            .map_err(|e| format!("set require cache: {e}"))?;
+        lua.load(REQUIRE_PRELUDE)
+            .set_name("require-prelude")
+            .exec()
+            .map_err(|e| format!("require prelude: {e}"))?;
+        for (key, src) in requires {
+            let value: LuaValue = lua
+                .load(src.as_str())
+                .set_name(key)
+                .eval()
+                .map_err(|e| format!("require module `{key}`: {e}"))?;
+            req_cache
+                .set(key.as_str(), value)
+                .map_err(|e| format!("cache require module `{key}`: {e}"))?;
+        }
+
         lua.sandbox(true)
             .map_err(|e| format!("enable luau sandbox: {e}"))?;
 
@@ -573,6 +625,23 @@ impl LuauScopeFrame {
 ///   records `(name, fn)` into the macro collector for the tag
 ///   resolver to dispatch through.
 ///
+/// **Wave H.7 (§5.9 tier 3)** — the `require(p)` prelude. A frozen
+/// lookup over the host-populated `__prism_require_cache`. Not a
+/// Rust closure (no resolver lifetime escapes into Lua) and not the
+/// real Lua `require` (no filesystem in the runtime): every module
+/// is pre-resolved + pre-evaluated host-side. A miss (unresolved
+/// path, or a hard `require` cycle whose dependency is not yet
+/// cached) is a bounded error, never a hang.
+const REQUIRE_PRELUDE: &str = r#"
+function require(p)
+  local m = __prism_require_cache[p]
+  if m == nil then
+    error("require: module not found or cyclic: " .. tostring(p), 2)
+  end
+  return m
+end
+"#;
+
 /// **Wave E.3** — `prui_ast.*` constructor prelude. Frozen by the
 /// sandbox (loaded before `sandbox(true)`); pure string building.
 const PRUI_AST_PRELUDE: &str = r#"
@@ -875,6 +944,40 @@ mod tests {
     #[test]
     fn script_error_surfaces_as_err() {
         let err = LuauScopeFrame::from_scripts(&["local x = nil + {}"], None);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn tier3_require_resolves_deps_first_and_caches() {
+        // Root script require()s `money`, which itself require()s
+        // `fmt`. The host hands them deps-first; each is evaluated
+        // once and cached, so the nested require is a cache hit.
+        let flat = LuauModule::flat(r#"local total = require("./money.luau").total(2, 3)"#);
+        let requires = vec![
+            (
+                "./fmt.luau".to_string(),
+                "return { sum = function(a, b) return a + b end }".to_string(),
+            ),
+            (
+                "./money.luau".to_string(),
+                "local fmt = require(\"./fmt.luau\")\n\
+                 return { total = function(a, b) return fmt.sum(a, b) end }"
+                    .to_string(),
+            ),
+        ];
+        let frame = LuauScopeFrame::from_modules_with_requires(&[flat], &requires, None, None)
+            .expect("frame");
+        assert_eq!(frame.lookup("total"), Some(JsonValue::from(5)));
+    }
+
+    #[test]
+    fn tier3_require_missing_or_cyclic_is_bounded_error() {
+        // `a` require()s `b`, but `b` was never resolved/cached (an
+        // unresolved path, or the not-yet-cached side of a cycle):
+        // a bounded load error, never a hang.
+        let flat = LuauModule::flat("local x = 1");
+        let requires = vec![("a".to_string(), r#"return require("b")"#.to_string())];
+        let err = LuauScopeFrame::from_modules_with_requires(&[flat], &requires, None, None);
         assert!(err.is_err());
     }
 

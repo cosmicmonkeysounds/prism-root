@@ -1,19 +1,22 @@
 <!--
-  shell.command-palette — Ctrl+Shift+P fuzzy-find palette overlay.
-  Wave 11.3 (Tier-2) migration of command_palette.rs.
+  shell.search-overlay — Ctrl+F document-search overlay. Sister to
+  `shell.command-palette` in shape: a modal card with a query
+  `<input>` row and a result list. The query buffer is a full
+  `TextEditor` (single-line) routed through the shared text-input
+  dispatch, so the input gets caret nav, selection, Ctrl+A,
+  Ctrl+C/X/V, and IME for free.
 
   Closed → 0×0 hidden overlay so visibility is host state. Open →
-  480px rounded card with a query `<input>` row and a result list.
-  Selection state lives on the host (`AppState::command_palette_*`);
-  the DSL just paints the visual structure and uses for-loop `idx`
-  to drive the selected-row tint.
+  420px rounded card. Selection state lives on the host
+  (`AppState::search.*`); the DSL just paints the visual structure
+  and uses for-loop `idx` to drive the selected-row tint.
 -->
 <container
     if="{!open}"
     tag="div"
     width="0"
     height="0"
-    data:role="command-palette"
+    data:role="search-overlay"
     data:visible="false"
     aria:hidden="true"/>
 <container
@@ -26,16 +29,16 @@
     padding-right="12"
     padding-top="12"
     padding-bottom="12"
-    width="480"
+    width="420"
     style:radius="8"
     style:background="#ffffff"
     role="dialog"
-    aria-label="Command palette"
-    data:role="command-palette">
+    aria-label="Find in document"
+    data:role="search-overlay">
   <input
       id="{id}::input"
       value="{query}"
-      placeholder="{placeholder}"
+      placeholder="Find…"
       focused="true"
       caret-byte="{caret}"
       selection="{selection}"
@@ -47,7 +50,7 @@
       direction="column"
       width="grow">
     <container
-        for="item, idx in results"
+        for="hit, idx in results"
         id="{id}::row::{idx}"
         tag="div"
         direction="row"
@@ -57,14 +60,14 @@
         padding-top="6"
         padding-bottom="6"
         width="grow"
-        height="32"
+        height="36"
         style:radius="4"
         style:background="{idx == selected-index ? '#190060c0' : ''}"
         style:background:hovered="{idx == selected-index ? '' : '#0f000000'}"
         role="option"
         aria:selected="{idx == selected-index ? 'true' : ''}">
-      <text font-size="13" style:color="#000000">{item.label}</text>
-      <text if="{item.shortcut}" font-size="11" style:color="#88000000">{item.shortcut}</text>
+      <text font-size="13" style:color="#000000">{hit.label}</text>
+      <text font-size="11" style:color="#88000000">{hit.snippet}</text>
     </container>
   </container>
 </container>

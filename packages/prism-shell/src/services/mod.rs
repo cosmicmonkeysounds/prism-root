@@ -580,8 +580,10 @@ pub fn register_shell_services(reg: &mut ServiceRegistry) {
     // §25 — `CommandPaletteService` MUST register ahead of `InputService`
     // so its modal-capture `on_event` (returns `Handled` while open)
     // short-circuits Ctrl+S / Ctrl+F / etc. before InputService can
-    // resolve them.
+    // resolve them. Same constraint applies to `SearchService` — when
+    // the find overlay is open, Ctrl+S must NOT save the doc.
     reg.add_scoped(Universal, CommandPaletteService);
+    reg.add_scoped(Universal, SearchService);
     reg.add_scoped(Universal, InputService::with_defaults());
     reg.add_scoped(Universal, SelectionService);
     // DSL self-bootstrap Loop 3: `App`-scoped services are dropped by
@@ -596,7 +598,10 @@ pub fn register_shell_services(reg: &mut ServiceRegistry) {
     // project-aware apps mount the explorer panel).
     reg.add_scoped(Universal, PersistenceService);
     reg.add_scoped(App, ProjectService);
-    reg.add_scoped(Universal, SearchService);
+    // (SearchService moved ahead of InputService — see comment above
+    // the CommandPalette registration. The §26 "IO services" cohort
+    // still owns the find shortcut, but the modal capture has to
+    // win the fan-out race with InputService.)
     // §27 — cross-service services. `Help` + `Menu` are universal
     // (every app surfaces them); `Signals` + `Luau` are app-scoped
     // (signal-connections / .luau-script-bearing apps).

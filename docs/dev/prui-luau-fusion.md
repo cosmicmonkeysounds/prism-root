@@ -37,8 +37,9 @@ H/I partial, 2026-05-15.** Runtime-complete: (A) colocated
 + `prism.probes:on` + `at:` keyframe namespace. Partial: (H)
 inline `<style>` + `<import>`/`ImportResolver` + FS
 sibling-pairing host resolver + **tier-2 named Luau module
-imports (§5.9)** landed; tier-3 `require`, fingerprint-cache, and
-`prism new` are follow-ups; (I) `prism.scope` value bridge landed,
+imports + tier-3 transitive `require` (§5.9) + `prism new
+widget` scaffold** landed; fingerprint-cache (H.4) is the only
+Wave-H follow-up; (I) `prism.scope` value bridge landed,
 the LSP / `luau-analyze` / `prism lint --types` / Inspector
 typing is external-tooling and intentionally not faked. See §9
 Waves A–I for as-built notes. Cross-wave deferrals:
@@ -1800,7 +1801,7 @@ exactly as an unknown tag does today.
 
 **Unlocks:** §7.11, §7.12.
 
-### Wave H — File model & multi-projection authoring — ◑ partial 2026-05-15
+### Wave H — File model & multi-projection authoring — ◑ partial 2026-05-15 (H.5 + H.7 landed 2026-05-16; H.4 deferred)
 - H.1 ✅ Host resolver landed: prism-shell ships
   `FsImportResolver` (filesystem-backed `ImportResolver`) —
   per-kind extension contract + canonicalised path-escape gate +
@@ -1830,8 +1831,16 @@ exactly as an unknown tag does today.
   the host's job by design (the runtime has no filesystem).
 - H.4 ⚠️ FingerprintCache virtual-file keys — a
   `prism-ui-build` / hot-reload concern, deferred.
-- H.5 ⚠️ `prism new widget` template — a `prism-cli` concern,
-  deferred.
+- H.5 ✅ `prism new widget <name> [--dir] [--single-file]
+  [--force]` — landed 2026-05-16 (`prism-cli`
+  `commands::new`). Scaffolds the sibling-paired
+  `<name>.prui` + `.prss` + `.luau` trio (or one inline-block
+  `.prui` with `--single-file`), written in the §5.10 canonical
+  surface (comma-separated attrs, bare values, `{expr}` slots,
+  `$` handlers, `class=…`, PRSS bare-expr braces) with the Luau
+  opening `--!strict` (§6.6). `--dry-run` lists files without
+  writing; refuses to clobber without `--force`; rejects
+  path-traversal names.
 - H.6 ✅ **Tier 2 — named module imports (§5.9).**
   `collect_imports` now carries the postfix `as` name;
   `LuauScopeFrame` evaluates
@@ -1844,15 +1853,30 @@ exactly as an unknown tag does today.
   script>` keeps the flat-merge path. Module identity is keyed by
   resolver-canonicalised path so one file imported twice
   evaluates once.
-- H.7 ⚠️ **Tier 3 — Luau-native `require` (§5.9).** Needs a
-  sandbox-safe `require` shim delegating to `ImportResolver` +
-  the shared module cache + structural-cycle detection. The
-  cache + resolver substrate H.6 landed is the foundation; the
-  `require` shim itself is the next increment.
+- H.7 ✅ **Tier 3 — Luau-native `require` (§5.9) — landed
+  2026-05-16.** The host (`interpret.rs::resolve_require_graph`)
+  scans each module/script body for literal `require("…")` calls
+  (a Prism `Scanner` pass that skips comments + string bodies),
+  resolves them transitively through the **same**
+  `ImportResolver` as `<import>` (kind `script`), and hands
+  `LuauScopeFrame::from_modules_with_requires` a **deps-first**
+  `(path, source)` list. Each module is evaluated once into a
+  per-document `__prism_require_cache`; the frozen `require(p)`
+  prelude is a pure cache lookup (no Rust closure → no resolver
+  lifetime escaping into Lua; no filesystem in the runtime).
+  Module identity is the literal path; a re-entered path (hard
+  cycle) hits the not-yet-cached branch and raises a bounded
+  load error — never a non-terminating walk (principle 1). No
+  resolver (wasm) → no `require`, graceful, same as `<import>`.
+  Known nuance: two *different* literal spellings of the same
+  file evaluate twice (tier-2 `<import>`'s canonical-path dedup
+  is the once-only path); same-literal `require` is cached.
 
 **Unlocks:** §5.3 + §5.4 (inline blocks + imports); §5.2 + §5.9
 sibling-pairing and tier-1/tier-2 modularity ride the H.1 + H.6
-work; tier-3 `require` is H.7.
+work; tier-3 `require` (H.7) and `prism new widget` (H.5) are
+now live — the only Wave-H deferral left is H.4 (FingerprintCache
+virtual-file keys, a hot-reload concern).
 
 ### Wave I — Type system end-to-end — ◑ partial 2026-05-15
 - I.2 ✅ `prism.scope.<name>` runtime bridge:

@@ -757,6 +757,15 @@ impl Shell {
         f(&self.inner.borrow())
     }
 
+    /// Mutable borrow of `ShellInner`. Same double-borrow caveat as
+    /// [`Self::with_inner`] — the closure must not call back into
+    /// `dispatch_event` or any other `&self` shell method while it
+    /// holds the borrow. Used by tests + host glue that need to
+    /// stage `AppState` setup outside the scene path.
+    pub fn with_inner_mut<R>(&self, f: impl FnOnce(&mut ShellInner) -> R) -> R {
+        f(&mut self.inner.borrow_mut())
+    }
+
     /// Find the topmost hit-cache entry whose `data-role` matches
     /// `role`. Helper for e2e tests that need to synthesise pointer
     /// events against a known surface (e.g. the code-editor body).

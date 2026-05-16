@@ -139,6 +139,17 @@ For routine housekeeping, rely on the automatic GC described below.
 ### `prism fmt [--check]`
 `cargo fmt --all`, optionally `--check`.
 
+### `prism new widget <name> [--dir <path>] [--single-file] [--force]`
+Scaffold a new widget in the §5.10-canonical PRUI/PRSS surface
+(`docs/dev/prui-luau-fusion.md` Wave H.5). Default: the
+sibling-paired trio `<name>.prui` + `<name>.prss` + `<name>.luau`
+(auto-attached by basename convention — no `<import>`).
+`--single-file` emits one `.prui` with inline `<script>` /
+`<style>` blocks instead. The Luau opens `--!strict`. `--dry-run`
+lists the files without writing; existing files are refused unless
+`--force`; path-traversal names are rejected. Pure filesystem
+scaffold — does not shell out. Lives in `commands::new`.
+
 ## Automatic build-artefact GC
 After every successful `prism build`, `prism test`, or `prism dev`
 (web preflight), the CLI runs `gc::sweep` over `target/`. The sweep

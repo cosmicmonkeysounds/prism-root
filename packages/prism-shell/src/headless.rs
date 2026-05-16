@@ -64,6 +64,10 @@ pub enum BuiltinScene {
     /// `TextEditor` wiring and the input's `caret-byte` rendering
     /// path end-to-end.
     CommandPalette,
+    /// The find-in-document overlay open with a query + selection
+    /// live. Sister to `CommandPalette` — same TextEditor wiring,
+    /// renders through `shell.search-overlay`.
+    SearchOverlay,
 }
 
 impl BuiltinScene {
@@ -79,6 +83,7 @@ impl BuiltinScene {
         Self::ConnectionPicker,
         Self::CodeEditor,
         Self::CommandPalette,
+        Self::SearchOverlay,
     ];
 
     /// Kebab-case CLI identifier — the bytes the user types after
@@ -93,6 +98,7 @@ impl BuiltinScene {
             Self::ConnectionPicker => "connection-picker",
             Self::CodeEditor => "code-editor",
             Self::CommandPalette => "command-palette",
+            Self::SearchOverlay => "search-overlay",
         }
     }
 
@@ -197,6 +203,18 @@ impl Shell {
                 // end-of-string.
                 palette.query.place_caret_at(2, false);
                 palette.selected_index = 0;
+            }
+            BuiltinScene::SearchOverlay => {
+                let mut guard = self.inner.borrow_mut();
+                let g = &mut *guard;
+                let search = &mut g.state.search;
+                search.open = true;
+                search.query.set_text("demo");
+                // Live selection covering "emo" — proves the
+                // `selection="a,b"` attribute renders the highlight.
+                search.query.place_caret_at(1, false);
+                search.query.place_caret_at(4, true);
+                search.selected_index = 0;
             }
         }
     }

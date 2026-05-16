@@ -697,22 +697,31 @@ impl<'s> Parser<'s> {
         )
     }
 
-    /// `$ stmt` — an unquoted action/handler body. Faithful to the
-    /// pre-§5.10 `on:click="stmt"` quoted form: it surfaces as a
-    /// `String`, so the `on:` / `effect:` lowering (which already
-    /// executes the body as Luau) is untouched.
+    /// `$ stmt` — an unquoted Luau action/handler body (§5.10). It
+    /// surfaces as the canonical `luau { … }` action string so the
+    /// existing dispatcher (`prism_builder::signal::parse_action`)
+    /// routes it to `ParsedAction::Luau` unchanged — `$emit("save")`
+    /// and `$state.x = !state.x` are Luau, not the space-delimited
+    /// `verb rest` micro-grammar (`emit save` / `cmd help.show`).
     fn parse_action_value(&mut self) -> AttributeValue {
         self.scanner.advance(); // `$`
         self.scanner.skip_whitespace();
-        let (value, range) = self.scan_value_run();
-        if value.is_empty() {
+        let (body, range) = self.scan_value_run();
+        if body.is_empty() {
             self.errors.push(ParseError {
                 message: "Empty `$` action body".into(),
                 range,
                 code: "expected-value",
             });
+            return AttributeValue::String {
+                value: String::new(),
+                range,
+            };
         }
-        AttributeValue::String { value, range }
+        AttributeValue::String {
+            value: format!("luau {{ {body} }}"),
+            range,
+        }
     }
 
     /// Bare token value — `gap=8`, `direction=row`, `padding=12 16`,
@@ -1395,11 +1404,19 @@ radius = 8
 
     #[test]
     fn s510_action_body_dollar() {
+        // `$` wraps to the canonical `luau { … }` action so the
+        // dispatcher routes it to ParsedAction::Luau.
         let doc = parse_ok(r#"<button on:click=$state.x = !state.x>Go</button>"#);
-        assert_eq!(as_str(attr(el0(&doc), "on:click")), "state.x = !state.x");
+        assert_eq!(
+            as_str(attr(el0(&doc), "on:click")),
+            "luau { state.x = !state.x }"
+        );
         // Comma / `>` inside a string or call must not terminate.
         let doc = parse_ok(r#"<button on:click=$emit("a, b")>Go</button>"#);
-        assert_eq!(as_str(attr(el0(&doc), "on:click")), r#"emit("a, b")"#);
+        assert_eq!(
+            as_str(attr(el0(&doc), "on:click")),
+            r#"luau { emit("a, b") }"#
+        );
     }
 
     #[test]

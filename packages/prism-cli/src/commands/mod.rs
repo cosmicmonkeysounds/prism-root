@@ -19,6 +19,7 @@ pub mod dev;
 pub mod e2e;
 pub mod fmt;
 pub mod lint;
+pub mod new;
 pub mod scripts;
 pub mod test;
 pub mod visual;
@@ -71,6 +72,9 @@ pub enum Command {
     /// Validate / inspect Luau scripts declared in a project's
     /// `.prism.json` `scripts` section.
     Scripts(scripts::ScriptsArgs),
+    /// Scaffold a new widget (`prism new widget <name>`) in the
+    /// §5.10-canonical surface syntax.
+    New(new::NewArgs),
 }
 
 /// Dispatch a parsed [`Cli`] to the right subcommand.
@@ -88,6 +92,7 @@ pub fn run(cli: &Cli, workspace: &Workspace) -> Result<u8> {
         Command::Clean => clean::run(workspace, cli.dry_run),
         Command::Codegen(args) => codegen::run(args, workspace, cli.dry_run),
         Command::Scripts(args) => scripts::run(args, workspace, cli.dry_run),
+        Command::New(args) => new::run(args, workspace, cli.dry_run),
     }
 }
 

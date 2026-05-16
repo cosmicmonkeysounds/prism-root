@@ -982,6 +982,23 @@ fn command_palette_signals() -> Vec<SignalDef> {
     ])
 }
 
+fn search_overlay_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::boolean("open", "Open").with_default(Value::Bool(false)),
+        FieldSpec::text("query", "Find query"),
+        FieldSpec::text("results", "Results (JSON array)"),
+        FieldSpec::integer("selected-index", "Selected result", NumericBounds::min(0.0))
+            .with_default(Value::from(0.0)),
+    ]
+}
+
+fn search_overlay_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new("query-changed", "User typed in the find input."),
+        SignalDef::new("result-activated", "User picked a hit."),
+    ])
+}
+
 fn component_picker_schema() -> Vec<FieldSpec> {
     vec![
         FieldSpec::boolean("open", "Open").with_default(Value::Bool(false)),
@@ -1661,6 +1678,14 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     )
     .schema(command_palette_schema)
     .signals(command_palette_signals),
+    // Find-in-document overlay. Sister to `shell.command-palette` —
+    // same TextEditor wiring, same modal-capture shape.
+    PrismUiSpec::new(
+        "shell.search-overlay",
+        include_str!("../../ui/components/search-overlay.prism-ui"),
+    )
+    .schema(search_overlay_schema)
+    .signals(search_overlay_signals),
 ];
 
 #[cfg(test)]

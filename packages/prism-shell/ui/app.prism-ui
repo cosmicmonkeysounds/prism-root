@@ -38,6 +38,7 @@
   end-to-end; whether they paint at any given frame is host state.
 -->
 <shell.command-palette id="palette"/>
+<shell.search-overlay id="search"/>
 <shell.toast-stack id="toasts"/>
 <shell.help-tooltip id="help" title=""/>
 <shell.context-menu id="ctx"/>

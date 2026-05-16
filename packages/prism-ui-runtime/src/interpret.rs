@@ -864,8 +864,20 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
         } else if !modules.is_empty() {
             let tokens = scope.binding("tokens");
             let scope_json = scope.bindings_json();
-            match crate::luau_scope::LuauScopeFrame::from_modules_with_scope(
+            // **Wave H.7 (§5.9 tier 3)** — transitively resolve the
+            // `require("…")` graph through the same `ImportResolver`
+            // as `<import>`, deps-first. No resolver → no `require`
+            // (graceful, same as imports on wasm).
+            let requires = match scope.import_resolver() {
+                Some(res) => {
+                    let roots: Vec<&str> = modules.iter().map(|m| m.source.as_str()).collect();
+                    resolve_require_graph(&roots, res.as_ref())
+                }
+                None => Vec::new(),
+            };
+            match crate::luau_scope::LuauScopeFrame::from_modules_with_requires(
                 &modules,
+                &requires,
                 tokens,
                 Some(&scope_json),
             ) {
@@ -912,13 +924,13 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
     lower_children(&document.nodes, &scope_with_teleports)
 }
 
-/// **Wave A** — collect the raw body of every top-level
-/// `<script>` element, in source order. The grammar
-/// parses a `<script>` block as a raw-text element (one
+/// **Wave A / §5.10** — collect the raw body of every top-level
+/// `<script>` element, in source order. `<script>` *is* Luau —
+/// there is no `lang=` selector (the grammar flags one as a
+/// recoverable diagnostic), so every block feeds the Lua state. The
+/// grammar parses a `<script>` block as a raw-text element (one
 /// [`AstNode::Text`] child); multiple inline blocks concatenate at
-/// the [`crate::luau_scope::LuauScopeFrame`] seam. Non-luau
-/// `lang=` scripts are skipped so a future `<script lang="…">`
-/// dialect doesn't get fed to the Lua state.
+/// the [`crate::luau_scope::LuauScopeFrame`] seam.
 #[cfg(feature = "luau")]
 fn collect_script_bodies(nodes: &[AstNode]) -> Vec<String> {
     let mut out = Vec::new();
@@ -939,10 +951,10 @@ fn collect_script_bodies(nodes: &[AstNode]) -> Vec<String> {
     out
 }
 
-/// **Wave H (`prui-luau-fusion.md` §5.3)** — collect the body of
-/// every top-level inline `<style>` block (or bare
-/// `<style>`, which defaults to PRSS), in source order. Grammar
-/// parses `<style>` as raw-text (one [`AstNode::Text`] child).
+/// **Wave H / §5.10 (`prui-luau-fusion.md`)** — collect the body of
+/// every top-level inline `<style>` block, in source order.
+/// `<style>` *is* PRSS — no `lang=` selector. Grammar parses
+/// `<style>` as raw-text (one [`AstNode::Text`] child).
 fn collect_inline_stylesheets(nodes: &[AstNode]) -> Vec<String> {
     let mut out = Vec::new();
     for node in nodes {
@@ -960,10 +972,10 @@ fn collect_inline_stylesheets(nodes: &[AstNode]) -> Vec<String> {
     out
 }
 
-/// **Wave H (§5.4 / §5.9)** — a parsed `<import KIND="path"
-/// [as="alias"]/>` row. `kind` is one of the four projections;
-/// `alias` carries the `as=` namespace (applied for `script`
-/// imports — §5.9 tier 2 — parsed-only for the others).
+/// **Wave H (§5.4 / §5.9 / §5.10)** — a parsed `<import
+/// KIND="path"/> [as <alias>]` row. `kind` is one of the four
+/// projections; `alias` carries the postfix `as` namespace (applied
+/// for `script` imports — §5.9 tier 2 — parsed-only for the others).
 struct ImportSpec {
     kind: String,
     path: String,
@@ -1003,6 +1015,156 @@ fn collect_imports(nodes: &[AstNode]) -> Vec<ImportSpec> {
                     });
                 }
             }
+        }
+    }
+    out
+}
+
+/// **Wave H.7 (`prui-luau-fusion.md` §5.9 tier 3)** — extract every
+/// literal `require("…")` / `require('…')` path from a Luau source,
+/// skipping comments and string/long-string bodies so a `require`
+/// token inside prose or a quote is never mistaken for a call. The
+/// Lua expression form `require(expr)` (non-literal) is intentionally
+/// not followed — only static, resolver-checkable paths participate
+/// (design principle 1: the graph is sized up front).
+#[cfg(feature = "luau")]
+fn scan_require_literals(src: &str) -> Vec<String> {
+    use prism_core::language::syntax::Scanner;
+    // Consume through a `]]` long-bracket close (block comment / long
+    // string terminator), or EOF.
+    fn skip_to_long_close(sc: &mut Scanner) {
+        loop {
+            if sc.is_at_end() {
+                break;
+            }
+            if sc.peek() == Some(']') && sc.peek_ahead(1) == Some(']') {
+                sc.advance();
+                sc.advance();
+                break;
+            }
+            sc.advance();
+        }
+    }
+    let mut sc = Scanner::new(src);
+    let mut out = Vec::new();
+    while let Some(c) = sc.peek() {
+        // `--` line / `--[[ ]]` block comment.
+        if c == '-' && sc.peek_ahead(1) == Some('-') {
+            sc.advance();
+            sc.advance();
+            if sc.peek() == Some('[') && sc.peek_ahead(1) == Some('[') {
+                sc.advance();
+                sc.advance();
+                skip_to_long_close(&mut sc);
+            } else {
+                while let Some(ch) = sc.peek() {
+                    if ch == '\n' {
+                        break;
+                    }
+                    sc.advance();
+                }
+            }
+            continue;
+        }
+        // `[[ … ]]` long string.
+        if c == '[' && sc.peek_ahead(1) == Some('[') {
+            sc.advance();
+            sc.advance();
+            skip_to_long_close(&mut sc);
+            continue;
+        }
+        // `"…"` / `'…'` short string.
+        if c == '"' || c == '\'' {
+            sc.advance();
+            while let Some(ch) = sc.advance() {
+                if ch == '\\' {
+                    sc.advance();
+                    continue;
+                }
+                if ch == c {
+                    break;
+                }
+            }
+            continue;
+        }
+        if c.is_ascii_alphabetic() || c == '_' {
+            let word = sc
+                .scan_while(|x| x.is_ascii_alphanumeric() || x == '_')
+                .to_string();
+            if word == "require" {
+                while matches!(sc.peek(), Some(' ' | '\t' | '\n' | '\r')) {
+                    sc.advance();
+                }
+                if sc.peek() == Some('(') {
+                    sc.advance();
+                    while matches!(sc.peek(), Some(' ' | '\t' | '\n' | '\r')) {
+                        sc.advance();
+                    }
+                    if let Some(q @ ('"' | '\'')) = sc.peek() {
+                        sc.advance();
+                        let mut p = String::new();
+                        while let Some(ch) = sc.advance() {
+                            if ch == '\\' {
+                                if let Some(n) = sc.advance() {
+                                    p.push(n);
+                                }
+                                continue;
+                            }
+                            if ch == q {
+                                break;
+                            }
+                            p.push(ch);
+                        }
+                        if !p.is_empty() {
+                            out.push(p);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        sc.advance();
+    }
+    out
+}
+
+/// **Wave H.7** — depth-first, deps-first transitive resolution of
+/// the `require` graph through the host [`ImportResolver`] (kind
+/// `script`, the same seam `<import script>` uses). Each module is
+/// emitted *after* its dependencies and *exactly once* (keyed by the
+/// literal path); a re-entered path (cycle) is skipped — its
+/// `require` then hits the not-yet-cached branch and errors, so a
+/// structural cycle is a bounded load error, never a hang.
+#[cfg(feature = "luau")]
+fn resolve_require_graph(roots: &[&str], res: &dyn ImportResolver) -> Vec<(String, String)> {
+    use std::collections::HashSet;
+    fn visit(
+        path: &str,
+        res: &dyn ImportResolver,
+        out: &mut Vec<(String, String)>,
+        done: &mut HashSet<String>,
+        stack: &mut HashSet<String>,
+    ) {
+        if done.contains(path) || stack.contains(path) {
+            return;
+        }
+        let Some(src) = res.resolve_import("script", path) else {
+            return;
+        };
+        stack.insert(path.to_string());
+        for dep in scan_require_literals(&src) {
+            visit(&dep, res, out, done, stack);
+        }
+        stack.remove(path);
+        out.push((path.to_string(), src));
+        done.insert(path.to_string());
+    }
+    let mut out = Vec::new();
+    let mut done = HashSet::new();
+    let mut stack = HashSet::new();
+    for root in roots {
+        for dep in scan_require_literals(root) {
+            visit(&dep, res, &mut out, &mut done, &mut stack);
         }
     }
     out
@@ -9788,6 +9950,35 @@ background = { lua = "brand()" }
 "#;
         let nodes = interpret_with_scope(src, &scope).unwrap();
         assert_eq!(text_contents(&nodes), vec!["42".to_string()]);
+    }
+
+    #[cfg(feature = "luau")]
+    #[test]
+    fn tier3_require_transitive_through_resolver() {
+        // §5.9 tier 3: an imported module `require`s a sibling; the
+        // host resolves the transitive graph through the *same*
+        // `ImportResolver` as `<import>`, deps-first, and the nested
+        // `require("./fmt.luau")` is a cache hit.
+        struct Res;
+        impl ImportResolver for Res {
+            fn resolve_import(&self, kind: &str, path: &str) -> Option<String> {
+                match (kind, path) {
+                    ("script", "./money.luau") => Some(
+                        "local fmt = require(\"./fmt.luau\")\n\
+                         local function total(a, b) return fmt.sum(a, b) end"
+                            .to_string(),
+                    ),
+                    ("script", "./fmt.luau") => {
+                        Some("return { sum = function(a, b) return a + b end }".to_string())
+                    }
+                    _ => None,
+                }
+            }
+        }
+        let scope = LowerScope::default().with_import_resolver(Arc::new(Res));
+        let src = "<import script=\"./money.luau\"/>\n<text>{total(2, 3)}</text>";
+        let nodes = interpret_with_scope(src, &scope).unwrap();
+        assert_eq!(text_contents(&nodes), vec!["5".to_string()]);
     }
 
     // ---------- Wave G: probe: + at: ----------
