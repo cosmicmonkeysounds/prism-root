@@ -30,11 +30,12 @@
 //! call [`Animator::start_with_easing`] directly.
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use crate::layout::{Node, Sizing};
 
 /// In-flight transition state. Stored per `(node-id, prop-key)`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct Transition {
     from: f32,
     to: f32,
@@ -46,18 +47,44 @@ struct Transition {
 /// Easing curve sampled per frame. Linear is the default; cubic
 /// `EaseInOut` matches CSS's classic `ease` curve closely enough for
 /// most UI transitions without hand-tuning bezier coefficients.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+///
+/// **§4.1 (`prism-cross-cutting-systems.md`)** — `Lut` carries a
+/// Luau easing closure that was *sampled at lowering time* (where the
+/// per-document Lua frame lives) into an equally-spaced normalised
+/// lookup table over `t ∈ [0,1]`. The animator interpolates the LUT
+/// linearly per frame, so a custom `transition:easing={\fn(t) … end}`
+/// curve costs zero Lua calls per tick and the animator never holds a
+/// Lua handle across frames (the closure could outlive the VM).
+#[derive(Debug, Clone, Default, PartialEq)]
 pub enum Easing {
     #[default]
     Linear,
     EaseIn,
     EaseOut,
     EaseInOut,
+    /// `N ≥ 2` equally-spaced samples of a custom easing curve over
+    /// `t ∈ [0,1]` (`samples[0]` = curve at 0, `samples[N-1]` = curve
+    /// at 1). Built by [`Easing::from_samples`]; fewer than two
+    /// samples degrade to [`Easing::Linear`] so a malformed closure
+    /// never breaks motion.
+    Lut(Rc<[f32]>),
 }
 
 impl Easing {
+    /// Build a sampled-LUT easing from a Luau closure's outputs. Fewer
+    /// than two samples is not a usable curve — fall back to linear
+    /// (the animator's contract: a bad easing degrades, never panics).
+    pub fn from_samples(samples: impl Into<Rc<[f32]>>) -> Self {
+        let samples = samples.into();
+        if samples.len() < 2 {
+            Easing::Linear
+        } else {
+            Easing::Lut(samples)
+        }
+    }
+
     /// Map a 0..=1 normalised time to the eased 0..=1 progress.
-    pub fn ease(self, t: f32) -> f32 {
+    pub fn ease(&self, t: f32) -> f32 {
         let t = t.clamp(0.0, 1.0);
         match self {
             Easing::Linear => t,
@@ -75,7 +102,52 @@ impl Easing {
                     1.0 - u * u * u / 2.0
                 }
             }
+            // Linearly interpolate between the two bracketing LUT
+            // samples. The closure already ran once at lowering time;
+            // this is pure arithmetic on the cached table.
+            Easing::Lut(samples) => {
+                let n = samples.len();
+                let scaled = t * (n - 1) as f32;
+                let i = scaled.floor() as usize;
+                if i >= n - 1 {
+                    return samples[n - 1];
+                }
+                let frac = scaled - i as f32;
+                samples[i] + (samples[i + 1] - samples[i]) * frac
+            }
         }
+    }
+}
+
+/// Parse a `data-transition-easing` attribute value into an
+/// [`Easing`]. Two encodings round-trip from the DSL lowering
+/// (`interpret.rs`):
+///
+/// - a **named keyword** (`linear` / `ease-in` / `ease-out` /
+///   `ease-in-out` / `ease`) → the matching builtin curve;
+/// - a **comma-separated float list** (`0,0.02,0.09,…,1`) → a sampled
+///   Luau easing closure, decoded into [`Easing::Lut`].
+///
+/// Anything unrecognised degrades to [`Easing::Linear`] — the
+/// animator never fails closed on a malformed easing hint.
+pub fn parse_easing(spec: &str) -> Easing {
+    let s = spec.trim();
+    if s.is_empty() {
+        return Easing::Linear;
+    }
+    if s.contains(',') {
+        let samples: Vec<f32> = s
+            .split(',')
+            .filter_map(|p| p.trim().parse::<f32>().ok())
+            .collect();
+        return Easing::from_samples(samples);
+    }
+    match s.to_ascii_lowercase().replace('_', "-").as_str() {
+        "linear" => Easing::Linear,
+        "ease-in" | "easein" => Easing::EaseIn,
+        "ease-out" | "easeout" => Easing::EaseOut,
+        "ease-in-out" | "easeinout" | "ease" => Easing::EaseInOut,
+        _ => Easing::Linear,
     }
 }
 
@@ -280,6 +352,11 @@ impl Animator {
                             has_out_spec = true;
                         }
                     }
+                    // §4.1 — a single `data-transition-easing` hint
+                    // governs every animated prop on this container
+                    // (entry, mid-life delta, and out transitions),
+                    // mirroring CSS's per-element `transition-timing-function`.
+                    let easing = node_easing(props);
                     if has_out_spec {
                         // Snapshot is the most recent representation
                         // of the node — phantoms graft from here
@@ -314,7 +391,15 @@ impl Animator {
                                 continue;
                             }
                             if let Some((from, duration_ms)) = parse_animate_in_value(attr_value) {
-                                self.start(id, prop, from, declared, duration_ms, now_ms);
+                                self.start_with_easing(
+                                    id,
+                                    prop,
+                                    from,
+                                    declared,
+                                    duration_ms,
+                                    now_ms,
+                                    easing.clone(),
+                                );
                             }
                             // Seed last_seen so the subsequent transition
                             // delta-detection path doesn't re-fire on
@@ -338,7 +423,15 @@ impl Animator {
                             }
                             Some(prev) if (prev - declared).abs() > f32::EPSILON => {
                                 if let Some(duration_ms) = parse_duration_ms(attr_value) {
-                                    self.start(id, prop, prev, declared, duration_ms, now_ms);
+                                    self.start_with_easing(
+                                        id,
+                                        prop,
+                                        prev,
+                                        declared,
+                                        duration_ms,
+                                        now_ms,
+                                        easing.clone(),
+                                    );
                                 }
                                 self.last_seen.insert(key, declared);
                             }
@@ -383,9 +476,18 @@ impl Animator {
                 .filter(|((sid, _), _)| sid == &id)
                 .map(|((_, prop), spec)| (prop.clone(), *spec))
                 .collect();
+            let easing = node_easing(props);
             for (prop, spec) in prop_specs {
                 let from = read_numeric_prop(props, &prop).unwrap_or(spec.to);
-                self.start(&id, &prop, from, spec.to, spec.duration_ms, now_ms);
+                self.start_with_easing(
+                    &id,
+                    &prop,
+                    from,
+                    spec.to,
+                    spec.duration_ms,
+                    now_ms,
+                    easing.clone(),
+                );
             }
             // Drop the spec entries so a fresh mount of the same id
             // doesn't carry stale out-state.
@@ -523,6 +625,19 @@ pub fn parse_duration_ms(spec: &str) -> Option<u64> {
             .map(|v| (v.max(0.0) * 1000.0) as u64);
     }
     s.parse::<f64>().ok().map(|v| v.max(0.0) as u64)
+}
+
+/// §4.1 — resolve a container's `data-transition-easing` hint into an
+/// [`Easing`]. Absent → [`Easing::Linear`] (the prior behaviour, so
+/// every existing transition is byte-identical without the attr).
+fn node_easing(props: &crate::layout::ContainerProps) -> Easing {
+    props
+        .semantic
+        .attrs
+        .iter()
+        .find(|(k, _)| k == "data-transition-easing")
+        .map(|(_, v)| parse_easing(v))
+        .unwrap_or_default()
 }
 
 /// Read a numeric prop from `ContainerProps` by name. Only props that
@@ -988,6 +1103,81 @@ mod tests {
         // At t=0 of the new transition, opacity is the snapshot's
         // refreshed value (0.5), not the original 1.0.
         assert!((props.opacity.unwrap_or(0.0) - 0.5).abs() < 1e-3);
+    }
+
+    /// §4.1 — `parse_easing` maps named keywords to builtin curves
+    /// and a comma list to a sampled LUT; junk degrades to linear.
+    #[test]
+    fn parse_easing_recognises_keywords_and_lut() {
+        assert_eq!(parse_easing("linear"), Easing::Linear);
+        assert_eq!(parse_easing("ease-in"), Easing::EaseIn);
+        assert_eq!(parse_easing("EASE_OUT"), Easing::EaseOut);
+        assert_eq!(parse_easing("ease"), Easing::EaseInOut);
+        assert_eq!(parse_easing("garbage"), Easing::Linear);
+        assert_eq!(parse_easing(""), Easing::Linear);
+        match parse_easing("0,0.25,1") {
+            Easing::Lut(s) => assert_eq!(&*s, &[0.0, 0.25, 1.0]),
+            other => panic!("expected Lut, got {other:?}"),
+        }
+        // A single sample is not a curve — degrade to linear.
+        assert_eq!(parse_easing("0.5"), Easing::Linear);
+    }
+
+    /// §4.1 — `Easing::Lut` linearly interpolates between bracketing
+    /// samples, is bounded, and stays monotone for a monotone table.
+    #[test]
+    fn lut_easing_interpolates_between_samples() {
+        let e = Easing::from_samples(vec![0.0, 0.5, 1.0]);
+        assert!((e.ease(0.0) - 0.0).abs() < 1e-6);
+        assert!((e.ease(1.0) - 1.0).abs() < 1e-6);
+        // Midpoint of the table is sample[1] exactly.
+        assert!((e.ease(0.5) - 0.5).abs() < 1e-6);
+        // Quarter point sits halfway between sample[0] and sample[1].
+        assert!((e.ease(0.25) - 0.25).abs() < 1e-6);
+        // Clamps out-of-range t to the table ends.
+        assert!((e.ease(-1.0) - 0.0).abs() < 1e-6);
+        assert!((e.ease(2.0) - 1.0).abs() < 1e-6);
+    }
+
+    /// §4.1 — a `data-transition-easing` LUT attr on the container
+    /// reshapes the interpolation curve for that node's transitions.
+    /// A back-loaded curve keeps the value near `from` at mid-flight
+    /// where a linear curve would already be halfway.
+    #[test]
+    fn observe_applies_custom_easing_from_attr() {
+        fn node(padding: f32) -> Node {
+            Node::Container {
+                id: "card".into(),
+                props: ContainerProps {
+                    padding: Padding::all(padding),
+                    semantic: Semantic {
+                        attrs: vec![
+                            ("data-transition-padding".into(), "200ms".into()),
+                            // Strongly back-loaded: flat at 0 until the
+                            // last segment. Linear at progress 0.5
+                            // would be 0.5; this LUT is still ~0.
+                            ("data-transition-easing".into(), "0,0,0,1".into()),
+                        ],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                children: vec![],
+            }
+        }
+        let mut animator = Animator::new();
+        animator.observe(std::slice::from_ref(&node(0.0)), 0);
+        animator.observe(std::slice::from_ref(&node(100.0)), 0);
+        assert_eq!(animator.active_count(), 1);
+        // Mid-flight (progress 0.5): custom curve keeps it near `from`.
+        let mid = animator.current("card", "padding", 100).unwrap();
+        assert!(
+            mid < 5.0,
+            "back-loaded easing mid value: {mid} (linear would be ~50)"
+        );
+        // End of duration still lands exactly on `to`.
+        let done = animator.current("card", "padding", 200).unwrap();
+        assert!((done - 100.0).abs() < 1e-3, "end value: {done}");
     }
 
     /// Restarting an in-flight transition snaps the new `from` to

@@ -1726,8 +1726,10 @@ exactly as an unknown tag does today.
   path) resolves to a `{ tag = "Pending" }` marker, the fallback
   renders; otherwise the primary renders (fallback stripped).
   Full coroutine scheduling + `BlockInvalidator` resume
-  notification is open question 3, deferred — this is the
-  lowering-time swap that makes the boundary observable today.
+  notification landed 2026-05-16 as cross-cutting §4.2
+  (`prism.objects:query_async` + `SuspenseScheduler` +
+  per-render-tick drain; resume rides §3.1) — open question 3
+  resolved.
 
 **Unlocks:** §7.5, §7.6.
 
@@ -1805,11 +1807,12 @@ exactly as an unknown tag does today.
   event-router family as `<suspense>` resume).
 - G.3 ⚠️ `at:<time>={…}` is a new namespace lowered to
   `data-at-<time>` — author intent + keyframe data round-trip
-  exactly as `transition:` / `animate:` already do today; the
-  Effect-driven animator that *interpolates* multi-stop
-  timelines (and Luau easing closures) is the shared animator
-  follow-up the existing `transition:`/`animate:` namespaces
-  also wait on.
+  exactly as `transition:` / `animate:` already do today. Luau
+  easing closures landed 2026-05-16 (cross-cutting §4.1:
+  `transition:easing={\fn(t)…}` samples to a `data-transition-easing`
+  LUT the animator interpolates Lua-free per frame); the
+  *multi-stop `at:` timeline* interpolation is the remaining shared
+  animator follow-up.
 
 **Unlocks:** §7.11, §7.12.
 
@@ -1961,11 +1964,15 @@ tooling).
    each `state` block by source position and migrate values
    across a structural change) is non-trivial.
 
-3. **Coroutine scheduling under `<suspense>`.** The Lua state is
-   per-document, but the coroutine pool is shared. A subtree
-   awaiting a `prism.objects:query_async` shouldn't starve
-   unrelated subtrees. Likely: per-suspense-boundary coroutine
-   queue, drained on the document's render tick.
+3. **Coroutine scheduling under `<suspense>`.** ✅ **Resolved
+   2026-05-16** (`prism-cross-cutting-systems.md` §4.2). Per-document
+   `SuspenseScheduler` in the Lua app-data; `drain_suspense` resumes
+   each `prism.objects:query_async` coroutine exactly once per render
+   tick (per-task fairness, no boundary starves another); a resolve
+   writes the backing `Signal`, marking the awaiting boundary's
+   NodeId dirty through the §3.1 reactive queue. Wiring a concrete
+   relay/daemon IO source into a producer is the documented host
+   follow-up.
 
 4. **Sub-dialect security.** A `<markdown>` body that contains
    `~md{<script>...</script>}` could re-invoke the PRUI parser

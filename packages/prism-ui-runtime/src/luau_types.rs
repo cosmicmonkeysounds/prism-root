@@ -37,6 +37,7 @@ pub fn type_defs() -> Vec<(&'static str, &'static str)> {
         ("Prism", PRISM),
         ("PrismReactive", PRISM_REACTIVE),
         ("PrismProbes", PRISM_PROBES),
+        ("PrismObjects", PRISM_OBJECTS),
     ]
 }
 
@@ -55,6 +56,7 @@ pub const PRISM_GLOBAL_MEMBERS: &[&str] = &[
     "macro",
     "dialect",
     "probes",
+    "objects",
 ];
 
 /// Concatenate every entry from [`type_defs`] into a single Luau
@@ -182,6 +184,15 @@ const PRISM_PROBES: &str = "export type PrismProbes = {
     on: (self: PrismProbes, name: string, handler: (payload: any) -> ()) -> (),
 }";
 
+// `prism.objects` — §4.2 suspense substrate. `query_async` registers
+// an async producer coroutine and returns *immediately* with a value
+// that reads as `{ tag = "Pending" }` until the suspense scheduler
+// resolves it (the marker `<suspense>`/`<fallback>` trip on). The
+// optional second arg labels the awaiting boundary for diagnostics.
+const PRISM_OBJECTS: &str = "export type PrismObjects = {
+    query_async: <T>(self: PrismObjects, producer: () -> T, boundary: string?) -> T,
+}";
+
 // The `prism` global. `state` returns a reactive table whose field
 // reads auto-subscribe the surrounding block; `derive` a memoised
 // signal. `scope` is host-seeded (Wave I) so it's optional. `reactive`
@@ -195,6 +206,7 @@ const PRISM: &str = "export type Prism = {
     macro: (name: string, body: (...any) -> string) -> (),
     dialect: (spec: { name: string, parse: (source: string) -> string }) -> (),
     probes: PrismProbes,
+    objects: PrismObjects,
     scope: { [string]: any }?,
     reactive: PrismReactive?,
 }";
@@ -223,6 +235,7 @@ mod tests {
             "Prism",
             "PrismReactive",
             "PrismProbes",
+            "PrismObjects",
         ] {
             assert!(
                 names.contains(&expected),

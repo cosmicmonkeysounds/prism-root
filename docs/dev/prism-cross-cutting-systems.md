@@ -265,26 +265,77 @@ the reactive work.
 
 ## 4. Tier 2 — high value, unblocked once Tier 1 lands
 
-### 4.1 Effect-driven animator
+### 4.1 Effect-driven animator — ✅ Luau easing landed 2026-05-16
 
-`transition:` / `animate:` / `at:` namespaces all lower to
-`data-*` author-intent attributes today (round-trip correct, fusion
-G.3) but there is no shared interpolator. Needed: one `Animator`
-that observes keyframe stops, ticks on the frame clock, and
-interpolates with an optional Luau easing closure. Depends on the
-reactive substrate for Effect-driven scheduling. Impact: motion
-stops being linear-only; springs/elastic/custom become one Luau
-function.
+The shared `prism_ui_runtime::animator::Animator` substrate (observe
+/ apply / tick) landed in Wave 14.3. **§4.1 closes the remaining
+gap: custom Luau easing.** `transition:easing={\fn(t) … end}` is
+*sampled at lowering time* (where the per-document Lua frame is live)
+into a comma-joined LUT and round-tripped through the
+`data-transition-easing` semantic attr; `animator::parse_easing`
+decodes it into `Easing::Lut`, which the per-frame `sample` path
+interpolates linearly. Net: the animator stays **Lua-free per
+frame** (zero `call_closure` on the frame clock) and never holds a
+Lua handle past the lowering pass — a closure that outlives the VM
+can't dangle. A named keyword (`ease-in` / `ease-out` /
+`ease-in-out` / `ease` / `linear`) round-trips verbatim; an absent
+attr is byte-identical to the prior linear behaviour. One
+`data-transition-easing` governs every animated prop on the
+container (entry / mid-life delta / out), mirroring CSS's
+per-element `transition-timing-function`. Springs/elastic/custom are
+now one Luau function. Pinned by
+`animator::tests::{parse_easing_recognises_keywords_and_lut,
+lut_easing_interpolates_between_samples,
+observe_applies_custom_easing_from_attr}` +
+`interpret::tests::{transition_easing_keyword_round_trips,
+transition_easing_closure_samples_to_lut}`.
 
-### 4.2 Async / suspense scheduler
+Remaining (separate from easing): the `at:<time>` multi-stop
+*timeline* interpolation (G.3's keyframe-sequence case) is still the
+data-round-trips-only path; the easing backplane it would use is now
+in place.
 
-`<suspense>`/`<fallback>` swap correctly at lowering time (fusion
-D.3) but full coroutine scheduling + `BlockInvalidator` resume is
-deferred (open question 3). Needed: a per-suspense-boundary
-coroutine queue drained on the document render tick, and a resume
-notification that marks the boundary's NodeId dirty (rides 3.1).
-Impact: `prism.objects:query_async` and federated/relay IO become
-first-class without manual coroutine wrappers.
+### 4.2 Async / suspense scheduler — ✅ landed 2026-05-16
+
+`<suspense>`/`<fallback>` swapped correctly at lowering time (fusion
+D.3); **§4.2 lands the coroutine scheduler + reactive resume.**
+`prism.objects:query_async(producer [, boundary])` allocates a
+backing `Signal<JsonValue>` seeded with `{ tag = "Pending" }` (the
+exact marker `subtree_has_pending` trips the `<fallback>` on),
+registers a `coroutine` wrapping `producer` into a per-document
+`SuspenseScheduler` (a `Vec<SuspenseTask>` in the Lua app-data,
+alongside the Phase-5 `Owner` — a query can't outlive its
+document), and returns *immediately* with a reactive proxy. The
+binding harvester binds it like a memo (`__prism_async` id → signal)
+so a read resolves live through `Signal::get`, **subscribing the
+awaiting block's `BlockInvalidator` context**.
+
+`LuauScopeFrame::drain_suspense` resumes every in-flight coroutine
+**exactly once per render tick** (per-task fairness — no boundary's
+slow query starves another): a *return* resolves the query by
+writing the value through the backing signal, which marks the
+subscribed `<suspense>` boundary's NodeId dirty — **the resume
+notification rides §3.1's reactive dirty queue with zero extra
+wiring**, so the next frame re-lowers and `subtree_has_pending`
+picks the primary subtree; a `coroutine.yield()` keeps the task for
+the next tick (multi-tick await — the shape a relay/daemon IO
+wrapper takes); an error resolves to `{ tag = "Error" }` so a
+boundary never suspends forever. The shell drains the retained
+per-document frame each render tick next to the animator pass and
+folds "still pending" into the same frame-redraw bit a running
+transition uses. Bounded by construction: ≤ one resume per task per
+tick, no nested scheduling (design principle 1). Pinned by
+`luau_scope::tests::{query_async_starts_pending_then_resolves_on_drain,
+query_async_multi_tick_yield_stays_pending,
+query_async_resolve_marks_subscribed_reader_dirty}` +
+`interpret::tests::suspense_shows_fallback_for_unresolved_query_async`.
+
+Impact: `prism.objects:query_async` is first-class — no manual
+coroutine wrapper at the call site. Wiring a concrete federated /
+relay / daemon IO *source* into a `query_async` producer (the
+coroutine `yield`s until the host feeds the result back) is the
+documented host follow-up — the runtime substrate it rides is now
+complete (open question 3 resolved).
 
 ### 4.3 Inspector / DevTools surface
 

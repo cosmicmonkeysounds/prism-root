@@ -953,6 +953,33 @@ impl Shell {
         animator.apply(&mut tree, now_ms);
         graft_phantoms(&mut tree, animator.phantom_nodes_with_parent(now_ms));
         animator.tick(now_ms);
+        drop(animator);
+        // **§4.2** — suspense scheduler tick. Resume every in-flight
+        // `prism.objects:query_async` coroutine once on the retained
+        // per-document frame. A resolved query writes through its
+        // backing signal, which has already marked the awaiting
+        // `<suspense>` boundary's NodeId into the reactive dirty queue
+        // (rides §3.1) — so the *resolve* redraw rides the existing
+        // reactive path with no extra wiring. A still-*pending* query
+        // (a coroutine that yielded, awaiting more) needs the loop to
+        // keep ticking, so mark the frame sentinel: same "I want
+        // another frame" contract the animator uses while a
+        // transition is in flight. Quiesces automatically once every
+        // query resolves.
+        #[cfg(feature = "native")]
+        {
+            let still_pending = inner
+                .active_luau_frame
+                .borrow()
+                .as_ref()
+                .map(|frame| frame.drain_suspense())
+                .unwrap_or(false);
+            if still_pending {
+                inner
+                    .render_scope
+                    .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+            }
+        }
         tree
     }
 

@@ -68,7 +68,38 @@ struct ScopeReactive {
     /// table carries in its `__prism_derive` metafield. Resolved to a
     /// binding name at harvest time.
     memos: RefCell<HashMap<u64, Memo<JsonValue>>>,
+    /// **§4.2** — `prism.objects:query_async` backing signals, keyed
+    /// by the opaque id the returned proxy carries in `__prism_async`.
+    /// Each holds `{ tag = "Pending" }` until the scheduler resolves
+    /// the query, then the awaited value. Resolved to a binding name
+    /// at harvest time exactly like a memo.
+    async_signals: RefCell<HashMap<u64, Signal<JsonValue>>>,
+    /// **§4.2** — the per-document suspense scheduler: the FIFO of
+    /// in-flight async query coroutines, drained one resume-per-task
+    /// per render tick by [`LuauScopeFrame::drain_suspense`]. Living in
+    /// the Lua app-data ties every coroutine's lifetime to the VM (a
+    /// query can't outlive its document) and matches the proven
+    /// `Owner`/`Signal` slot pattern Phase 5 uses.
+    suspense: RefCell<Vec<SuspenseTask>>,
     next_id: Cell<u64>,
+}
+
+/// One in-flight `prism.objects:query_async` coroutine. The
+/// `boundary` label groups tasks by the `<suspense>` subtree that
+/// awaits them (diagnostic today; the per-resume fairness below
+/// already prevents one boundary starving another).
+struct SuspenseTask {
+    #[allow(dead_code)]
+    boundary: Option<String>,
+    /// Registry-retained `coroutine` thread wrapping the author's
+    /// query function. Resumed once per drain; a `yield` keeps it for
+    /// the next tick (multi-tick await), a return resolves the query.
+    thread: RegistryKey,
+    /// The backing signal the resolved value is written through. The
+    /// write marks every subscribing block dirty (the `<suspense>`
+    /// boundary's `BlockInvalidator` NodeId — rides §3.1) so the next
+    /// frame re-lowers and swaps fallback → primary.
+    signal: Signal<JsonValue>,
 }
 
 impl ScopeReactive {
@@ -79,6 +110,8 @@ impl ScopeReactive {
         let slot = Rc::new(ScopeReactive {
             owner: Rc::new(Owner::new()),
             memos: RefCell::new(HashMap::new()),
+            async_signals: RefCell::new(HashMap::new()),
+            suspense: RefCell::new(Vec::new()),
             next_id: Cell::new(0),
         });
         lua.set_app_data(slot.clone());
@@ -171,6 +204,14 @@ struct LuauScopeInner {
     /// memo, resolved by recomputing the memo (PartialEq-gated) and
     /// subscribing the current reactive context.
     derives: HashMap<String, Memo<JsonValue>>,
+    /// **§4.2** — top-level `local`s bound to a
+    /// `prism.objects:query_async` result. Resolved live through the
+    /// backing signal (so the read subscribes the surrounding block's
+    /// reactive context); the value is `{ tag = "Pending" }` until the
+    /// suspense scheduler resolves the coroutine, which is exactly the
+    /// marker `expand_suspense`/`subtree_has_pending` trip the
+    /// `<fallback>` on.
+    async_queries: HashMap<String, Signal<JsonValue>>,
 }
 
 impl std::fmt::Debug for LuauScopeFrame {
@@ -439,6 +480,7 @@ impl LuauScopeFrame {
         // every read subscribes the current reactive context.
         let mut reactive_state: HashSet<String> = HashSet::new();
         let mut derives: HashMap<String, Memo<JsonValue>> = HashMap::new();
+        let mut async_queries: HashMap<String, Signal<JsonValue>> = HashMap::new();
         let reactive_slot = ScopeReactive::get_or_install(&lua);
         for name in harvested {
             let value: LuaValue = match globals.get(name.as_str()) {
@@ -454,6 +496,16 @@ impl LuauScopeFrame {
                     if let Ok(Some(id)) = mt.raw_get::<Option<u64>>("__prism_derive") {
                         if let Some(memo) = reactive_slot.memos.borrow().get(&id).cloned() {
                             derives.insert(name.clone(), memo);
+                        }
+                        continue;
+                    }
+                    // **§4.2** — a `prism.objects:query_async` result.
+                    // Bind the name to its backing signal so reads
+                    // resolve live (subscribing the block ctx) and the
+                    // scheduler's resolve write marks the boundary dirty.
+                    if let Ok(Some(id)) = mt.raw_get::<Option<u64>>("__prism_async") {
+                        if let Some(sig) = reactive_slot.async_signals.borrow().get(&id).copied() {
+                            async_queries.insert(name.clone(), sig);
                         }
                         continue;
                     }
@@ -517,6 +569,7 @@ impl LuauScopeFrame {
                 probes,
                 reactive_state,
                 derives,
+                async_queries,
             }),
         })
     }
@@ -715,6 +768,14 @@ impl LuauScopeFrame {
             let memo = self.inner.derives.get(head)?;
             return walk_json_segments(memo.get(), &rest);
         }
+        // **§4.2** — an async query head. `signal.get()` subscribes
+        // the current reactive context (the block's `BlockInvalidator`
+        // ctx during lowering), so when the scheduler resolves the
+        // coroutine and `set`s the value, that NodeId is marked dirty
+        // and the `<suspense>` boundary re-lowers fallback → primary.
+        if let Some(sig) = self.inner.async_queries.get(head) {
+            return walk_json_segments(sig.get(), &rest);
+        }
         if self.inner.reactive_state.contains(head) {
             // Live read through the `prism.state` proxy metatable:
             // `globals.get(head)` → proxy, `.get(seg)` fires
@@ -789,6 +850,83 @@ impl LuauScopeFrame {
             .set_name("action")
             .exec()
             .map_err(|e| format!("action: {e}"))
+    }
+
+    /// **§4.2** — drain one render tick of the suspense scheduler.
+    ///
+    /// Every in-flight `prism.objects:query_async` coroutine is
+    /// resumed **exactly once** (per-task fairness: no boundary's slow
+    /// query starves another's). A coroutine that:
+    ///
+    /// - **returns** → the query resolved; its value is written
+    ///   through the backing signal. That `set` marks every
+    ///   subscribing block dirty — the `<suspense>` boundary's
+    ///   `BlockInvalidator` NodeId (rides §3.1) — so the next frame
+    ///   re-lowers and `subtree_has_pending` now picks the primary
+    ///   subtree over the `<fallback>`.
+    /// - **yields** → still awaiting; kept for the next tick
+    ///   (multi-tick await — e.g. a coroutine that `yield`s until a
+    ///   host feeds relay/daemon IO back in).
+    /// - **errors** → resolved to `{ tag = "Error" }` so the boundary
+    ///   stops suspending (a permanent `<fallback>` is worse than a
+    ///   surfaced error); bounded — the task is dropped, never retried
+    ///   in a storm.
+    ///
+    /// Returns `true` while any task is still pending, so the host
+    /// folds it into the same per-frame "needs another tick" bit the
+    /// animator uses.
+    ///
+    /// Host-internal (`luau`-feature) seam: the host (shell) calls
+    /// this once per render tick on the retained per-document frame.
+    /// Bounded by construction — at most one `resume` per task per
+    /// tick, no nested scheduling (design principle 1).
+    pub fn drain_suspense(&self) -> bool {
+        let slot = ScopeReactive::get_or_install(&self.inner.lua);
+        // Take the whole queue so a `query_async` registered *during*
+        // a resume (a query that spawns a query) lands cleanly in the
+        // next tick rather than being resumed twice this tick.
+        let tasks: Vec<SuspenseTask> = slot.suspense.borrow_mut().drain(..).collect();
+        let mut still: Vec<SuspenseTask> = Vec::new();
+        for task in tasks {
+            let thread: mlua::Thread = match self.inner.lua.registry_value(&task.thread) {
+                Ok(t) => t,
+                // The thread vanished (VM rebuilt) — drop the task;
+                // the signal stays Pending, the next render's fresh
+                // `query_async` re-registers it.
+                Err(_) => continue,
+            };
+            match thread.resume::<LuaValue>(()) {
+                Ok(ret) => match thread.status() {
+                    mlua::ThreadStatus::Resumable => {
+                        // Yielded — awaiting more; resume next tick.
+                        still.push(task);
+                    }
+                    _ => {
+                        // Finished — resolve the query. The signal
+                        // write notifies the boundary's subscriber.
+                        task.signal.set(lua_value_to_json(&ret));
+                        let _ = self.inner.lua.remove_registry_value(task.thread);
+                    }
+                },
+                Err(_) => {
+                    task.signal.set(serde_json::json!({ "tag": "Error" }));
+                    let _ = self.inner.lua.remove_registry_value(task.thread);
+                }
+            }
+        }
+        let any_pending = !still.is_empty();
+        slot.suspense.borrow_mut().extend(still);
+        any_pending
+    }
+
+    /// **§4.2** — number of suspense queries still awaiting. Exposed
+    /// for tests + a host debug HUD; production callers fold
+    /// [`Self::drain_suspense`]'s return into the redraw bit.
+    pub fn pending_suspense(&self) -> usize {
+        ScopeReactive::get_or_install(&self.inner.lua)
+            .suspense
+            .borrow()
+            .len()
     }
 
     /// True when `name` is a harvested top-level callable — the call
@@ -1055,6 +1193,57 @@ fn install_prism_helpers(
         Ok(proxy)
     })?;
     prism.set("derive", derive)?;
+
+    // **§4.2 (`prism-cross-cutting-systems.md`)** — `prism.objects`
+    // with `query_async(fn [, boundary])`. The author writes an async
+    // producer once; the call returns *immediately* with a reactive
+    // proxy holding `{ tag = "Pending" }` (the exact marker
+    // `subtree_has_pending` trips the `<fallback>` on), and registers
+    // a coroutine wrapping `fn` into the per-document suspense
+    // scheduler. [`LuauScopeFrame::drain_suspense`] resumes it on each
+    // render tick; a `coroutine.yield()` keeps it pending across ticks
+    // (multi-tick await), a return resolves it — the resolve write
+    // marks the boundary's NodeId dirty so the next frame swaps
+    // fallback → primary. No manual coroutine wrapper, no host plumbing
+    // at the call site.
+    let objects = lua.create_table()?;
+    let query_async = lua.create_function(
+        |lua, (_self, f, boundary): (LuaValue, mlua::Function, Option<String>)| {
+            let slot = ScopeReactive::get_or_install(lua);
+            let sig: Signal<JsonValue> = slot.owner.insert(serde_json::json!({ "tag": "Pending" }));
+            let thread = lua.create_thread(f)?;
+            let thread_key = lua.create_registry_value(thread)?;
+            let id = slot.next_id.get();
+            slot.next_id.set(id + 1);
+            slot.async_signals.borrow_mut().insert(id, sig);
+            slot.suspense.borrow_mut().push(SuspenseTask {
+                boundary,
+                thread: thread_key,
+                signal: sig,
+            });
+            // Proxy: `__prism_async` lets the harvester bind the value
+            // to its signal; `__index` lets an in-script read
+            // (`data.user`) see the current value too (parity with the
+            // `prism.state` proxy).
+            let proxy = lua.create_table()?;
+            let meta = lua.create_table()?;
+            meta.set("__prism_async", id)?;
+            meta.set(
+                "__index",
+                lua.create_function(move |lua, (_t, k): (LuaTable, LuaValue)| {
+                    let cur = sig.get();
+                    match lua_key_to_string(&k) {
+                        Some(key) => lua.to_value(cur.get(&key).unwrap_or(&JsonValue::Null)),
+                        None => Ok(LuaValue::Nil),
+                    }
+                })?,
+            )?;
+            proxy.set_metatable(Some(meta));
+            Ok(proxy)
+        },
+    )?;
+    objects.set("query_async", query_async)?;
+    prism.set("objects", objects)?;
 
     for hook in ["on_mount", "on_update", "on_cleanup"] {
         let noop = lua.create_function(|_, _f: mlua::Function| Ok(()))?;
@@ -1409,6 +1598,101 @@ mod tests {
         frame.exec_action("base.n = 5").expect("write");
         // Memo recomputes because its body read `base.n` (a signal).
         assert_eq!(frame.lookup("doubled"), Some(JsonValue::from(50)));
+    }
+
+    /// §4.2 — `prism.objects:query_async` reads as `{ tag = "Pending" }`
+    /// before the scheduler runs, then resolves to the producer's
+    /// return value after one drain. This is the exact Pending→Ready
+    /// transition `subtree_has_pending` keys the `<fallback>` swap on.
+    #[test]
+    fn query_async_starts_pending_then_resolves_on_drain() {
+        let src = r#"
+            local data = prism.objects:query_async(function()
+                return { user = "ada", n = 7 }
+            end)
+        "#;
+        let frame = LuauScopeFrame::from_scripts(&[src], None).expect("frame");
+        // Before draining: the binding is the Pending marker.
+        assert_eq!(
+            frame.lookup("data.tag"),
+            Some(JsonValue::from("Pending")),
+            "query is Pending until the scheduler resolves it"
+        );
+        assert_eq!(frame.pending_suspense(), 1);
+
+        // One render tick: the producer returns, so the query resolves
+        // and no task remains pending.
+        let still = frame.drain_suspense();
+        assert!(!still, "a returning producer resolves in one tick");
+        assert_eq!(frame.pending_suspense(), 0);
+        assert_eq!(frame.lookup("data.user"), Some(JsonValue::from("ada")));
+        assert_eq!(frame.lookup("data.n"), Some(JsonValue::from(7)));
+        // `tag` is gone — `subtree_has_pending` now picks the primary.
+        assert_eq!(frame.lookup("data.tag"), None);
+    }
+
+    /// §4.2 — a producer that `coroutine.yield()`s stays Pending
+    /// across ticks (multi-tick await — the shape a relay/daemon IO
+    /// wrapper takes) and resolves only once it returns.
+    #[test]
+    fn query_async_multi_tick_yield_stays_pending() {
+        let src = r#"
+            local data = prism.objects:query_async(function()
+                coroutine.yield()
+                coroutine.yield()
+                return "done"
+            end)
+        "#;
+        let frame = LuauScopeFrame::from_scripts(&[src], None).expect("frame");
+        assert_eq!(frame.lookup("data.tag"), Some(JsonValue::from("Pending")));
+
+        // Tick 1 + 2: still yielding → still pending.
+        assert!(frame.drain_suspense(), "still awaiting after yield 1");
+        assert!(frame.drain_suspense(), "still awaiting after yield 2");
+        assert_eq!(frame.lookup("data.tag"), Some(JsonValue::from("Pending")));
+
+        // Tick 3: the producer returns → resolved, queue drained.
+        assert!(!frame.drain_suspense(), "returns on the third resume");
+        assert_eq!(frame.lookup("data"), Some(JsonValue::from("done")));
+        assert_eq!(frame.pending_suspense(), 0);
+    }
+
+    /// §4.2 — reading the query inside a reactive context subscribes
+    /// it, and the scheduler's resolve write marks that context dirty.
+    /// This is the "resume rides §3.1" contract: the `<suspense>`
+    /// boundary's `BlockInvalidator` NodeId is invalidated on resolve
+    /// with no extra wiring, exactly like a `prism.state` write.
+    #[test]
+    fn query_async_resolve_marks_subscribed_reader_dirty() {
+        use prism_core::reactive::ReactiveContext;
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let src = r#"
+            local data = prism.objects:query_async(function()
+                return { ready = true }
+            end)
+        "#;
+        let frame = LuauScopeFrame::from_scripts(&[src], None).expect("frame");
+
+        let fired = Rc::new(Cell::new(false));
+        let f = Rc::clone(&fired);
+        let ctx = ReactiveContext::new(move || f.set(true));
+        ctx.reset_and_run_in(|| {
+            // Reading the pending query through the backing signal
+            // subscribes `ctx` (the BlockInvalidator path).
+            assert_eq!(frame.lookup("data.tag"), Some(JsonValue::from("Pending")));
+        });
+        assert!(!fired.get(), "subscribe alone must not fire");
+
+        // Resolving the query writes the signal → subscriber dirty.
+        frame.drain_suspense();
+        assert!(
+            fired.get(),
+            "query resolve must mark the awaiting boundary dirty"
+        );
+        assert_eq!(frame.lookup("data.ready"), Some(JsonValue::from(true)));
+        ctx.dispose();
     }
 
     #[test]

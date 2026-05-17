@@ -3409,7 +3409,23 @@ fn apply_container_attributes(
             // the follow-up — today the data round-trips through
             // the semantic attrs without behaviour change.
             AttributeNamespace::Transition => {
-                if let Some(value) = raw {
+                if local == "easing" {
+                    // **§4.1** — `transition:easing` selects the timing
+                    // curve. A Luau closure (`{\fn(t) … end}`) is
+                    // *sampled here* (the per-document Lua frame is
+                    // live during lowering) into a comma-joined LUT so
+                    // the animator never calls Lua per frame; a named
+                    // keyword (`ease-in`, `linear`, …) round-trips
+                    // verbatim. No frame / not a closure → the keyword
+                    // path; unresolvable → attr omitted (animator
+                    // defaults to linear).
+                    if let Some(encoded) = encode_easing_attr(&attr.value, scope) {
+                        props
+                            .semantic
+                            .attrs
+                            .push(("data-transition-easing".to_string(), encoded));
+                    }
+                } else if let Some(value) = raw {
                     props
                         .semantic
                         .attrs
@@ -3742,6 +3758,75 @@ fn resolved_attribute_string(value: &AttributeValue, scope: &LowerScope) -> Opti
             }
             Some(out)
         }
+    }
+}
+
+/// Number of points a Luau easing closure is sampled at when lowered
+/// to a `data-transition-easing` LUT. 24 stops resolves a cubic /
+/// spring curve smoothly under linear inter-sample interpolation while
+/// keeping the one-time sampling cost (24 cached Lua calls) trivial.
+#[cfg_attr(not(feature = "luau"), allow(dead_code))]
+const EASING_LUT_SAMPLES: usize = 24;
+
+/// **§4.1 (`prism-cross-cutting-systems.md`)** — encode a
+/// `transition:easing` value into the `data-transition-easing` attr
+/// the [`crate::animator::Animator`] reads.
+///
+/// - A **named keyword** (`"ease-in"`, `linear`, …), whether written
+///   bare or via a binding, round-trips as the keyword string —
+///   `animator::parse_easing` maps it to the matching builtin curve.
+/// - A **Luau closure** (`{\fn(t) return 1-(1-t)^3 end}`) is sampled
+///   *here*, while the per-document Lua frame is live, into a
+///   comma-joined LUT of [`EASING_LUT_SAMPLES`] stops. The animator
+///   then interpolates the table with zero per-frame Lua calls and
+///   never holds a Lua handle past the lowering pass.
+///
+/// Returns `None` (attr omitted → animator defaults to linear) when
+/// the closure can't be sampled (no Lua frame on the SSR/no-`luau`
+/// path, or a closure error) — a malformed easing degrades motion to
+/// linear, it never fails the render.
+fn encode_easing_attr(value: &AttributeValue, scope: &LowerScope) -> Option<String> {
+    let body = match value {
+        AttributeValue::Expression(e) => e.body.trim().to_string(),
+        // A keyword string / binding / template resolves through the
+        // normal attribute path (`transition:easing="ease-in"` or
+        // `transition:easing={someKeyword}`).
+        _ => return resolved_attribute_string(value, scope).filter(|s| !s.is_empty()),
+    };
+
+    #[cfg(feature = "luau")]
+    {
+        if looks_like_closure(&body) {
+            let frame = scope.luau_scope()?;
+            let mut samples = Vec::with_capacity(EASING_LUT_SAMPLES);
+            for i in 0..EASING_LUT_SAMPLES {
+                let t = i as f64 / (EASING_LUT_SAMPLES - 1) as f64;
+                let out = frame.call_closure(&body, &[serde_json::Value::from(t)])?;
+                let v = out.ok()?;
+                samples.push(v.as_f64()? as f32);
+            }
+            let joined = samples
+                .iter()
+                .map(|f| {
+                    // Trim trailing zeros so the attr stays compact
+                    // and the round-trip is exact for typical curves.
+                    let s = format!("{f:.6}");
+                    let s = s.trim_end_matches('0').trim_end_matches('.');
+                    if s.is_empty() { "0" } else { s }.to_string()
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            return Some(joined);
+        }
+    }
+
+    // Not a closure (or no `luau` feature): resolve as a keyword
+    // expression (`transition:easing={mode}` where `mode == "ease"`).
+    let resolved = resolved_attribute_string(value, scope)?;
+    if resolved.is_empty() {
+        Some(body).filter(|s| !s.is_empty())
+    } else {
+        Some(resolved)
     }
 }
 
@@ -6867,6 +6952,64 @@ mod tests {
         );
     }
 
+    /// §4.1 — `transition:easing="ease-in"` round-trips the keyword
+    /// verbatim into `data-transition-easing`; the animator's
+    /// `parse_easing` maps it to the builtin cubic curve.
+    #[test]
+    fn transition_easing_keyword_round_trips() {
+        let nodes = interpret(r#"<container transition:easing="ease-in"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let v = props
+            .semantic
+            .attrs
+            .iter()
+            .find(|(k, _)| k == "data-transition-easing")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(v, Some("ease-in"));
+        assert_eq!(
+            crate::animator::parse_easing(v.unwrap()),
+            crate::animator::Easing::EaseIn
+        );
+    }
+
+    /// §4.1 — a Luau easing closure on `transition:easing` is sampled
+    /// at lowering time into a numeric LUT the animator interpolates
+    /// with zero per-frame Lua calls. `\fn(t) return t*t end` → the
+    /// decoded curve must satisfy `ease(0)=0`, `ease(1)=1`,
+    /// `ease(0.5)≈0.25` (the quadratic at its midpoint).
+    #[cfg(feature = "luau")]
+    #[test]
+    fn transition_easing_closure_samples_to_lut() {
+        let nodes =
+            interpret(r#"<container transition:easing={\fn(t) return t * t end}/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let encoded = props
+            .semantic
+            .attrs
+            .iter()
+            .find(|(k, _)| k == "data-transition-easing")
+            .map(|(_, v)| v.clone())
+            .expect("closure lowered to data-transition-easing LUT");
+        // It's a comma-joined float list, not a keyword.
+        assert!(encoded.contains(','), "expected LUT, got {encoded:?}");
+        let easing = crate::animator::parse_easing(&encoded);
+        assert!(
+            matches!(easing, crate::animator::Easing::Lut(_)),
+            "expected Lut, got {easing:?}"
+        );
+        assert!((easing.ease(0.0) - 0.0).abs() < 1e-3);
+        assert!((easing.ease(1.0) - 1.0).abs() < 1e-3);
+        assert!(
+            (easing.ease(0.5) - 0.25).abs() < 2e-2,
+            "quadratic midpoint ~0.25, got {}",
+            easing.ease(0.5)
+        );
+    }
+
     /// Wave 13.3 — `use:<modifier-id>[="<value>"]` directive lowers
     /// to a `data-use-<id>` semantic attribute. Authors write
     /// `<container use:hover use:tooltip="Click to save"/>` instead
@@ -9968,6 +10111,31 @@ mod tests {
 <suspense>
   <fallback><text>loading…</text></fallback>
   <container><text>{async_tasks.tag}</text></container>
+</suspense>
+"##;
+        let nodes = interpret(src).unwrap();
+        assert_eq!(text_contents(&nodes), vec!["loading…".to_string()]);
+    }
+
+    /// §4.2 — `prism.objects:query_async` returns the `{ tag =
+    /// "Pending" }` marker synchronously, so a `<suspense>` reading
+    /// the query renders the `<fallback>` on the first frame (before
+    /// the scheduler resolves it). End-to-end proof the new seam is
+    /// wired through `subtree_has_pending` with no extra glue — the
+    /// fallback→primary swap on resolve is covered by the
+    /// `luau_scope::query_async_*` reactive tests.
+    #[cfg(feature = "luau")]
+    #[test]
+    fn suspense_shows_fallback_for_unresolved_query_async() {
+        let src = r##"
+<script>
+  local data = prism.objects:query_async(function()
+    return { rows = 3 }
+  end)
+</script>
+<suspense>
+  <fallback><text>loading…</text></fallback>
+  <container><text>{data.rows}</text></container>
 </suspense>
 "##;
         let nodes = interpret(src).unwrap();
