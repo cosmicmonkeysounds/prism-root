@@ -398,6 +398,15 @@ pub struct RenderCaches {
     /// the NodeIds that used a patched class dirty.
     pub class_deps:
         Option<std::rc::Rc<std::cell::RefCell<prism_ui_runtime::interpret::ClassUsage>>>,
+    /// **§4.3** — one-shot sink the lowering pass deposits the
+    /// per-document `LuauScopeFrame` into, so the shell can retain it
+    /// past the render and dispatch `data-probe-*` hits through
+    /// `fire_probe`. `native`-only — `luau_scope` is luau-gated and
+    /// the event router that consumes it is the femtovg path.
+    #[cfg(feature = "native")]
+    pub frame_sink: Option<
+        std::rc::Rc<std::cell::RefCell<Option<prism_ui_runtime::luau_scope::LuauScopeFrame>>>,
+    >,
 }
 
 /// **Wave 14.3** — same as [`render_tree`] but threads a host-owned
@@ -421,11 +430,14 @@ pub fn render_tree_with(
     stylesheet: Option<&Stylesheet>,
     import_resolver: Option<Arc<dyn ImportResolver>>,
 ) -> Vec<UiNode> {
-    let RenderCaches {
-        memo: memo_cache,
-        dirty: dirty_nodes,
-        class_deps,
-    } = caches;
+    // Field access (not destructure) so the `native`-only
+    // `frame_sink` field doesn't make the pattern non-exhaustive on
+    // the `web` build.
+    let memo_cache = caches.memo;
+    let dirty_nodes = caches.dirty;
+    let class_deps = caches.class_deps;
+    #[cfg(feature = "native")]
+    let frame_sink = caches.frame_sink;
     let emissions = bindings.snapshot(ctx);
     let doc = fill_compositions(skeleton, &emissions);
     let host_children = harvest_host_children(&emissions);
@@ -466,6 +478,10 @@ pub fn render_tree_with(
     }
     if let Some(deps) = class_deps {
         scope = scope.with_class_deps(deps);
+    }
+    #[cfg(feature = "native")]
+    if let Some(sink) = frame_sink {
+        scope = scope.with_frame_sink(sink);
     }
     if let Some(sheet) = stylesheet {
         // PRSS install runs *after* `with_design_tokens` so the

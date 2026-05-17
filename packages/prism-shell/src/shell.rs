@@ -39,6 +39,24 @@ pub enum ShellError {
     Runtime(String),
 }
 
+/// **§4.3** — one recorded probe fire. The event router appends
+/// these to [`ShellInner::probe_log`] every time a `data-probe-*`
+/// hit dispatches; a future Inspector panel streams the ring.
+#[cfg(feature = "native")]
+#[derive(Debug, Clone)]
+pub struct ProbeFire {
+    /// The probe name (the `<name>` in `data-probe-<name>`).
+    pub name: String,
+    /// JSON payload handed to the Luau handler (the hit's other
+    /// `data-*` attrs).
+    pub payload: serde_json::Value,
+    /// `true` when a handler was subscribed *and* ran without error.
+    /// `false` when no handler was registered or the body errored
+    /// (`error` carries the message in the latter case).
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
 /// Per-frame shared state. Currently the registry + bindings + the
 /// reloadable `AppState`; legacy modules (store, undo, persistence,
 /// VFS, …) re-introduce themselves as fields here as they're ported.
@@ -138,6 +156,21 @@ pub struct ShellInner {
     /// the NodeIds that used a literally-patched class dirty, so
     /// Phase 3 splices the rest instead of a full re-walk.
     pub class_deps: Rc<RefCell<prism_ui_runtime::interpret::ClassUsage>>,
+    /// **§4.3** — the per-document `LuauScopeFrame` retained from the
+    /// last render (the lowering pass deposits it via
+    /// `RenderCaches.frame_sink`). The event router reads it to
+    /// dispatch `data-probe-*` hits through `fire_probe`; `None`
+    /// until the first render of a document that carries a
+    /// `<script>`. `native`-only — `luau_scope` is luau-gated and
+    /// the consuming router is the femtovg path.
+    #[cfg(feature = "native")]
+    pub active_luau_frame: Rc<RefCell<Option<prism_ui_runtime::luau_scope::LuauScopeFrame>>>,
+    /// **§4.3** — bounded ring of the most recent probe fires (the
+    /// substrate a future Inspector panel streams). The event router
+    /// appends one [`ProbeFire`] per `data-probe-*` hit it dispatches.
+    /// Capped so a long session can't grow it unbounded.
+    #[cfg(feature = "native")]
+    pub probe_log: Rc<RefCell<std::collections::VecDeque<ProbeFire>>>,
     /// Persistent-Luau runtime — the long-lived `mlua::Lua` state app
     /// `[entry] script` bodies ran in at boot. `None` when no app
     /// declared a script (or when the build doesn't pull in mlua, e.g.
@@ -487,9 +520,11 @@ impl Shell {
             render_scope: RenderScope::new(),
             animator: RefCell::new(prism_ui_runtime::animator::Animator::new()),
             memo_cache: Rc::new(RefCell::new(prism_ui_runtime::interpret::MemoCache::new())),
-            class_deps: Rc::new(RefCell::new(
-                prism_ui_runtime::interpret::ClassUsage::new(),
-            )),
+            class_deps: Rc::new(RefCell::new(prism_ui_runtime::interpret::ClassUsage::new())),
+            #[cfg(feature = "native")]
+            active_luau_frame: Rc::new(RefCell::new(None)),
+            #[cfg(feature = "native")]
+            probe_log: Rc::new(RefCell::new(std::collections::VecDeque::new())),
             #[cfg(feature = "native")]
             luau_runtime,
         }));
@@ -868,6 +903,24 @@ impl Shell {
         // Full render — rebuild the class→NodeId table from scratch so
         // a removed `class="…"` doesn't keep a stale NodeId alive.
         inner.class_deps.borrow_mut().clear();
+        // Boot / full render: no dirty set — walk everything and
+        // (re)populate the per-id cache so subsequent reactive frames
+        // can splice. §4.3 — retain the per-document `LuauScopeFrame`
+        // via the sink so the event router can fire its probes.
+        let render_caches = {
+            #[allow(unused_mut)]
+            let mut c = RenderCaches {
+                memo: Some(Rc::clone(&cache)),
+                dirty: None,
+                class_deps: Some(Rc::clone(&inner.class_deps)),
+                ..Default::default()
+            };
+            #[cfg(feature = "native")]
+            {
+                c.frame_sink = Some(Rc::clone(&inner.active_luau_frame));
+            }
+            c
+        };
         let mut tree = inner.render_scope.run_in_render_pass(|| {
             render_with_hot_reload(|| {
                 render_tree_with(
@@ -875,14 +928,7 @@ impl Shell {
                     &inner.bindings,
                     Arc::clone(&inner.resolver),
                     &inner.prop_ctx(),
-                    // Boot / full render: no dirty set — walk
-                    // everything and (re)populate the per-id cache so
-                    // subsequent reactive frames can splice.
-                    RenderCaches {
-                        memo: Some(Rc::clone(&cache)),
-                        dirty: None,
-                        class_deps: Some(Rc::clone(&inner.class_deps)),
-                    },
+                    render_caches.clone(),
                     effective_stylesheet.as_ref(),
                     app_import_resolver.clone(),
                 )
@@ -1012,22 +1058,32 @@ impl Shell {
                     if dirty.is_none() {
                         guard.class_deps.borrow_mut().clear();
                     }
+                    let render_caches = {
+                        #[allow(unused_mut)]
+                        let mut c = RenderCaches {
+                            memo: Some(Rc::clone(&cache)),
+                            dirty: dirty.clone(),
+                            class_deps: Some(Rc::clone(&guard.class_deps)),
+                            ..Default::default()
+                        };
+                        #[cfg(feature = "native")]
+                        {
+                            c.frame_sink = Some(Rc::clone(&guard.active_luau_frame));
+                        }
+                        c
+                    };
                     guard.render_scope.run_in_render_pass(|| {
                         render_with_hot_reload(|| {
                             // `render_with_hot_reload` accepts FnMut so
                             // the patch pipeline can re-invoke us; clone
-                            // the dirty handle each call so the inner
-                            // closure doesn't move it out of its capture.
+                            // the caches each call so the inner closure
+                            // doesn't move them out of its capture.
                             render_tree_with(
                                 &skeleton,
                                 &guard.bindings,
                                 Arc::clone(&guard.resolver),
                                 &guard.prop_ctx(),
-                                RenderCaches {
-                                    memo: Some(Rc::clone(&cache)),
-                                    dirty: dirty.clone(),
-                                    class_deps: Some(Rc::clone(&guard.class_deps)),
-                                },
+                                render_caches.clone(),
                                 stylesheet.as_ref(),
                                 app_import_resolver.clone(),
                             )
@@ -1203,9 +1259,8 @@ impl Shell {
                                     _ => broad = true,
                                 }
                                 if broad {
-                                    g.render_scope.mark_dirty(
-                                        crate::render_scope::FRAME_DIRTY_SENTINEL,
-                                    );
+                                    g.render_scope
+                                        .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
                                 }
                             } else if let prism_ui_build::PrssChange::ParseError { message } =
                                 &reload.change

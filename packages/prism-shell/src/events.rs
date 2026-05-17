@@ -139,6 +139,17 @@ fn dispatch_event_inner(
                     .as_ref()
                     .map(|h| route_bind_input_focus(inner, h))
                     .unwrap_or(false);
+            // §4.3 — fire any `data-probe-<name>` the hit carries
+            // through the retained per-document `LuauScopeFrame`.
+            // Independent of `routed` (a probe is observational —
+            // it rides alongside whatever else claimed the click) and
+            // recorded into the bounded `probe_log` for the Inspector
+            // surface. A probe handler that writes reactive state has
+            // already marked its block dirty via Phase 5.
+            #[cfg(feature = "native")]
+            let probed = hit.as_ref().map(|h| route_probe(inner, h)).unwrap_or(false);
+            #[cfg(not(feature = "native"))]
+            let probed = false;
             // Wave 3.4: any primary click outside the context menu
             // dismisses it. Sits before the canvas-node-select route
             // so clicking on a node behind the menu re-selects rather
@@ -187,6 +198,7 @@ fn dispatch_event_inner(
                 || routed
                 || acted
                 || bound
+                || probed
                 || dismissed
                 || palette_armed
                 || selected
@@ -462,6 +474,62 @@ const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
     // can't access it). See `route_color_slider_press` for the
     // pointer-y / move / up wiring.
 ];
+
+/// **§4.3** — dispatch every `data-probe-<name>` the hit carries
+/// through the retained per-document `LuauScopeFrame`'s `fire_probe`,
+/// recording each into the bounded `probe_log`. The payload is the
+/// hit's other `data-*` attributes as a JSON object so a handler
+/// gets interaction context. Returns `true` when at least one probe
+/// was present (so the caller can fold it into the redraw bit — a
+/// handler that wrote reactive state already marked its block, but
+/// an empty-handler probe still warrants a frame so the Inspector
+/// reflects the fire).
+#[cfg(feature = "native")]
+fn route_probe(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let probes: Vec<String> = hit
+        .attrs
+        .iter()
+        .filter_map(|(k, _)| k.strip_prefix("data-probe-").map(str::to_string))
+        .collect();
+    if probes.is_empty() {
+        return false;
+    }
+    // Payload = every non-probe `data-*` attr (strip the `data-`
+    // prefix so handlers read `role` / `target-id` not the wire key).
+    let mut payload = serde_json::Map::new();
+    for (k, v) in &hit.attrs {
+        if let Some(rest) = k.strip_prefix("data-") {
+            if !rest.starts_with("probe-") {
+                payload.insert(rest.to_string(), serde_json::Value::String(v.clone()));
+            }
+        }
+    }
+    let payload = serde_json::Value::Object(payload);
+
+    let g = inner.borrow();
+    let frame = g.active_luau_frame.borrow();
+    const PROBE_LOG_CAP: usize = 256;
+    for name in probes {
+        // `fire_probe` → `None` = no handler subscribed; `Some(Ok)` =
+        // ran clean; `Some(Err)` = handler body failed.
+        let (ok, error) = match frame.as_ref().and_then(|f| f.fire_probe(&name, &payload)) {
+            Some(Ok(())) => (true, None),
+            Some(Err(e)) => (false, Some(e)),
+            None => (false, None),
+        };
+        let mut log = g.probe_log.borrow_mut();
+        if log.len() >= PROBE_LOG_CAP {
+            log.pop_front();
+        }
+        log.push_back(crate::shell::ProbeFire {
+            name,
+            payload: payload.clone(),
+            ok,
+            error,
+        });
+    }
+    true
+}
 
 fn route_pointer_down(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
     let role = match attr_value(hit, "data-role") {

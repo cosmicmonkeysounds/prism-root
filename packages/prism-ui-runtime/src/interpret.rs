@@ -240,6 +240,15 @@ pub struct LowerScope {
     /// `None` on headless / SSR / no-stylesheet paths. `Rc` so scope
     /// forks stay cheap.
     class_deps: Option<std::rc::Rc<std::cell::RefCell<ClassUsage>>>,
+    /// **§4.3 — probe/inspector seam.** Optional one-shot sink the
+    /// document-scope builder writes the per-document
+    /// [`crate::luau_scope::LuauScopeFrame`] into once it's built, so
+    /// a host (the shell) can *retain* it past the render and reach
+    /// `fire_probe` / `has_probe` from the event router. `None` on
+    /// every path that doesn't care (SSR, tests). `Rc<RefCell<…>>`
+    /// so the host keeps its end and reads it after `render_tree`.
+    #[cfg(feature = "luau")]
+    frame_sink: Option<std::rc::Rc<std::cell::RefCell<Option<crate::luau_scope::LuauScopeFrame>>>>,
 }
 
 /// **Wave 14.3** — per-element memo cache keyed by `id`. Hosts that
@@ -600,10 +609,7 @@ impl LowerScope {
     }
 
     /// **Fusion F.3** — install the class→NodeId usage collector.
-    pub fn with_class_deps(
-        mut self,
-        deps: std::rc::Rc<std::cell::RefCell<ClassUsage>>,
-    ) -> Self {
+    pub fn with_class_deps(mut self, deps: std::rc::Rc<std::cell::RefCell<ClassUsage>>) -> Self {
         self.class_deps = Some(deps);
         self
     }
@@ -611,6 +617,27 @@ impl LowerScope {
     /// **Fusion F.3** — borrow the class-usage collector handle.
     pub fn class_deps(&self) -> Option<&std::rc::Rc<std::cell::RefCell<ClassUsage>>> {
         self.class_deps.as_ref()
+    }
+
+    /// **§4.3** — install the one-shot frame sink. After
+    /// `lower_document_with_scope` builds the per-document
+    /// `LuauScopeFrame`, it deposits a clone here so the host can
+    /// retain it (event-router probe dispatch).
+    #[cfg(feature = "luau")]
+    pub fn with_frame_sink(
+        mut self,
+        sink: std::rc::Rc<std::cell::RefCell<Option<crate::luau_scope::LuauScopeFrame>>>,
+    ) -> Self {
+        self.frame_sink = Some(sink);
+        self
+    }
+
+    /// **§4.3** — borrow the frame sink, if installed.
+    #[cfg(feature = "luau")]
+    pub fn frame_sink(
+        &self,
+    ) -> Option<&std::rc::Rc<std::cell::RefCell<Option<crate::luau_scope::LuauScopeFrame>>>> {
+        self.frame_sink.as_ref()
     }
 
     /// **Wave 14.1** — seed the design-token table as a `tokens`
@@ -1048,6 +1075,12 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
                 Some(&scope_json),
             ) {
                 Ok(frame) => {
+                    // §4.3 — hand the host a retained clone so the
+                    // event router can fire probes registered in this
+                    // document's `<script>` after the render returns.
+                    if let Some(sink) = scope.frame_sink() {
+                        *sink.borrow_mut() = Some(frame.clone());
+                    }
                     luau_owned = scope.clone().with_luau_scope(frame);
                     &luau_owned
                 }
@@ -1065,6 +1098,9 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
                 Some(&scope_json),
             ) {
                 Ok(frame) => {
+                    if let Some(sink) = scope.frame_sink() {
+                        *sink.borrow_mut() = Some(frame.clone());
+                    }
                     luau_owned = scope.clone().with_luau_scope(frame);
                     &luau_owned
                 }

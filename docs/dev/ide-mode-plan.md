@@ -21,6 +21,35 @@ end so chunks can land independently.
 > ordering at the end of this doc reflects both this plan's UI
 > phasing and the cross-cutting doc's substrate priorities.
 
+## Status
+
+| Phase | State | Landed |
+|---|---|---|
+| 1 — Project tree + open-path | ✅ shipped | `shell.explorer` rewrite, `FileNode::path`, `explorer-row` route, 5 e2e tests, `IdeExplorer` scene |
+| 2 — Symbol index + Ctrl+P / Ctrl+click | not started | — |
+| 3 — Diagnostics panel + squiggles | not started (blocked on Tier 1 §3.3 `luau-analyze`) | — |
+| **4 — Inspector / DevTools panel** | ✅ **shipped** | `shell.devtools` block with 4 lenses (Document / Presence / Probes / Bindings), tabbed switcher, declarative filter via `TextInputDeclaration`, `DevToolsService` commands, scene + 12 e2e tests, `PanelKind::DEVTOOLS` |
+| 5 — Folding + bracket-match + inlays | not started | — |
+| 6 — Find/replace across project | not started | — |
+| 7 — IDE workflow + split + persistence | not started | — |
+
+### Phase 4 — what's wired vs what's stubbed
+
+**Wired end-to-end:**
+- All four lenses render via `DevToolsSlot::devtools_props` (in `state.rs`).
+- Tab switching: click → `events.rs::handle_devtools_tab_click` → `DevToolsSlot::switch_lens`.
+- Filter field: one `TextInputDeclaration` row in `services/text_input/service.rs`. Typing routes through the shared dispatch primitive; Escape blurs via the declaration's `on_cancel` hook.
+- Document lens: walks `state.canvas.document` (the live `BuilderDocument`), each row routes to canvas selection on click.
+- Bindings lens: enumerates `props::builtin_binding_tags()` (the SLOT_BINDINGS table).
+- Probe buffer: capped-FIFO (`PROBE_BUFFER_LIMIT = 200`), `record_probe` / `clear_probes` API + `devtools.clear-probes` command.
+- Presence buffer: `Vec<PresencePeer>`, scene-seeded, ready for `PresenceManager` ingest.
+- `DEVTOOLS` panel kind registered in `prism-dock`; reachable via `workspace.ensure_panel_visible("devtools")`.
+
+**Stubbed (future wiring):**
+- **Probe firing.** The runtime can fire probes (`LuauScopeFrame::fire_probe`), and the buffer captures events, but the host event-router doesn't yet fire probes off a `data-probe-*` hit. When that wiring lands (cross-cutting §4.3), `record_probe(...)` is the seam.
+- **Presence ingest.** `PresenceManager` exists in `prism-core::network::presence`, but no shell service consumes its `PresenceChange` events into `state.devtools.presence`. Adding a `PresenceService` that subscribes to a `PresenceManager` instance and `replace_or_insert`s into the vec is one self-contained service file.
+- **Binding values.** The Bindings lens shows tag names; the JSON values are placeholders. A `PropCtx`-aware closure could snapshot the latest emission into `binding_snapshots: IndexMap<String, Value>` for full value rendering.
+
 ---
 
 ## What already works

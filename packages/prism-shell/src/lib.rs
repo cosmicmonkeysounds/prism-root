@@ -60,6 +60,8 @@ mod shell;
 
 pub use render::{Skeleton, Stylesheet, StylesheetReload, StylesheetWatcher};
 pub use render_scope::RenderScope;
+#[cfg(feature = "native")]
+pub use shell::ProbeFire;
 pub use shell::{Shell, ShellError, ShellInner};
 pub use state::{
     AppState, BuilderSlot, CanvasSlot, CanvasViewport, ChromeSlot, CodeBuffer, CommandPalette,
