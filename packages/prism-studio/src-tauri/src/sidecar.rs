@@ -114,13 +114,17 @@ impl DaemonSidecar {
 
 impl Drop for DaemonSidecar {
     fn drop(&mut self) {
-        // Best-effort shutdown: kill the child, then reap it. We
-        // swallow errors because Drop can't return them anyway, and
-        // every branch (already exited, already reaped, permissions)
-        // is effectively the same outcome — the child is gone.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        reap_child(&mut self.child);
     }
+}
+
+/// Best-effort shutdown: kill the child, then reap it. Errors are
+/// swallowed because every branch (already exited, already reaped,
+/// permissions) is the same outcome — the child is gone — and the
+/// `Drop` caller can't return them anyway.
+fn reap_child(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// Spawn the in-tree `prism-daemond` binary and connect to it over
@@ -160,8 +164,7 @@ pub fn spawn_dev() -> anyhow::Result<DaemonSidecar> {
         Err(e) => {
             // Guarantee the child is reaped on every failure path so
             // callers never leak a zombie.
-            let _ = child.kill();
-            let _ = child.wait();
+            reap_child(&mut child);
             return Err(e);
         }
     };

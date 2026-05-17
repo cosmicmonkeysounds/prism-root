@@ -32,31 +32,7 @@ mod tests {
     use prism_core::widget::{get_json_field, DataQuery, FilterOp, QueryFilter};
 
     use crate::document::Node;
-    use crate::prefab::{ExposedSlot, PrefabDef};
     use crate::registry::{FieldKind, FieldSpec, NumericBounds, SelectOption};
-
-    fn hero_prefab() -> PrefabDef {
-        PrefabDef {
-            id: "prefab:hero".into(),
-            label: "Hero".into(),
-            description: String::new(),
-            root: Node {
-                id: "hero-root".into(),
-                component: "text".into(),
-                props: json!({ "body": "default" }),
-                children: vec![],
-                ..Default::default()
-            },
-            exposed: vec![ExposedSlot {
-                key: "title".into(),
-                target_node: "hero-root".into(),
-                target_prop: "body".into(),
-                spec: FieldSpec::text("title", "Title"),
-            }],
-            variants: vec![],
-            thumbnail: None,
-        }
-    }
 
     fn sample_facet() -> FacetDef {
         FacetDef {
@@ -142,33 +118,6 @@ mod tests {
             id: "missing".into(),
         };
         assert!(src.resolve(&resources).is_empty());
-    }
-
-    #[test]
-    fn apply_bindings_injects_values() {
-        let prefab = hero_prefab();
-        let item = json!({ "name": "TestTitle" });
-        let bindings = vec![FacetBinding {
-            slot_key: "title".into(),
-            item_field: "name".into(),
-        }];
-        let mut root = prefab.root.clone();
-        apply_bindings(&mut root, &prefab, &bindings, &item);
-        assert_eq!(root.props["body"], "TestTitle");
-    }
-
-    #[test]
-    fn apply_bindings_skips_missing_slot() {
-        let prefab = hero_prefab();
-        let item = json!({ "name": "TestTitle" });
-        let bindings = vec![FacetBinding {
-            slot_key: "nonexistent".into(),
-            item_field: "name".into(),
-        }];
-        let mut root = prefab.root.clone();
-        apply_bindings(&mut root, &prefab, &bindings, &item);
-        // default value should be unchanged
-        assert_eq!(root.props["body"], "default");
     }
 
     #[test]
@@ -1006,77 +955,6 @@ mod tests {
             FacetKind::Script { graph, .. } => assert!(graph.is_none()),
             _ => panic!("expected Script"),
         }
-    }
-
-    // ── Variant rule tests ──────────────────────────────────────
-
-    #[test]
-    fn evaluate_variant_rules_sets_axis_prop() {
-        let mut root = Node {
-            id: "r".into(),
-            component: "text".into(),
-            props: json!({}),
-            children: vec![],
-            ..Default::default()
-        };
-        let rules = vec![FacetVariantRule {
-            field: "featured".into(),
-            value: "true".into(),
-            axis_key: "variant".into(),
-            axis_value: "highlight".into(),
-        }];
-        let item = json!({"featured": true});
-        evaluate_variant_rules(&mut root, &rules, &item);
-        assert_eq!(root.props["variant"], "highlight");
-    }
-
-    #[test]
-    fn evaluate_variant_rules_no_match_no_change() {
-        let mut root = Node {
-            id: "r".into(),
-            component: "text".into(),
-            props: json!({"variant": "default"}),
-            children: vec![],
-            ..Default::default()
-        };
-        let rules = vec![FacetVariantRule {
-            field: "featured".into(),
-            value: "true".into(),
-            axis_key: "variant".into(),
-            axis_value: "highlight".into(),
-        }];
-        let item = json!({"featured": false});
-        evaluate_variant_rules(&mut root, &rules, &item);
-        assert_eq!(root.props["variant"], "default");
-    }
-
-    #[test]
-    fn evaluate_variant_rules_multiple_rules() {
-        let mut root = Node {
-            id: "r".into(),
-            component: "text".into(),
-            props: json!({}),
-            children: vec![],
-            ..Default::default()
-        };
-        let rules = vec![
-            FacetVariantRule {
-                field: "status".into(),
-                value: "active".into(),
-                axis_key: "variant".into(),
-                axis_value: "primary".into(),
-            },
-            FacetVariantRule {
-                field: "size".into(),
-                value: "large".into(),
-                axis_key: "size".into(),
-                axis_value: "lg".into(),
-            },
-        ];
-        let item = json!({"status": "active", "size": "large"});
-        evaluate_variant_rules(&mut root, &rules, &item);
-        assert_eq!(root.props["variant"], "primary");
-        assert_eq!(root.props["size"], "lg");
     }
 
     #[test]

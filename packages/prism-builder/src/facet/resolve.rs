@@ -6,11 +6,10 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use prism_core::language::expression::{evaluate_expression, ExprValue};
-use prism_core::widget::{get_json_field, json_sort_key, FilterOp, QueryFilter};
+use prism_core::widget::{get_json_field, FilterOp, QueryFilter};
 
 use crate::document::{Node, NodeId};
 use crate::mutator::NodeMutator;
-use crate::prefab::PrefabDef;
 use crate::registry::FieldKind;
 
 use super::*;
@@ -81,43 +80,6 @@ pub fn parse_filter_expr(expr: &str) -> Option<QueryFilter> {
         ));
     }
     None
-}
-
-/// Apply all facet bindings to a cloned prefab root node.
-#[allow(dead_code)]
-pub(super) fn apply_bindings(
-    root: &mut Node,
-    prefab: &PrefabDef,
-    bindings: &[FacetBinding],
-    item: &Value,
-) {
-    let mutator = NodeMutator::new();
-    for binding in bindings {
-        if let Some(slot) = prefab.exposed.iter().find(|s| s.key == binding.slot_key) {
-            if let Some(value) = get_json_field(item, &binding.item_field) {
-                mutator.write_at(root, &slot.target_node, &slot.target_prop, value);
-            }
-        }
-    }
-}
-
-/// Apply variant rules to a cloned prefab root. For each matching rule,
-/// sets the axis key prop so the variant system picks it up during render.
-#[allow(dead_code)]
-pub(super) fn evaluate_variant_rules(root: &mut Node, rules: &[FacetVariantRule], item: &Value) {
-    let mutator = NodeMutator::new();
-    for rule in rules {
-        let raw = get_json_field(item, &rule.field);
-        let sort_key = raw.clone().map(json_sort_key).unwrap_or_default();
-        let matches = sort_key == rule.value
-            || raw
-                .as_ref()
-                .map(|v| v.to_string().trim_matches('"') == rule.value)
-                .unwrap_or(false);
-        if matches {
-            mutator.write(root, &rule.axis_key, Value::String(rule.axis_value.clone()));
-        }
-    }
 }
 
 // ── Inline template expression resolution ────────────────────────────────────
