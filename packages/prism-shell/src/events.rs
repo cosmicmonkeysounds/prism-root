@@ -1118,24 +1118,18 @@ fn step_number_on_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool 
     write_field_value(g, hit, target, key, value)
 }
 
-/// Inline-template third slice — dispatch a field-editor write to
-/// either [`AppState::set_node_prop`] (regular node selection) or
-/// [`AppState::set_facet_template_prop`] (facet-template descendant
-/// selection) based on whether `data-template-path` is present on
-/// the hit-test rect. Single seam for every click-driven write, so
-/// the routing logic doesn't drift across the seven-or-so commit
-/// sites in `handle_field_edit_click` / drag-commit / text-input
-/// commit.
+/// Single seam for every click-driven field-editor write, so the
+/// routing logic doesn't drift across the seven-or-so commit sites in
+/// `handle_field_edit_click` / drag-commit / text-input commit. Facet
+/// template descendants are ordinary nodes now, so every write is a
+/// plain [`AppState::set_node_prop`] on the target node id.
 fn write_field_value(
     g: &mut crate::shell::ShellInner,
-    hit: &HitRect,
+    _hit: &HitRect,
     target: &str,
     key: &str,
     value: serde_json::Value,
 ) -> bool {
-    let template_path = attr_value(hit, "data-template-path")
-        .unwrap_or("")
-        .to_string();
     // Split borrow: name `registry` and `state` as disjoint fields
     // of `*g` so the mut borrow on `state` and the immut borrow on
     // `registry` don't overlap. Sound — Rust's borrow checker
@@ -1144,9 +1138,6 @@ fn write_field_value(
         registry, state, ..
     } = g;
     let reg = registry.as_component_registry();
-    if !template_path.is_empty() {
-        return state.set_facet_template_prop(target, &template_path, key, value, Some(reg));
-    }
     state.set_node_prop(target, key, value, Some(reg))
 }
 

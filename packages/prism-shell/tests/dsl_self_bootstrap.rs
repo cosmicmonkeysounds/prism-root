@@ -193,8 +193,8 @@ tag = "lattice.activity-panel"
         assert_eq!(peers.min_width, 240.0);
         let activity = catalog.get("lattice.activity").expect("lattice.activity");
         assert_eq!(activity.label, "Activity");
-        // Total = 15 built-ins + 2 app panels.
-        assert_eq!(catalog.len(), 17);
+        // Total = 16 built-ins + 2 app panels.
+        assert_eq!(catalog.len(), 18);
         // tag_for resolves through the catalog.
         assert_eq!(
             catalog.tag_for("lattice.peers"),

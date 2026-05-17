@@ -294,17 +294,13 @@ impl AppState {
         // gets one section per attached `node.modifiers` entry plus
         // an add-modifier footer.
         let mod_registry = self.modifier_registry.clone();
-        self.builder.inspector = derive_inspector_tree(
-            &self.canvas.document,
-            &self.canvas.selection,
-            self.canvas.facet_template_selection.as_ref(),
-        );
+        self.builder.inspector =
+            derive_inspector_tree(&self.canvas.document, &self.canvas.selection);
         self.builder.property_rows = derive_property_rows(
             registry,
             mod_registry.as_deref(),
             &self.canvas.document,
             self.canvas.selection.as_deref(),
-            self.canvas.facet_template_selection.as_ref(),
         );
     }
 
@@ -320,14 +316,6 @@ impl AppState {
         node_id: &str,
         registry: Option<&prism_builder::ComponentRegistry>,
     ) -> bool {
-        // Composite id from `walk_facet_template`. Route into the
-        // facet-template selection slot instead of the regular
-        // `selection` field. Inline-template third slice — closes
-        // the click-router branch in
-        // `docs/dev/state-of-prism.md`.
-        if let Some((facet_id, template_path)) = parse_facet_template_id(node_id) {
-            return self.select_facet_template(facet_id, template_path, registry);
-        }
         // Reject ids that don't exist in the active document — the
         // hit-test surface can produce stale ids when the document
         // changes between layout and click. Headless render paths
@@ -342,59 +330,11 @@ impl AppState {
         if !exists {
             return false;
         }
-        let already = self.canvas.selection.as_deref() == Some(node_id)
-            && self.canvas.facet_template_selection.is_none();
+        let already = self.canvas.selection.as_deref() == Some(node_id);
         if already {
             return false;
         }
         self.canvas.selection = Some(node_id.into());
-        self.canvas.facet_template_selection = None;
-        self.resync_builder_for_selection(registry);
-        true
-    }
-
-    /// Set the facet-template descendant selection. Clears the
-    /// regular `canvas.selection`. Validates that the facet node
-    /// exists, has an inline template, and the path resolves; bails
-    /// without mutating otherwise.
-    pub fn select_facet_template(
-        &mut self,
-        facet_node_id: &str,
-        template_path: &str,
-        registry: Option<&prism_builder::ComponentRegistry>,
-    ) -> bool {
-        // Validate against the document.
-        let Some(root) = self.canvas.document.root.as_ref() else {
-            return false;
-        };
-        let Some(facet_node) = root.find(facet_node_id) else {
-            return false;
-        };
-        if facet_node.component != "facet" {
-            return false;
-        }
-        let Some(facet_id) = facet_node.props.get("facet_id").and_then(|v| v.as_str()) else {
-            return false;
-        };
-        let Some(facet_def) = self.canvas.document.facets.get(facet_id) else {
-            return false;
-        };
-        let prism_builder::FacetTemplate::Inline { root: tpl_root } = &facet_def.template else {
-            return false;
-        };
-        if resolve_facet_template_path_ref(tpl_root, template_path).is_none() {
-            return false;
-        }
-
-        let new_selection = FacetTemplateSelection {
-            facet_node_id: facet_node_id.into(),
-            template_path: template_path.into(),
-        };
-        if self.canvas.facet_template_selection.as_ref() == Some(&new_selection) {
-            return false;
-        }
-        self.canvas.facet_template_selection = Some(new_selection);
-        self.canvas.selection = None;
         self.resync_builder_for_selection(registry);
         true
     }
@@ -893,74 +833,6 @@ impl AppState {
         true
     }
 
-    /// Inline-template editing — write `value` into a facet's inline
-    /// template node at `template_path` (slash-joined child-index
-    /// trail; `""` / `"root"` target the template root). Closes the
-    /// data-side half of the "inline template canvas editing"
-    /// follow-up in `docs/dev/state-of-prism.md`: the visibility
-    /// (inspector tree) + the mutator are now in place; the
-    /// click-router branch that selects template descendants from
-    /// the canvas is the remaining third slice.
-    ///
-    /// Returns `true` when the document actually changed. Skips
-    /// PartialEq-equal writes, mirrors `set_node_prop`'s contract.
-    pub fn set_facet_template_prop(
-        &mut self,
-        facet_node_id: &str,
-        template_path: &str,
-        key: &str,
-        value: Value,
-        registry: Option<&prism_builder::ComponentRegistry>,
-    ) -> bool {
-        // Locate the facet node + read its `facet_id` prop.
-        let Some(root) = self.canvas.document.root.as_ref() else {
-            return false;
-        };
-        let Some(facet_node) = root.find(facet_node_id) else {
-            return false;
-        };
-        if facet_node.component != "facet" {
-            return false;
-        }
-        let Some(facet_id) = facet_node
-            .props
-            .get("facet_id")
-            .and_then(|v| v.as_str())
-            .map(String::from)
-        else {
-            return false;
-        };
-
-        // Borrow the facet mutably and resolve the template path.
-        let Some(facet_def) = self.canvas.document.facets.get_mut(&facet_id) else {
-            return false;
-        };
-        let prism_builder::FacetTemplate::Inline { root: tpl_root } = &mut facet_def.template
-        else {
-            return false;
-        };
-        let Some(target) = resolve_facet_template_path(tpl_root, template_path) else {
-            return false;
-        };
-
-        // PartialEq gate.
-        if target.props.get(key) == Some(&value) {
-            return false;
-        }
-        match &mut target.props {
-            Value::Object(map) => {
-                map.insert(key.to_string(), value);
-            }
-            slot => {
-                let mut map = serde_json::Map::new();
-                map.insert(key.to_string(), value);
-                *slot = Value::Object(map);
-            }
-        }
-        self.resync_builder_for_selection(registry);
-        true
-    }
-
     // ── Wave 1.5 modifier mutators ───────────────────────────────────
     //
     // Each mutator validates against the doc, short-circuits on
@@ -1297,18 +1169,10 @@ fn value_as_string(v: &Value) -> String {
 fn derive_inspector_tree(
     doc: &prism_builder::BuilderDocument,
     selection: &Option<NodeId>,
-    facet_template_selection: Option<&FacetTemplateSelection>,
 ) -> Vec<InspectorNode> {
     let mut out: Vec<InspectorNode> = Vec::new();
     if let Some(root) = doc.root.as_ref() {
-        walk_inspector(
-            root,
-            0,
-            selection.as_deref(),
-            facet_template_selection,
-            doc,
-            &mut out,
-        );
+        walk_inspector(root, 0, selection.as_deref(), &mut out);
     }
     out
 }
@@ -1317,8 +1181,6 @@ fn walk_inspector(
     node: &prism_builder::Node,
     depth: u32,
     selection: Option<&str>,
-    facet_template_selection: Option<&FacetTemplateSelection>,
-    doc: &prism_builder::BuilderDocument,
     out: &mut Vec<InspectorNode>,
 ) {
     let label = inspector_label_for(node);
@@ -1328,306 +1190,9 @@ fn walk_inspector(
         depth,
         selected: selection == Some(node.id.as_str()),
     });
-    // Facet nodes with inline templates surface their template
-    // subtree below the facet row, indented one level deeper. The
-    // walker marks the row whose `(facet_node_id, template_path)`
-    // pair matches `facet_template_selection` as `selected = true`
-    // so the inspector chevron / hover highlights the active
-    // descendant.
-    if node.component == "facet" {
-        if let Some(facet_id) = node.props.get("facet_id").and_then(|v| v.as_str()) {
-            if let Some(facet) = doc.facets.get(facet_id) {
-                if let prism_builder::FacetTemplate::Inline { root: tpl_root } = &facet.template {
-                    let active_path = facet_template_selection
-                        .filter(|sel| sel.facet_node_id == node.id)
-                        .map(|sel| sel.template_path.as_str());
-                    walk_facet_template(&node.id, tpl_root, depth + 1, active_path, out);
-                }
-            }
-        }
-    }
     for child in &node.children {
-        walk_inspector(
-            child,
-            depth + 1,
-            selection,
-            facet_template_selection,
-            doc,
-            out,
-        );
+        walk_inspector(child, depth + 1, selection, out);
     }
-}
-
-/// Walk a facet's inline template tree (the [`FacetTemplate::Inline`]
-/// root + descendants) and append each node as an inspector row.
-/// Closes the "inline template canvas editing — second slice" item
-/// in `docs/dev/state-of-prism.md` by surfacing template descendants
-/// in the inspector tree.
-///
-/// Inspector ids for template descendants use the composite shape
-/// `"<facet_node_id>::tpl/<path>"`, where `path` is a slash-joined
-/// child-index trail. Today the resulting rows are visibility-only
-/// (the canvas hit-test router still has to learn this shape to
-/// route clicks back to a real selection); the property panel
-/// already special-cases facet nodes via [`facet_template_rows`].
-fn walk_facet_template(
-    facet_node_id: &str,
-    template_root: &prism_builder::Node,
-    base_depth: u32,
-    active_path: Option<&str>,
-    out: &mut Vec<InspectorNode>,
-) {
-    fn recurse(
-        facet_id: &str,
-        node: &prism_builder::Node,
-        depth: u32,
-        path: &mut Vec<usize>,
-        active_path: Option<&str>,
-        out: &mut Vec<InspectorNode>,
-    ) {
-        let path_str = if path.is_empty() {
-            "root".to_string()
-        } else {
-            path.iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join("/")
-        };
-        let inspector_id = format!("{facet_id}{FACET_TEMPLATE_ID_PREFIX}{path_str}");
-        let label = inspector_label_for(node);
-        let selected = active_path == Some(path_str.as_str());
-        out.push(InspectorNode {
-            id: inspector_id,
-            label: format!("{label} (template)"),
-            depth,
-            selected,
-        });
-        for (idx, child) in node.children.iter().enumerate() {
-            path.push(idx);
-            recurse(facet_id, child, depth + 1, path, active_path, out);
-            path.pop();
-        }
-    }
-    let mut path = Vec::new();
-    recurse(
-        facet_node_id,
-        template_root,
-        base_depth,
-        &mut path,
-        active_path,
-        out,
-    );
-}
-
-/// Resolve a `path` (slash-joined child indices, e.g. `"0/2/1"`) to
-/// a mutable reference to a node inside a facet's inline-template
-/// tree. Returns `None` when any index is out of bounds or the path
-/// names a non-existent child. The empty path `""` and the literal
-/// `"root"` both target the template root.
-fn resolve_facet_template_path<'a>(
-    root: &'a mut prism_builder::Node,
-    path: &str,
-) -> Option<&'a mut prism_builder::Node> {
-    if path.is_empty() || path == "root" {
-        return Some(root);
-    }
-    let mut current = root;
-    for segment in path.split('/') {
-        let idx: usize = segment.parse().ok()?;
-        if idx >= current.children.len() {
-            return None;
-        }
-        current = &mut current.children[idx];
-    }
-    Some(current)
-}
-
-/// Inline-template third slice — property panel for a selected
-/// facet-template descendant. Resolves the descendant through
-/// `resolve_facet_template_path_ref`, looks up its component
-/// schema in the registry, and emits the same field-editor rows a
-/// regular node selection would — with each row's props extended
-/// with a `template-path` field so the field-edit click router
-/// routes writes through [`AppState::set_facet_template_prop`]
-/// instead of [`AppState::set_node_prop`].
-fn derive_facet_template_property_rows(
-    registry: Option<&prism_builder::ComponentRegistry>,
-    doc: &prism_builder::BuilderDocument,
-    selection: &FacetTemplateSelection,
-) -> Vec<PropertyRow> {
-    let Some(reg) = registry else {
-        return Vec::new();
-    };
-    let Some(root) = doc.root.as_ref() else {
-        return Vec::new();
-    };
-    let Some(facet_node) = root.find(&selection.facet_node_id) else {
-        return Vec::new();
-    };
-    if facet_node.component != "facet" {
-        return Vec::new();
-    }
-    let Some(facet_id) = facet_node.props.get("facet_id").and_then(|v| v.as_str()) else {
-        return Vec::new();
-    };
-    let Some(facet) = doc.facets.get(facet_id) else {
-        return Vec::new();
-    };
-    let prism_builder::FacetTemplate::Inline { root: tpl_root } = &facet.template else {
-        return Vec::new();
-    };
-    let Some(descendant) = resolve_facet_template_path_ref(tpl_root, &selection.template_path)
-    else {
-        return Vec::new();
-    };
-    let Some(component) = reg.get(&descendant.component) else {
-        return Vec::new();
-    };
-
-    let schema = component.schema();
-    let mut rows: Vec<PropertyRow> = Vec::with_capacity(schema.len() + 1);
-    // Section header — distinct label so authors see they're editing
-    // the template, not a regular node.
-    rows.push(PropertyRow {
-        component: "shell.section-header".into(),
-        props: json!({
-            "label": format!("{} (template)", descendant.component),
-            "data-target-id": selection.facet_node_id,
-        }),
-    });
-    for spec in schema {
-        let mut row = property_row_from_spec(&spec, &descendant.props, &selection.facet_node_id);
-        // Carry the template-path through to the field-editor click
-        // handler so writes route through `set_facet_template_prop`.
-        if let Value::Object(map) = &mut row.props {
-            map.insert(
-                "template-path".into(),
-                Value::String(selection.template_path.clone()),
-            );
-        }
-        rows.push(row);
-    }
-    rows
-}
-
-/// Cheap pre-check — `true` when any facet in the document carries
-/// an inline template. Lets `lower_document_to_ui_full` skip the
-/// clone + walk entirely on the common (no-inline-facet) path.
-fn facets_have_inline_template(doc: &prism_builder::BuilderDocument) -> bool {
-    doc.facets
-        .values()
-        .any(|f| matches!(f.template, prism_builder::FacetTemplate::Inline { .. }))
-}
-
-/// Canvas-hit pre-pass — clone `root` and, for every `facet` node
-/// whose `FacetDef` has an inline template, replace the node's
-/// children with a design-time view of the template. Each view
-/// node's id is rewritten to the composite
-/// `"<facet_node_id>::tpl/<path>"` shape so the canvas tagger emits
-/// `data-canvas-node` attrs the third-slice selection chain
-/// understands. `{{field}}` expressions render literally — the
-/// canvas is a structure editor, not a data preview.
-///
-/// The pre-pass is non-destructive: it operates on a clone, so the
-/// persisted document keeps facets opaque (their real children stay
-/// empty / authored-as-is).
-/// A look-up trait over the builder's facet map. Lets the
-/// materialiser work against any container — the live document's
-/// `IndexMap`, a `HashMap` in tests, or an empty stub — without
-/// pulling `indexmap` into the shell's dep tree.
-trait FacetLookup {
-    fn lookup(&self, id: &str) -> Option<&prism_builder::FacetDef>;
-}
-
-impl<S: std::hash::BuildHasher> FacetLookup
-    for std::collections::HashMap<String, prism_builder::FacetDef, S>
-{
-    fn lookup(&self, id: &str) -> Option<&prism_builder::FacetDef> {
-        self.get(id)
-    }
-}
-
-impl<S: std::hash::BuildHasher> FacetLookup
-    for indexmap::IndexMap<String, prism_builder::FacetDef, S>
-{
-    fn lookup(&self, id: &str) -> Option<&prism_builder::FacetDef> {
-        self.get(id)
-    }
-}
-
-fn materialize_facet_templates(
-    root: &prism_builder::Node,
-    facets: &impl FacetLookup,
-) -> prism_builder::Node {
-    let mut cloned = root.clone();
-    inject_facet_templates(&mut cloned, facets);
-    cloned
-}
-
-fn inject_facet_templates(node: &mut prism_builder::Node, facets: &impl FacetLookup) {
-    if node.component == "facet" {
-        if let Some(facet_id) = node.props.get("facet_id").and_then(|v| v.as_str()) {
-            if let Some(def) = facets.lookup(facet_id) {
-                if let prism_builder::FacetTemplate::Inline { root: tpl_root } = &def.template {
-                    let mut view: prism_builder::Node = tpl_root.as_ref().clone();
-                    let facet_node_id = node.id.clone();
-                    let mut path: Vec<usize> = Vec::new();
-                    rewrite_template_ids(&mut view, &facet_node_id, &mut path);
-                    node.children = vec![view];
-                }
-            }
-        }
-    }
-    for child in &mut node.children {
-        inject_facet_templates(child, facets);
-    }
-}
-
-/// Rewrite every node id in a materialized template view to the
-/// composite `"<facet_node_id>::tpl/<path>"` shape. `path` is the
-/// child-index trail; the root uses the literal `"root"` so it
-/// matches [`resolve_facet_template_path_ref`]'s contract.
-fn rewrite_template_ids(
-    node: &mut prism_builder::Node,
-    facet_node_id: &str,
-    path: &mut Vec<usize>,
-) {
-    let path_str = if path.is_empty() {
-        "root".to_string()
-    } else {
-        path.iter()
-            .map(|i| i.to_string())
-            .collect::<Vec<_>>()
-            .join("/")
-    };
-    node.id = format!("{facet_node_id}{FACET_TEMPLATE_ID_PREFIX}{path_str}");
-    for (idx, child) in node.children.iter_mut().enumerate() {
-        path.push(idx);
-        rewrite_template_ids(child, facet_node_id, path);
-        path.pop();
-    }
-}
-
-/// Read-only sibling of [`resolve_facet_template_path`] — same
-/// resolution semantics, immutable borrow. Used by the property-
-/// panel derivation and selection-validation paths so they don't
-/// need write access to the document.
-pub(crate) fn resolve_facet_template_path_ref<'a>(
-    root: &'a prism_builder::Node,
-    path: &str,
-) -> Option<&'a prism_builder::Node> {
-    if path.is_empty() || path == "root" {
-        return Some(root);
-    }
-    let mut current = root;
-    for segment in path.split('/') {
-        let idx: usize = segment.parse().ok()?;
-        if idx >= current.children.len() {
-            return None;
-        }
-        current = &current.children[idx];
-    }
-    Some(current)
 }
 
 /// Friendly label for an inspector row. Prefers a string prop the user
@@ -1666,16 +1231,7 @@ fn derive_property_rows(
     modifier_registry: Option<&prism_builder::ModifierRegistry>,
     doc: &prism_builder::BuilderDocument,
     selection: Option<&str>,
-    facet_template_selection: Option<&FacetTemplateSelection>,
 ) -> Vec<PropertyRow> {
-    // Inline-template third slice — when a facet-template descendant
-    // is selected, surface its component schema as editable rows.
-    // The field-edit click router routes writes through
-    // `set_facet_template_prop` via the `template-path` carry on
-    // each row.
-    if let Some(sel) = facet_template_selection {
-        return derive_facet_template_property_rows(registry, doc, sel);
-    }
     let Some(id) = selection else {
         return Vec::new();
     };
@@ -1703,24 +1259,6 @@ fn derive_property_rows(
     });
     for spec in schema {
         rows.push(property_row_from_spec(&spec, &node.props, &node.id));
-    }
-    // ── Section 1.5: facet template (inline vs component-ref) ────
-    //
-    // When the selection is a `facet` block, surface the structure
-    // of its `FacetDef.template` underneath the config rows so
-    // authors can see what they're binding to without leaving the
-    // panel. Read-only for now — the actual edit surface for an
-    // `Inline` template is the inspector tree + canvas (a follow-up
-    // tied to `docs/dev/data-template-system.md`), and `ComponentRef`
-    // templates are edited by picking a registered component. Both
-    // surfaces still need wiring; this section is the data
-    // exposure that unblocks the visual half.
-    if node.component == "facet" {
-        if let Some(facet_id) = node.props.get("facet_id").and_then(|v| v.as_str()) {
-            if let Some(facet) = doc.facets.get(facet_id) {
-                rows.extend(facet_template_rows(facet, &node.id));
-            }
-        }
     }
     // ── Section 2..N: one per attached modifier ──────────────────
     //
@@ -1777,79 +1315,6 @@ fn derive_property_rows(
             }),
         });
     }
-    rows
-}
-
-/// Emit a "Template" section for a facet node's `FacetDef.template`.
-/// Inline templates surface the root component + each immediate child
-/// as a read-only inspector row; component-ref templates emit a single
-/// row showing the referenced component id.
-///
-/// Follow-up (`docs/dev/data-template-system.md`): the next step is
-/// canvas-side selection of inline template descendants so the
-/// existing field-editor pipeline reaches them through one path.
-/// Mutators live on `apply_facet_edit` in `events.rs`; the missing
-/// piece is the click router branch that routes
-/// `node-id=<facet_node_id> + template-path=<…>` to a facet template
-/// edit instead of a regular node prop write.
-fn facet_template_rows(facet: &prism_builder::FacetDef, facet_node_id: &str) -> Vec<PropertyRow> {
-    let mut rows = Vec::new();
-    let (header_label, body_rows): (&str, Vec<PropertyRow>) = match &facet.template {
-        prism_builder::FacetTemplate::ComponentRef { component_id } => (
-            "Template (component ref)",
-            vec![PropertyRow {
-                component: "shell.inspector-row".into(),
-                props: json!({
-                    "id": format!("{facet_node_id}::facet-template-ref"),
-                    "kind": "row",
-                    "component-id": component_id,
-                    "node-id": "",
-                    "depth": 0,
-                    "selected": false,
-                    "show-delete": false,
-                }),
-            }],
-        ),
-        prism_builder::FacetTemplate::Inline { root } => {
-            let mut inner = Vec::with_capacity(1 + root.children.len());
-            inner.push(PropertyRow {
-                component: "shell.inspector-row".into(),
-                props: json!({
-                    "id": format!("{facet_node_id}::facet-template-root"),
-                    "kind": "row",
-                    "component-id": root.component,
-                    "node-id": root.id,
-                    "depth": 0,
-                    "selected": false,
-                    "show-delete": false,
-                }),
-            });
-            for (idx, child) in root.children.iter().enumerate() {
-                inner.push(PropertyRow {
-                    component: "shell.inspector-row".into(),
-                    props: json!({
-                        "id": format!("{facet_node_id}::facet-template-{idx}"),
-                        "kind": "row",
-                        "component-id": child.component,
-                        "node-id": child.id,
-                        "depth": 1,
-                        "selected": false,
-                        "show-delete": false,
-                    }),
-                });
-            }
-            ("Template (inline)", inner)
-        }
-    };
-    rows.push(PropertyRow {
-        component: "shell.section-header".into(),
-        props: json!({
-            "label": header_label,
-            "section-id": format!("{facet_node_id}::facet-template"),
-            "collapsed": false,
-        }),
-    });
-    rows.extend(body_rows);
     rows
 }
 
@@ -4100,18 +3565,6 @@ impl MenuSlot {
 pub struct CanvasSlot {
     pub document: BuilderDocument,
     pub selection: Option<NodeId>,
-    /// Inline-template editing — third slice. When the user clicks
-    /// an inspector row for a facet's inline-template descendant
-    /// (composite id `"<facet_node_id>::tpl/<path>"`), the regular
-    /// [`Self::selection`] field clears and this one fills.
-    /// `derive_property_rows` then resolves the descendant's
-    /// schema and emits field-editor rows carrying both `target-id`
-    /// (the facet node) and `template-path` so the field-edit click
-    /// router routes writes through [`AppState::set_facet_template_prop`]
-    /// instead of [`AppState::set_node_prop`]. The two selection
-    /// fields are mutually exclusive — a regular node selection
-    /// always wins on the next `select_node` call.
-    pub facet_template_selection: Option<FacetTemplateSelection>,
     pub tool: ToolMode,
     pub viewport: CanvasViewport,
     pub picker: PickerState,
@@ -4176,34 +3629,6 @@ pub struct SelectionBbox {
     pub y: f32,
     pub width: f32,
     pub height: f32,
-}
-
-/// Composite selection target for a facet's inline-template
-/// descendant. Decoded from the inspector-row composite id
-/// `"<facet_node_id>::tpl/<path>"`. Lives next to
-/// [`CanvasSlot::selection`] so the regular node-selection path
-/// and the template-descendant path stay mutually exclusive.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FacetTemplateSelection {
-    pub facet_node_id: NodeId,
-    pub template_path: String,
-}
-
-/// Composite-id prefix authored by [`walk_facet_template`].
-/// `"<facet_node_id>::tpl/<path>"`.
-pub(crate) const FACET_TEMPLATE_ID_PREFIX: &str = "::tpl/";
-
-/// Parse a composite inspector id like `"facet-node::tpl/0/1"` back
-/// into `(facet_node_id, template_path)`. Returns `None` when the
-/// `::tpl/` marker is absent — used by the inspector-row click router
-/// to dispatch between regular `select_node` and the facet-template
-/// path.
-pub(crate) fn parse_facet_template_id(id: &str) -> Option<(&str, &str)> {
-    id.find(FACET_TEMPLATE_ID_PREFIX).map(|idx| {
-        let facet = &id[..idx];
-        let rest = &id[idx + FACET_TEMPLATE_ID_PREFIX.len()..];
-        (facet, rest)
-    })
 }
 
 /// Wave 3.3 — pointer-driven resize session against a canvas node.
@@ -5127,22 +4552,10 @@ impl CanvasSlot {
         let Some(root) = self.document.root.as_ref() else {
             return Vec::new();
         };
-        // Canvas-hit: materialize every facet's inline template into
-        // a design-time child subtree so it (a) renders on the canvas
-        // and (b) carries composite `<facet_node_id>::tpl/<path>` ids.
-        // `tag_canvas_subtree` then tags those containers
-        // `data-canvas-node=…`, and a pointer-down routes through the
-        // existing `route_canvas_node_select` → `select_node` →
-        // `select_facet_template` chain (the third-slice composite-id
-        // parser). The pre-pass is canvas-only — it clones the tree
-        // so the persisted document keeps facets opaque.
-        let materialized;
-        let lower_root: &prism_builder::Node = if facets_have_inline_template(&self.document) {
-            materialized = materialize_facet_templates(root, &self.document.facets);
-            &materialized
-        } else {
-            root
-        };
+        // Facet templates are now real `node.children` — the facet
+        // block's own `lower_ui` repeats them per data item. No canvas
+        // pre-pass: the normal walk renders + tags them like any node.
+        let lower_root: &prism_builder::Node = root;
         let cascade = prism_builder::StyleProperties::default();
         let mut ctx = prism_builder::ui_lower::LowerCtx::new(Some(reg), &cascade)
             .with_bindings(&self.bindings);
@@ -5983,449 +5396,6 @@ mod tests {
             .map(|n| n.id.as_str())
             .collect();
         assert_eq!(selected_ids, vec!["btn"]);
-    }
-
-    #[test]
-    fn property_rows_surface_facet_inline_template_after_schema() {
-        use prism_builder::{BuilderDocument, ComponentRegistry, FacetDef, FacetTemplate, Node};
-
-        let mut reg = ComponentRegistry::new();
-        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
-
-        let mut doc = BuilderDocument {
-            root: Some(Node {
-                id: "root".into(),
-                component: "container".into(),
-                children: vec![Node {
-                    id: "facet-node".into(),
-                    component: "facet".into(),
-                    props: json!({ "facet_id": "f1", "max_items": 5 }),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        doc.facets.insert(
-            "f1".into(),
-            FacetDef {
-                id: "f1".into(),
-                label: "Tasks".into(),
-                template: FacetTemplate::Inline {
-                    root: Box::new(Node {
-                        id: "tpl-root".into(),
-                        component: "card".into(),
-                        children: vec![Node {
-                            id: "tpl-title".into(),
-                            component: "text".into(),
-                            props: json!({ "body": "{{record.title}}" }),
-                            ..Default::default()
-                        }],
-                        ..Default::default()
-                    }),
-                },
-                ..Default::default()
-            },
-        );
-
-        let rows = derive_property_rows(Some(&reg), None, &doc, Some("facet-node"), None);
-
-        // A "Template (inline)" section header appears after the
-        // facet's schema rows.
-        let header = rows.iter().find(|r| {
-            r.component == "shell.section-header"
-                && r.props
-                    .get("label")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|s| s.contains("Template (inline)"))
-        });
-        assert!(header.is_some(), "missing Template (inline) header");
-
-        // The root + one child appear as inspector-rows.
-        let inspector_rows: Vec<&PropertyRow> = rows
-            .iter()
-            .filter(|r| r.component == "shell.inspector-row")
-            .collect();
-        assert_eq!(inspector_rows.len(), 2, "expected root + 1 child");
-        assert_eq!(
-            inspector_rows[0].props.get("component-id"),
-            Some(&json!("card"))
-        );
-        assert_eq!(
-            inspector_rows[1].props.get("component-id"),
-            Some(&json!("text"))
-        );
-    }
-
-    /// Inline-template second slice — the inspector tree walks a
-    /// facet's `FacetTemplate::Inline` subtree, producing rows for
-    /// the template root + each descendant. Composite ids carry the
-    /// facet node id and a path into the template tree
-    /// (`"<facet_id>::tpl/<path>"`).
-    #[test]
-    fn inspector_tree_walks_facet_inline_template_descendants() {
-        use prism_builder::{BuilderDocument, FacetDef, FacetTemplate, Node};
-        let mut doc = BuilderDocument {
-            root: Some(Node {
-                id: "root".into(),
-                component: "container".into(),
-                children: vec![Node {
-                    id: "facet-node".into(),
-                    component: "facet".into(),
-                    props: json!({ "facet_id": "f1" }),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        doc.facets.insert(
-            "f1".into(),
-            FacetDef {
-                id: "f1".into(),
-                template: FacetTemplate::Inline {
-                    root: Box::new(Node {
-                        id: "tpl-root".into(),
-                        component: "card".into(),
-                        children: vec![
-                            Node {
-                                id: "tpl-title".into(),
-                                component: "text".into(),
-                                ..Default::default()
-                            },
-                            Node {
-                                id: "tpl-body".into(),
-                                component: "text".into(),
-                                ..Default::default()
-                            },
-                        ],
-                        ..Default::default()
-                    }),
-                },
-                ..Default::default()
-            },
-        );
-
-        let tree = derive_inspector_tree(&doc, &None, None);
-        // Expected rows: root container, facet-node, tpl-root (root),
-        // tpl-title (child 0), tpl-body (child 1).
-        assert_eq!(tree.len(), 5);
-        let ids: Vec<&str> = tree.iter().map(|n| n.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            vec![
-                "root",
-                "facet-node",
-                "facet-node::tpl/root",
-                "facet-node::tpl/0",
-                "facet-node::tpl/1",
-            ]
-        );
-        // Template rows sit one level deeper than the facet they
-        // came from.
-        let facet_row = tree.iter().find(|n| n.id == "facet-node").unwrap();
-        let tpl_root_row = tree
-            .iter()
-            .find(|n| n.id == "facet-node::tpl/root")
-            .unwrap();
-        assert_eq!(tpl_root_row.depth, facet_row.depth + 1);
-    }
-
-    /// `AppState::set_facet_template_prop` writes a prop into the
-    /// resolved inline-template node and dirty-marks the document
-    /// for resync. PartialEq-equal writes return `false` and skip
-    /// the resync (mirrors `set_node_prop`).
-    /// Inline-template third slice — `select_node` with a composite
-    /// `"<facet_node_id>::tpl/<path>"` id routes through
-    /// `select_facet_template`, populating
-    /// `canvas.facet_template_selection` and clearing the regular
-    /// `canvas.selection`. Subsequent regular selection on a
-    /// non-template id clears the template selection.
-    #[test]
-    fn select_node_dispatches_composite_template_ids() {
-        use prism_builder::{BuilderDocument, ComponentRegistry, FacetDef, FacetTemplate, Node};
-        let mut reg = ComponentRegistry::new();
-        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
-
-        let mut state = AppState::default();
-        state.canvas.document = BuilderDocument {
-            root: Some(Node {
-                id: "root".into(),
-                component: "container".into(),
-                children: vec![Node {
-                    id: "facet-node".into(),
-                    component: "facet".into(),
-                    props: json!({ "facet_id": "f1" }),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        state.canvas.document.facets.insert(
-            "f1".into(),
-            FacetDef {
-                id: "f1".into(),
-                template: FacetTemplate::Inline {
-                    root: Box::new(Node {
-                        id: "tpl-root".into(),
-                        component: "card".into(),
-                        children: vec![Node {
-                            id: "tpl-child".into(),
-                            component: "text".into(),
-                            ..Default::default()
-                        }],
-                        ..Default::default()
-                    }),
-                },
-                ..Default::default()
-            },
-        );
-
-        // Composite id → facet-template selection populated, regular cleared.
-        let changed = state.select_node("facet-node::tpl/0", Some(&reg));
-        assert!(changed);
-        assert!(state.canvas.selection.is_none());
-        let sel = state
-            .canvas
-            .facet_template_selection
-            .as_ref()
-            .expect("facet template selection");
-        assert_eq!(sel.facet_node_id, "facet-node");
-        assert_eq!(sel.template_path, "0");
-
-        // Root-path variant.
-        state.select_node("facet-node::tpl/root", Some(&reg));
-        assert_eq!(
-            state
-                .canvas
-                .facet_template_selection
-                .as_ref()
-                .unwrap()
-                .template_path,
-            "root"
-        );
-
-        // Regular node selection clears the template selection.
-        state.select_node("root", Some(&reg));
-        assert!(state.canvas.facet_template_selection.is_none());
-        assert_eq!(state.canvas.selection.as_deref(), Some("root"));
-    }
-
-    /// When `canvas.facet_template_selection` is set,
-    /// `derive_property_rows` resolves the template descendant and
-    /// emits field-editor rows whose props carry `template-path`
-    /// pointing at the descendant. The section header reflects the
-    /// descendant's component, not the facet's.
-    #[test]
-    fn property_rows_for_facet_template_selection_carry_template_path() {
-        use prism_builder::{BuilderDocument, ComponentRegistry, FacetDef, FacetTemplate, Node};
-
-        let mut reg = ComponentRegistry::new();
-        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
-
-        let mut doc = BuilderDocument {
-            root: Some(Node {
-                id: "root".into(),
-                component: "container".into(),
-                children: vec![Node {
-                    id: "facet-node".into(),
-                    component: "facet".into(),
-                    props: json!({ "facet_id": "f1" }),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        doc.facets.insert(
-            "f1".into(),
-            FacetDef {
-                id: "f1".into(),
-                template: FacetTemplate::Inline {
-                    root: Box::new(Node {
-                        id: "tpl-root".into(),
-                        component: "text".into(),
-                        props: json!({ "body": "hi" }),
-                        ..Default::default()
-                    }),
-                },
-                ..Default::default()
-            },
-        );
-
-        let sel = FacetTemplateSelection {
-            facet_node_id: "facet-node".into(),
-            template_path: "root".into(),
-        };
-        let rows = derive_property_rows(Some(&reg), None, &doc, None, Some(&sel));
-
-        // Section header reflects the descendant component.
-        let header = rows
-            .iter()
-            .find(|r| r.component == "shell.section-header")
-            .expect("missing section header");
-        assert!(header
-            .props
-            .get("label")
-            .and_then(|v| v.as_str())
-            .is_some_and(|s| s.contains("text") && s.contains("template")));
-
-        // Every field-editor row carries `template-path: "root"`.
-        let editors: Vec<&PropertyRow> = rows
-            .iter()
-            .filter(|r| r.component == "shell.field-editor")
-            .collect();
-        assert!(
-            !editors.is_empty(),
-            "expected field-editor rows for the text schema"
-        );
-        for row in editors {
-            assert_eq!(
-                row.props.get("template-path").and_then(|v| v.as_str()),
-                Some("root")
-            );
-            assert_eq!(
-                row.props.get("target-id").and_then(|v| v.as_str()),
-                Some("facet-node")
-            );
-        }
-    }
-
-    /// Inspector tree marks the active facet-template descendant
-    /// row as `selected: true` so the chevron / hover highlight
-    /// surface visibly. Non-active template rows stay `selected:
-    /// false`; the regular `selection` field is honored as before.
-    #[test]
-    fn inspector_marks_active_facet_template_descendant() {
-        use prism_builder::{BuilderDocument, FacetDef, FacetTemplate, Node};
-        let mut doc = BuilderDocument {
-            root: Some(Node {
-                id: "root".into(),
-                component: "container".into(),
-                children: vec![Node {
-                    id: "facet-node".into(),
-                    component: "facet".into(),
-                    props: json!({ "facet_id": "f1" }),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        doc.facets.insert(
-            "f1".into(),
-            FacetDef {
-                id: "f1".into(),
-                template: FacetTemplate::Inline {
-                    root: Box::new(Node {
-                        id: "tpl-root".into(),
-                        component: "card".into(),
-                        children: vec![
-                            Node {
-                                id: "a".into(),
-                                component: "text".into(),
-                                ..Default::default()
-                            },
-                            Node {
-                                id: "b".into(),
-                                component: "text".into(),
-                                ..Default::default()
-                            },
-                        ],
-                        ..Default::default()
-                    }),
-                },
-                ..Default::default()
-            },
-        );
-
-        let sel = FacetTemplateSelection {
-            facet_node_id: "facet-node".into(),
-            template_path: "1".into(),
-        };
-        let tree = derive_inspector_tree(&doc, &None, Some(&sel));
-        let active_count = tree.iter().filter(|n| n.selected).count();
-        assert_eq!(active_count, 1, "exactly one template row selected");
-        let active = tree.iter().find(|n| n.selected).unwrap();
-        assert_eq!(active.id, "facet-node::tpl/1");
-    }
-
-    #[test]
-    fn set_facet_template_prop_writes_and_resyncs() {
-        use prism_builder::{BuilderDocument, ComponentRegistry, FacetDef, FacetTemplate, Node};
-
-        let mut reg = ComponentRegistry::new();
-        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
-
-        let mut state = AppState::default();
-        state.canvas.document = BuilderDocument {
-            root: Some(Node {
-                id: "root".into(),
-                component: "container".into(),
-                children: vec![Node {
-                    id: "facet-node".into(),
-                    component: "facet".into(),
-                    props: json!({ "facet_id": "f1" }),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        state.canvas.document.facets.insert(
-            "f1".into(),
-            FacetDef {
-                id: "f1".into(),
-                template: FacetTemplate::Inline {
-                    root: Box::new(Node {
-                        id: "tpl-root".into(),
-                        component: "card".into(),
-                        children: vec![Node {
-                            id: "tpl-title".into(),
-                            component: "text".into(),
-                            props: json!({ "body": "old" }),
-                            ..Default::default()
-                        }],
-                        ..Default::default()
-                    }),
-                },
-                ..Default::default()
-            },
-        );
-
-        // Write to the root of the template.
-        let changed =
-            state.set_facet_template_prop("facet-node", "root", "title", json!("new"), Some(&reg));
-        assert!(changed);
-        let root = match &state.canvas.document.facets["f1"].template {
-            FacetTemplate::Inline { root } => root,
-            _ => unreachable!(),
-        };
-        assert_eq!(root.props.get("title"), Some(&json!("new")));
-
-        // Write to child[0] via "0".
-        let changed =
-            state.set_facet_template_prop("facet-node", "0", "body", json!("hello"), Some(&reg));
-        assert!(changed);
-        let root = match &state.canvas.document.facets["f1"].template {
-            FacetTemplate::Inline { root } => root,
-            _ => unreachable!(),
-        };
-        assert_eq!(root.children[0].props.get("body"), Some(&json!("hello")));
-
-        // PartialEq-equal write returns false.
-        let unchanged =
-            state.set_facet_template_prop("facet-node", "0", "body", json!("hello"), Some(&reg));
-        assert!(!unchanged);
-
-        // Non-facet node → false.
-        let bad = state.set_facet_template_prop("root", "", "x", json!(1), Some(&reg));
-        assert!(!bad);
-
-        // Out-of-bounds path → false.
-        let oob = state.set_facet_template_prop("facet-node", "99", "body", json!("y"), Some(&reg));
-        assert!(!oob);
     }
 
     #[test]
@@ -8337,7 +7307,6 @@ mod tests {
                 ..Default::default()
             },
             selection: Some("root".into()),
-            facet_template_selection: None,
             tool: ToolMode::Move,
             viewport: CanvasViewport::default(),
             picker: PickerState {

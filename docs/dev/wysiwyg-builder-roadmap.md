@@ -147,7 +147,109 @@ the symbol, find all refs.
 → Acceptance: package a signed desktop build that self-updates; two
 users co-edit a page with live cursors.
 
-## 4. Cross-references
+## 4. Authoring-systems survey & consolidation decisions
+
+A 3-pass evidence survey (runtime DSL path, builder-side model with
+real call-site counts, documented intent) of every authoring system,
+to decide firmly what we keep, unify, or cut. Status point-in-time
+2026-05-16; verify against code before acting.
+
+### 4.1 The "facets" disambiguation
+
+"Facets" is **two unrelated systems sharing a name**:
+
+1. **PRUI `<facet>` element** (`prism-ui-runtime::interpret`, ~8 LOC) —
+   a thin sugar wrapper over `resolve_for_iteration`, the exact engine
+   `for=` uses. Plus the `fct:` attribute namespace
+   (`prism-core::AttributeNamespace::Facet`). **KEEP** — this is the
+   canonical data-repeat mechanism, 36 live `for=` uses, full runtime.
+2. **`prism-builder::FacetDef` subsystem** (`facet/` dir, ~1447 LOC +
+   86 tests) — a separate document-model data construct. **RETIRE**
+   (see §4.3).
+
+These are not the same thing. The decision below retires #2 only and
+explicitly preserves #1.
+
+### 4.2 Keep / unify / cut table
+
+| System | Call | Rationale |
+|---|---|---|
+| PRUI / PRSS / Luau (3 projections) | **KEEP** | The authoring surface; roles deliberately non-overlapping. |
+| BuilderDocument / ComponentRegistry / Block | **KEEP** | Core spine; universal. |
+| PRUI `<facet>` / `for=` / `bind:` / `fct:` | **KEEP** | One `resolve_for_iteration`, 36 live uses, full runtime. |
+| Modifiers (+ `ModifierRegistry`) | **KEEP** | Live in every shell frame (`ui_lower.rs:401`). |
+| TemplateNode / `CoreWidgetBlock` | **KEEP** | Live in relay SSR + the `PrismBlock` derive; ~13 core domains. |
+| `dialects.rs` | **KEEP** | Live in the shell parse pipeline. |
+| **`FacetDef` subsystem** | **CUT / MIGRATE** | No runtime render path (`FacetComponent` has no `lower_ui`), zero shipping use, subsumed by `for=`+`bind:`. Migrate the inline-template editing surface onto normal nodes, then delete the model. |
+| **`prism_ui_emit.rs`** | **CUT** | Vestigial Slint-era source emitter; only a documented no-op hook + self-tests consume it (~371 LOC + 15 tests). |
+| **`SignalDef` / `Connection`** | **UNIFY** | Doc graph's one undecided convergence: compile `SignalDef`→`reactive::Signal<()>`, `Connection`→`Effect`. Finishing the `bind:*` install path (A2) *is* this at the attribute layer. |
+| Prefabs | **REDUCE** | Doc-demoted to internal-only; sole live use powers the `card` builtin + facet-promote. Fold `card` into a SpecBlock; keep `PrefabDef` only as hidden promotion mechanism. |
+| Variants | **KEEP (plumbing)** | No independent authoring surface; core-widget variant-spec bridge only. |
+| `widget-system.md`, `prui-reference.md` §4 | **DOC FIX** | Stale (reference Slint / mark landed items as pass-through). |
+
+### 4.3 Firm decision: retire `FacetDef`, re-base inline templates on normal nodes
+
+**Why.** `FacetComponent` (the only `Component` impl in `facet/`) has
+**no `lower_ui`** — a `facet` block renders as an empty container;
+nothing renders facet data in the live tree today. Zero `<facet>`/
+`fct:` usages in any shipping skeleton/app vs. 36 live `for=` uses.
+The non-`Inline` FacetKinds (Query/Script/Aggregate/Lookup), schemas,
+aggregates, calc, variant-rules have **zero shipping use and no render
+path** — pure dead code. The only shipped surface is
+`FacetTemplate::Inline` + the property-panel editing UI.
+
+**Locked replacement design.** A facet today is two disjoint things
+glued by a string id: a `Node{component:"facet"}` whose `children` are
+ignored, plus a side-table `FacetDef` whose `FacetTemplate::Inline.root`
+holds the real subtree (canvas-only `materialize_facet_templates`
+clones it in). The migration **collapses the inline template into the
+facet `Node.children`** so the template is ordinary tree data:
+
+- The facet block keeps its template **as real `Node.children`**,
+  edited/selected/clicked through the *normal* node paths — deleting
+  the entire parallel inline-template-editing surface in
+  `prism-shell/src/state.rs` (`materialize_facet_templates`,
+  `walk_facet_template`, `parse_facet_template_id`,
+  `FacetTemplateSelection`, `select_facet_template`,
+  `set_facet_template_prop`, `derive_facet_template_property_rows`,
+  `facet_template_rows`, `FacetLookup`, the `::tpl/` composite-id
+  scheme, the `CanvasSlot.facet_template_selection` field, the
+  `events.rs` template-path write branch).
+- The block gains a **real `lower_ui`**: resolve a data source
+  (minimal — static items / resource ref, mirroring PRUI), then lower
+  the child subtree once per item with `{{field}}` interpolation
+  (`resolve_template_expressions` survives as a node-tree helper).
+- The heavy `FacetDef` model + 86 isolated-helper tests are deleted.
+  `BuilderDocument.facets` / `.facet_schemas` side-tables removed;
+  any non-`Inline` data kinds dropped (no shipping use, no render).
+- **Out of scope / preserved:** the PRUI `<facet>`/`for=`/`fct:`
+  system (§4.1 #1) and `prism-core::AttributeNamespace::Facet`. The
+  stale `fct:` "lowered to FacetDef" comment is corrected to the
+  plain-repeater reality.
+
+**Risk register** (from the touchpoint map): serde on-disk compat
+(`facets`/`facet_schemas` are persisted `#[serde(default)]` fields —
+no shipping data exists, so practical loss is moot, but
+`project.rs`/back-compat tests change); the render path is *net-new*
+behavior, not a 1:1 port; builtin-id assertion tests in 3 crates
+(`starter.rs`, `relay/state.rs`, `shell/components/registry.rs`) fail
+the instant registration changes — update in lockstep; the pointer-hit
+one-seam invariant must hold (template descendants must be real
+canvas nodes the normal tagging covers); `promote_inline_to_component`
++ `FacetBinding` coupling resolved by keeping `{{field}}` helpers as
+node-tree utilities.
+
+### 4.4 Other firm calls (deferred — tracked, not yet scheduled)
+
+- **`SignalDef` → reactive `Signal`/`Effect` convergence** + the
+  `bind:*` install path (A2). The doc graph's single remaining
+  undecided unification; commit to it. Lands in Phase A (§3).
+- **Cut `prism_ui_emit.rs`** — vestigial; safe once confirmed the
+  no-op `Page::ensure_source` hook can go.
+- **Reduce Prefabs** to hidden promotion mechanism; fold `card` into
+  a SpecBlock.
+
+## 5. Cross-references
 
 - Cleanup/migration reconciliation: `docs/dev/state-of-prism.md`
 - Substrate roadmap (Tier 1–3): `docs/dev/prism-cross-cutting-systems.md`

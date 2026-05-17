@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::{AppIcon, NavigationConfig, Page, PrismApp};
 use crate::document::BuilderDocument;
-use crate::facet::{FacetDef, FacetSchema, FacetSchemaId};
 use crate::layout::PageLayout;
 use crate::prefab::PrefabDef;
 use crate::resource::{ResourceDef, ResourceId};
@@ -47,10 +46,6 @@ pub struct SavedPage {
     pub connections: Vec<Connection>,
     #[serde(default)]
     pub prefabs: IndexMap<String, PrefabDef>,
-    #[serde(default)]
-    pub facet_schemas: IndexMap<FacetSchemaId, FacetSchema>,
-    #[serde(default)]
-    pub facets: IndexMap<String, FacetDef>,
     #[serde(default)]
     pub style: StyleProperties,
 }
@@ -138,8 +133,6 @@ impl SavedPage {
             resources: page.document.resources.clone(),
             connections: page.document.connections.clone(),
             prefabs: page.document.prefabs.clone(),
-            facet_schemas: page.document.facet_schemas.clone(),
-            facets: page.document.facets.clone(),
             style: page.style.clone(),
         }
     }
@@ -152,8 +145,6 @@ impl SavedPage {
             resources: self.resources,
             connections: self.connections,
             prefabs: self.prefabs,
-            facet_schemas: self.facet_schemas,
-            facets: self.facets,
         };
         Page {
             id: self.id,

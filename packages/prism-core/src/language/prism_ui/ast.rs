@@ -84,7 +84,8 @@ pub enum AttributeNamespace {
     ControlFlow,
     /// `style:<token>` — token-resolved style attribute.
     Style,
-    /// `fct:<name>` — facet binding lowered to `FacetDef`.
+    /// `fct:<name>` — facet binding; carried through as a
+    /// `data-fct-*` semantic attr for a host/SSR consumer.
     Facet,
     /// `sig:<name>` — declared signal shorthand.
     Signal,

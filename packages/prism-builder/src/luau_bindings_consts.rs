@@ -199,7 +199,6 @@ pub const BUILDER_DOCUMENT_TYPE_DEF: &str = r#"export type BuilderDocument = {
     resources: { [string]: ResourceDef },
     connections: {Connection},
     prefabs: { [string]: PrefabDef },
-    facets: { [string]: any },
 }"#;
 
 #[cfg(test)]

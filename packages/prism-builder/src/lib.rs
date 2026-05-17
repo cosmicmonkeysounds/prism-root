@@ -60,13 +60,7 @@ pub use component::{Component, ComponentId, RenderError};
 pub use core_widget::{collect_all_contributions, register_core_widgets, CoreWidgetBlock};
 pub use dialects::builtin_dialect_sources;
 pub use document::{BuilderDocument, Node, NodeId};
-pub use facet::{
-    apply_aggregate, apply_scalar_bindings, collect_expression_fields, evaluate_calculations,
-    parse_filter_expr, promote_inline_to_component, resolve_template_expressions, AggregateOp,
-    FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout, FacetOutput,
-    FacetRecord, FacetSchema, FacetSchemaId, FacetTemplate, FacetVariantRule, ResolvedFacetData,
-    ScriptLanguage, ValidationError, AGGREGATE_OP_TAGS, FACET_KIND_TAGS,
-};
+pub use facet::resolve_template_expressions;
 pub use html::{escape_attr, escape_text, Html};
 pub use layout::{
     compute_layout, compute_track_sizes, path_from_string, path_to_string, AbsoluteProps, CellEdge,
