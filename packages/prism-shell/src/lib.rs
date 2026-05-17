@@ -47,6 +47,11 @@ pub mod import_resolver;
 /// Walks a `RenderCommand` stream into an RGBA buffer the `image`
 /// crate's PNG encoder consumes.
 pub mod png_paint;
+/// Project Vault — folder-backed persistent object graph. See
+/// `docs/dev/project-vault.md`. Native-only: rides the `crdt`
+/// stack the `native` feature pulls in.
+#[cfg(feature = "native")]
+pub mod project_manager;
 pub mod props;
 pub mod render;
 pub mod render_scope;
@@ -58,6 +63,8 @@ pub mod state;
 
 mod shell;
 
+#[cfg(feature = "native")]
+pub use project_manager::ProjectManager;
 pub use render::{Skeleton, Stylesheet, StylesheetReload, StylesheetWatcher};
 pub use render_scope::RenderScope;
 #[cfg(feature = "native")]

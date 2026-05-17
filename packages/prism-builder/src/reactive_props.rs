@@ -149,6 +149,21 @@ impl ReactiveProps {
         self.inner.signals.borrow().contains_key(key)
     }
 
+    /// Every key currently present in the canonical JSON store —
+    /// every prop a writer has `set`. Used by the skeleton read
+    /// consumer to project the whole bag back into the tree without
+    /// re-walking the bind list. Non-subscribing (the caller takes a
+    /// per-key subscribing read via [`signal`](Self::signal) for the
+    /// ones it actually projects).
+    pub fn keys(&self) -> Vec<String> {
+        self.inner
+            .json
+            .borrow()
+            .as_object()
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
     fn read_json_key(&self, key: &str) -> Value {
         self.inner
             .json
@@ -523,6 +538,20 @@ mod tests {
     fn new_with_non_object_coerces_to_empty() {
         let p = ReactiveProps::new(serde_json::json!([1, 2, 3]));
         assert!(p.is_empty());
+    }
+
+    #[test]
+    fn keys_reports_every_set_prop_including_post_construction_writes() {
+        let p = props(serde_json::json!({"a": 1, "b": 2}));
+        let mut k = p.keys();
+        k.sort();
+        assert_eq!(k, vec!["a".to_string(), "b".to_string()]);
+        p.set("c", serde_json::json!(3));
+        let mut k = p.keys();
+        k.sort();
+        assert_eq!(k, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        // Null bag → no keys (the coerced-empty-object case).
+        assert!(ReactiveProps::new(Value::Null).keys().is_empty());
     }
 
     #[test]

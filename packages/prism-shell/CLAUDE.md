@@ -46,6 +46,7 @@ src/
   events.rs            # `dispatch_event` router (read events → service fan-out)
   import_resolver.rs   # `FsImportResolver` — host `ImportResolver` (sibling/`prism://`)
   lib.rs               # public surface + `web_start` wasm entry
+  project_manager.rs   # Project Vault: folder → persistent object graph (native)
   props.rs             # `ShellPropBindings` (read side — slot → JSON props)
   render.rs            # `render_tree` + `Skeleton` loader
   render_scope.rs      # `RenderScope` — Phase 3 reactive Owner + DirtyQueue
@@ -133,6 +134,18 @@ From `src/lib.rs`:
   `NavPage`, `InspectorNode`, `PropertyRow`, `SchemaDoc`,
   `SignalConnection`, `TransformSnapshot`, …). Each slot owns its
   own `*_props()` methods so binding closures stay one line.
+- `ProjectManager` (native only) — Project Vault per
+  `docs/dev/project-vault.md`. `Shell::open_project(path)` reads/creates
+  `.prism.json`, hydrates a persistent `CollectionStore` via
+  `VaultManager<FileSystemAdapter>`, ingests every file as a
+  `GraphObject` (`type "file"`/`"folder"`, deterministic
+  `sha256` id, content hashed into a `FileSystemVfsAdapter` blob
+  store, image thumbnails), populates `state.catalog.files`, and
+  starts a recursive `notify` watcher. `close_project` /
+  `save_project` / `poll_project` round it out;
+  `Shell::run_with_project` / the `--project <path>` CLI flag drive
+  the watcher each idle tick. Held as `Option<ProjectManager>` on
+  `ShellInner` — `None` for the default ephemeral session.
 
 ## Three contracts
 

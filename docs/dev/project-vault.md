@@ -151,9 +151,37 @@ pub struct ProjectManager {
 
 | Phase | What | Status |
 |-------|------|--------|
-| **V1** | `FileSystemAdapter` + `FileSystemVfsAdapter` in prism-core | This PR |
-| **V1** | `ProjectManager` in shell: open/close/save, initial file scan | This PR |
-| **V2** | Watcher integration: live file change → graph updates | Next |
-| **V2** | Explorer panel: show project files alongside document tree | Next |
-| **V3** | Folder hierarchy: nested dirs as parent/child GraphObjects | Later |
-| **V3** | Thumbnail generation for image files | Later |
+| **V1** | `FileSystemAdapter` + `FileSystemVfsAdapter` in prism-core | ✅ Done |
+| **V1** | `ProjectManager` in shell: open/close/save, initial file scan | ✅ Done |
+| **V1** | `Shell::{open,close,save,poll}_project` + `--project` CLI flag | ✅ Done |
+| **V2** | Watcher integration: live file change → graph updates | ✅ Done |
+| **V2** | Explorer panel: project files drive `state.catalog.files` | ✅ Done |
+| **V3** | Folder hierarchy: nested dirs as parent/child GraphObjects | ✅ Done |
+| **V3** | Thumbnail generation for image files | ✅ Done |
+
+### Implementation notes
+
+- `ProjectManager` lives in `prism-shell/src/project_manager.rs`,
+  gated `#[cfg(feature = "native")]` — the persistent stack rides the
+  `crdt` feature the shell's `native` feature already pulls in. The
+  wasm matrix never compiles it.
+- The watcher uses `notify::RecommendedWatcher` **directly in the
+  shell** (already a `native` dep, same pattern as the `.prism-ui`
+  hot-reload watcher) rather than going through `prism-daemon` IPC —
+  the shell's `native` feature deliberately excludes the daemon, so
+  host-side watching keeps the feature boundary intact. `Shell::poll_project`
+  / `run_with_project` drain it each idle tick.
+- Deterministic IDs: `sha256("file:"|"folder:" + relative_path)`
+  truncated to 16 hex chars. Folders are `type_name: "folder"`
+  objects; files carry the V3 `parent_id` chain so the explorer
+  renders a real tree.
+- Thumbnails decode via the workspace `image` crate, downscale to
+  ≤256px PNG, and land as their own content-addressed VFS blob
+  referenced from `GraphObject.image`.
+- **Downstream (not in this scope):** the shell had no object graph
+  before this; `ProjectManager` introduces the first persistent
+  `CollectionStore`. Wiring those `GraphObject`s into facet
+  `items` / search resolution is a separate binding-layer change —
+  the data is now live and queryable via `Shell`/`ProjectManager`
+  accessors; the facet read-path consumption is left to the
+  binding/connection layer that owns `node.props`.

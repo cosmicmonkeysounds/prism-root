@@ -180,6 +180,25 @@ pub struct ShellInner {
     /// otherwise.
     #[cfg(feature = "native")]
     pub luau_runtime: Option<Rc<prism_core::luau_runtime::LuauRuntime>>,
+    /// Project Vault (`docs/dev/project-vault.md`). `Some` once a
+    /// folder is opened via [`Shell::open_project`]; owns the
+    /// persistent `CollectionStore`, VFS blob store, and the
+    /// recursive change watcher. `None` for the default ephemeral
+    /// session and every headless test that never opens a project.
+    #[cfg(feature = "native")]
+    pub project: Option<crate::project_manager::ProjectManager>,
+    /// **A2 read seam (§2.3).** The installed skeleton `bind:*`
+    /// context, when a host has attached one via
+    /// [`Shell::attach_skeleton_bindings`]. `None` (the default) is a
+    /// zero-cost no-op — `Shell::render` skips the projection pass
+    /// entirely, so every existing render path is byte-identical
+    /// until a host opts in. When `Some`, each frame's composed
+    /// skeleton has the per-node `ReactiveProps` bag projected back
+    /// into its attributes (a subscribing read inside the render
+    /// pass), so a [`refresh`] wakes the next frame.
+    ///
+    /// [`refresh`]: crate::skeleton_bindings::SkeletonBindingContext::refresh
+    pub skeleton_bindings: RefCell<Option<crate::skeleton_bindings::SkeletonBindingContext>>,
 }
 
 impl ShellInner {
@@ -527,6 +546,9 @@ impl Shell {
             probe_log: Rc::new(RefCell::new(std::collections::VecDeque::new())),
             #[cfg(feature = "native")]
             luau_runtime,
+            #[cfg(feature = "native")]
+            project: None,
+            skeleton_bindings: RefCell::new(None),
         }));
         // §43 C1: one-shot post-boot resync. The seed sets selection
         // and the inspector tree, but `derive_property_rows` needs the
@@ -576,6 +598,69 @@ impl Shell {
     /// [`ServiceContext`]: crate::services::ServiceContext
     pub fn switch_active_app(&self, app_id: Option<&str>) -> bool {
         self.inner.borrow_mut().switch_active_app(app_id)
+    }
+
+    /// Open `path` as a Project Vault (`docs/dev/project-vault.md`).
+    /// Reads or creates `.prism.json`, hydrates the persistent
+    /// `CollectionStore`, ingests every file as a `GraphObject`,
+    /// starts the recursive change watcher, and populates the
+    /// explorer (`state.catalog.files`) + `state.project.root`.
+    ///
+    /// Replaces any already-open project (its dirty collection is
+    /// flushed first via [`Self::close_project`]).
+    #[cfg(feature = "native")]
+    pub fn open_project(&self, path: impl Into<std::path::PathBuf>) -> Result<(), String> {
+        let path = path.into();
+        self.close_project();
+        let mut pm = crate::project_manager::ProjectManager::open(&path)?;
+        let files = pm.file_nodes();
+        let mut guard = self.inner.borrow_mut();
+        guard.state.catalog.files = files;
+        guard.state.project.root = Some(path);
+        guard.state.project.dirty = false;
+        guard.project = Some(pm);
+        Ok(())
+    }
+
+    /// Flush and close the open project (if any), clearing the
+    /// explorer + `state.project`. Idempotent.
+    #[cfg(feature = "native")]
+    pub fn close_project(&self) {
+        let mut guard = self.inner.borrow_mut();
+        if let Some(mut pm) = guard.project.take() {
+            let _ = pm.save();
+        }
+        guard.state.project.root = None;
+        guard.state.project.current_file = None;
+        guard.state.catalog.files.clear();
+    }
+
+    /// Force-flush the open project's dirty collection to disk.
+    #[cfg(feature = "native")]
+    pub fn save_project(&self) -> Result<(), String> {
+        let mut guard = self.inner.borrow_mut();
+        match guard.project.as_mut() {
+            Some(pm) => pm.save(),
+            None => Ok(()),
+        }
+    }
+
+    /// Drain the project watcher, apply filesystem changes to the
+    /// graph, auto-save on cadence, and refresh the explorer tree.
+    /// Returns `true` when something changed (the caller should
+    /// re-render). No-op when no project is open.
+    #[cfg(feature = "native")]
+    pub fn poll_project(&self) -> bool {
+        let mut guard = self.inner.borrow_mut();
+        let Some(pm) = guard.project.as_mut() else {
+            return false;
+        };
+        if !pm.poll() {
+            return false;
+        }
+        let files = pm.file_nodes();
+        guard.state.catalog.files = files;
+        true
     }
 
     /// ADR-009 follow-on: install (or replace) the stylesheet
@@ -721,6 +806,80 @@ impl Shell {
     pub fn collect_skeleton_bindings(&self) -> crate::skeleton_bindings::SkeletonBindings {
         let tree = self.render();
         crate::skeleton_bindings::SkeletonBindings::collect(&tree)
+    }
+
+    /// A2 install side — render the skeleton, then build a
+    /// [`SkeletonBindingContext`](crate::skeleton_bindings::SkeletonBindingContext)
+    /// that registers an `Effect` per slot/selector `bind:*` against
+    /// the supplied AppState snapshot. `snapshot` is the slot tree
+    /// keyed by slot name (`state.workspace.label` reads
+    /// `snapshot["workspace"]["label"]`); `selectors` is the
+    /// host-resolved selector table.
+    ///
+    /// The host keeps the returned context alive for the skeleton's
+    /// lifetime and calls
+    /// [`refresh`](crate::skeleton_bindings::SkeletonBindingContext::refresh)
+    /// each frame (or on slot mutation) to push fresh values through
+    /// the reactive graph. Dropping the context disposes every
+    /// installed effect.
+    pub fn install_skeleton_bindings(
+        &self,
+        snapshot: &serde_json::Value,
+        selectors: &serde_json::Value,
+    ) -> crate::skeleton_bindings::SkeletonBindingContext {
+        let tree = self.render();
+        crate::skeleton_bindings::SkeletonBindingContext::install(&tree, snapshot, selectors)
+    }
+
+    /// A2 **read seam (§2.3)** — install a skeleton `bind:*` context
+    /// (via [`install_skeleton_bindings`]) *and* retain it on
+    /// `ShellInner` so every subsequent [`render`](Self::render)
+    /// projects the per-node `ReactiveProps` bag back into the
+    /// composed skeleton. This is the read-side mirror of the install
+    /// seam: the installer answers "what did the author bind?"; this
+    /// makes the next render actually show it, with the projecting
+    /// reads subscribed to the frame's reactive context so a later
+    /// [`refresh_skeleton_bindings`](Self::refresh_skeleton_bindings)
+    /// wakes the next frame.
+    ///
+    /// Replaces any previously attached context (dropping it, which
+    /// disposes its effects). The host owns refresh cadence — call
+    /// `refresh_skeleton_bindings` whenever the bound slots change.
+    ///
+    /// [`install_skeleton_bindings`]: Self::install_skeleton_bindings
+    pub fn attach_skeleton_bindings(
+        &self,
+        snapshot: &serde_json::Value,
+        selectors: &serde_json::Value,
+    ) {
+        let ctx = self.install_skeleton_bindings(snapshot, selectors);
+        self.inner.borrow().skeleton_bindings.replace(Some(ctx));
+    }
+
+    /// Push a fresh AppState/selector snapshot through the attached
+    /// skeleton `bind:*` context's source signals. Each changed slot
+    /// drives its `Effect` to mirror the new value into the per-node
+    /// bag; because the previous render's projection read those bag
+    /// signals under the frame's reactive context, the frame is
+    /// marked dirty and the next `render` reflects the change.
+    ///
+    /// No-op when nothing has been attached via
+    /// [`attach_skeleton_bindings`](Self::attach_skeleton_bindings).
+    /// Returns `true` when a context was present and refreshed.
+    pub fn refresh_skeleton_bindings(
+        &self,
+        snapshot: &serde_json::Value,
+        selectors: &serde_json::Value,
+    ) -> bool {
+        let inner = self.inner.borrow();
+        let sk = inner.skeleton_bindings.borrow();
+        match sk.as_ref() {
+            Some(ctx) => {
+                ctx.refresh(snapshot, selectors);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Install (or replace) the default `app.prism-ui` skeleton from
@@ -898,8 +1057,16 @@ impl Shell {
         // skeleton's `<shell.app-window>` element. Cheap (AST clone),
         // bounded (host skeleton is ~50 nodes), and runs once per
         // frame — no caching needed unless profiling shows it.
-        let composed = self.skeleton.with_app_body(inner.active_app_skeleton());
+        let mut composed = self.skeleton.with_app_body(inner.active_app_skeleton());
         let app_import_resolver = inner.active_app_import_resolver();
+        // **A2 read seam (§2.3).** When a host attached a skeleton
+        // `bind:*` context, project its per-node `ReactiveProps` bag
+        // into the composed AST *inside* the render pass below so the
+        // subscribing `signal(key)` reads enroll the frame's reactive
+        // context — a `refresh` then wakes the next frame. `None` is
+        // a no-op: the composed doc is untouched and the path is
+        // byte-identical to pre-seam behaviour.
+        let skeleton_bindings = inner.skeleton_bindings.borrow();
         // Full render — rebuild the class→NodeId table from scratch so
         // a removed `class="…"` doesn't keep a stale NodeId alive.
         inner.class_deps.borrow_mut().clear();
@@ -922,6 +1089,9 @@ impl Shell {
             c
         };
         let mut tree = inner.render_scope.run_in_render_pass(|| {
+            if let Some(sk) = skeleton_bindings.as_ref() {
+                sk.apply_to_ast(&mut composed.doc);
+            }
             render_with_hot_reload(|| {
                 render_tree_with(
                     &composed,
@@ -1099,14 +1269,27 @@ impl Shell {
                         }
                         c
                     };
+                    // A2 read seam (§2.3): when a host attached a
+                    // skeleton `bind:*` context, project its bag into
+                    // a per-frame clone *inside* the render pass so
+                    // the subscribing reads re-enroll this frame's
+                    // reactive context (a `refresh` is what marked us
+                    // dirty to get here). `None` keeps the borrow-free
+                    // fast path — render the shared skeleton directly.
+                    let sk = guard.skeleton_bindings.borrow();
+                    let mut bound_skeleton = sk.as_ref().map(|_| skeleton.clone());
                     guard.render_scope.run_in_render_pass(|| {
+                        if let (Some(ctx), Some(bs)) = (sk.as_ref(), bound_skeleton.as_mut()) {
+                            ctx.apply_to_ast(&mut bs.doc);
+                        }
+                        let active_skeleton = bound_skeleton.as_ref().unwrap_or(&skeleton);
                         render_with_hot_reload(|| {
                             // `render_with_hot_reload` accepts FnMut so
                             // the patch pipeline can re-invoke us; clone
                             // the caches each call so the inner closure
                             // doesn't move them out of its capture.
                             render_tree_with(
-                                &skeleton,
+                                active_skeleton,
                                 &guard.bindings,
                                 Arc::clone(&guard.resolver),
                                 &guard.prop_ctx(),
@@ -1311,6 +1494,31 @@ impl Shell {
                 }
             });
 
+        self.run_inner(Some(tick))
+    }
+
+    /// Same as [`Self::run`] but drives the open Project Vault's
+    /// watcher each idle tick: filesystem changes flow into the
+    /// graph and the explorer re-renders without an input event.
+    /// `open_project` must have succeeded before calling this.
+    #[cfg(feature = "native")]
+    pub fn run_with_project(self) -> Result<(), Box<dyn std::error::Error>> {
+        let tick_inner = Rc::clone(&self.inner);
+        let tick: prism_ui_runtime::backends::femtovg::TickHook =
+            Box::new(move |_surface: &mut Surface| {
+                let mut guard = tick_inner.borrow_mut();
+                let Some(pm) = guard.project.as_mut() else {
+                    return;
+                };
+                if !pm.poll() {
+                    return;
+                }
+                let files = pm.file_nodes();
+                guard.state.catalog.files = files;
+                guard
+                    .render_scope
+                    .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+            });
         self.run_inner(Some(tick))
     }
 

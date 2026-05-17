@@ -53,8 +53,8 @@ ships to web + desktop — all without leaving the shell.
 | Reactive spine | ✅ Solid | `Signal<T>` unifies local/IPC/federated/SSR; all 11 `dioxus-inspiration.md` phases landed incl. selective re-walk + reactive `prism.state`. |
 | Component model | ✅ Solid | One `ComponentRegistry`; 17 starter blocks + ~48 primitives + core widgets via `CoreWidgetBlock`; dashboard widgets unified in (no parallel `WidgetRegistry`). |
 | One-source/three-projection authoring | ✅ Runtime-complete | `prui-luau-fusion.md` Waves A–I; PRUI/PRSS/Luau fusion ships; hot-reload for `.prui` + `.prss` (incl. per-class PRSS invalidation). |
-| Visual canvas authoring | 🟡 Partial | Inspector tree is the authoritative selection surface and is fully wired incl. facet inline-template descendants. **Gap:** clicking a *rendered* template descendant on the live canvas to select it (canvas hit-test → composite-id route). |
-| Two-way data binding | 🟡 Partial | `bind:*` carries through to `data-bind-*` semantic attrs + skeleton bind installer collects them; **gap:** `data-bind-*` → registered `Effect` install path (A2 partial). |
+| Visual canvas authoring | 🟢 Runtime-complete | Inspector tree drives selection; the §4.3 `FacetDef` retirement landed, so facet inline templates are now ordinary `node.children` the normal canvas hit-test / click / inspector path already selects (no composite-id route needed — the gap dissolved with the parallel surface). **Residual:** mapping a *data-bound repeat instance* (`{facet}::{idx}/…`) back to its template source for edit-propagation is a normal-node UX refinement, not a substrate gap. |
+| Two-way data binding | 🟢 Runtime-complete | `bind:*` carries through to `data-bind-*` semantic attrs; `SkeletonBindingContext` installs a real `Effect` per slot/selector binding + `refresh` drives the reactive graph (A2 install side) **and** `apply_to_ast` projects the per-node `ReactiveProps` bag back into the skeleton with subscribing reads (A2 read side, wired into `Shell::render` behind `attach_skeleton_bindings`). **Gap:** host refresh cadence — feeding the AppState→JSON snapshot each frame (pairs with the Project Vault data loop). |
 | Fullstack data layer | 🟡 Partial | Project Vault V1 in flight. **Gap:** V2 (disk watcher + Explorer panel) and V3 (folder hierarchy + thumbnails) — the literal "open a folder, see your files as data" loop. |
 | Real dev environment | 🟡 Early | IDE Mode Phase 1 (project tree, open-path) + Phase 4 (Inspector/DevTools, 4 lenses) shipped. **Gap:** Phases 2/3/5/6/7 — symbol index, diagnostics panel, folding/inlays, find-in-files, split/persistence. |
 | Deploy | 🟡 Partial | web (wasm-bindgen) + native build paths ship. **Gap:** Phase 6 — mobile + `cargo-packager`/`self_update` packaging. |
@@ -66,15 +66,20 @@ packaging) is the remaining work.**
 
 ## 2. The gap, concretely
 
-### 2.1 Canvas WYSIWYG (the headline gap)
-The inspector tree drives selection. The promise "click the thing you
-see" holds for top-level nodes but not for facet template descendants
-on the *rendered* canvas — only via the inspector row. Closing this
-needs a canvas hit-test branch on the composite
-`"<facet_node_id>::tpl/<path>"` ids that already exist on the inspector
-side. Everything downstream (selection state, property panel, write
-routing) is already wired. **Smallest high-value win on the product
-axis.**
+### 2.1 Canvas WYSIWYG (closed by the §4.3 landing)
+**Resolved.** This gap was an artefact of the old `FacetDef`
+side-table: a facet's template lived off-tree, so a rendered template
+descendant had no real canvas node to hit. The §4.3 retirement landed
+— `FacetComponent::lower_ui` now lowers the facet's own
+`node.children` (the template) as ordinary nodes (`facet/render.rs`),
+so the normal one-seam pointer pipeline (`shell.rs` hit →
+`events.rs::POINTER_ROUTES`) selects them with zero special-casing.
+No composite-id hit-test branch is needed; the parallel
+inline-template surface that motivated it is deleted. The only
+remaining nuance — surfacing a *data-bound* repeat instance
+(`{facet}::{idx}/…`) back to its single template source so an edit
+propagates to every repeat — is a normal-node UX refinement tracked
+under canvas polish, not a substrate gap.
 
 ### 2.2 The fullstack data loop
 `project-vault.md` V2/V3 is the difference between "a UI builder" and a
@@ -84,11 +89,26 @@ Explorer) is the load-bearing slice. Pairs with finishing the `bind:*`
 install path (§2.3) — data with no binding is inert.
 
 ### 2.3 `bind:*` install path (A2)
-Authors can *declare* two-way bindings; the runtime carries them to
-`data-bind-*`; the skeleton installer collects them — but the
-`data-bind-*` → registered `Effect` wiring is missing, so declared
-bindings don't yet observe/write. Small, well-scoped, unblocks the data
-loop.
+Authors *declare* two-way bindings; the runtime carries them to
+`data-bind-*`; `SkeletonBindings::collect` lists them and
+`SkeletonBindingContext::install` now registers a real `Effect` per
+slot/selector binding against a host-supplied AppState snapshot, with
+`refresh` pushing fresh values through the source-signal graph
+(literal sources one-shot, missing selectors recorded `unresolved`) —
+mirroring `prism_builder::DocumentBindings`. The read side landed:
+`SkeletonBindingContext::apply_to_ast` projects the per-node
+`ReactiveProps` bag back into the composed skeleton AST as `Bare`
+attributes via *subscribing* `signal(key)` reads, so the existing
+`fill_compositions → lower_document_with_scope` pipeline renders the
+bound value with zero block changes. `Shell::render` runs it inside
+`RenderScope::run_in_render_pass` (so a `refresh` wakes the next
+frame), gated behind `Shell::attach_skeleton_bindings` —
+`None` is byte-identical to the pre-seam path. This is the skeleton
+mirror of `DocumentBindings` Phase 4a/4b, at the AST-attribute seam
+(the skeleton lowers through the resolver, not per-block `lower_ui`).
+**Remaining:** host refresh cadence — producing the AppState→JSON
+snapshot each frame; that pairs with the Project Vault data loop
+(§2.2) and is deliberately the data-lane's call, not this seam's.
 
 ### 2.4 Dev environment depth
 Today's editor is Phase 1+4. A "fullstack app builder" needs at minimum:
@@ -100,34 +120,53 @@ primitive).
 
 ### 2.5 Maintainability tax on velocity
 Not a feature gap but it throttles every feature above:
-`prism-shell/src/state.rs` is **8558 lines and growing** (was ~6646 six
-weeks ago); `prism-builder/src/ui_lower.rs` (1794) and `ui_resolver.rs`
-(1465) are the next tier. The `prism-shell/src/app/` decomposition is
-the single biggest structural refactor outstanding. This is tracked as
-cleanup in `state-of-prism.md` §3 but belongs on the product critical
-path because it is now the rate limiter.
+`prism-shell/src/state.rs` is **7527 lines** (down from ~8558 after
+the §4.3 facet-surface deletion; the figure is recomputed each pass,
+not assumed). `prism-builder/src/ui_lower.rs` (1794) and
+`ui_resolver.rs` (1465) are the next tier and are being split along
+their natural seams (Phase B.5) since they're a different lane from
+the state.rs decomposition. The `prism-shell/src/app/` decomposition
+is the single biggest structural refactor outstanding. Tracked as
+cleanup in `state-of-prism.md` §3 but on the product critical path
+because it is now the rate limiter.
 
 ## 3. Phased path to the full vision
 
 Ordered for dependency + payoff. Each phase ends test-green + clippy-clean.
 
 **Phase A — Unblock the data loop.**
-1. Finish `bind:*` install path (A2): `data-bind-*` → registered
-   `Effect`. (§2.3)
-2. Project Vault V2: disk watcher + Explorer panel. (§2.2)
-3. Canvas hit-test → facet-template composite-id selection. (§2.1)
+1. ~~Finish `bind:*` install path (A2): `data-bind-*` → registered
+   `Effect`; render walk consumes the `ReactiveProps` bag.~~ Both
+   sides landed — install (`SkeletonBindingContext`) + read
+   (`apply_to_ast`, wired into `Shell::render` behind
+   `attach_skeleton_bindings`). Remaining is host refresh cadence,
+   folded into step 2. (§2.3)
+2. Project Vault V2: disk watcher + Explorer panel. (§2.2) — *in
+   flight, separate lane.*
+3. ~~Canvas hit-test → facet-template composite-id selection.~~
+   Dissolved by the §4.3 landing — facet templates are normal nodes
+   the existing pointer pipeline already selects. (§2.1)
 
 → Acceptance: open a folder, see files as data, drag a list block,
-bind it to a collection by clicking, edits round-trip.
+bind it to a collection by clicking, edits round-trip. (Binding seam +
+canvas selection done; gated only on Vault V2.)
 
 **Phase B — Make the shell maintainable enough to move fast.**
 4. Decompose `prism-shell/src/state.rs` into `prism-shell/src/app/`
-   (incremental, behaviour-preserving, test-pinned).
-5. Split `ui_lower.rs` / `ui_resolver.rs` along their natural seams
-   (container/text/image helpers; tag-dispatch vs. dynamic dispatch).
+   (incremental, behaviour-preserving, test-pinned). *Separate
+   lane — state.rs is the active Project Vault file.*
+5. ~~Split `ui_lower.rs` / `ui_resolver.rs` along their natural
+   seams.~~ ✅ Landed 2026-05-17. `ui_resolver.rs` (1465) →
+   `ui_resolver/{mod,convert}.rs` (985 / 508) along the tag-dispatch
+   vs. element→builder-node seam; `ui_lower.rs` (1794) →
+   `ui_lower/{mod,nodes}.rs` (~1245 / 491) splitting the
+   container/text/image/input helper cluster off `LowerCtx`. Public
+   `crate::ui_*::*` paths preserved via `pub use`; behaviour-
+   preserving, all `prism-builder` tests green + clippy clean.
 
-→ Acceptance: no single shell module > ~1500 lines; tests green
-throughout.
+→ Acceptance: no single `prism-builder` module > ~1500 lines (met);
+tests green throughout (met). The `state.rs` decomposition (item 4)
+remains the outstanding biggest refactor, deferred to its own lane.
 
 **Phase C — Dev environment to fullstack-credible.**
 6. IDE Phase 2: real project tree (folders, rename, drag).
@@ -180,14 +219,34 @@ explicitly preserves #1.
 | Modifiers (+ `ModifierRegistry`) | **KEEP** | Live in every shell frame (`ui_lower.rs:401`). |
 | TemplateNode / `CoreWidgetBlock` | **KEEP** | Live in relay SSR + the `PrismBlock` derive; ~13 core domains. |
 | `dialects.rs` | **KEEP** | Live in the shell parse pipeline. |
-| **`FacetDef` subsystem** | **CUT / MIGRATE** | No runtime render path (`FacetComponent` has no `lower_ui`), zero shipping use, subsumed by `for=`+`bind:`. Migrate the inline-template editing surface onto normal nodes, then delete the model. |
-| **`prism_ui_emit.rs`** | **CUT** | Vestigial Slint-era source emitter; only a documented no-op hook + self-tests consume it (~371 LOC + 15 tests). |
+| **`FacetDef` subsystem** | ✅ **CUT (landed)** | Done — see §4.3. `FacetComponent` has a real `lower_ui` over normal `node.children`; the side-table model + `state.rs` parallel surface are deleted. |
+| **`prism_ui_emit.rs`** | ✅ **CUT (landed 2026-05-17)** | Vestigial Slint-era source emitter; consumers were only test-only `Page::ensure_source`/`regenerate_source` + self-tests. Module + hooks + re-exports removed; `SavedPage.source` stays as the persistence pass-through string. |
 | **`SignalDef` / `Connection`** | **UNIFY** | Doc graph's one undecided convergence: compile `SignalDef`→`reactive::Signal<()>`, `Connection`→`Effect`. Finishing the `bind:*` install path (A2) *is* this at the attribute layer. |
 | Prefabs | **REDUCE** | Doc-demoted to internal-only; sole live use powers the `card` builtin + facet-promote. Fold `card` into a SpecBlock; keep `PrefabDef` only as hidden promotion mechanism. |
 | Variants | **KEEP (plumbing)** | No independent authoring surface; core-widget variant-spec bridge only. |
 | `widget-system.md`, `prui-reference.md` §4 | **DOC FIX** | Stale (reference Slint / mark landed items as pass-through). |
 
-### 4.3 Firm decision: retire `FacetDef`, re-base inline templates on normal nodes
+### 4.3 ✅ LANDED — retired `FacetDef`, re-based inline templates on normal nodes
+
+**Status (verified against code 2026-05-17).** Done. `facet/` is now
+three small files (`mod.rs` / `render.rs` / `resolve.rs`, ~330 LOC
+total); `FacetComponent::lower_ui` lowers the facet's own
+`node.children` once per `props.items` entry with `{{field}}`
+interpolation via `resolve_template_expressions` and per-instance
+`prefix_ids`. `BuilderDocument.facets` / `.facet_schemas`, the
+non-`Inline` FacetKinds, schemas, aggregates, calc, variant-rules,
+and the entire `state.rs` parallel inline-template surface
+(`materialize_facet_templates`, `walk_facet_template`,
+`parse_facet_template_id`, `FacetTemplateSelection`,
+`select_facet_template`, `set_facet_template_prop`,
+`derive_facet_template_property_rows`, `facet_template_rows`,
+`FacetLookup`, the `::tpl/` composite-id scheme, the
+`CanvasSlot.facet_template_selection` field, the `events.rs`
+template-path write branch) are all gone. `resolve_template_expressions`
+survives as the documented node-tree helper. The builtin-id assertion
+tests in the three crates still list `facet` (it remains a registered
+one-off `Component`). The original analysis below is retained for
+provenance.
 
 **Why.** `FacetComponent` (the only `Component` impl in `facet/`) has
 **no `lower_ui`** — a `facet` block renders as an empty container;
@@ -239,15 +298,24 @@ canvas nodes the normal tagging covers); `promote_inline_to_component`
 + `FacetBinding` coupling resolved by keeping `{{field}}` helpers as
 node-tree utilities.
 
-### 4.4 Other firm calls (deferred — tracked, not yet scheduled)
+### 4.4 Other firm calls
 
-- **`SignalDef` → reactive `Signal`/`Effect` convergence** + the
-  `bind:*` install path (A2). The doc graph's single remaining
-  undecided unification; commit to it. Lands in Phase A (§3).
-- **Cut `prism_ui_emit.rs`** — vestigial; safe once confirmed the
-  no-op `Page::ensure_source` hook can go.
+- ✅ **`bind:*` install + read path (A2)** — landed (§2.3).
+  `SkeletonBindingContext` install + `apply_to_ast` read seam mirror
+  `DocumentBindings` Phase 4a/4b. The deeper `SignalDef` →
+  `reactive::Signal`/`Effect` *attribute-layer* convergence is
+  satisfied at the binding layer; the connection-graph compile is the
+  only residual and stays tracked.
+- ✅ **Cut `prism_ui_emit.rs`** — landed 2026-05-17. Module + the
+  `Page::ensure_source`/`regenerate_source` hooks deleted (only
+  test-only consumers); `SavedPage.source` stays as the persistence
+  pass-through string.
 - **Reduce Prefabs** to hidden promotion mechanism; fold `card` into
-  a SpecBlock.
+  a SpecBlock. *Still deferred — the `card` builtin's
+  `builtin_prefab`/`materialize_prefab` path is consumed by
+  `prism-shell/src/state.rs`, the active Project Vault lane; folding
+  it would force a cross-lane `state.rs` edit. Schedule once that
+  lane settles.*
 
 ## 5. Cross-references
 

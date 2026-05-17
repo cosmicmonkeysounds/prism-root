@@ -79,6 +79,14 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+
+# Project Vault (`docs/dev/project-vault.md`) — deterministic
+# file→ObjectId hashing + file-time stamps for the native-only
+# `project_manager` module. The wasm matrix never compiles that
+# module; the deps stay light enough not to gate.
+sha2 = { workspace = true }
+hex = { workspace = true }
+chrono = { workspace = true }
 # Used as the lookup type for the live document's facet table —
 # `BuilderDocument::facets` is an `IndexMap`, and the shell's
 # `materialize_facet_templates` helper accepts any map that

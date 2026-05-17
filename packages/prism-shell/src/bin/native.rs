@@ -58,6 +58,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if let Cli::Project { path } = &cli {
+        shell.open_project(path.clone())?;
+        return shell.run_with_project();
+    }
+
     if matches!(cli, Cli::Run) && std::env::var("PRISM_WATCH_UI").is_ok()
         || matches!(cli, Cli::WatchUi)
     {
@@ -179,6 +184,10 @@ enum Cli {
         width: u32,
         height: u32,
     },
+    /// `--project <path>` — open a Project Vault
+    /// (`docs/dev/project-vault.md`) and run the event loop with the
+    /// folder watcher driving the live object graph.
+    Project { path: String },
 }
 
 fn scene_from_cli(cli: &Cli) -> Option<BuiltinScene> {
@@ -194,6 +203,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
     let mut screenshot: Option<String> = None;
     let mut list_scenes = false;
     let mut watch_ui = false;
+    let mut project: Option<String> = None;
     let mut width: u32 = 1280;
     let mut height: u32 = 800;
     let mut i = 0;
@@ -202,6 +212,13 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
             "--watch-ui" => {
                 watch_ui = true;
                 i += 1;
+            }
+            "--project" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| "--project requires a path".to_string())?;
+                project = Some(value.clone());
+                i += 2;
             }
             "--scene" => {
                 let value = args
@@ -244,6 +261,9 @@ fn parse_cli(args: &[String]) -> Result<Cli, String> {
     }
     if list_scenes {
         return Ok(Cli::ListScenes);
+    }
+    if let Some(path) = project {
+        return Ok(Cli::Project { path });
     }
     if let Some(path) = screenshot {
         return Ok(Cli::Screenshot {

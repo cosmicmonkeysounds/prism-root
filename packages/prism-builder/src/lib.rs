@@ -1,7 +1,6 @@
 //! `prism-builder` — the page builder.
 //!
-//! Post-Slint, this crate emits `.prism-ui` source via §29's
-//! [`prism_ui_emit`] and lowers documents to `prism_ui_runtime`
+//! Post-Slint, this crate lowers documents to `prism_ui_runtime`
 //! through the unified Taffy pipeline.
 //! [`component::Component::lower_ui`] emits `prism_ui_runtime::layout::Node`
 //! trees consumed by the shell renderer *and* by the relay's
@@ -33,7 +32,6 @@ pub mod modifier_bootstrap;
 pub mod mutator;
 pub mod prefab;
 pub mod primitives;
-pub mod prism_ui_emit;
 pub mod project;
 pub mod reactive_props;
 pub mod registry;
@@ -74,7 +72,6 @@ pub use modifier::{
 };
 pub use mutator::NodeMutator;
 pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef};
-pub use prism_ui_emit::{emit_document, emit_node};
 pub use project::{ProjectFile, FILE_EXTENSION, FORMAT_VERSION};
 pub use reactive_props::{DocumentBindings, ReactiveProps};
 pub use registry::{

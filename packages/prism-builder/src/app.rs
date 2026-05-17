@@ -88,30 +88,6 @@ pub struct Page {
     pub style: StyleProperties,
 }
 
-impl Page {
-    /// Populate `self.source` from the document tree if it is empty.
-    /// The source is the `.prism-ui` text representation produced by
-    /// [`crate::prism_ui_emit::emit_document`]. Idempotent — does
-    /// nothing if `source` is already set; callers wanting a forced
-    /// refresh should clear `source` first or call
-    /// [`Page::regenerate_source`].
-    pub fn ensure_source(
-        &mut self,
-        _registry: &crate::registry::ComponentRegistry,
-        _tokens: &prism_core::design_tokens::DesignTokens,
-    ) {
-        if self.source.is_empty() {
-            self.source = crate::prism_ui_emit::emit_document(&self.document);
-        }
-    }
-
-    /// Force-regenerate `self.source` from the document tree,
-    /// regardless of whether it is currently set.
-    pub fn regenerate_source(&mut self) {
-        self.source = crate::prism_ui_emit::emit_document(&self.document);
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NavigationConfig {
     pub style: NavigationStyle,
@@ -210,68 +186,6 @@ mod tests {
         assert!(app.active_document().is_some());
         assert_eq!(app.active_source(), Some("// page 1"));
         assert_eq!(app.page_count(), 2);
-    }
-
-    #[test]
-    fn ensure_source_emits_when_empty_and_is_idempotent() {
-        use crate::document::Node;
-        use prism_core::design_tokens::DesignTokens;
-
-        let mut page = Page {
-            id: "p".into(),
-            title: "T".into(),
-            route: "/".into(),
-            source: String::new(),
-            document: BuilderDocument {
-                root: Some(Node {
-                    id: "root".into(),
-                    component: "container".into(),
-                    props: serde_json::json!({ "title": "Hi" }),
-                    children: vec![],
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            style: StyleProperties::default(),
-        };
-        let registry = crate::registry::ComponentRegistry::new();
-        let tokens = DesignTokens::default();
-
-        page.ensure_source(&registry, &tokens);
-        let first = page.source.clone();
-        assert!(first.contains("<container"));
-        assert!(first.contains("title=\"Hi\""));
-
-        // idempotent — already-set source survives the call
-        page.source = "// hand-edited".into();
-        page.ensure_source(&registry, &tokens);
-        assert_eq!(page.source, "// hand-edited");
-    }
-
-    #[test]
-    fn regenerate_source_overwrites_unconditionally() {
-        use crate::document::Node;
-
-        let mut page = Page {
-            id: "p".into(),
-            title: "T".into(),
-            route: "/".into(),
-            source: "// stale".into(),
-            document: BuilderDocument {
-                root: Some(Node {
-                    id: "root".into(),
-                    component: "container".into(),
-                    props: serde_json::Value::Null,
-                    children: vec![],
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            style: StyleProperties::default(),
-        };
-        page.regenerate_source();
-        assert!(page.source.contains("<container"));
-        assert!(!page.source.contains("stale"));
     }
 
     #[test]
