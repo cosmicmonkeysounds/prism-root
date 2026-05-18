@@ -72,6 +72,38 @@ impl ShellService for EditorFilesService {
                     ctx.state.canvas.prev_editor_tab();
                 }
             ),
+            // IDE Phase 2 — "Go to Symbol" palette (Ctrl+T, matching
+            // VS Code's workspace-symbol shortcut; Ctrl+Shift+O is
+            // already taken by project.open-folder).
+            cmd!(
+                "editor.go-to-symbol",
+                "Go to Symbol…",
+                "View",
+                "Ctrl+T",
+                |ctx| {
+                    let idx = &mut ctx.state.index;
+                    idx.palette_open = true;
+                    idx.query.set_text("");
+                    idx.selected_index = 0;
+                    idx.refresh_results();
+                    // Lose to no other modal — clear competitors so the
+                    // symbol-palette text-input declaration wins.
+                    ctx.state.overlay.command_palette.open = false;
+                    ctx.state.search.open = false;
+                }
+            ),
+            cmd!("editor.symbol-next", "Next Symbol", "View", |ctx| {
+                let n = ctx.state.index.results.len();
+                if n > 0 {
+                    ctx.state.index.selected_index = (ctx.state.index.selected_index + 1) % n;
+                }
+            }),
+            cmd!("editor.symbol-prev", "Previous Symbol", "View", |ctx| {
+                let n = ctx.state.index.results.len();
+                if n > 0 {
+                    ctx.state.index.selected_index = (ctx.state.index.selected_index + n - 1) % n;
+                }
+            }),
         ]
     }
 
@@ -157,6 +189,14 @@ fn save_to(ctx: &mut MutCtx<'_>, path: PathBuf) {
         });
         return;
     }
+    // IDE Phase 2 — keep the symbol index live: a save is the one
+    // moment the on-disk source is known-fresh. Single-file rebuild
+    // (cheap) so jump-to-symbol / the palette see the new defs.
+    if path.extension().and_then(|e| e.to_str()) == Some("luau") {
+        let src = ctx.state.canvas.code_buffer.source().to_string();
+        ctx.state.index.symbols.rebuild_file(path.clone(), &src);
+        ctx.state.index.refresh_results();
+    }
     ctx.state.canvas.record_active_tab_saved(path);
 }
 
@@ -215,6 +255,31 @@ fn open_path_into_tab(ctx: &mut MutCtx<'_>, path: PathBuf) {
     ctx.state.canvas.open_editor_tab(path, source, language);
 }
 
+/// IDE Phase 2 — open `path` in the code editor and drop the caret at
+/// `offset` (a byte index into the file's current source). Shared by
+/// the symbol palette's Enter-commit and its row-click handler so both
+/// land on the exact same jump. Returns a human-readable failure for
+/// the caller to surface as a toast.
+pub(crate) fn open_at_offset(
+    state: &mut crate::state::AppState,
+    vfs: &dyn crate::services::Vfs,
+    path: PathBuf,
+    offset: usize,
+) -> Result<(), String> {
+    let bytes = vfs.read(&path).map_err(|e| format!("{e}"))?;
+    let source =
+        String::from_utf8(bytes).map_err(|_| "file contains non-UTF-8 bytes".to_string())?;
+    let language = language_from_path(&path);
+    state.canvas.open_editor_tab(path, source, language);
+    state
+        .canvas
+        .code_buffer
+        .editor
+        .place_caret_at(offset, false);
+    state.code_editor_focused = true;
+    Ok(())
+}
+
 fn language_from_path(path: &std::path::Path) -> &'static str {
     match path
         .extension()
@@ -237,7 +302,7 @@ fn language_from_path(path: &std::path::Path) -> &'static str {
 mod tests {
     use super::*;
     use crate::services::vfs::test_support::InMemVfs;
-    use crate::services::{Clipboard, NoopLuauHost, ServiceRegistry, UndoStack};
+    use crate::services::{Clipboard, NoopLuauHost, ServiceRegistry, UndoStack, Vfs};
     use crate::AppState;
     use prism_ui_runtime::layout::Viewport;
 
@@ -307,6 +372,47 @@ mod tests {
         assert_eq!(state.canvas.editor_tab_count(), 2);
         run_cmd(&mut state, "editor.file.close", &mut vfs);
         assert_eq!(state.canvas.editor_tab_count(), 1);
+    }
+
+    #[test]
+    fn go_to_symbol_opens_palette_with_results() {
+        let mut state = focused_state();
+        state
+            .index
+            .symbols
+            .rebuild_file("m.luau", "local function greet() end\nlocal count = 0");
+        let mut vfs = InMemVfs::default();
+        assert!(run_cmd(&mut state, "editor.go-to-symbol", &mut vfs));
+        assert!(state.index.palette_open);
+        // Empty query lists every symbol.
+        assert!(state.index.results.iter().any(|s| s.name == "greet"));
+        assert!(state.index.results.iter().any(|s| s.name == "count"));
+    }
+
+    #[test]
+    fn open_at_offset_opens_tab_and_places_caret() {
+        let mut state = focused_state();
+        let mut vfs = InMemVfs::default();
+        let path = PathBuf::from("/proj/m.luau");
+        let src = "local x = 1\nlocal function go() end";
+        vfs.write(&path, src.as_bytes()).unwrap();
+        let off = src.find("go").unwrap();
+        open_at_offset(&mut state, &vfs, path.clone(), off).unwrap();
+        assert_eq!(state.canvas.code_buffer_meta.path.as_ref(), Some(&path));
+        assert_eq!(state.canvas.code_buffer.editor.caret_byte(), off);
+        assert!(state.code_editor_focused);
+    }
+
+    #[test]
+    fn saving_luau_rebuilds_the_symbol_index() {
+        let mut state = focused_state();
+        let mut vfs = InMemVfs::default();
+        let path = PathBuf::from("/proj/s.luau");
+        state
+            .canvas
+            .open_editor_tab(path.clone(), "local function alpha() end", "luau");
+        run_cmd(&mut state, "editor.file.save", &mut vfs);
+        assert!(state.index.symbols.lookup("alpha").len() == 1);
     }
 
     #[test]

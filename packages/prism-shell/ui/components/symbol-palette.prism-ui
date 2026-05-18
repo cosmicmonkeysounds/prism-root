@@ -1,0 +1,79 @@
+<!--
+  shell.symbol-palette — Ctrl+T "Go to Symbol" overlay (IDE Phase 2).
+  Sister to `shell.search-overlay`: a modal card with a query
+  `<input>` and a fuzzy-ranked result list over the project-wide
+  Luau symbol index. The query buffer is a full single-line
+  `TextEditor` routed through the shared text-input dispatch, so it
+  gets caret nav, selection, Ctrl+A/C/X/V and IME for free.
+
+  Closed → 0×0 hidden overlay so visibility stays host state. Open →
+  480px rounded card. Selection + results live on the host
+  (`AppState::index.*`); the DSL paints structure and uses the
+  for-loop `idx` to tint the selected row. Each row carries
+  `data:role="symbol-row"` + `data-path` / `data-offset` so the
+  pointer router can jump to the definition.
+-->
+<container
+    if="{!open}"
+    tag="div"
+    width="0"
+    height="0"
+    data:role="symbol-palette"
+    data:visible="false"
+    aria:hidden="true"/>
+<container
+    else
+    id="{id}"
+    tag="div"
+    direction="column"
+    gap="8"
+    padding-left="12"
+    padding-right="12"
+    padding-top="12"
+    padding-bottom="12"
+    width="480"
+    style:radius="8"
+    style:background="#ffffff"
+    role="dialog"
+    aria-label="Go to Symbol"
+    data:role="symbol-palette">
+  <input
+      id="{id}::input"
+      value="{query}"
+      placeholder="Go to symbol…"
+      focused="true"
+      caret-byte="{caret}"
+      selection="{selection}"
+      width="grow"
+      height="36"
+      font-size="13"/>
+  <container
+      id="{id}::results"
+      direction="column"
+      width="grow">
+    <container
+        for="sym, idx in results"
+        id="{id}::row::{idx}"
+        tag="div"
+        direction="row"
+        gap="12"
+        padding-left="8"
+        padding-right="8"
+        padding-top="6"
+        padding-bottom="6"
+        width="grow"
+        height="34"
+        style:radius="4"
+        style:background="{idx == selected-index ? '#190060c0' : ''}"
+        style:background:hovered="{idx == selected-index ? '' : '#0f000000'}"
+        role="option"
+        aria:selected="{idx == selected-index ? 'true' : ''}"
+        data:role="symbol-row"
+        data-path="{sym.path}"
+        data-offset="{sym.offset}">
+      <text font-size="13" style:color="#000000">{sym.name}</text>
+      <text font-size="11" style:color="#88000000">{sym.kind}</text>
+      <text font-size="11" style:color="#66000000">{sym.path}:{sym.line}</text>
+    </container>
+  </container>
+</container>

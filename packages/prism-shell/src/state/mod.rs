@@ -113,6 +113,10 @@ pub struct AppState {
     pub canvas: CanvasSlot,
     pub project: ProjectSlot,
     pub search: SearchSlot,
+    /// **IDE-mode Phase 2** — project-wide Luau symbol table + the
+    /// `shell.symbol-palette` (Ctrl+Shift+O) state. Rebuilt per-file
+    /// on `editor.file.save` and wholesale on `project.open-folder`.
+    pub index: IndexSlot,
     /// **IDE-mode Phase 4 / cross-cutting §4.3** — DevTools / Inspector
     /// panel state. Four lenses (Document / Presence / Probes / Bindings)
     /// rendered through `shell.devtools`. The probe stream and presence
@@ -253,6 +257,33 @@ pub struct NumberDragInit<'a> {
 }
 
 impl AppState {
+    /// **IDE Phase 2** — rebuild the whole Luau symbol index from the
+    /// current explorer file list. `read` resolves a file's bytes
+    /// (callers pass a VFS-backed or `std::fs`-backed closure so this
+    /// stays host-agnostic); non-`.luau` / unreadable / non-UTF-8
+    /// files are skipped. Clears first so re-opening a different
+    /// folder can't accumulate stale symbols. `refresh_results`
+    /// repopulates the palette projection.
+    pub fn reindex_luau_symbols(&mut self, read: impl Fn(&std::path::Path) -> Option<Vec<u8>>) {
+        self.index.symbols.clear();
+        let paths: Vec<std::path::PathBuf> = self
+            .catalog
+            .files
+            .iter()
+            .filter(|f| {
+                matches!(f.kind, FileKind::File)
+                    && f.path.extension().and_then(|e| e.to_str()) == Some("luau")
+            })
+            .map(|f| f.path.clone())
+            .collect();
+        for path in paths {
+            if let Some(src) = read(&path).and_then(|b| String::from_utf8(b).ok()) {
+                self.index.symbols.rebuild_file(path, &src);
+            }
+        }
+        self.index.refresh_results();
+    }
+
     /// Cross-slot invariant: clearing the selection clears it on
     /// every slot that owns one. The §25 doctrine — multi-slot
     /// invariants live on the multi-slot type, not on each service

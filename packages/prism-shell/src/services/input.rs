@@ -163,7 +163,9 @@ impl InputService {
             .bind("ctrl+shift+s", "file.save-as")
             .bind("ctrl+o", "file.open")
             .bind("ctrl+shift+o", "project.open-folder")
-            .bind("ctrl+f", "search.open");
+            .bind("ctrl+f", "search.open")
+            // IDE Phase 2 — "Go to Symbol" palette.
+            .bind("ctrl+t", "editor.go-to-symbol");
         svc.schemes.lock().expect("schemes lock").push(base);
         svc
     }

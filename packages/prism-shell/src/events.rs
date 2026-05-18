@@ -386,6 +386,10 @@ const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
     // no-op until folding lands (the walker emits a flat depth-encoded
     // list today, so every file is already visible).
     ("explorer-row", handle_explorer_row_click),
+    // **IDE-mode Phase 2** — "Go to Symbol" palette row. Reads
+    // `data-path` + `data-offset`, opens the file in the code editor
+    // and drops the caret on the definition.
+    ("symbol-row", handle_symbol_row_click),
     // **IDE-mode Phase 4** — DevTools panel routes. Tabs switch the
     // active lens; clicking the filter input focuses it so the
     // declarative text-input dispatch claims keystrokes; clicking a
@@ -611,6 +615,38 @@ fn handle_explorer_row_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> 
     // route the user into the code editor so they see the file
     // they just opened.
     g.state.code_editor_focused = true;
+    true
+}
+
+/// IDE-mode Phase 2: a click on a `shell.symbol-palette` result row.
+/// Reads the absolute `data-path` + byte `data-offset`, opens the
+/// file in the code editor (de-duped to an existing tab) and places
+/// the caret on the definition, then closes the palette. Mirrors the
+/// Enter-commit hook so click and keyboard land identically.
+fn handle_symbol_row_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let path_str = match attr_value(hit, "data-path") {
+        Some(p) if !p.is_empty() => p.to_string(),
+        _ => return false,
+    };
+    let offset: usize = attr_value(hit, "data-offset")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let path = std::path::PathBuf::from(path_str);
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    if let Err(e) =
+        crate::services::editor_files::open_at_offset(&mut g.state, &*g.vfs, path, offset)
+    {
+        g.state.overlay.toasts.push(crate::state::Toast {
+            title: "Go to Symbol failed".into(),
+            body: e,
+            kind: crate::state::ToastKind::Error,
+        });
+    }
+    let idx = &mut g.state.index;
+    idx.palette_open = false;
+    idx.query.set_text("");
+    idx.selected_index = 0;
     true
 }
 

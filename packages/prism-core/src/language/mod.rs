@@ -26,5 +26,6 @@ pub mod markdown;
 pub mod prism_ui;
 pub mod prss;
 pub mod registry;
+pub mod symbol_index;
 pub mod syntax;
 pub mod visual;

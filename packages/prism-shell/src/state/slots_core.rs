@@ -380,6 +380,72 @@ impl SearchSlot {
     }
 }
 
+// ── symbol index (IDE Phase 2) ────────────────────────────────────
+
+/// IDE-mode Phase 2 — the project-wide Luau symbol table plus the
+/// `shell.symbol-palette` UI state (Ctrl+Shift+O "Go to Symbol").
+///
+/// `symbols` is rebuilt per-file on save (`editor.file.save`) and
+/// wholesale on `project.open-folder`. The palette is a single-line
+/// [`TextEditor`] routed through the declarative text-input system,
+/// exactly like search / the command palette; `results` is the cached
+/// fuzzy projection the block renders, refreshed on every keystroke.
+#[derive(Clone, Debug, Default)]
+pub struct IndexSlot {
+    pub symbols: prism_core::language::symbol_index::SymbolIndex,
+    pub palette_open: bool,
+    pub query: prism_ui_runtime::editor::TextEditor,
+    pub results: Vec<prism_core::language::symbol_index::Symbol>,
+    pub selected_index: usize,
+}
+
+impl IndexSlot {
+    /// Largest result set the palette renders — keeps the list bounded
+    /// regardless of project size.
+    pub const RESULT_LIMIT: usize = 50;
+
+    pub fn query_text(&self) -> &str {
+        self.query.text()
+    }
+
+    /// Recompute `results` from the current query against the live
+    /// index. An empty query lists everything (capped) so opening the
+    /// palette shows the whole symbol surface.
+    pub fn refresh_results(&mut self) {
+        self.results = self
+            .symbols
+            .fuzzy(self.query_text(), Self::RESULT_LIMIT)
+            .into_iter()
+            .cloned()
+            .collect();
+        if self.selected_index >= self.results.len() {
+            self.selected_index = self.results.len().saturating_sub(1);
+        }
+    }
+
+    pub fn symbol_palette_props(&self) -> Value {
+        let mut props = json!({
+            "open": self.palette_open,
+            "query": self.query_text(),
+            "caret": self.query.caret_byte(),
+            "selected-index": self.selected_index,
+            "results": Value::Array(
+                self.results.iter().map(|s| json!({
+                    "name": s.name,
+                    "kind": format!("{:?}", s.kind).to_lowercase(),
+                    "path": s.path.to_string_lossy(),
+                    "line": s.line,
+                    "offset": s.offset,
+                })).collect()
+            ),
+        });
+        if let Some((a, b)) = self.query.selection() {
+            props["selection"] = json!(format!("{a},{b}"));
+        }
+        props
+    }
+}
+
 // ── chrome ────────────────────────────────────────────────────────
 
 /// Static chrome strings — app name in the menu row, status string

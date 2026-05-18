@@ -44,6 +44,7 @@ impl ShellService for ProjectService {
                         Ok(files) => {
                             ctx.state.catalog.files = files;
                             ctx.state.project.dirty = false;
+                            reindex_project_symbols(ctx);
                         }
                         Err(e) => ctx.state.overlay.toasts.push(Toast {
                             title: "Open Folder failed".into(),
@@ -60,6 +61,19 @@ impl ShellService for ProjectService {
             }),
         ]
     }
+}
+
+/// IDE Phase 2 — rebuild the project-wide symbol index from every
+/// `.luau` file the ingest just listed. Unreadable / non-Luau files
+/// are skipped; a parse failure simply contributes no symbols (see
+/// `prism_core::language::symbol_index`). Cleared first so a re-open
+/// of a different folder doesn't accumulate stale symbols.
+pub(crate) fn reindex_project_symbols(ctx: &mut crate::services::MutCtx<'_>) {
+    // `state` and `vfs` are disjoint fields of `MutCtx`, so the
+    // index rebuild can borrow the vfs as its read hook while it
+    // mutates `state.index`.
+    let vfs = &*ctx.vfs;
+    ctx.state.reindex_luau_symbols(|p| vfs.read(p).ok());
 }
 
 /// Single-pass folder walk. Skips dotfiles, `target/`, `node_modules/`,

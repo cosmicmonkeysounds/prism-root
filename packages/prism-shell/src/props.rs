@@ -180,6 +180,9 @@ const SLOT_BINDINGS: &[(&str, SlotAccessor)] = &[
     // Find-in-document overlay. Reads from `state.search`, which the
     // `SearchService` mutates through the shared text-input dispatch.
     ("shell.search-overlay", |s| s.search.search_overlay_props()),
+    // IDE-mode Phase 2 — "Go to Symbol" palette. Reads from
+    // `state.index`, mutated through the shared text-input dispatch.
+    ("shell.symbol-palette", |s| s.index.symbol_palette_props()),
     // IDE-mode Phase 4 / cross-cutting §4.3 — Inspector / DevTools.
     // Walks the builder document for the Document lens; the other
     // three lenses read pre-populated buffers off `state.devtools`.

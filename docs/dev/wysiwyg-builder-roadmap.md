@@ -55,8 +55,8 @@ ships to web + desktop — all without leaving the shell.
 | One-source/three-projection authoring | ✅ Runtime-complete | `prui-luau-fusion.md` Waves A–I; PRUI/PRSS/Luau fusion ships; hot-reload for `.prui` + `.prss` (incl. per-class PRSS invalidation). |
 | Visual canvas authoring | 🟢 Runtime-complete | Inspector tree drives selection; the §4.3 `FacetDef` retirement landed, so facet inline templates are now ordinary `node.children` the normal canvas hit-test / click / inspector path already selects (no composite-id route needed — the gap dissolved with the parallel surface). **Residual:** mapping a *data-bound repeat instance* (`{facet}::{idx}/…`) back to its template source for edit-propagation is a normal-node UX refinement, not a substrate gap. |
 | Two-way data binding | 🟢 Runtime-complete | `bind:*` carries through to `data-bind-*` semantic attrs; `SkeletonBindingContext` installs a real `Effect` per slot/selector binding + `refresh` drives the reactive graph (A2 install side) **and** `apply_to_ast` projects the per-node `ReactiveProps` bag back into the skeleton with subscribing reads (A2 read side, wired into `Shell::render` behind `attach_skeleton_bindings`). **Gap:** host refresh cadence — feeding the AppState→JSON snapshot each frame (pairs with the Project Vault data loop). |
-| Fullstack data layer | 🟡 Partial | Project Vault V1 in flight. **Gap:** V2 (disk watcher + Explorer panel) and V3 (folder hierarchy + thumbnails) — the literal "open a folder, see your files as data" loop. |
-| Real dev environment | 🟡 Early | IDE Mode Phase 1 (project tree, open-path) + Phase 4 (Inspector/DevTools, 4 lenses) shipped. **Gap:** Phases 2/3/5/6/7 — symbol index, diagnostics panel, folding/inlays, find-in-files, split/persistence. |
+| Fullstack data layer | 🟢 Runtime-complete | Project Vault V1–V3 all landed (verified in `project_manager.rs` 2026-05-17): `notify` watcher → live graph, Explorer (`state.catalog.files`), folder hierarchy + image thumbnails, `Shell::{open,close,save,poll}_project` + `--project`. **Residual:** binding-layer consumption of those `GraphObject`s into facet `items` / search (the data is live + queryable; the read-path is the binding lane's call). |
+| Real dev environment | 🟡 Early | IDE Mode Phase 1 (project tree) + Phase 2 (symbol index + Ctrl+T Go-to-Symbol palette + jump-to-def) + Phase 4 (Inspector/DevTools) shipped. **Gap:** Phases 3/5/6/7 — diagnostics panel, folding/inlays, find-in-files, split/persistence. |
 | Deploy | 🟡 Partial | web (wasm-bindgen) + native build paths ship. **Gap:** Phase 6 — mobile + `cargo-packager`/`self_update` packaging. |
 | Collaborate | 🟡 Substrate-only | Loro CRDT + `PresenceManager` exist; probe firing + presence ingest stubbed (no host event-router / `PresenceService` consumer yet). |
 
@@ -84,9 +84,12 @@ under canvas polish, not a substrate gap.
 ### 2.2 The fullstack data loop
 `project-vault.md` V2/V3 is the difference between "a UI builder" and a
 "fullstack app builder." Disk folder → auto-ingest → live object graph
-→ Explorer panel → two-way bound blocks. V1 is in flight; V2 (watcher +
-Explorer) is the load-bearing slice. Pairs with finishing the `bind:*`
-install path (§2.3) — data with no binding is inert.
+→ Explorer panel → two-way bound blocks. **V1–V3 all landed**
+(`project_manager.rs`, verified 2026-05-17): `notify` watcher, live
+graph, Explorer files, folder hierarchy + thumbnails. What remains is
+the *binding-layer* consumption of those `GraphObject`s into facet
+`items` / search — the data is live + queryable; pairs with the
+`bind:*` install path (§2.3). Data with no binding is inert.
 
 ### 2.3 `bind:*` install path (A2)
 Authors *declare* two-way bindings; the runtime carries them to
@@ -111,12 +114,14 @@ snapshot each frame; that pairs with the Project Vault data loop
 (§2.2) and is deliberately the data-lane's call, not this seam's.
 
 ### 2.4 Dev environment depth
-Today's editor is Phase 1+4. A "fullstack app builder" needs at minimum:
-real project tree (folders/rename/drag), symbol index +
-jump-to-definition, and a diagnostics panel. Phase 3 (diagnostics) is
-blocked on `luau-analyze` integration (landed as a CI gate; needs the
-in-shell surface) and an open femtovg question (no wavy-underline
-primitive).
+Today's editor is Phase 1+2+4. Symbol index + jump-to-definition
+**landed** (`prism_core::language::symbol_index` + the Ctrl+T
+`shell.symbol-palette`; `editor_files::open_at_offset` is the shared
+jump seam). What remains: nested/drag project tree (Phase 2's tree
+refinement — the flat depth-encoded explorer ships), find-in-files,
+and the diagnostics panel. Phase 3 (diagnostics) is blocked on
+`luau-analyze` integration (landed as a CI gate; needs the in-shell
+surface) and an open femtovg question (no wavy-underline primitive).
 
 ### 2.5 Maintainability tax on velocity — ✅ largely retired
 The former rate limiter was `prism-shell/src/state.rs` at 7.5k lines.
@@ -144,8 +149,11 @@ Ordered for dependency + payoff. Each phase ends test-green + clippy-clean.
    (`apply_to_ast`, wired into `Shell::render` behind
    `attach_skeleton_bindings`). Remaining is host refresh cadence,
    folded into step 2. (§2.3)
-2. Project Vault V2: disk watcher + Explorer panel. (§2.2) — *in
-   flight, separate lane.*
+2. ~~Project Vault V2: disk watcher + Explorer panel.~~ ✅ Landed
+   (V1–V3 all done — `project_manager.rs` verified 2026-05-17:
+   `notify` watcher, Explorer files, folder hierarchy + thumbnails,
+   `Shell::{open,close,save,poll}_project` + `--project`). Residual
+   is binding-layer consumption, the data lane's call. (§2.2)
 3. ~~Canvas hit-test → facet-template composite-id selection.~~
    Dissolved by the §4.3 landing — facet templates are normal nodes
    the existing pointer pipeline already selects. (§2.1)
@@ -179,16 +187,23 @@ builder, clippy + workspace clean). Phase B is effectively closed;
 the lone residual is the test-only `state/tests.rs` split.
 
 **Phase C — Dev environment to fullstack-credible.**
-6. IDE Phase 2: real project tree (folders, rename, drag).
+6. IDE Phase 2: real project tree (folders, rename, drag). *(tree
+   nesting + drag still open; the flat depth-encoded explorer ships.)*
 7. IDE Phase 3: diagnostics panel (resolve the femtovg
    underline question — gutter markers vs. squiggle primitive).
-8. IDE symbol index + jump-to-definition + find-in-files.
+8. ~~IDE symbol index + jump-to-definition.~~ ✅ Landed 2026-05-17.
+   `prism_core::language::symbol_index` + `AppState::index` (rebuilt
+   on save / project-open) + `editor.go-to-symbol` (Ctrl+T)
+   `shell.symbol-palette` (fuzzy, Enter/click jump). **Residual:**
+   find-in-files (Phase 6 below) + Ctrl+click in the editor body.
 
-→ Acceptance: author a Luau error, see it inline + in a panel, jump to
-the symbol, find all refs.
+→ Acceptance: jump to a symbol by name from the Ctrl+T palette —
+**met**. Author a Luau error → see it inline + in a panel (Phase 3,
+femtovg-underline-blocked), find all refs (find-in-files) — open.
 
 **Phase D — Deploy + collaborate.**
-9. Project Vault V3 (folder hierarchy + thumbnails).
+9. ~~Project Vault V3 (folder hierarchy + thumbnails).~~ ✅ Landed
+   (shipped with V2 above — one `project_manager.rs` pass).
 10. Phase 6: mobile target + `cargo-packager` + `self_update`.
 11. Wire presence: host event-router → `PresenceService` consuming
     probes; live cursors/selections on the canvas.

@@ -999,6 +999,23 @@ fn search_overlay_signals() -> Vec<SignalDef> {
     ])
 }
 
+fn symbol_palette_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::boolean("open", "Open").with_default(Value::Bool(false)),
+        FieldSpec::text("query", "Symbol query"),
+        FieldSpec::text("results", "Results (JSON array)"),
+        FieldSpec::integer("selected-index", "Selected symbol", NumericBounds::min(0.0))
+            .with_default(Value::from(0.0)),
+    ]
+}
+
+fn symbol_palette_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new("query-changed", "User typed in the symbol input."),
+        SignalDef::new("result-activated", "User jumped to a symbol."),
+    ])
+}
+
 fn devtools_schema() -> Vec<FieldSpec> {
     vec![
         FieldSpec::text(
@@ -1719,6 +1736,15 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     )
     .schema(search_overlay_schema)
     .signals(search_overlay_signals),
+    // IDE-mode Phase 2 — "Go to Symbol" palette. Sister to
+    // `shell.search-overlay`: same TextEditor wiring + modal shape,
+    // fuzzy-ranked over the project-wide Luau symbol index.
+    PrismUiSpec::new(
+        "shell.symbol-palette",
+        include_str!("../../ui/components/symbol-palette.prism-ui"),
+    )
+    .schema(symbol_palette_schema)
+    .signals(symbol_palette_signals),
     // IDE-mode Phase 4 / cross-cutting §4.3 — unified
     // Inspector / DevTools surface. Four lenses (Document, Presence,
     // Probes, Bindings) in one tabbed panel.

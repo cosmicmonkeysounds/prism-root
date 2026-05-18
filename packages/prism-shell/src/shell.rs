@@ -618,6 +618,7 @@ impl Shell {
         guard.state.catalog.files = files;
         guard.state.project.root = Some(path);
         guard.state.project.dirty = false;
+        guard.state.reindex_luau_symbols(|p| std::fs::read(p).ok());
         guard.project = Some(pm);
         Ok(())
     }
@@ -660,6 +661,7 @@ impl Shell {
         }
         let files = pm.file_nodes();
         guard.state.catalog.files = files;
+        guard.state.reindex_luau_symbols(|p| std::fs::read(p).ok());
         true
     }
 

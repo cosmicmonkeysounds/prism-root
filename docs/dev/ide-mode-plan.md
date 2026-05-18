@@ -26,7 +26,7 @@ end so chunks can land independently.
 | Phase | State | Landed |
 |---|---|---|
 | 1 — Project tree + open-path | ✅ shipped | `shell.explorer` rewrite, `FileNode::path`, `explorer-row` route, 5 e2e tests, `IdeExplorer` scene |
-| 2 — Symbol index + Ctrl+P / Ctrl+click | not started | — |
+| 2 — Symbol index + Go-to-Symbol palette | ✅ shipped | `prism_core::language::symbol_index` (`Symbol`/`SymbolIndex`, 8 tests); `AppState::index` (`IndexSlot`) rebuilt per-file on `editor.file.save` + wholesale on `project.open-folder` / `Shell::{open,poll}_project`; `editor.go-to-symbol` (Ctrl+T) + `editor.symbol-{next,prev}`; `shell.symbol-palette` block + `symbol-palette` text-input declaration (fuzzy, Enter/click jump via `editor_files::open_at_offset`); `symbol-row` pointer route. **Residual:** Ctrl+click jump-to-def in the editor body (the palette is the shipped surface); arrow-key result nav shares the search-overlay limitation. |
 | 3 — Diagnostics panel + squiggles | not started (blocked on Tier 1 §3.3 `luau-analyze`) | — |
 | **4 — Inspector / DevTools panel** | ✅ **shipped** | `shell.devtools` block with 4 lenses (Document / Presence / Probes / Bindings), tabbed switcher, declarative filter via `TextInputDeclaration`, `DevToolsService` commands, scene + 12 e2e tests, `PanelKind::DEVTOOLS` |
 | 5 — Folding + bracket-match + inlays | not started | — |

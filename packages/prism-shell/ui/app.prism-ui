@@ -39,6 +39,7 @@
 -->
 <shell.command-palette id="palette"/>
 <shell.search-overlay id="search"/>
+<shell.symbol-palette id="symbols"/>
 <shell.toast-stack id="toasts"/>
 <shell.help-tooltip id="help" title=""/>
 <shell.context-menu id="ctx"/>

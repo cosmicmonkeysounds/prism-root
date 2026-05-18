@@ -148,7 +148,11 @@ From `src/lib.rs`:
   subtree-cache layer is a pure addition when it lands.
 - `AppState` + slot types — `BuilderSlot`, `CanvasSlot`,
   `ChromeSlot`, `OverlaySlot`, `NavigationSlot`, `WorkspaceSlot`,
-  `ProjectSlot`, `SearchSlot`, plus the leaf records (`Toast`,
+  `ProjectSlot`, `SearchSlot`, `IndexSlot` (IDE Phase 2 — the
+  project-wide `prism_core` `SymbolIndex` + the Ctrl+T "Go to Symbol"
+  palette state; rebuilt per-file on `editor.file.save` and wholesale
+  on `project.open-folder` / `Shell::{open,poll}_project` via
+  `AppState::reindex_luau_symbols`), plus the leaf records (`Toast`,
   `NavPage`, `InspectorNode`, `PropertyRow`, `SchemaDoc`,
   `SignalConnection`, `TransformSnapshot`, …). Each slot owns its
   own `*_props()` methods so binding closures stay one line.

@@ -140,9 +140,10 @@ pub fn builtin_declarations() -> &'static [TextInputDeclaration] {
     &BUILTINS
 }
 
-static BUILTINS: [TextInputDeclaration; 3] = [
+static BUILTINS: [TextInputDeclaration; 4] = [
     palette_declaration(),
     search_declaration(),
+    symbol_palette_declaration(),
     devtools_filter_declaration(),
 ];
 
@@ -185,6 +186,60 @@ const fn search_declaration() -> TextInputDeclaration {
         ])
         .modal()
         .build()
+}
+
+/// IDE Phase 2 — the "Go to Symbol" palette (Ctrl+T). Sister to the
+/// command-palette / search declarations: modal, single-line query,
+/// live fuzzy re-rank on every keystroke, Enter jumps to the selected
+/// symbol, Escape closes.
+const fn symbol_palette_declaration() -> TextInputDeclaration {
+    TextInputDeclaration::builder("symbol-palette", |s| &s.index.query, |s| &mut s.index.query)
+        .active_when(|s| s.index.palette_open)
+        .on_buffer_change(symbol_palette_refresh)
+        .on_commit(symbol_palette_commit)
+        .on_cancel(symbol_palette_close)
+        .passthrough_plain(&[
+            "enter",
+            "return",
+            "escape",
+            "arrowup",
+            "arrowdown",
+            "up",
+            "down",
+        ])
+        .modal()
+        .build()
+}
+
+fn symbol_palette_refresh(ctx: &mut MutCtx<'_>) {
+    ctx.state.index.selected_index = 0;
+    ctx.state.index.refresh_results();
+}
+
+fn symbol_palette_close(ctx: &mut MutCtx<'_>) {
+    let idx = &mut ctx.state.index;
+    idx.palette_open = false;
+    idx.query.set_text("");
+    idx.selected_index = 0;
+}
+
+fn symbol_palette_commit(ctx: &mut MutCtx<'_>) {
+    let sel = ctx.state.index.selected_index;
+    let Some(sym) = ctx.state.index.results.get(sel).cloned() else {
+        symbol_palette_close(ctx);
+        return;
+    };
+    let vfs = &*ctx.vfs;
+    if let Err(e) =
+        crate::services::editor_files::open_at_offset(ctx.state, vfs, sym.path.clone(), sym.offset)
+    {
+        ctx.state.overlay.toasts.push(crate::state::Toast {
+            title: "Go to Symbol failed".into(),
+            body: e,
+            kind: crate::state::ToastKind::Error,
+        });
+    }
+    symbol_palette_close(ctx);
 }
 
 /// IDE-mode Phase 4 — the DevTools panel's filter field.
