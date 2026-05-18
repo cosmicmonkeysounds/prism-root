@@ -231,6 +231,30 @@ impl DevToolsSlot {
             .collect()
     }
 
+    /// IDE Phase D — props for the `shell.presence-overlay` window
+    /// facepile. Renders one chip per remote peer (colour swatch +
+    /// name + the node id they have selected, when any). `visible` is
+    /// false when no peers are present so the overlay collapses to a
+    /// 0×0 sibling (host state drives visibility, same shape as the
+    /// other overlay siblings). Pixel-accurate peer *cursors* need a
+    /// presence coordinate channel the upstream `PresenceState`
+    /// doesn't carry yet; this is the live who's-here surface over
+    /// the data that exists (`selection` is the collaborative anchor).
+    pub fn presence_overlay_props(&self) -> Value {
+        json!({
+            "visible": !self.presence.is_empty(),
+            "peers": Value::Array(
+                self.presence.iter().map(|p| json!({
+                    "peer-id": p.peer_id,
+                    "display-name": p.display_name,
+                    "color": p.color,
+                    "selection": p.selection.clone().unwrap_or_default(),
+                    "active-view": p.active_view.clone().unwrap_or_default(),
+                })).collect()
+            ),
+        })
+    }
+
     pub(crate) fn probe_items(&self, filter: &str) -> Vec<Value> {
         self.probes
             .iter()
@@ -1149,5 +1173,28 @@ mod presence_tests {
         assert!(dt.presence.is_empty());
         // Left for an unknown peer is a no-op.
         assert!(!dt.apply_presence_change(&left, 400));
+    }
+
+    #[test]
+    fn presence_overlay_props_track_ingest() {
+        let mut dt = DevToolsSlot::default();
+        let empty = dt.presence_overlay_props();
+        assert_eq!(empty["visible"], serde_json::json!(false));
+        assert_eq!(empty["peers"].as_array().unwrap().len(), 0);
+
+        dt.apply_presence_change(
+            &PresenceChange {
+                kind: PresenceChangeKind::Joined,
+                peer_id: "p1".into(),
+                state: Some(state_for("p1", "builder")),
+            },
+            100,
+        );
+        let live = dt.presence_overlay_props();
+        assert_eq!(live["visible"], serde_json::json!(true));
+        let peers = live["peers"].as_array().unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0]["display-name"], serde_json::json!("Peer p1"));
+        assert_eq!(peers[0]["color"], serde_json::json!("#abc"));
     }
 }

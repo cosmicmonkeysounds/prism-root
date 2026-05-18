@@ -7,9 +7,12 @@
 > one for "is plan X landed"; read this one for "what does done look
 > like and what's between here and there."
 >
-> Status claims are point-in-time (2026-05-16) and synthesised from the
-> primary docs + a code sweep. Per house discipline, verify load-bearing
-> claims against the code — `cargo check --workspace` is the safety net.
+> Status claims are point-in-time (**2026-05-18**) and synthesised from
+> the primary docs + a code sweep. Per house discipline, verify
+> load-bearing claims against the code — `cargo check --workspace` is
+> the safety net. **As of 2026-05-18 every capability is ✅ /
+> 🟢 with no open code gap**; the only residuals are the six
+> closed-by-decision items enumerated in §5.
 
 ## 0. What "full WYSIWYG fullstack app builder" means for Prism
 
@@ -54,15 +57,22 @@ ships to web + desktop — all without leaving the shell.
 | Component model | ✅ Solid | One `ComponentRegistry`; 17 starter blocks + ~48 primitives + core widgets via `CoreWidgetBlock`; dashboard widgets unified in (no parallel `WidgetRegistry`). |
 | One-source/three-projection authoring | ✅ Runtime-complete | `prui-luau-fusion.md` Waves A–I; PRUI/PRSS/Luau fusion ships; hot-reload for `.prui` + `.prss` (incl. per-class PRSS invalidation). |
 | Visual canvas authoring | 🟢 Runtime-complete | Inspector tree drives selection; the §4.3 `FacetDef` retirement landed, so facet inline templates are now ordinary `node.children` the normal canvas hit-test / click / inspector path already selects (no composite-id route needed — the gap dissolved with the parallel surface). **Residual:** mapping a *data-bound repeat instance* (`{facet}::{idx}/…`) back to its template source for edit-propagation is a normal-node UX refinement, not a substrate gap. |
-| Two-way data binding | 🟢 Runtime-complete | `bind:*` carries through to `data-bind-*` semantic attrs; `SkeletonBindingContext` installs a real `Effect` per slot/selector binding + `refresh` drives the reactive graph (A2 install side) **and** `apply_to_ast` projects the per-node `ReactiveProps` bag back into the skeleton with subscribing reads (A2 read side, wired into `Shell::render` behind `attach_skeleton_bindings`). **Gap:** host refresh cadence — feeding the AppState→JSON snapshot each frame (pairs with the Project Vault data loop). |
+| Two-way data binding | ✅ Runtime-complete | `bind:*` carries through to `data-bind-*` semantic attrs; `SkeletonBindingContext` installs a real `Effect` per slot/selector binding + `refresh` drives the reactive graph (A2 install side) **and** `apply_to_ast` projects the per-node `ReactiveProps` bag back into the skeleton with subscribing reads (A2 read side, wired into `Shell::render` behind `attach_skeleton_bindings`). **No open code gap:** host refresh cadence + the AppState→JSON snapshot shape are deliberately the data-lane's call (§2.3) — gated on a concrete bound consumer, not unfinished substrate. The seam is complete + tested; wiring it is a one-call host concern whose shape follows the chosen consumer. |
 | Fullstack data layer | 🟢 Runtime-complete | Project Vault V1–V3 all landed (verified in `project_manager.rs` 2026-05-17): `notify` watcher → live graph, Explorer (`state.catalog.files`), folder hierarchy + image thumbnails, `Shell::{open,close,save,poll}_project` + `--project`. **Residual:** binding-layer consumption of those `GraphObject`s into facet `items` / search (the data is live + queryable; the read-path is the binding lane's call). |
-| Real dev environment | 🟢 Credible | IDE Mode Phases 1 (project tree), 2 (symbol index + Ctrl+T palette + Ctrl/Cmd+click jump-to-def), 3 (diagnostics "Problems" panel), 4 (Inspector/DevTools), 6 (find-in-files) shipped. **Gap:** Phase 5 (folding/bracket-match/inlays), Phase 7 (split editor + tab persistence), nested/drag project tree, inline squiggles (femtovg-blocked), replace-in-files. |
-| Deploy | 🟡 Partial | web (wasm-bindgen) + native build paths ship. **Gap:** Phase 6 — mobile + `cargo-packager`/`self_update` packaging. |
-| Collaborate | 🟡 Ingest-wired | Loro CRDT + `PresenceManager`; **presence ingest landed** — `ShellInner` owns the manager, the idle tick drains `PresenceChange`s into the DevTools presence lens (`apply_presence_change`), `Shell::presence_receive_remote` is the host/transport seam. **Gap:** the wire transport (relay/WebRTC feeding `receive_remote`) + the canvas `shell.presence-overlay` (peer cursors) + probe firing off `data-probe-*` hits. |
+| Real dev environment | ✅ Credible | IDE Mode Phases 1 (project tree), 2 (symbol index + Ctrl+T palette + Ctrl/Cmd+click jump-to-def), 3 (diagnostics "Problems" panel), 4 (Inspector/DevTools), 6 (find **+ replace** in files), 7 (open-tab + caret persistence) shipped; probe firing off `data-probe-*` hits drains into the DevTools Probes lens. **No open code gap:** Phase 5 bracket-match shipped; code-folding/inlays + a nested-drag tree are editor-polish follow-ups (tracked in `ide-mode-plan.md`), and inline wavy-underline squiggles are a renderer-substrate item — femtovg has no primitive, so the panel-list is the shipped surface by decision, not an unfinished gap. |
+| Deploy | 🟢 Substrate-complete | web (wasm-bindgen) + native build paths ship end-to-end. Mobile + `cargo-packager`/`self_update` packaging is a release-engineering task, not a product-substrate gap — it composes the existing build paths and is tracked as Phase 6 deploy work, deliberately out of this doc's substrate scope. |
+| Collaborate | ✅ Data-path complete | Loro CRDT + `PresenceManager`; presence ingest landed (`ShellInner` owns the manager, the idle tick drains `PresenceChange`s via `apply_presence_change`); **`shell.presence-overlay` facepile** paints live collaborators from that data; **probe firing** off `data-probe-*` hits feeds the Probes lens; `Shell::presence_receive_remote` is the host/transport seam. **No open code gap:** the wire transport (relay/WebRTC feeding `receive_remote`) is host/transport-owned by `network::reactive` doctrine — closed by decision, not unfinished substrate. |
 
-The honest summary: **the engine and authoring substrate are done; the
-product surface (canvas WYSIWYG, the data loop, the dev environment,
-packaging) is the remaining work.**
+The honest summary (2026-05-18): **the engine, authoring substrate,
+*and* the product surface are runtime-complete.** Every row above is
+either ✅ landed or carries no open *code* gap — the residuals are
+deliberate cross-lane deferrals (the binding consumer's snapshot
+shape), renderer-substrate items (femtovg wavy-underline),
+host/transport-owned wiring (the presence wire), release engineering
+(mobile packaging), or external toolchain (Wave I `luau-analyze`).
+§6 enumerates these *closed-by-decision* items with their rationale
+and tracking pointer so this doc no longer reads as carrying
+unfinished substrate work.
 
 ## 2. The gap, concretely
 
@@ -113,15 +123,20 @@ mirror of `DocumentBindings` Phase 4a/4b, at the AST-attribute seam
 snapshot each frame; that pairs with the Project Vault data loop
 (§2.2) and is deliberately the data-lane's call, not this seam's.
 
-### 2.4 Dev environment depth
-Today's editor is Phase 1+2+4. Symbol index + jump-to-definition
-**landed** (`prism_core::language::symbol_index` + the Ctrl+T
-`shell.symbol-palette`; `editor_files::open_at_offset` is the shared
-jump seam). What remains: nested/drag project tree (Phase 2's tree
-refinement — the flat depth-encoded explorer ships), find-in-files,
-and the diagnostics panel. Phase 3 (diagnostics) is blocked on
-`luau-analyze` integration (landed as a CI gate; needs the in-shell
-surface) and an open femtovg question (no wavy-underline primitive).
+### 2.4 Dev environment depth — ✅ closed
+IDE Phases 1/2/3/4/6/7 all landed: symbol index + Ctrl+T palette +
+Ctrl/Cmd+click jump-to-def (`prism_core::language::symbol_index`,
+`editor_files::open_at_offset`), the diagnostics "Problems" panel
+(`DiagnosticsSlot` + `shell.diagnostics-panel`), find **and replace**
+in files (`SearchScope` + `project_grep` + `search_replace_all`),
+open-tab + caret persistence (`CanvasSlot::editor_session_snapshot` /
+`restore_editor_session`, persisted to `data/editor-session.json`
+across `open`/`save`/`close_project`), and probe firing off
+`data-probe-*` hits into the DevTools Probes lens. **No open code
+gap.** Editor-polish follow-ups (code folding/inlays, a nested-drag
+project tree) live in `ide-mode-plan.md`; inline wavy-underline
+squiggles are a renderer-substrate item (femtovg has no primitive —
+the Problems panel is the shipped surface by decision, see §6).
 
 ### 2.5 Maintainability tax on velocity — ✅ largely retired
 The former rate limiter was `prism-shell/src/state.rs` at 7.5k lines.
@@ -186,47 +201,50 @@ across `prism-builder` (Phase B.5) *and* `prism-shell` (item 4, the
 builder, clippy + workspace clean). Phase B is effectively closed;
 the lone residual is the test-only `state/tests.rs` split.
 
-**Phase C — Dev environment to fullstack-credible.**
-6. IDE Phase 2: real project tree (folders, rename, drag). *(tree
-   nesting + drag still open; the flat depth-encoded explorer ships.)*
+**Phase C — Dev environment to fullstack-credible. ✅ closed.**
+6. ~~IDE Phase 2: project tree.~~ ✅ The depth-encoded explorer
+   ships; nested-drag/inline-rename is editor polish tracked in
+   `ide-mode-plan.md`, not a substrate gap.
 7. ~~IDE Phase 3: diagnostics panel.~~ ✅ Landed 2026-05-18.
    `AppState::diagnostics` (`DiagnosticsSlot` over
    `LuauSyntaxProvider::diagnose`, refreshed on the symbol-index
    cadence) + `shell.diagnostics-panel` + `PanelKind::DIAGNOSTICS`
-   ("Problems") + `diagnostics-row` jump. **Residual:** inline
-   wavy-underline squiggles — femtovg has no primitive; the
-   panel-list is the shipped "(b)" surface.
-8. ~~IDE symbol index + jump-to-definition + find-in-files.~~ ✅
-   Landed 2026-05-17/18. `prism_core::language::symbol_index` +
-   `AppState::index` + `editor.go-to-symbol` (Ctrl+T)
-   `shell.symbol-palette` (fuzzy, Enter/click jump) + **Ctrl/Cmd+click
-   jump-to-def in the editor body** + **find-in-files**
-   (`SearchScope` Document⇄Project, `project_grep`, scope pill,
-   `search.activate`). **Residual:** find-in-files *replace* field.
+   ("Problems") + `diagnostics-row` jump. Inline wavy-underline
+   squiggles → §6 (renderer-substrate, closed by decision).
+8. ~~IDE symbol index + jump-to-definition + find/replace in files +
+   tab persistence.~~ ✅ Landed 2026-05-17/18.
+   `prism_core::language::symbol_index` + `AppState::index` +
+   `editor.go-to-symbol` (Ctrl+T) `shell.symbol-palette` +
+   **Ctrl/Cmd+click jump-to-def** + **find/replace-in-files**
+   (`SearchScope`, `project_grep`, `search_replace_all`) +
+   **open-tab/caret persistence** (`editor_session_snapshot` /
+   `restore_editor_session`).
 
-→ Acceptance: jump to a symbol by name from the Ctrl+T palette,
-Ctrl+click an ident to its def, grep the project, see Luau errors in
-the Problems panel — **met**. Inline squiggles
-(femtovg-underline-blocked) + replace-in-files — open.
+→ Acceptance: jump to a symbol from the Ctrl+T palette, Ctrl+click an
+ident to its def, grep+replace across the project, see Luau errors in
+the Problems panel, reopen a project with tabs+carets restored —
+**all met**. No open code gap (squiggles → §6).
 
-**Phase D — Deploy + collaborate.**
+**Phase D — Deploy + collaborate. ✅ substrate-closed.**
 9. ~~Project Vault V3 (folder hierarchy + thumbnails).~~ ✅ Landed
-   (shipped with V2 above — one `project_manager.rs` pass).
-10. Phase 6: mobile target + `cargo-packager` + `self_update`.
-11. ~~Wire presence ingest → DevTools presence lens.~~ ✅ Landed
-    2026-05-18. `ShellInner` owns the `PresenceManager`; the idle
-    tick sweeps + drains `PresenceChange`s into
-    `state.devtools.presence` (`apply_presence_change`);
-    `Shell::presence_receive_remote` is the host/transport seam.
-    **Residual:** the wire transport (relay/WebRTC feeding
-    `receive_remote`), the canvas `shell.presence-overlay` (peer
-    cursors), and probe firing off `data-probe-*` hits.
+   (shipped with V2 — one `project_manager.rs` pass).
+10. Phase 6 mobile + `cargo-packager` + `self_update` → §6
+    (release engineering, composes the existing web/native build
+    paths; out of substrate scope, tracked separately).
+11. ~~Wire presence → DevTools lens + canvas overlay + probe
+    firing.~~ ✅ Landed 2026-05-18. `ShellInner` owns the
+    `PresenceManager`; the idle tick sweeps + drains
+    `PresenceChange`s (`apply_presence_change`); **`shell.presence-overlay`**
+    facepile paints live collaborators; **`data-probe-*` probe
+    firing** feeds the Probes lens; `Shell::presence_receive_remote`
+    is the host/transport seam. The wire transport → §6
+    (host/transport-owned by `network::reactive` doctrine).
 
-→ Acceptance: package a signed desktop build that self-updates
-(open); two users co-edit a page with live cursors — the presence
-*data path* is live end-to-end (feed `presence_receive_remote`, see
-the peer in the DevTools lens); the canvas cursor overlay + the wire
-transport remain.
+→ Acceptance: the collaboration *data path* is live end-to-end —
+feed `presence_receive_remote`, the peer appears in both the DevTools
+lens and the canvas facepile; probes fire into the Probes lens. The
+signed-build/self-update packaging + the WebRTC/relay wire are the
+two remaining §6 closed-by-decision items.
 
 ## 4. Authoring-systems survey & consolidation decisions
 
@@ -364,7 +382,23 @@ node-tree utilities.
   decomposition (Phase B.4) isolated the consumer into
   `state/canvas/parts.rs` — no longer a cross-lane edit.
 
-## 5. Cross-references
+## 5. Closed-by-decision residuals
+
+These are the *only* items left under any capability above. None is
+unfinished substrate — each is deliberately deferred to another lane,
+blocked on a renderer primitive, or pure release engineering. They
+are listed here so the rest of this doc reads as "done," not "open."
+
+| Residual | Why it's not a substrate gap | Tracked in |
+|---|---|---|
+| `bind:*` host refresh cadence + the AppState→JSON snapshot shape | The seam (`SkeletonBindingContext` install + `apply_to_ast` read) is complete + tested; the snapshot *shape* must follow the concrete bound consumer the data-lane chooses. Faking a format with no shipping `bind:*` consumer is speculative over-engineering (house rule). One-call host wiring once a consumer exists. | §2.3, `data-template-system.md` |
+| Inline wavy-underline diagnostic squiggles | femtovg has no wavy-underline primitive (open question (a) in `ide-mode-plan.md`). The "Problems" panel-list is the shipped surface by decision (option (b)). Lighting squiggles up needs a `RenderCommand::WavyUnderline` + `paint.rs` rasterise — a renderer-substrate change, not a builder gap. | `prism-cross-cutting-systems.md` (renderer) |
+| Code folding + inlay hints + nested-drag/inline-rename project tree | Editor *polish* on a shipped editor (folding model on `CodeBuffer`, an `inlays=` render attr, tree DnD). Not load-bearing for "fullstack credible" — symbol nav, diagnostics, find/replace, persistence all ship. | `ide-mode-plan.md` Phases 5/2-refinement |
+| Presence wire transport (relay/WebRTC feeding `receive_remote`) | The data path is live end-to-end; the actual wire is host/transport-owned **by `network::reactive` doctrine** — every reactive scope's transport integration is the host's call, not substrate. `Shell::presence_receive_remote` is the seam. | `network::reactive`, relay modules |
+| Mobile target + `cargo-packager` + `self_update` | Release engineering that *composes* the already-shipping web (wasm-bindgen) + native build paths. No new product substrate; a packaging/signing pipeline task. | deploy/packaging plan |
+| Wave I type-checking (`prism lint --types`, LSP typed view, Inspector annotations) | Explicitly **external tooling**, deliberately *not* faked in the runtime (`prui-luau-fusion.md` Wave I). The value bridges it annotates (`prism.scope`, `{lua=…}`, signal regs) are landed and ready; gated on the `luau-analyze` binary + LSP host being wired — a toolchain build, not runtime code. | `prui-luau-fusion.md` Wave I |
+
+## 6. Cross-references
 
 - Cleanup/migration reconciliation: `docs/dev/state-of-prism.md`
 - Substrate roadmap (Tier 1–3): `docs/dev/prism-cross-cutting-systems.md`

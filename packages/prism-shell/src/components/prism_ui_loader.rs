@@ -1016,6 +1016,20 @@ fn symbol_palette_signals() -> Vec<SignalDef> {
     ])
 }
 
+fn presence_overlay_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::boolean("visible", "Visible").with_default(Value::Bool(false)),
+        FieldSpec::text("peers", "Peers (JSON array)"),
+    ]
+}
+
+fn presence_overlay_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![SignalDef::new(
+        "peer-activated",
+        "User focused a collaborator.",
+    )])
+}
+
 fn devtools_schema() -> Vec<FieldSpec> {
     vec![
         FieldSpec::text(
@@ -1763,6 +1777,14 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     )
     .schema(symbol_palette_schema)
     .signals(symbol_palette_signals),
+    // IDE-mode Phase D — collaborative presence facepile, fed from
+    // the `PresenceManager` ingest drained on the idle tick.
+    PrismUiSpec::new(
+        "shell.presence-overlay",
+        include_str!("../../ui/components/presence-overlay.prism-ui"),
+    )
+    .schema(presence_overlay_schema)
+    .signals(presence_overlay_signals),
     // IDE-mode Phase 4 / cross-cutting §4.3 — unified
     // Inspector / DevTools surface. Four lenses (Document, Presence,
     // Probes, Bindings) in one tabbed panel.

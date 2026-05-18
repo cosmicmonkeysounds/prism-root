@@ -661,6 +661,22 @@ impl Shell {
         guard.state.project.dirty = false;
         guard.state.reindex_luau_symbols(|p| std::fs::read(p).ok());
         guard.project = Some(pm);
+        // IDE Phase 7 — restore the persisted editor session (open
+        // tabs + carets) written by a prior save/close, if any.
+        let session = guard
+            .state
+            .project
+            .root
+            .as_ref()
+            .map(|r| editor_session_path(r))
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+        if let Some(sess) = session {
+            guard
+                .state
+                .canvas
+                .restore_editor_session(&sess, |p| std::fs::read_to_string(p).ok());
+        }
         Ok(())
     }
 
@@ -670,6 +686,7 @@ impl Shell {
     pub fn close_project(&self) {
         let mut guard = self.inner.borrow_mut();
         if let Some(mut pm) = guard.project.take() {
+            persist_editor_session(&guard.state, pm.root());
             let _ = pm.save();
         }
         guard.state.project.root = None;
@@ -681,6 +698,10 @@ impl Shell {
     #[cfg(feature = "native")]
     pub fn save_project(&self) -> Result<(), String> {
         let mut guard = self.inner.borrow_mut();
+        let root = guard.project.as_ref().map(|pm| pm.root().to_path_buf());
+        if let Some(root) = root {
+            persist_editor_session(&guard.state, &root);
+        }
         match guard.project.as_mut() {
             Some(pm) => pm.save(),
             None => Ok(()),
@@ -1653,6 +1674,28 @@ fn now_ms() -> u64 {
     static EPOCH: OnceLock<Instant> = OnceLock::new();
     let epoch = EPOCH.get_or_init(Instant::now);
     epoch.elapsed().as_millis() as u64
+}
+
+/// IDE Phase 7 — where the persisted editor session lives, next to
+/// the Project Vault's own `data/` store (skipped by the scanner).
+#[cfg(feature = "native")]
+fn editor_session_path(root: &std::path::Path) -> std::path::PathBuf {
+    root.join("data").join("editor-session.json")
+}
+
+/// Write the open-tab + caret snapshot to `data/editor-session.json`.
+/// Best-effort: a write failure is non-fatal (the session is a
+/// convenience, not load-bearing state).
+#[cfg(feature = "native")]
+fn persist_editor_session(state: &crate::state::AppState, root: &std::path::Path) {
+    let snap = state.canvas.editor_session_snapshot();
+    let path = editor_session_path(root);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(s) = serde_json::to_string(&snap) {
+        let _ = std::fs::write(&path, s);
+    }
 }
 
 /// Wave 14.8 — graft animator phantoms into the live render tree.

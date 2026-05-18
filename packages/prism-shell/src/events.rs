@@ -523,26 +523,44 @@ fn route_probe(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
     }
     let payload = serde_json::Value::Object(payload);
 
-    let g = inner.borrow();
-    let frame = g.active_luau_frame.borrow();
-    const PROBE_LOG_CAP: usize = 256;
-    for name in probes {
-        // `fire_probe` → `None` = no handler subscribed; `Some(Ok)` =
-        // ran clean; `Some(Err)` = handler body failed.
-        let (ok, error) = match frame.as_ref().and_then(|f| f.fire_probe(&name, &payload)) {
-            Some(Ok(())) => (true, None),
-            Some(Err(e)) => (false, Some(e)),
-            None => (false, None),
-        };
-        let mut log = g.probe_log.borrow_mut();
-        if log.len() >= PROBE_LOG_CAP {
-            log.pop_front();
+    // Fire each probe through the Luau frame + record into the
+    // Inspector's `probe_log`, collecting a `ProbeEvent` per probe so
+    // the DevTools Probes lens (`state.devtools.probes`) shows the
+    // same stream. Two borrow phases: the frame dispatch needs an
+    // immutable `inner`; the lens push needs `&mut state`.
+    let fired: Vec<String> = {
+        let g = inner.borrow();
+        let frame = g.active_luau_frame.borrow();
+        const PROBE_LOG_CAP: usize = 256;
+        for name in &probes {
+            let (ok, error) = match frame.as_ref().and_then(|f| f.fire_probe(name, &payload)) {
+                Some(Ok(())) => (true, None),
+                Some(Err(e)) => (false, Some(e)),
+                None => (false, None),
+            };
+            let mut log = g.probe_log.borrow_mut();
+            if log.len() >= PROBE_LOG_CAP {
+                log.pop_front();
+            }
+            log.push_back(crate::shell::ProbeFire {
+                name: name.clone(),
+                payload: payload.clone(),
+                ok,
+                error,
+            });
         }
-        log.push_back(crate::shell::ProbeFire {
+        probes
+    };
+    // §4.3 — surface the same fires in the DevTools Probes lens.
+    let ts = click_millis();
+    let source = (!hit.id.is_empty()).then(|| hit.id.clone());
+    let mut g = inner.borrow_mut();
+    for name in fired {
+        g.state.devtools.record_probe(crate::state::ProbeEvent {
             name,
             payload: payload.clone(),
-            ok,
-            error,
+            timestamp_ms: ts,
+            source_node_id: source.clone(),
         });
     }
     true
@@ -2227,6 +2245,22 @@ mod tests {
         let vp = shell.inner.borrow().viewport;
         assert_eq!(vp.width, 1024.0);
         assert_eq!(vp.height, 600.0);
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn data_probe_hit_records_into_devtools_probes_lens() {
+        let shell = Shell::new().expect("boot");
+        let before = shell.inner.borrow().state.devtools.probes.len();
+        let hit = hit_with("button", "demo", &[("data-probe-click", "tap")]);
+        assert!(route_probe(&shell.inner, &hit));
+        let g = shell.inner.borrow();
+        assert_eq!(g.state.devtools.probes.len(), before + 1);
+        let ev = g.state.devtools.probes.back().unwrap();
+        assert_eq!(ev.name, "click");
+        // Payload carries the other data-* attrs (prefix stripped).
+        assert_eq!(ev.payload["role"], serde_json::json!("button"));
+        assert_eq!(ev.source_node_id.as_deref(), Some("hit-button"));
     }
 
     #[test]

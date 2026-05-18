@@ -187,6 +187,10 @@ const SLOT_BINDINGS: &[(&str, SlotAccessor)] = &[
     ("shell.diagnostics-panel", |s| {
         s.diagnostics.diagnostics_panel_props()
     }),
+    // IDE-mode Phase D — collaborative presence facepile.
+    ("shell.presence-overlay", |s| {
+        s.devtools.presence_overlay_props()
+    }),
     // IDE-mode Phase 4 / cross-cutting §4.3 — Inspector / DevTools.
     // Walks the builder document for the Document lens; the other
     // three lenses read pre-populated buffers off `state.devtools`.

@@ -118,6 +118,82 @@ impl CanvasSlot {
         })
     }
 
+    /// **IDE Phase 7** — serialise the open editor session (every
+    /// path-backed tab + its caret byte, with the active one flagged)
+    /// so the host can persist it next to the project and restore on
+    /// reopen. Untitled scratch buffers are skipped — they have
+    /// nowhere to reload from. Shape:
+    /// `{ "tabs": [{ "path": "...", "caret": N, "active": bool }] }`.
+    pub fn editor_session_snapshot(&self) -> Value {
+        let mut tabs: Vec<Value> = Vec::new();
+        let active_disp = self.code_active_tab.min(self.code_tabs.len());
+        // The inactive vec, plus the live active buffer spliced at
+        // its display index — mirrors `editor_tab_strip` ordering.
+        let mut emit = |meta: &EditorTabMeta, caret: usize, active: bool| {
+            if let Some(p) = meta.path.as_ref() {
+                tabs.push(json!({
+                    "path": p.to_string_lossy(),
+                    "caret": caret,
+                    "active": active,
+                }));
+            }
+        };
+        for (idx, tab) in self.code_tabs.iter().enumerate() {
+            if idx == active_disp {
+                emit(
+                    &self.code_buffer_meta,
+                    self.code_buffer.editor.caret_byte(),
+                    true,
+                );
+            }
+            emit(&tab.meta, tab.buffer.editor.caret_byte(), false);
+        }
+        if active_disp >= self.code_tabs.len() {
+            emit(
+                &self.code_buffer_meta,
+                self.code_buffer.editor.caret_byte(),
+                true,
+            );
+        }
+        json!({ "tabs": tabs })
+    }
+
+    /// **IDE Phase 7** — restore an [`editor_session_snapshot`] value.
+    /// `read` resolves a path's source (host passes a VFS- or
+    /// `std::fs`-backed closure); unreadable paths are skipped.
+    /// Non-active tabs open first, then the active one last so it
+    /// ends focused with its caret placed.
+    ///
+    /// [`editor_session_snapshot`]: Self::editor_session_snapshot
+    pub fn restore_editor_session(
+        &mut self,
+        snapshot: &Value,
+        read: impl Fn(&std::path::Path) -> Option<String>,
+    ) {
+        let Some(rows) = snapshot.get("tabs").and_then(|t| t.as_array()) else {
+            return;
+        };
+        let mut ordered: Vec<(std::path::PathBuf, usize, bool)> = Vec::new();
+        for r in rows {
+            let Some(p) = r.get("path").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let caret = r.get("caret").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let active = r.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
+            ordered.push((std::path::PathBuf::from(p), caret, active));
+        }
+        // Stable: inactive first (in recorded order), then the active.
+        ordered.sort_by_key(|(_, _, active)| *active);
+        for (path, caret, _) in ordered {
+            let Some(src) = read(&path) else {
+                continue;
+            };
+            let language = crate::services::editor_files::language_from_path(&path);
+            self.open_editor_tab(path, src, language);
+            self.code_buffer.editor.place_caret_at(caret, false);
+        }
+    }
+
     /// Snapshot the live editing state into the active slot of
     /// `code_tabs`. Cheap (`code_buffer.clone()`), invoked on every
     /// tab switch + every save so the inactive vec stays current.

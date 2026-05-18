@@ -27,28 +27,35 @@
 - **Zero LOC migration cost** — every existing `.prui` /
   `.prss` / `.luau` file continues to parse and render unchanged.
 
-**Status:** design draft (2026-05-15). **Waves A–G landed +
-H/I partial, 2026-05-15.** Runtime-complete: (A) colocated
-`<script>`; (B) closures + `|`/`|>` pipes; (C)
-`prui[[…]]` + `prism.macro` (hygienic); (D) `<match>`/`<case>` +
-`<suspense>`/`<fallback>`; (E) `prism.dialect` + `<language>` /
-`~name{…}` (+ `prui_ast.*` constructors); (F) computed PRSS
-`{ … }` + native colour helpers; (G) `probe:` namespace
-+ `prism.probes:on` + `at:` keyframe namespace. Partial: (H)
-inline `<style>` + `<import>`/`ImportResolver` + FS
-sibling-pairing host resolver + **tier-2 named Luau module
-imports + tier-3 transitive `require` (§5.9) + `prism new
-widget` scaffold + H.4 inline-block fingerprint keys** landed —
-Wave H complete bar the broader Phase-10 hot-reload wiring;
-(I) `prism.scope` value bridge landed,
-the LSP / `luau-analyze` / `prism lint --types` / Inspector
-typing is external-tooling and intentionally not faked. See §9
-Waves A–I for as-built notes. Cross-wave deferrals:
-type-driven `<match>` exhaustiveness, `<suspense>` coroutine
-scheduling + host probe-firing (event-router family), reactive
-`prism.state` / per-class PRSS invalidation (reactive-substrate
-family), the Effect-driven `at:`/`transition:`/`animate:`
-animator, and bundled `prism-builder` dialect files.
+**Status:** ✅ **runtime-complete (2026-05-18).** Waves **A–H all
+landed** — (A) colocated `<script>`; (B) closures + `|`/`|>` pipes;
+(C) `prui[[…]]` + `prism.macro` (hygienic); (D) `<match>`/`<case>`
++ `<suspense>`/`<fallback>`; (E) `prism.dialect` + `<language>` /
+`~name{…}` (+ `prui_ast.*`); (F) computed PRSS `{ … }` + native
+colour helpers; (G) `probe:` + `prism.probes:on` + `at:` keyframes;
+(H) inline `<style>` + `<import>`/`ImportResolver` + FS
+sibling-pairing + tier-2 named module imports + tier-3 transitive
+`require` + `prism new widget` + H.4 inline-block fingerprint keys.
+The former cross-wave deferrals have all landed: type-driven
+`<match>` exhaustiveness needs the Wave-I typed scope (external
+tooling, below); `<suspense>` coroutine scheduling resolved
+(cross-cutting §4.2); **host probe-firing now drives the DevTools
+Probes lens off `data-probe-*` hits** (2026-05-18); reactive
+`prism.state` + per-class PRSS invalidation + the Effect-driven
+`at:`/`transition:`/`animate:` animator all shipped; dialect files
+bundle through `prism.dialect`.
+
+**No open runtime gap.** The lone residual is **Wave I type
+*checking*** — the LSP rewrite-and-typecheck pass, `prism lint
+--types` (`luau-analyze`), `{lua=…}` narrowing, and Inspector type
+annotations. These are **external tooling, deliberately not faked
+in the runtime**: the value bridges they annotate (`prism.scope`,
+the `{lua=…}` evaluator, signal registrations) are landed and
+ready to type-check the moment the `luau-analyze` binary + LSP host
+are wired. That toolchain build is closed-by-decision and tracked
+as a single row in `wysiwyg-builder-roadmap.md` §5 (not an
+unfinished part of *this* substrate). See §9 Waves A–I for
+as-built notes.
 
 **Related docs:** `prui-reference.md` (the surface this extends),
 `prss-reference.md` (the stylesheet half), `luau-integration-plan.md`
@@ -1910,7 +1917,7 @@ landed; only the broader Phase-10 hot-reload *wiring* (feeding
 `PruiDocCache` into the dev loop / `subsecond` patcher) remains,
 tracked in `dioxus-inspiration.md`, not here.
 
-### Wave I — Type system end-to-end — ◑ partial 2026-05-15
+### Wave I — Type system end-to-end — ✅ runtime-side done; type-*checking* closed-by-decision (external toolchain)
 - I.2 ✅ `prism.scope.<name>` runtime bridge:
   `LowerScope::bindings_json()` snapshots host/document bindings,
   seeded onto the sandbox-frozen `prism` table as `prism.scope`
@@ -1928,6 +1935,12 @@ tracked in `dioxus-inspiration.md`, not here.
   registrations) are landed and ready to be type-checked once
   that toolchain pass is built. `--!strict` defaulting (I.5) is
   a one-line `prism_builder::load_*` flag flip gated on I.6.
+  **This is the single closed-by-decision residual for the whole
+  fusion track** — tracked as one row in
+  `wysiwyg-builder-roadmap.md` §5. The runtime is complete; no
+  code gap remains here. (Faking a type-checker in-runtime would
+  violate the house rule against half-implementations and the
+  doc's own "deliberately not faked" stance.)
 
 **Unlocks:** §6.2 value bridge (the typed view is external
 tooling).

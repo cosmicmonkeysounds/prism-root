@@ -282,7 +282,7 @@ pub(crate) fn open_at_offset(
     Ok(())
 }
 
-fn language_from_path(path: &std::path::Path) -> &'static str {
+pub(crate) fn language_from_path(path: &std::path::Path) -> &'static str {
     match path
         .extension()
         .and_then(|e| e.to_str())

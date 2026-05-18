@@ -2004,6 +2004,44 @@ fn code_editor_props_carry_source_caret_and_language() {
 }
 
 #[test]
+fn editor_session_snapshot_round_trips_open_tabs_and_carets() {
+    use std::path::PathBuf;
+    let mut c = CanvasSlot::default();
+    // Open two path-backed tabs; the second is active.
+    c.open_editor_tab(PathBuf::from("/p/a.luau"), "local a = 1\n", "luau");
+    c.code_buffer.editor.place_caret_at(6, false);
+    c.open_editor_tab(PathBuf::from("/p/b.luau"), "return 2\n", "luau");
+    c.code_buffer.editor.place_caret_at(3, false);
+
+    let snap = c.editor_session_snapshot();
+    let tabs = snap["tabs"].as_array().unwrap();
+    assert_eq!(tabs.len(), 2);
+    let active = tabs
+        .iter()
+        .find(|t| t["active"] == serde_json::json!(true))
+        .unwrap();
+    assert_eq!(active["path"], serde_json::json!("/p/b.luau"));
+    assert_eq!(active["caret"], serde_json::json!(3));
+
+    // Restore into a fresh slot from an in-memory source map.
+    let mut fresh = CanvasSlot::default();
+    fresh.restore_editor_session(&snap, |p| match p.to_string_lossy().as_ref() {
+        "/p/a.luau" => Some("local a = 1\n".to_string()),
+        "/p/b.luau" => Some("return 2\n".to_string()),
+        _ => None,
+    });
+    // Fresh slot boots with one untitled scratch tab; restoring the
+    // two path tabs brings the total to three.
+    assert_eq!(fresh.editor_tab_count(), 3);
+    // The active tab restored last → b.luau focused, caret replaced.
+    assert_eq!(
+        fresh.code_buffer_meta.path.as_deref(),
+        Some(std::path::Path::new("/p/b.luau"))
+    );
+    assert_eq!(fresh.code_buffer.editor.caret_byte(), 3);
+}
+
+#[test]
 fn device_from_id_parses_known_ids_and_rejects_others() {
     assert_eq!(Device::from_id("desktop"), Some(Device::Desktop));
     assert_eq!(Device::from_id("tablet"), Some(Device::Tablet));
