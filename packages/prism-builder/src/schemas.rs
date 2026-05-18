@@ -33,6 +33,18 @@ pub fn text() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
+pub(crate) struct CardProps {
+    #[field(label = "Card title", required)]
+    pub(crate) title: String,
+    #[field(label = "Card body", multiline)]
+    pub(crate) body: String,
+}
+
+pub fn card() -> Vec<FieldSpec> {
+    CardProps::field_specs()
+}
+
+#[derive(PrismField)]
 pub(crate) struct ImageProps {
     #[field(label = "Image source", kind = "file", accept = "image/*", required)]
     pub(crate) src: String,

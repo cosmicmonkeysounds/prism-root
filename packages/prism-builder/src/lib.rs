@@ -84,7 +84,7 @@ pub use signal::{
     with_common_signals, ActionKind, Connection, ConnectionId, DispatchResult, SignalDef,
     SignalEvent,
 };
-pub use starter::{builtin_prefab, card_prefab_def, materialize_prefab, register_builtins};
+pub use starter::register_builtins;
 pub use style::{resolve_cascade, StyleProperties};
 pub use template_lower::lower_template;
 pub use variant::{VariantAxis, VariantOption};

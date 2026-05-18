@@ -44,9 +44,11 @@ From `src/lib.rs`:
   17-block default catalog (`text`, `image`, `container`, `form`,
   `input`, `button`, `card`, `code`, `divider`, `spacer`, `columns`,
   `list`, `table`, `tabs`, `accordion`, `facet`, `graph-view`). The
-  15 `Block` rows go through one `SpecBlock` type driven by a
-  `BUILTINS: &[&BlockSpec]` const table — no per-block trait impl;
-  add a builtin = one `const SPEC` + one row.
+  16 `Block` rows (incl. `card` — §4.4 folded it from a `PrefabDef`
+  into a plain `BlockSpec`) go through one `SpecBlock` type driven by
+  a `BUILTINS: &[&BlockSpec]` const table — no per-block trait impl;
+  add a builtin = one `const SPEC` + one row. `facet` is the lone
+  one-off `Component`.
 - `block::BlockSpec`, `block::SpecBlock`, `block::register_specs`,
   `block::{HelpDef, LowerFn, default_lower, default_signals,
   no_schema, no_variants}` — the declarative spec primitive +

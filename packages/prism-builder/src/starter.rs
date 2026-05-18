@@ -6,10 +6,12 @@
 //! delegating to its spec. There are no per-block trait impls — adding
 //! a new block is one `const SPEC` and one entry in the table.
 //!
-//! `card` is a prefab, `facet` is a one-off `Component`, and the
-//! remaining 15 blocks (text, image, container, form, input, button,
-//! code, divider, spacer, columns, list, table, tabs, accordion,
-//! graph-view) flow through `SpecBlock` + `BlockSpec`.
+//! `facet` is a one-off `Component`; the other 16 (text, image,
+//! container, form, input, button, code, divider, spacer, columns,
+//! list, table, tabs, accordion, graph-view, **card**) flow through
+//! `SpecBlock` + `BlockSpec`. `card` was a `PrefabDef`-backed builtin
+//! until §4.4 folded it into a plain `BlockSpec`; `PrefabDef` now
+//! exists only as the hidden user/promotion mechanism.
 
 use std::sync::Arc;
 
@@ -19,7 +21,6 @@ use crate::asset::AssetSource;
 use crate::block::{register_specs, BlockSpec, SpecBlock};
 use crate::document::Node;
 use crate::facet::FacetComponent;
-use crate::prefab::{ExposedSlot, PrefabComponent, PrefabDef};
 use crate::registry::{ComponentRegistry, FieldSpec, RegistryError};
 use crate::schemas;
 use crate::signal::{with_common_signals, SignalDef};
@@ -42,12 +43,14 @@ pub fn builtin_block(id: &str) -> Option<Arc<SpecBlock>> {
         .map(|spec| SpecBlock::arc(spec))
 }
 
-/// Register every entry in [`BUILTINS`] plus the `card` prefab and the
-/// one-off `facet` component. The Slint DSL emit path is gone; the
-/// unified Taffy/SSR pipeline is the single render path.
+/// Register every entry in [`BUILTINS`] plus the one-off `facet`
+/// component. `card` is now a plain `BlockSpec` in the table (§4.4 —
+/// the prefab-backed builtin was folded into a SpecBlock; `PrefabDef`
+/// stays only as the hidden user/promotion mechanism). The Slint DSL
+/// emit path is gone; the unified Taffy/SSR pipeline is the single
+/// render path.
 pub fn register_builtins(components: &mut ComponentRegistry) -> Result<(), RegistryError> {
     register_specs(components, BUILTINS)?;
-    components.register(Arc::new(PrefabComponent::new(card_prefab_def())))?;
     components.register(Arc::new(FacetComponent::new()))?;
     Ok(())
 }
@@ -822,100 +825,59 @@ pub const BUILTINS: &[&BlockSpec] = &[
     &TABS,
     &ACCORDION,
     &GRAPH_VIEW,
+    &CARD,
 ];
 
-// ── card prefab ─────────────────────────────────────────────────────
+// ── card ─────────────────────────────────────────────────────────
 
-/// Built-in card prefab: Container + title text + body text.
-pub fn card_prefab_def() -> PrefabDef {
-    PrefabDef {
-        id: "card".into(),
-        label: "Card".into(),
-        description: "Bordered content card with title and body text slots.".into(),
-        root: Node {
-            id: "card-root".into(),
-            component: "container".into(),
-            props: json!({
-                "spacing": 8,
-                "padding": 16,
-                "border_width": 1,
-                "border_color": "#3b4252"
-            }),
-            children: vec![
-                Node {
-                    id: "card-title".into(),
-                    component: "text".into(),
-                    props: json!({ "body": "", "level": "h3" }),
-                    children: vec![],
-                    ..Default::default()
-                },
-                Node {
-                    id: "card-body".into(),
-                    component: "text".into(),
-                    props: json!({ "body": "", "level": "paragraph" }),
-                    children: vec![],
-                    ..Default::default()
-                },
-            ],
-            style: StyleProperties {
-                background: Some("#2e3440".into()),
-                border_radius: Some(8.0),
+/// Bordered content card: a styled container wrapping a heading
+/// (`title`) and a paragraph (`body`). Folded from the former `card`
+/// prefab into a declarative `BlockSpec` (§4.4) — same visual, same
+/// `"card"` id, but no `PrefabDef` side-table. The two text children
+/// lower through the normal `text` block so the inspector / property
+/// panel / click paths treat a card like any other container.
+fn card_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> ui::Node {
+    let p = schemas::CardProps::from_value(&node.props);
+    let subtree = Node {
+        id: node.id.clone(),
+        component: "container".into(),
+        props: json!({
+            "spacing": 8,
+            "padding": 16,
+            "border_width": 1,
+            "border_color": "#3b4252"
+        }),
+        children: vec![
+            Node {
+                id: format!("{}-title", node.id),
+                component: "text".into(),
+                props: json!({ "body": p.title, "level": "h3" }),
                 ..Default::default()
             },
-            ..Default::default()
-        },
-        exposed: vec![
-            ExposedSlot {
-                key: "title".into(),
-                target_node: "card-title".into(),
-                target_prop: "body".into(),
-                spec: FieldSpec::text("title", "Card title").required(),
-            },
-            ExposedSlot {
-                key: "body".into(),
-                target_node: "card-body".into(),
-                target_prop: "body".into(),
-                spec: FieldSpec::textarea("body", "Card body"),
+            Node {
+                id: format!("{}-body", node.id),
+                component: "text".into(),
+                props: json!({ "body": p.body, "level": "paragraph" }),
+                ..Default::default()
             },
         ],
-        variants: vec![],
-        thumbnail: None,
-    }
+        style: StyleProperties {
+            background: Some("#2e3440".into()),
+            border_radius: Some(8.0),
+            ..style.clone()
+        },
+        ..Default::default()
+    };
+    ctx.lower(&subtree)
 }
 
-/// Instantiate a prefab definition into a document node tree with
-/// fresh IDs. Each node in the returned tree is a regular built-in
-/// component that the inspector and property panel handle natively.
-pub fn materialize_prefab(def: &PrefabDef, counter: &mut u64) -> Node {
-    fn assign_ids(node: &Node, counter: &mut u64) -> Node {
-        let id = format!("n{}", *counter);
-        *counter += 1;
-        Node {
-            id,
-            component: node.component.clone(),
-            props: node.props.clone(),
-            children: node
-                .children
-                .iter()
-                .map(|c| assign_ids(c, counter))
-                .collect(),
-            style: node.style.clone(),
-            layout_mode: node.layout_mode.clone(),
-            transform: node.transform.clone(),
-            modifiers: node.modifiers.clone(),
-        }
-    }
-    assign_ids(&def.root, counter)
-}
-
-/// Look up a built-in prefab by component type. Returns `None` for
-/// non-prefab component types.
-pub fn builtin_prefab(component_type: &str) -> Option<PrefabDef> {
-    match component_type {
-        "card" => Some(card_prefab_def()),
-        _ => None,
-    }
-}
+const CARD: BlockSpec = BlockSpec::new("card", schemas::card)
+    .lower(card_lower)
+    .help(
+        "builder.components.card",
+        "Card",
+        "Bordered content card with a title heading and a body paragraph.",
+    );
 
 // ── tests ───────────────────────────────────────────────────────────
 

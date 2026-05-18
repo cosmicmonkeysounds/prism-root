@@ -118,17 +118,20 @@ blocked on `luau-analyze` integration (landed as a CI gate; needs the
 in-shell surface) and an open femtovg question (no wavy-underline
 primitive).
 
-### 2.5 Maintainability tax on velocity
-Not a feature gap but it throttles every feature above:
-`prism-shell/src/state.rs` is **7527 lines** (down from ~8558 after
-the §4.3 facet-surface deletion; the figure is recomputed each pass,
-not assumed). `prism-builder/src/ui_lower.rs` (1794) and
-`ui_resolver.rs` (1465) are the next tier and are being split along
-their natural seams (Phase B.5) since they're a different lane from
-the state.rs decomposition. The `prism-shell/src/app/` decomposition
-is the single biggest structural refactor outstanding. Tracked as
-cleanup in `state-of-prism.md` §3 but on the product critical path
-because it is now the rate limiter.
+### 2.5 Maintainability tax on velocity — ✅ largely retired
+The former rate limiter was `prism-shell/src/state.rs` at 7.5k lines.
+**Landed 2026-05-17:** decomposed into a `state/` module dir along
+slot/divider seams — `mod.rs` (1168, `AppState` + `impl AppState`),
+`inspector.rs` (358), `slots_core.rs` (811), `overlay.rs` (453),
+`slots_doc.rs` (800), `canvas/mod.rs` (1082), `canvas/parts.rs`
+(741). Every **production** module is now ≤ ~1.2k lines; only the
+test-only `state/tests.rs` (2179) is over guideline and is an
+optional follow-up (its size doesn't throttle feature velocity).
+Behaviour-preserving: child modules `use super::*`; private items the
+cross-module callers reach were widened to `pub(crate)`; `pub use`
+keeps every `crate::state::X` / `crate::X` path stable. `ui_lower.rs`
+/ `ui_resolver.rs` were already split (Phase B.5). The structural
+maintainability blocker is cleared; what remains is incremental.
 
 ## 3. Phased path to the full vision
 
@@ -152,9 +155,14 @@ bind it to a collection by clicking, edits round-trip. (Binding seam +
 canvas selection done; gated only on Vault V2.)
 
 **Phase B — Make the shell maintainable enough to move fast.**
-4. Decompose `prism-shell/src/state.rs` into `prism-shell/src/app/`
-   (incremental, behaviour-preserving, test-pinned). *Separate
-   lane — state.rs is the active Project Vault file.*
+4. ~~Decompose `prism-shell/src/state.rs`~~ ✅ Landed 2026-05-17.
+   Done as a `state/` module dir (not `app/` — same effect, smaller
+   blast radius): `mod.rs` + `inspector` + `slots_core` + `overlay`
+   + `slots_doc` + `canvas/{mod,parts}` + `tests`. Every production
+   module ≤ ~1.2k lines; behaviour-preserving (child `use super::*`,
+   private→`pub(crate)` widening, `pub use` path stability); all 434
+   `prism-shell` lib tests green, clippy clean, workspace check
+   clean. Residual: `state/tests.rs` (2179) test-only split.
 5. ~~Split `ui_lower.rs` / `ui_resolver.rs` along their natural
    seams.~~ ✅ Landed 2026-05-17. `ui_resolver.rs` (1465) →
    `ui_resolver/{mod,convert}.rs` (985 / 508) along the tag-dispatch
@@ -164,9 +172,11 @@ canvas selection done; gated only on Vault V2.)
    `crate::ui_*::*` paths preserved via `pub use`; behaviour-
    preserving, all `prism-builder` tests green + clippy clean.
 
-→ Acceptance: no single `prism-builder` module > ~1500 lines (met);
-tests green throughout (met). The `state.rs` decomposition (item 4)
-remains the outstanding biggest refactor, deferred to its own lane.
+→ Acceptance: no single production module > ~1500 lines — **met**
+across `prism-builder` (Phase B.5) *and* `prism-shell` (item 4, the
+`state/` split); tests green throughout — **met** (434 shell + all
+builder, clippy + workspace clean). Phase B is effectively closed;
+the lone residual is the test-only `state/tests.rs` split.
 
 **Phase C — Dev environment to fullstack-credible.**
 6. IDE Phase 2: real project tree (folders, rename, drag).
@@ -310,12 +320,17 @@ node-tree utilities.
   `Page::ensure_source`/`regenerate_source` hooks deleted (only
   test-only consumers); `SavedPage.source` stays as the persistence
   pass-through string.
-- **Reduce Prefabs** to hidden promotion mechanism; fold `card` into
-  a SpecBlock. *Still deferred — the `card` builtin's
-  `builtin_prefab`/`materialize_prefab` path is consumed by
-  `prism-shell/src/state.rs`, the active Project Vault lane; folding
-  it would force a cross-lane `state.rs` edit. Schedule once that
-  lane settles.*
+- ✅ **Reduce Prefabs** — landed 2026-05-17. `card` folded into a
+  declarative `BlockSpec` (`schemas::CardProps` + `card_lower` + the
+  `CARD` row in `BUILTINS`, same `"card"` id so the builtin-id
+  assertion tests in all three crates stay green). Deleted
+  `card_prefab_def` / `builtin_prefab` / `materialize_prefab` + their
+  re-exports; the shell palette path now drops `card` as a vanilla
+  `Node` like every other block. `PrefabDef` / `PrefabComponent` /
+  `ExposedSlot` remain solely as the hidden user/promotion mechanism
+  (`BuilderDocument.prefabs`). Unblocked once the `state.rs`
+  decomposition (Phase B.4) isolated the consumer into
+  `state/canvas/parts.rs` — no longer a cross-lane edit.
 
 ## 5. Cross-references
 

@@ -51,8 +51,26 @@ src/
   render.rs            # `render_tree` + `Skeleton` loader
   render_scope.rs      # `RenderScope` — Phase 3 reactive Owner + DirtyQueue
   shell.rs             # `Shell` + `ShellInner` borrow-pack
-  state.rs             # `AppState` + every typed slot
+  state/               # `AppState` + every typed slot (decomposed)
+    mod.rs             #   `AppState` struct + `impl AppState` + cursor helpers
+    inspector.rs       #   inspector-tree + property-row derivation
+    slots_core.rs      #   Project / DevTools / Search / Chrome / Workspace
+    overlay.rs         #   `OverlaySlot` + modal/picker/toast sub-types
+    slots_doc.rs       #   Builder / Navigation / Catalog / Docs / Menu
+    canvas/mod.rs      #   `CanvasSlot` struct + `impl CanvasSlot`
+    canvas/parts.rs    #   canvas standalone types + tree helpers
+    tests.rs           #   the `#[cfg(test)]` suite
 ```
+
+The `state/` decomposition (Phase B.4 of the WYSIWYG roadmap) split
+the former 7.5k-line `state.rs` along slot/divider seams. Every
+production module is now ≤ ~1.2k lines. The split is purely module
+boundaries: child modules `use super::*` to inherit intra-`state`
+types + crate imports, and items the cross-module callers reach were
+widened from private to `pub(crate)` (behaviour-preserving — all
+crate-internal). `pub use canvas::*` / `slots_*::*` keep every
+`crate::state::X` / `crate::X` path stable; `tests.rs` is the only
+module still over the size guideline and is test-only.
 
 Adding a feature is one of: a new component module under
 `components/` (chrome), a new service under `services/` (behaviour),
