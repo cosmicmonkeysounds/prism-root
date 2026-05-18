@@ -1,0 +1,64 @@
+<!--
+  shell.diagnostics-panel — IDE-mode Phase 3 "Problems" panel.
+
+  Lists every Luau diagnostic in the project (one row per problem),
+  refreshed on the same cadence as the symbol index (per-file on
+  `editor.file.save`, wholesale on project open). Each row carries
+  `data:role="diagnostics-row"` + `data-path` / `data-offset` so a
+  click jumps to the diagnostic through the shared
+  `editor_files::open_at_offset` seam — the same one the symbol
+  palette and find-in-files use.
+
+  Inline squiggles are deliberately out of scope (femtovg has no
+  wavy-underline primitive — ide-mode-plan.md open question); this
+  is the panel-list surface, the "(b) faster to ship" option.
+-->
+<container
+    tag="aside"
+    direction="column"
+    width="grow"
+    height="grow"
+    padding-left="6"
+    padding-right="6"
+    padding-top="6"
+    padding-bottom="6"
+    gap="6"
+    aria-label="Problems"
+    data:role="diagnostics-panel">
+  <container
+      id="diagnostics-summary"
+      direction="row"
+      height="24"
+      padding-left="6">
+    <text font-size="12" style:color="#000000">{summary}</text>
+  </container>
+  <container
+      id="diagnostics-rows"
+      direction="column"
+      width="grow">
+    <container
+        for="row, idx in rows"
+        id="diagnostics-row-{idx}"
+        tag="div"
+        direction="row"
+        gap="10"
+        padding-left="8"
+        padding-right="8"
+        padding-top="5"
+        padding-bottom="5"
+        width="grow"
+        height="30"
+        style:radius="4"
+        style:background:hovered="#0f000018"
+        role="option"
+        data:role="diagnostics-row"
+        data-path="{row.path}"
+        data-offset="{row.offset}">
+      <text
+          font-size="11"
+          style:color="{row.severity == 'error' ? '#c0152b' : '#9a6a00'}">{row.severity}</text>
+      <text font-size="12" style:color="#000000">{row.message}</text>
+      <text font-size="11" style:color="#66000000">{row.label}</text>
+    </container>
+  </container>
+</container>

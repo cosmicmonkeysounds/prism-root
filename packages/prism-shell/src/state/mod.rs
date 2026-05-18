@@ -117,6 +117,10 @@ pub struct AppState {
     /// `shell.symbol-palette` (Ctrl+Shift+O) state. Rebuilt per-file
     /// on `editor.file.save` and wholesale on `project.open-folder`.
     pub index: IndexSlot,
+    /// **IDE-mode Phase 3** — project-wide Luau diagnostics ("Problems"
+    /// panel). Rebuilt on the same cadence as `index` (per-file on
+    /// `editor.file.save`, wholesale on project open).
+    pub diagnostics: DiagnosticsSlot,
     /// **IDE-mode Phase 4 / cross-cutting §4.3** — DevTools / Inspector
     /// panel state. Four lenses (Document / Presence / Probes / Bindings)
     /// rendered through `shell.devtools`. The probe stream and presence
@@ -266,6 +270,7 @@ impl AppState {
     /// repopulates the palette projection.
     pub fn reindex_luau_symbols(&mut self, read: impl Fn(&std::path::Path) -> Option<Vec<u8>>) {
         self.index.symbols.clear();
+        self.diagnostics.clear();
         let paths: Vec<std::path::PathBuf> = self
             .catalog
             .files
@@ -278,7 +283,8 @@ impl AppState {
             .collect();
         for path in paths {
             if let Some(src) = read(&path).and_then(|b| String::from_utf8(b).ok()) {
-                self.index.symbols.rebuild_file(path, &src);
+                self.index.symbols.rebuild_file(path.clone(), &src);
+                self.diagnostics.rebuild_file(path, &src);
             }
         }
         self.index.refresh_results();

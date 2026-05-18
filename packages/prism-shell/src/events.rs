@@ -390,6 +390,19 @@ const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
     // `data-path` + `data-offset`, opens the file in the code editor
     // and drops the caret on the definition.
     ("symbol-row", handle_symbol_row_click),
+    // **IDE-mode Phase 6** — find-in-files. A result row click sets
+    // the selection + opens it (file hits jump via `open_at_offset`,
+    // document hits select the builder node); the scope pill flips
+    // Document ⇄ Project.
+    ("search-result", handle_search_result_click),
+    ("search-scope-toggle", handle_search_scope_toggle_click),
+    // Replace-in-files focus routing + apply.
+    ("search-replace-input", handle_search_replace_focus_click),
+    ("search-query-input", handle_search_query_focus_click),
+    ("search-replace-apply", handle_search_replace_apply_click),
+    // **IDE-mode Phase 3** — a diagnostics row jumps to the problem
+    // site via the shared editor-jump seam.
+    ("diagnostics-row", handle_diagnostics_row_click),
     // **IDE-mode Phase 4** — DevTools panel routes. Tabs switch the
     // active lens; clicking the filter input focuses it so the
     // declarative text-input dispatch claims keystrokes; clicking a
@@ -615,6 +628,96 @@ fn handle_explorer_row_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> 
     // route the user into the code editor so they see the file
     // they just opened.
     g.state.code_editor_focused = true;
+    true
+}
+
+/// IDE-mode Phase 3: a click on a `shell.diagnostics-panel` row.
+/// Reads `data-path` + byte `data-offset` and jumps to the problem
+/// site through the shared editor-jump seam.
+fn handle_diagnostics_row_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let path_str = match attr_value(hit, "data-path") {
+        Some(p) if !p.is_empty() => p.to_string(),
+        _ => return false,
+    };
+    let offset: usize = attr_value(hit, "data-offset")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let path = std::path::PathBuf::from(path_str);
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    if let Err(e) =
+        crate::services::editor_files::open_at_offset(&mut g.state, &*g.vfs, path, offset)
+    {
+        g.state.overlay.toasts.push(crate::state::Toast {
+            title: "Open diagnostic failed".into(),
+            body: e,
+            kind: crate::state::ToastKind::Error,
+        });
+    }
+    true
+}
+
+/// IDE-mode Phase 6: a click on a `shell.search-overlay` result row.
+/// Reads `data-idx`, makes it the selection, and activates the hit
+/// through the shared `activate_search_hit` (project hits jump to the
+/// file; document hits select the builder node).
+fn handle_search_result_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(idx) = attr_value(hit, "data-idx").and_then(|s| s.parse::<usize>().ok()) else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    let sh = {
+        let s = &mut guard.state.search;
+        s.selected_index = idx;
+        s.results.get(idx).cloned()
+    };
+    let Some(sh) = sh else {
+        return true;
+    };
+    let mut ctx = guard.mut_ctx();
+    crate::services::search::activate_search_hit(&mut ctx, &sh);
+    true
+}
+
+/// IDE-mode Phase 6: clicking the replace input claims keyboard for
+/// the `search-replace` text-input declaration (the query
+/// declaration yields via its `!replace_focused` guard).
+fn handle_search_replace_focus_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRect) -> bool {
+    inner.borrow_mut().state.search.replace_focused = true;
+    true
+}
+
+/// Clicking the query input releases the replace field's focus so
+/// keystrokes flow back to the query declaration.
+fn handle_search_query_focus_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRect) -> bool {
+    let mut guard = inner.borrow_mut();
+    if guard.state.search.replace_focused {
+        guard.state.search.replace_focused = false;
+        return true;
+    }
+    // Not consumed when already focused on query — let the press
+    // fall through to normal caret placement in the input.
+    false
+}
+
+/// The "Replace All" button — apply the replacement across the
+/// current result set via the shared `search_replace_all`.
+fn handle_search_replace_apply_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRect) -> bool {
+    let mut guard = inner.borrow_mut();
+    let mut ctx = guard.mut_ctx();
+    crate::services::text_input::search_replace_all(&mut ctx);
+    true
+}
+
+/// IDE-mode Phase 6: the scope pill — flips Document ⇄ Project. The
+/// query is preserved; the now-stale result list is cleared so the
+/// next keystroke re-derives it in the new scope.
+fn handle_search_scope_toggle_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRect) -> bool {
+    let mut guard = inner.borrow_mut();
+    let s = &mut guard.state.search;
+    s.scope = s.scope.toggled();
+    s.results.clear();
+    s.selected_index = 0;
     true
 }
 
@@ -1590,6 +1693,66 @@ fn click_millis() -> u64 {
 /// line selection. Plain single clicks open a drag — pointer-move +
 /// pointer-up close the loop through
 /// `route_code_editor_body_drag` / `_release`.
+/// Resolve the identifier under a Ctrl/Cmd+click on the code-editor
+/// body and jump to its definition via the project symbol index.
+/// Returns `true` when a symbol was found *and* the jump fired; a
+/// miss returns `false` so the caller can fall back to a normal
+/// caret-placement press. Mirrors the hover path's
+/// `resolve_editor_byte_at` + `syntax::token_at` lexeme extraction,
+/// then `SymbolIndex::lookup` + the shared `open_at_offset` jump seam.
+fn try_ctrl_jump_to_def(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect, x: f32, y: f32) -> bool {
+    const FONT_SIZE: f32 = 13.0;
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let text = g.state.canvas.code_buffer.source().to_string();
+    let language = g.state.canvas.code_buffer.language.clone();
+    let scroll_x = g.state.canvas.code_buffer.scroll_x;
+    let scroll_y = g.state.canvas.code_buffer.scroll_y;
+    let byte = resolve_editor_byte_at(
+        &text,
+        hit.bounds.x,
+        hit.bounds.y,
+        hit.bounds.width,
+        x,
+        y,
+        scroll_x,
+        scroll_y,
+        FONT_SIZE,
+    );
+    let lang = if language.is_empty() {
+        "luau"
+    } else {
+        language.as_str()
+    };
+    let Some((_, lexeme)) = prism_ui_runtime::syntax::token_at(&text, lang, byte) else {
+        return false;
+    };
+    let Some(sym) = g
+        .state
+        .index
+        .symbols
+        .lookup(lexeme)
+        .into_iter()
+        .next()
+        .cloned()
+    else {
+        return false;
+    };
+    if let Err(e) = crate::services::editor_files::open_at_offset(
+        &mut g.state,
+        &*g.vfs,
+        sym.path.clone(),
+        sym.offset,
+    ) {
+        g.state.overlay.toasts.push(crate::state::Toast {
+            title: "Go to Definition failed".into(),
+            body: e,
+            kind: crate::state::ToastKind::Error,
+        });
+    }
+    true
+}
+
 fn route_code_editor_body_press(
     inner: &Rc<RefCell<ShellInner>>,
     hit: &HitRect,
@@ -1599,6 +1762,13 @@ fn route_code_editor_body_press(
 ) -> bool {
     if attr_value(hit, "data-role") != Some("code-editor-body") {
         return false;
+    }
+    // **IDE Phase 2** — Ctrl/Cmd+click is jump-to-definition: resolve
+    // the identifier under the click against the project symbol index
+    // and, on a hit, open its file with the caret on the def. Misses
+    // fall through to the normal caret-placement press below.
+    if (modifiers.ctrl || modifiers.meta) && try_ctrl_jump_to_def(inner, hit, x, y) {
+        return true;
     }
     const FONT_SIZE: f32 = 13.0;
     let mut guard = inner.borrow_mut();

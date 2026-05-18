@@ -791,9 +791,10 @@ mod tests {
         assert!(snap.get("builder").is_some());
         assert!(snap.get("inspector").is_some());
         // IDE-mode Phase 4: `devtools` joined the built-in catalog
-        // alongside the 15 previous panels.
+        // alongside the 15 previous panels; IDE Phase 3 added
+        // `diagnostics` → 17.
         assert!(snap.get("devtools").is_some());
-        assert_eq!(snap.len(), 16);
+        assert_eq!(snap.len(), 17);
     }
 
     #[test]
@@ -813,8 +814,8 @@ mod tests {
         let p = snap.get("lattice.peers").expect("registered panel");
         assert_eq!(p.label, "Peers");
         assert_eq!(p.tag, Some("lattice.peers-panel"));
-        // 16 builtins + 1 newly registered = 17.
-        assert_eq!(snap.len(), 17);
+        // 17 builtins + 1 newly registered = 18.
+        assert_eq!(snap.len(), 18);
     }
 
     #[test]
@@ -1062,8 +1063,8 @@ mod tests {
         assert!(snap.get("lattice.peers").is_some());
         assert!(snap.get("lattice.activity").is_some());
         assert_eq!(snap.tag_for("lattice.peers"), Some("lattice.peers"));
-        // 16 builtins + 2 manifest-declared = 18.
-        assert_eq!(snap.len(), 18);
+        // 17 builtins + 2 manifest-declared = 19.
+        assert_eq!(snap.len(), 19);
     }
 
     #[test]

@@ -1049,6 +1049,24 @@ fn devtools_signals() -> Vec<SignalDef> {
     ])
 }
 
+fn diagnostics_panel_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("summary", "Summary line"),
+        FieldSpec::text("rows", "Diagnostics (JSON array)"),
+        FieldSpec::integer("total", "Problem count", NumericBounds::min(0.0))
+            .with_default(Value::from(0.0)),
+        FieldSpec::integer("errors", "Error count", NumericBounds::min(0.0))
+            .with_default(Value::from(0.0)),
+    ]
+}
+
+fn diagnostics_panel_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![SignalDef::new(
+        "diagnostic-activated",
+        "User jumped to a diagnostic.",
+    )])
+}
+
 fn component_picker_schema() -> Vec<FieldSpec> {
     vec![
         FieldSpec::boolean("open", "Open").with_default(Value::Bool(false)),
@@ -1754,6 +1772,14 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     )
     .schema(devtools_schema)
     .signals(devtools_signals),
+    // IDE-mode Phase 3 — the Luau "Problems" panel. Reads from
+    // `state.diagnostics`; rows jump via `editor_files::open_at_offset`.
+    PrismUiSpec::new(
+        "shell.diagnostics-panel",
+        include_str!("../../ui/components/diagnostics-panel.prism-ui"),
+    )
+    .schema(diagnostics_panel_schema)
+    .signals(diagnostics_panel_signals),
 ];
 
 #[cfg(test)]

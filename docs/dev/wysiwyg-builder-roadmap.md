@@ -56,9 +56,9 @@ ships to web + desktop — all without leaving the shell.
 | Visual canvas authoring | 🟢 Runtime-complete | Inspector tree drives selection; the §4.3 `FacetDef` retirement landed, so facet inline templates are now ordinary `node.children` the normal canvas hit-test / click / inspector path already selects (no composite-id route needed — the gap dissolved with the parallel surface). **Residual:** mapping a *data-bound repeat instance* (`{facet}::{idx}/…`) back to its template source for edit-propagation is a normal-node UX refinement, not a substrate gap. |
 | Two-way data binding | 🟢 Runtime-complete | `bind:*` carries through to `data-bind-*` semantic attrs; `SkeletonBindingContext` installs a real `Effect` per slot/selector binding + `refresh` drives the reactive graph (A2 install side) **and** `apply_to_ast` projects the per-node `ReactiveProps` bag back into the skeleton with subscribing reads (A2 read side, wired into `Shell::render` behind `attach_skeleton_bindings`). **Gap:** host refresh cadence — feeding the AppState→JSON snapshot each frame (pairs with the Project Vault data loop). |
 | Fullstack data layer | 🟢 Runtime-complete | Project Vault V1–V3 all landed (verified in `project_manager.rs` 2026-05-17): `notify` watcher → live graph, Explorer (`state.catalog.files`), folder hierarchy + image thumbnails, `Shell::{open,close,save,poll}_project` + `--project`. **Residual:** binding-layer consumption of those `GraphObject`s into facet `items` / search (the data is live + queryable; the read-path is the binding lane's call). |
-| Real dev environment | 🟡 Early | IDE Mode Phase 1 (project tree) + Phase 2 (symbol index + Ctrl+T Go-to-Symbol palette + jump-to-def) + Phase 4 (Inspector/DevTools) shipped. **Gap:** Phases 3/5/6/7 — diagnostics panel, folding/inlays, find-in-files, split/persistence. |
+| Real dev environment | 🟢 Credible | IDE Mode Phases 1 (project tree), 2 (symbol index + Ctrl+T palette + Ctrl/Cmd+click jump-to-def), 3 (diagnostics "Problems" panel), 4 (Inspector/DevTools), 6 (find-in-files) shipped. **Gap:** Phase 5 (folding/bracket-match/inlays), Phase 7 (split editor + tab persistence), nested/drag project tree, inline squiggles (femtovg-blocked), replace-in-files. |
 | Deploy | 🟡 Partial | web (wasm-bindgen) + native build paths ship. **Gap:** Phase 6 — mobile + `cargo-packager`/`self_update` packaging. |
-| Collaborate | 🟡 Substrate-only | Loro CRDT + `PresenceManager` exist; probe firing + presence ingest stubbed (no host event-router / `PresenceService` consumer yet). |
+| Collaborate | 🟡 Ingest-wired | Loro CRDT + `PresenceManager`; **presence ingest landed** — `ShellInner` owns the manager, the idle tick drains `PresenceChange`s into the DevTools presence lens (`apply_presence_change`), `Shell::presence_receive_remote` is the host/transport seam. **Gap:** the wire transport (relay/WebRTC feeding `receive_remote`) + the canvas `shell.presence-overlay` (peer cursors) + probe firing off `data-probe-*` hits. |
 
 The honest summary: **the engine and authoring substrate are done; the
 product surface (canvas WYSIWYG, the data loop, the dev environment,
@@ -189,27 +189,44 @@ the lone residual is the test-only `state/tests.rs` split.
 **Phase C — Dev environment to fullstack-credible.**
 6. IDE Phase 2: real project tree (folders, rename, drag). *(tree
    nesting + drag still open; the flat depth-encoded explorer ships.)*
-7. IDE Phase 3: diagnostics panel (resolve the femtovg
-   underline question — gutter markers vs. squiggle primitive).
-8. ~~IDE symbol index + jump-to-definition.~~ ✅ Landed 2026-05-17.
-   `prism_core::language::symbol_index` + `AppState::index` (rebuilt
-   on save / project-open) + `editor.go-to-symbol` (Ctrl+T)
-   `shell.symbol-palette` (fuzzy, Enter/click jump). **Residual:**
-   find-in-files (Phase 6 below) + Ctrl+click in the editor body.
+7. ~~IDE Phase 3: diagnostics panel.~~ ✅ Landed 2026-05-18.
+   `AppState::diagnostics` (`DiagnosticsSlot` over
+   `LuauSyntaxProvider::diagnose`, refreshed on the symbol-index
+   cadence) + `shell.diagnostics-panel` + `PanelKind::DIAGNOSTICS`
+   ("Problems") + `diagnostics-row` jump. **Residual:** inline
+   wavy-underline squiggles — femtovg has no primitive; the
+   panel-list is the shipped "(b)" surface.
+8. ~~IDE symbol index + jump-to-definition + find-in-files.~~ ✅
+   Landed 2026-05-17/18. `prism_core::language::symbol_index` +
+   `AppState::index` + `editor.go-to-symbol` (Ctrl+T)
+   `shell.symbol-palette` (fuzzy, Enter/click jump) + **Ctrl/Cmd+click
+   jump-to-def in the editor body** + **find-in-files**
+   (`SearchScope` Document⇄Project, `project_grep`, scope pill,
+   `search.activate`). **Residual:** find-in-files *replace* field.
 
-→ Acceptance: jump to a symbol by name from the Ctrl+T palette —
-**met**. Author a Luau error → see it inline + in a panel (Phase 3,
-femtovg-underline-blocked), find all refs (find-in-files) — open.
+→ Acceptance: jump to a symbol by name from the Ctrl+T palette,
+Ctrl+click an ident to its def, grep the project, see Luau errors in
+the Problems panel — **met**. Inline squiggles
+(femtovg-underline-blocked) + replace-in-files — open.
 
 **Phase D — Deploy + collaborate.**
 9. ~~Project Vault V3 (folder hierarchy + thumbnails).~~ ✅ Landed
    (shipped with V2 above — one `project_manager.rs` pass).
 10. Phase 6: mobile target + `cargo-packager` + `self_update`.
-11. Wire presence: host event-router → `PresenceService` consuming
-    probes; live cursors/selections on the canvas.
+11. ~~Wire presence ingest → DevTools presence lens.~~ ✅ Landed
+    2026-05-18. `ShellInner` owns the `PresenceManager`; the idle
+    tick sweeps + drains `PresenceChange`s into
+    `state.devtools.presence` (`apply_presence_change`);
+    `Shell::presence_receive_remote` is the host/transport seam.
+    **Residual:** the wire transport (relay/WebRTC feeding
+    `receive_remote`), the canvas `shell.presence-overlay` (peer
+    cursors), and probe firing off `data-probe-*` hits.
 
-→ Acceptance: package a signed desktop build that self-updates; two
-users co-edit a page with live cursors.
+→ Acceptance: package a signed desktop build that self-updates
+(open); two users co-edit a page with live cursors — the presence
+*data path* is live end-to-end (feed `presence_receive_remote`, see
+the peer in the DevTools lens); the canvas cursor overlay + the wire
+transport remain.
 
 ## 4. Authoring-systems survey & consolidation decisions
 

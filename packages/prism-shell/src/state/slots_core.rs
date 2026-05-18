@@ -114,6 +114,55 @@ impl DevToolsSlot {
         self.probes.clear();
     }
 
+    /// IDE Phase D / cross-cutting §4.3 — ingest one
+    /// `prism_core::network::presence::PresenceChange` into the
+    /// presence lens. `Joined`/`Updated` replace-or-insert by
+    /// `peer_id`; `Left` removes. `now_ms` is the host's monotonic
+    /// clock so the row's "last seen" is render-friendly. Returns
+    /// `true` when the buffer actually changed.
+    pub fn apply_presence_change(
+        &mut self,
+        change: &prism_core::network::presence::PresenceChange,
+        now_ms: u64,
+    ) -> bool {
+        use prism_core::network::presence::PresenceChangeKind;
+        match change.kind {
+            PresenceChangeKind::Joined | PresenceChangeKind::Updated => {
+                let Some(st) = change.state.as_ref() else {
+                    return false;
+                };
+                let selection = st
+                    .selections
+                    .first()
+                    .map(|s| s.object_id.clone())
+                    .or_else(|| st.cursor.as_ref().map(|c| c.object_id.clone()));
+                let peer = PresencePeer {
+                    peer_id: st.identity.peer_id.clone(),
+                    display_name: st.identity.display_name.clone(),
+                    color: st.identity.color.clone(),
+                    selection,
+                    active_view: st.active_view.clone(),
+                    last_seen_ms: now_ms,
+                };
+                match self.presence.iter_mut().find(|p| p.peer_id == peer.peer_id) {
+                    Some(slot) => {
+                        if *slot == peer {
+                            return false;
+                        }
+                        *slot = peer;
+                    }
+                    None => self.presence.push(peer),
+                }
+                true
+            }
+            PresenceChangeKind::Left => {
+                let before = self.presence.len();
+                self.presence.retain(|p| p.peer_id != change.peer_id);
+                before != self.presence.len()
+            }
+        }
+    }
+
     /// Switch lenses. Side-effect-free — the binding closure does the
     /// rendering work.
     pub fn switch_lens(&mut self, lens: DevToolsLens) {
@@ -332,20 +381,60 @@ pub(crate) fn flatten_doc_tree(root: Option<&prism_builder::Node>) -> Vec<Value>
 /// [`Self::query_text`] which projects the underlying buffer.
 ///
 /// See `docs/dev/clay-migration-plan.md` §26.
+/// What the find overlay searches. `Document` is the original
+/// builder-tree scorer; `Project` (IDE Phase 6) greps every text
+/// file in `state.catalog.files`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchScope {
+    #[default]
+    Document,
+    Project,
+}
+
+impl SearchScope {
+    pub fn label(&self) -> &'static str {
+        match self {
+            SearchScope::Document => "Document",
+            SearchScope::Project => "Project",
+        }
+    }
+
+    pub fn toggled(&self) -> Self {
+        match self {
+            SearchScope::Document => SearchScope::Project,
+            SearchScope::Project => SearchScope::Document,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SearchSlot {
     pub open: bool,
     pub query: prism_ui_runtime::editor::TextEditor,
     pub results: Vec<SearchHit>,
     pub selected_index: usize,
+    pub scope: SearchScope,
+    /// IDE Phase 6 — the replacement string (project scope only).
+    pub replace: prism_ui_runtime::editor::TextEditor,
+    /// `true` while the replace field owns the keyboard. Routes the
+    /// two single-line inputs to disjoint text-input declarations so
+    /// they don't both claim a keystroke.
+    pub replace_focused: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SearchHit {
+    /// Builder `NodeId` for `Document`-scope hits; empty for project
+    /// file hits (those carry `path` + `offset` instead).
     pub node_id: String,
     pub label: String,
     pub snippet: String,
     pub score: f32,
+    /// `Project`-scope hits carry the file + byte offset of the match
+    /// so activation routes through `editor_files::open_at_offset`.
+    pub path: Option<std::path::PathBuf>,
+    pub offset: usize,
 }
 
 impl SearchSlot {
@@ -355,18 +444,30 @@ impl SearchSlot {
         self.query.text()
     }
 
+    pub fn replace_text(&self) -> &str {
+        self.replace.text()
+    }
+
     pub fn search_overlay_props(&self) -> Value {
         let mut props = json!({
             "open": self.open,
             "query": self.query_text(),
             "caret": self.query.caret_byte(),
             "selected-index": self.selected_index,
+            "scope": self.scope.label(),
+            "project-scope": self.scope == SearchScope::Project,
+            "replace": self.replace_text(),
+            "replace-caret": self.replace.caret_byte(),
+            "replace-focused": self.replace_focused,
             "results": Value::Array(
                 self.results.iter().map(|h| json!({
                     "node-id": h.node_id,
                     "label": h.label,
                     "snippet": h.snippet,
                     "score": h.score,
+                    "path": h.path.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+                    "offset": h.offset,
+                    "has-path": h.path.is_some(),
                 })).collect()
             ),
         });
@@ -375,6 +476,9 @@ impl SearchSlot {
         // missing-attr branch (no highlight) is the default.
         if let Some((a, b)) = self.query.selection() {
             props["selection"] = json!(format!("{a},{b}"));
+        }
+        if let Some((a, b)) = self.replace.selection() {
+            props["replace-selection"] = json!(format!("{a},{b}"));
         }
         props
     }
@@ -443,6 +547,120 @@ impl IndexSlot {
             props["selection"] = json!(format!("{a},{b}"));
         }
         props
+    }
+}
+
+// ── diagnostics (IDE Phase 3) ─────────────────────────────────────
+
+/// One Luau diagnostic resolved to a jump target. `severity` is a
+/// lowercase string so the panel DSL can key a colour off it without
+/// a renderer-side enum.
+#[derive(Clone, Debug)]
+pub struct DiagEntry {
+    pub message: String,
+    pub severity: &'static str,
+    /// 1-based line / 0-based column of the diagnostic's start.
+    pub line: usize,
+    pub column: usize,
+    /// Byte offset of the start — the jump target.
+    pub offset: usize,
+}
+
+/// IDE-mode Phase 3 — the project-wide Luau "Problems" table, keyed
+/// by file so one file rebuilds on save. Squiggle rendering is
+/// femtovg-blocked (no wavy-underline primitive); this is the
+/// panel-list half (ide-mode-plan.md open question (b)), refreshed on
+/// the same cadence as the symbol index.
+#[derive(Clone, Debug, Default)]
+pub struct DiagnosticsSlot {
+    pub per_file: std::collections::BTreeMap<std::path::PathBuf, Vec<DiagEntry>>,
+}
+
+impl DiagnosticsSlot {
+    /// Re-diagnose one file via `LuauSyntaxProvider`. Clean files are
+    /// dropped from the map so the panel only lists files with
+    /// problems.
+    pub fn rebuild_file(&mut self, path: impl Into<std::path::PathBuf>, source: &str) {
+        use prism_core::language::syntax::{pos_at, DiagnosticSeverity, SyntaxProvider};
+        let path = path.into();
+        let provider = prism_core::language::luau::LuauSyntaxProvider::new();
+        let diags = provider.diagnose(source, None);
+        if diags.is_empty() {
+            self.per_file.remove(&path);
+            return;
+        }
+        let mut rows: Vec<DiagEntry> = diags
+            .into_iter()
+            .map(|d| {
+                let p = pos_at(source, d.range.start);
+                DiagEntry {
+                    message: d.message,
+                    severity: match d.severity {
+                        DiagnosticSeverity::Error => "error",
+                        DiagnosticSeverity::Warning => "warning",
+                        DiagnosticSeverity::Info => "info",
+                        DiagnosticSeverity::Hint => "hint",
+                    },
+                    line: p.line,
+                    column: p.column,
+                    offset: d.range.start,
+                }
+            })
+            .collect();
+        rows.sort_by_key(|r| r.offset);
+        self.per_file.insert(path, rows);
+    }
+
+    pub fn remove_file(&mut self, path: &std::path::Path) {
+        self.per_file.remove(path);
+    }
+
+    pub fn clear(&mut self) {
+        self.per_file.clear();
+    }
+
+    pub fn total(&self) -> usize {
+        self.per_file.values().map(|v| v.len()).sum()
+    }
+
+    pub fn error_count(&self) -> usize {
+        self.per_file
+            .values()
+            .flatten()
+            .filter(|d| d.severity == "error")
+            .count()
+    }
+
+    pub fn diagnostics_panel_props(&self) -> Value {
+        let mut rows: Vec<Value> = Vec::new();
+        for (path, diags) in &self.per_file {
+            let file = path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string_lossy().into_owned());
+            for d in diags {
+                rows.push(json!({
+                    "path": path.to_string_lossy(),
+                    "file": file,
+                    "line": d.line,
+                    "column": d.column,
+                    "offset": d.offset,
+                    "severity": d.severity,
+                    "message": d.message,
+                    "label": format!("{file}:{}", d.line),
+                }));
+            }
+        }
+        json!({
+            "total": self.total(),
+            "errors": self.error_count(),
+            "summary": if rows.is_empty() {
+                "No problems".to_string()
+            } else {
+                format!("{} problem(s), {} error(s)", self.total(), self.error_count())
+            },
+            "rows": Value::Array(rows),
+        })
     }
 }
 
@@ -872,5 +1090,64 @@ pub(crate) fn walk_panel_ids(node: &DockNode, out: &mut Vec<String>) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod presence_tests {
+    use super::*;
+    use prism_core::network::presence::{
+        PeerIdentity, PresenceChange, PresenceChangeKind, PresenceState,
+    };
+
+    fn state_for(peer: &str, view: &str) -> PresenceState {
+        PresenceState {
+            identity: PeerIdentity {
+                peer_id: peer.into(),
+                display_name: format!("Peer {peer}"),
+                color: "#abc".into(),
+                avatar_url: None,
+            },
+            cursor: None,
+            selections: Vec::new(),
+            active_view: Some(view.into()),
+            last_seen: "2026-05-18T00:00:00Z".into(),
+            data: Default::default(),
+        }
+    }
+
+    #[test]
+    fn joined_then_updated_then_left() {
+        let mut dt = DevToolsSlot::default();
+        let joined = PresenceChange {
+            kind: PresenceChangeKind::Joined,
+            peer_id: "p1".into(),
+            state: Some(state_for("p1", "builder")),
+        };
+        assert!(dt.apply_presence_change(&joined, 100));
+        assert_eq!(dt.presence.len(), 1);
+        assert_eq!(dt.presence[0].active_view.as_deref(), Some("builder"));
+
+        // Idempotent re-apply of the same state → no change.
+        assert!(!dt.apply_presence_change(&joined, 100));
+
+        let updated = PresenceChange {
+            kind: PresenceChangeKind::Updated,
+            peer_id: "p1".into(),
+            state: Some(state_for("p1", "code")),
+        };
+        assert!(dt.apply_presence_change(&updated, 200));
+        assert_eq!(dt.presence.len(), 1);
+        assert_eq!(dt.presence[0].active_view.as_deref(), Some("code"));
+
+        let left = PresenceChange {
+            kind: PresenceChangeKind::Left,
+            peer_id: "p1".into(),
+            state: None,
+        };
+        assert!(dt.apply_presence_change(&left, 300));
+        assert!(dt.presence.is_empty());
+        // Left for an unknown peer is a no-op.
+        assert!(!dt.apply_presence_change(&left, 400));
     }
 }

@@ -152,7 +152,10 @@ From `src/lib.rs`:
   project-wide `prism_core` `SymbolIndex` + the Ctrl+T "Go to Symbol"
   palette state; rebuilt per-file on `editor.file.save` and wholesale
   on `project.open-folder` / `Shell::{open,poll}_project` via
-  `AppState::reindex_luau_symbols`), plus the leaf records (`Toast`,
+  `AppState::reindex_luau_symbols` — which also drives `DiagnosticsSlot`),
+  `DiagnosticsSlot` (IDE Phase 3 — `LuauSyntaxProvider::diagnose` per
+  `.luau` file, surfaced through `shell.diagnostics-panel` /
+  `PanelKind::DIAGNOSTICS`), plus the leaf records (`Toast`,
   `NavPage`, `InspectorNode`, `PropertyRow`, `SchemaDoc`,
   `SignalConnection`, `TransformSnapshot`, …). Each slot owns its
   own `*_props()` methods so binding closures stay one line.
@@ -168,6 +171,14 @@ From `src/lib.rs`:
   `Shell::run_with_project` / the `--project <path>` CLI flag drive
   the watcher each idle tick. Held as `Option<ProjectManager>` on
   `ShellInner` — `None` for the default ephemeral session.
+- **Presence (IDE Phase D)** — `ShellInner.presence` is a
+  `prism_core::network::presence::PresenceManager`; a subscribed
+  listener funnels every `PresenceChange` into a host queue that the
+  `run_with_project` idle tick (and the standalone `Shell::poll_presence`)
+  drains into `state.devtools.presence` via
+  `DevToolsSlot::apply_presence_change` (TTL `sweep` first).
+  `Shell::presence_receive_remote(PresenceState)` is the
+  host/transport seam — the wire (relay/WebRTC) owns the call site.
 
 ## Three contracts
 

@@ -101,6 +101,7 @@ pub fn register_builtins(catalog: &mut DockCatalog) {
     catalog.register(PanelKind::SCHEMA_DESIGNER);
     catalog.register(PanelKind::DOCS);
     catalog.register(PanelKind::DEVTOOLS);
+    catalog.register(PanelKind::DIAGNOSTICS);
 }
 
 #[cfg(test)]
@@ -119,8 +120,8 @@ mod tests {
     #[test]
     fn builtins_seed_every_panel() {
         let cat = DockCatalog::with_builtins();
-        // 15 original panels + `devtools` (IDE-mode Phase 4) = 16.
-        assert_eq!(cat.len(), 16);
+        // 15 original + `devtools` (Phase 4) + `diagnostics` (Phase 3) = 17.
+        assert_eq!(cat.len(), 17);
         for id in [
             "builder",
             "inspector",
@@ -138,6 +139,7 @@ mod tests {
             "schema-designer",
             "docs",
             "devtools",
+            "diagnostics",
         ] {
             assert!(cat.get(id).is_some(), "builtin `{id}` missing");
         }
@@ -170,7 +172,7 @@ mod tests {
         let p = cat.get("builder").unwrap();
         assert_eq!(p.label, "Builder (custom)");
         assert_eq!(p.tag, Some("my.builder-canvas"));
-        assert_eq!(cat.len(), 16, "override should not grow the catalog");
+        assert_eq!(cat.len(), 17, "override should not grow the catalog");
     }
 
     #[test]
@@ -178,7 +180,7 @@ mod tests {
         let cat = DockCatalog::with_builtins();
         let ids: Vec<&str> = cat.ids().collect();
         assert_eq!(ids.first(), Some(&"builder"));
-        // `devtools` is registered last (IDE-mode Phase 4).
-        assert_eq!(ids.last(), Some(&"devtools"));
+        // `diagnostics` is registered last (IDE-mode Phase 3).
+        assert_eq!(ids.last(), Some(&"diagnostics"));
     }
 }

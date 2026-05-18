@@ -140,8 +140,9 @@ pub fn builtin_declarations() -> &'static [TextInputDeclaration] {
     &BUILTINS
 }
 
-static BUILTINS: [TextInputDeclaration; 4] = [
+static BUILTINS: [TextInputDeclaration; 5] = [
     palette_declaration(),
+    search_replace_declaration(),
     search_declaration(),
     symbol_palette_declaration(),
     devtools_filter_declaration(),
@@ -172,7 +173,7 @@ const fn palette_declaration() -> TextInputDeclaration {
 
 const fn search_declaration() -> TextInputDeclaration {
     TextInputDeclaration::builder("search", |s| &s.search.query, |s| &mut s.search.query)
-        .active_when(|s| s.search.open)
+        .active_when(|s| s.search.open && !s.search.replace_focused)
         .on_buffer_change(search_rebuild_results)
         .on_cancel(search_close)
         .passthrough_plain(&[
@@ -186,6 +187,88 @@ const fn search_declaration() -> TextInputDeclaration {
         ])
         .modal()
         .build()
+}
+
+/// IDE Phase 6 — the replace field. Active only while the replace
+/// input holds focus (the query declaration yields via its
+/// `!replace_focused` guard). Enter applies the replacement across
+/// the current result set; Escape blurs back to the query.
+const fn search_replace_declaration() -> TextInputDeclaration {
+    TextInputDeclaration::builder(
+        "search-replace",
+        |s| &s.search.replace,
+        |s| &mut s.search.replace,
+    )
+    .active_when(|s| s.search.open && s.search.replace_focused)
+    .on_commit(search_replace_all)
+    .on_cancel(search_replace_blur)
+    .passthrough_plain(&["enter", "return", "escape"])
+    .modal()
+    .build()
+}
+
+fn search_replace_blur(ctx: &mut MutCtx<'_>) {
+    ctx.state.search.replace_focused = false;
+}
+
+/// Apply the replace string to every project hit in the current
+/// result set. Replacements are applied **back-to-front per file**
+/// (so earlier offsets stay valid), the file is written back through
+/// the `Vfs`, then results + the symbol index / diagnostics are
+/// re-derived. The matched span length is the query's byte length —
+/// the grep is literal, so for ASCII source (the common case) this
+/// is exact; a non-ASCII case-fold shift is re-grepped immediately.
+pub(crate) fn search_replace_all(ctx: &mut MutCtx<'_>) {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    let qlen = ctx.state.search.query.text().len();
+    if qlen == 0 {
+        return;
+    }
+    let replacement = ctx.state.search.replace.text().to_string();
+
+    let mut by_file: BTreeMap<PathBuf, Vec<usize>> = BTreeMap::new();
+    for h in &ctx.state.search.results {
+        if let Some(p) = &h.path {
+            by_file.entry(p.clone()).or_default().push(h.offset);
+        }
+    }
+    if by_file.is_empty() {
+        return;
+    }
+
+    let mut files_changed = 0usize;
+    let mut total = 0usize;
+    for (path, mut offsets) in by_file {
+        let Ok(bytes) = ctx.vfs.read(&path) else {
+            continue;
+        };
+        let Ok(mut text) = String::from_utf8(bytes) else {
+            continue;
+        };
+        offsets.sort_unstable();
+        offsets.dedup();
+        for &off in offsets.iter().rev() {
+            let end = off + qlen;
+            if end <= text.len() && text.is_char_boundary(off) && text.is_char_boundary(end) {
+                text.replace_range(off..end, &replacement);
+                total += 1;
+            }
+        }
+        if ctx.vfs.write(&path, text.as_bytes()).is_ok() {
+            files_changed += 1;
+        }
+    }
+
+    ctx.state.overlay.toasts.push(crate::state::Toast {
+        title: "Replace in Files".into(),
+        body: format!("{total} replacement(s) across {files_changed} file(s)"),
+        kind: crate::state::ToastKind::Info,
+    });
+    search_rebuild_results(ctx);
+    let vfs = &*ctx.vfs;
+    ctx.state.reindex_luau_symbols(|p| vfs.read(p).ok());
 }
 
 /// IDE Phase 2 — the "Go to Symbol" palette (Ctrl+T). Sister to the
@@ -291,7 +374,7 @@ fn palette_close(ctx: &mut MutCtx<'_>) {
 // Search hooks -------------------------------------------------------
 
 fn search_rebuild_results(ctx: &mut MutCtx<'_>) {
-    use crate::state::SearchHit;
+    use crate::state::{SearchHit, SearchScope};
     let q = ctx.state.search.query.text().to_lowercase();
     ctx.state.search.results.clear();
     if q.is_empty() {
@@ -299,22 +382,92 @@ fn search_rebuild_results(ctx: &mut MutCtx<'_>) {
         return;
     }
     let mut hits: Vec<SearchHit> = Vec::new();
-    if let Some(root) = ctx.state.canvas.document.root.as_ref() {
-        walk_score(root, &q, &mut hits);
+    match ctx.state.search.scope {
+        SearchScope::Document => {
+            if let Some(root) = ctx.state.canvas.document.root.as_ref() {
+                walk_score(root, &q, &mut hits);
+            }
+            hits.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            hits.truncate(50);
+        }
+        SearchScope::Project => {
+            // `state` + `vfs` are disjoint `MutCtx` fields, so the
+            // grep can borrow the vfs while reading the file list.
+            let vfs = &*ctx.vfs;
+            project_grep(&ctx.state.catalog.files, vfs, &q, &mut hits);
+        }
     }
-    hits.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    hits.truncate(50);
     ctx.state.search.results = hits;
     ctx.state.search.selected_index = 0;
+}
+
+/// Largest single file the project grep will scan (bytes) and the
+/// global hit cap — keeps a "find in files" over a big tree bounded.
+const GREP_MAX_FILE_BYTES: usize = 1 << 20;
+const GREP_MAX_HITS: usize = 200;
+
+/// Case-insensitive substring grep over every readable, UTF-8 text
+/// file in the explorer list. Each match becomes a `SearchHit`
+/// carrying the file path + byte offset (activation jumps there via
+/// `editor_files::open_at_offset`) and a `path:line` label with the
+/// trimmed source line as the snippet.
+fn project_grep(
+    files: &[crate::state::FileNode],
+    vfs: &dyn crate::services::Vfs,
+    q: &str,
+    out: &mut Vec<crate::state::SearchHit>,
+) {
+    use crate::state::{FileKind, SearchHit};
+    for node in files {
+        if out.len() >= GREP_MAX_HITS {
+            break;
+        }
+        if !matches!(node.kind, FileKind::File) {
+            continue;
+        }
+        let Ok(bytes) = vfs.read(&node.path) else {
+            continue;
+        };
+        if bytes.len() > GREP_MAX_FILE_BYTES {
+            continue;
+        }
+        let Ok(text) = String::from_utf8(bytes) else {
+            continue;
+        };
+        let name = node
+            .path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| node.label.clone());
+        let mut line_start = 0usize;
+        for (lineno, line) in text.split_inclusive('\n').enumerate() {
+            if out.len() >= GREP_MAX_HITS {
+                break;
+            }
+            if let Some(col) = line.to_lowercase().find(q) {
+                out.push(SearchHit {
+                    node_id: String::new(),
+                    label: format!("{name}:{}", lineno + 1),
+                    snippet: line.trim().chars().take(120).collect(),
+                    score: 1.0,
+                    path: Some(node.path.clone()),
+                    offset: line_start + col,
+                });
+            }
+            line_start += line.len();
+        }
+    }
 }
 
 fn search_close(ctx: &mut MutCtx<'_>) {
     ctx.state.search.open = false;
     ctx.state.search.query.set_text("");
+    ctx.state.search.replace.set_text("");
+    ctx.state.search.replace_focused = false;
     ctx.state.search.results.clear();
     ctx.state.search.selected_index = 0;
 }
@@ -359,6 +512,7 @@ fn score_node(node: &prism_builder::Node, q: &str) -> Option<crate::state::Searc
             label,
             snippet: best_snippet,
             score: best_score,
+            ..Default::default()
         })
     } else {
         None
@@ -470,5 +624,109 @@ mod tests {
             "",
             "Esc must clear the query"
         );
+    }
+
+    #[test]
+    fn project_grep_finds_matches_with_path_and_offset() {
+        use crate::services::Vfs;
+        use crate::state::{FileKind, FileNode};
+        use std::path::PathBuf;
+
+        let mut vfs = InMemVfs::default();
+        let p = PathBuf::from("/proj/a.luau");
+        let src = "local x = 1\nlocal needle = 2\nreturn x\n";
+        vfs.write(&p, src.as_bytes()).unwrap();
+        let files = vec![FileNode {
+            id: "a.luau".into(),
+            label: "a.luau".into(),
+            depth: 0,
+            kind: FileKind::File,
+            path: p.clone(),
+        }];
+
+        let mut out = Vec::new();
+        project_grep(&files, &vfs, "needle", &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].path.as_ref(), Some(&p));
+        assert_eq!(&src[out[0].offset..out[0].offset + 6], "needle");
+        assert_eq!(out[0].label, "a.luau:2");
+        assert!(out[0].snippet.contains("needle"));
+    }
+
+    #[test]
+    fn replace_all_rewrites_files_and_regreps() {
+        use crate::services::Vfs;
+        use crate::state::{FileKind, FileNode, SearchScope};
+        use std::path::PathBuf;
+
+        let mut state = AppState::default();
+        let mut vfs = InMemVfs::default();
+        let p = PathBuf::from("/proj/a.luau");
+        vfs.write(&p, b"local needle = 1\nreturn needle\n").unwrap();
+        state.catalog.files = vec![FileNode {
+            id: "a.luau".into(),
+            label: "a.luau".into(),
+            depth: 0,
+            kind: FileKind::File,
+            path: p.clone(),
+        }];
+        state.search.open = true;
+        state.search.scope = SearchScope::Project;
+        state.search.query.set_text("needle");
+        state.search.replace.set_text("haystack");
+
+        let mut undo = UndoStack::default();
+        let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
+        let mut ctx = MutCtx {
+            state: &mut state,
+            viewport: Viewport {
+                width: 0.0,
+                height: 0.0,
+            },
+            undo: &mut undo,
+            vfs: &mut vfs,
+            luau: &mut luau,
+            clipboard: &mut clipboard,
+            registry: None,
+            modifier_registry: None,
+        };
+        // Populate results, then apply the replacement.
+        search_rebuild_results(&mut ctx);
+        assert_eq!(ctx.state.search.results.len(), 2);
+        search_replace_all(&mut ctx);
+
+        let after = String::from_utf8(vfs.read(&p).unwrap()).unwrap();
+        assert_eq!(after, "local haystack = 1\nreturn haystack\n");
+        // Re-grep cleared the (now non-matching) hits.
+        assert!(state.search.results.is_empty());
+    }
+
+    #[test]
+    fn toggle_scope_command_flips_and_clears() {
+        use crate::state::SearchScope;
+        let mut state = AppState::default();
+        assert_eq!(state.search.scope, SearchScope::Document);
+        let mut reg = ServiceRegistry::new();
+        register_shell_services(&mut reg);
+        let mut undo = UndoStack::default();
+        let mut vfs = InMemVfs::default();
+        let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
+        let mut ctx = MutCtx {
+            state: &mut state,
+            viewport: Viewport {
+                width: 0.0,
+                height: 0.0,
+            },
+            undo: &mut undo,
+            vfs: &mut vfs,
+            luau: &mut luau,
+            clipboard: &mut clipboard,
+            registry: None,
+            modifier_registry: None,
+        };
+        assert!(reg.commands().run("search.toggle-scope", &mut ctx));
+        assert_eq!(state.search.scope, SearchScope::Project);
     }
 }

@@ -1,15 +1,20 @@
 <!--
-  shell.search-overlay — Ctrl+F document-search overlay. Sister to
+  shell.search-overlay — Ctrl+F find overlay. Sister to
   `shell.command-palette` in shape: a modal card with a query
   `<input>` row and a result list. The query buffer is a full
   `TextEditor` (single-line) routed through the shared text-input
   dispatch, so the input gets caret nav, selection, Ctrl+A,
   Ctrl+C/X/V, and IME for free.
 
+  IDE Phase 6: a scope pill flips Document ⇄ Project ("find in
+  files"). Result rows carry `data:role="search-result"` +
+  `data-idx` so a click selects + opens the hit (project hits jump
+  to `path:offset`, document hits select the builder node).
+
   Closed → 0×0 hidden overlay so visibility is host state. Open →
-  420px rounded card. Selection state lives on the host
-  (`AppState::search.*`); the DSL just paints the visual structure
-  and uses for-loop `idx` to drive the selected-row tint.
+  480px rounded card. Selection state lives on the host
+  (`AppState::search.*`); the DSL paints structure and uses the
+  for-loop `idx` to drive the selected-row tint.
 -->
 <container
     if="{!open}"
@@ -29,22 +34,81 @@
     padding-right="12"
     padding-top="12"
     padding-bottom="12"
-    width="420"
+    width="480"
     style:radius="8"
     style:background="#ffffff"
     role="dialog"
-    aria-label="Find in document"
+    aria-label="Find"
     data:role="search-overlay">
-  <input
-      id="{id}::input"
-      value="{query}"
-      placeholder="Find…"
-      focused="true"
-      caret-byte="{caret}"
-      selection="{selection}"
-      width="grow"
-      height="36"
-      font-size="13"/>
+  <container
+      id="{id}::head"
+      direction="row"
+      gap="8"
+      width="grow">
+    <input
+        id="{id}::input"
+        value="{query}"
+        placeholder="Find…"
+        focused="true"
+        caret-byte="{caret}"
+        selection="{selection}"
+        width="grow"
+        height="36"
+        font-size="13"
+        data:role="search-query-input"/>
+    <container
+        id="{id}::scope"
+        tag="button"
+        direction="row"
+        padding-left="10"
+        padding-right="10"
+        padding-top="8"
+        padding-bottom="8"
+        height="36"
+        style:radius="6"
+        style:background="#0f000018"
+        style:background:hovered="#1a000028"
+        role="button"
+        aria-label="Toggle search scope"
+        data:role="search-scope-toggle">
+      <text font-size="12" style:color="#000000">{scope}</text>
+    </container>
+  </container>
+  <container
+      if="{project-scope}"
+      id="{id}::replace-row"
+      direction="row"
+      gap="8"
+      width="grow">
+    <input
+        id="{id}::replace"
+        value="{replace}"
+        placeholder="Replace with…"
+        focused="{replace-focused}"
+        caret-byte="{replace-caret}"
+        selection="{replace-selection}"
+        width="grow"
+        height="32"
+        font-size="13"
+        data:role="search-replace-input"/>
+    <container
+        id="{id}::replace-all"
+        tag="button"
+        direction="row"
+        padding-left="10"
+        padding-right="10"
+        padding-top="6"
+        padding-bottom="6"
+        height="32"
+        style:radius="6"
+        style:background="#0f000018"
+        style:background:hovered="#1a000028"
+        role="button"
+        aria-label="Replace all in files"
+        data:role="search-replace-apply">
+      <text font-size="12" style:color="#000000">Replace All</text>
+    </container>
+  </container>
   <container
       id="{id}::results"
       direction="column"
@@ -65,7 +129,9 @@
         style:background="{idx == selected-index ? '#190060c0' : ''}"
         style:background:hovered="{idx == selected-index ? '' : '#0f000000'}"
         role="option"
-        aria:selected="{idx == selected-index ? 'true' : ''}">
+        aria:selected="{idx == selected-index ? 'true' : ''}"
+        data:role="search-result"
+        data-idx="{idx}">
       <text font-size="13" style:color="#000000">{hit.label}</text>
       <text font-size="11" style:color="#88000000">{hit.snippet}</text>
     </container>

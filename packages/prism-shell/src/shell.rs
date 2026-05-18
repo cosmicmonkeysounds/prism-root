@@ -199,6 +199,19 @@ pub struct ShellInner {
     ///
     /// [`refresh`]: crate::skeleton_bindings::SkeletonBindingContext::refresh
     pub skeleton_bindings: RefCell<Option<crate::skeleton_bindings::SkeletonBindingContext>>,
+    /// **IDE Phase D / cross-cutting §4.3** — collaborative presence.
+    /// `PresenceManager` owns the local + remote awareness snapshot;
+    /// the subscribed listener funnels every `PresenceChange` into
+    /// `presence_events`, which [`Shell::poll_presence`] drains into
+    /// `state.devtools.presence` on the idle tick. The wire transport
+    /// (relay / WebRTC) feeds [`Shell::presence_receive_remote`] — it
+    /// is host-owned per `network::reactive` doctrine, so this is the
+    /// substrate seam, not a built-in network client.
+    pub presence: prism_core::network::presence::PresenceManager,
+    presence_events: Rc<RefCell<Vec<prism_core::network::presence::PresenceChange>>>,
+    /// Keeps the presence subscription alive for the shell's lifetime
+    /// (it unsubscribes on `Drop`).
+    _presence_sub: prism_core::network::presence::manager::Subscription,
 }
 
 impl ShellInner {
@@ -491,6 +504,31 @@ impl Shell {
         // command body) derives modifier sections without per-callsite
         // plumbing.
         seed_state.modifier_registry = Some(Arc::clone(&modifier_registry));
+        // IDE Phase D — presence substrate. The manager fires
+        // `PresenceChange`s into a host-side queue the idle tick
+        // drains; the wire transport feeds `receive_remote`.
+        let presence_events: Rc<RefCell<Vec<prism_core::network::presence::PresenceChange>>> =
+            Rc::new(RefCell::new(Vec::new()));
+        let presence = prism_core::network::presence::create_presence_manager(
+            prism_core::network::presence::PresenceManagerOptions {
+                local_identity: prism_core::network::presence::PeerIdentity {
+                    peer_id: "local".to_string(),
+                    display_name: "You".to_string(),
+                    color: "#4a90e2".to_string(),
+                    avatar_url: None,
+                },
+                ttl_ms: 0,
+                sweep_interval_ms: 0,
+                timers: Box::new(prism_core::network::presence::SystemTimer::new()),
+            },
+        );
+        let _presence_sub = {
+            let sink = Rc::clone(&presence_events);
+            presence.subscribe(Box::new(move |change| {
+                sink.borrow_mut().push(change.clone());
+            }))
+        };
+
         let inner = Rc::new(RefCell::new(ShellInner {
             registry,
             modifier_registry,
@@ -549,6 +587,9 @@ impl Shell {
             #[cfg(feature = "native")]
             project: None,
             skeleton_bindings: RefCell::new(None),
+            presence,
+            presence_events,
+            _presence_sub,
         }));
         // §43 C1: one-shot post-boot resync. The seed sets selection
         // and the inspector tree, but `derive_property_rows` needs the
@@ -663,6 +704,41 @@ impl Shell {
         guard.state.catalog.files = files;
         guard.state.reindex_luau_symbols(|p| std::fs::read(p).ok());
         true
+    }
+
+    /// **IDE Phase D** — TTL-sweep the presence manager, then drain
+    /// every queued `PresenceChange` into `state.devtools.presence`.
+    /// Returns `true` when the presence buffer changed (the caller
+    /// should request a redraw). Driven by the idle tick alongside
+    /// the project watcher; also callable standalone by hosts/tests.
+    pub fn poll_presence(&self) -> bool {
+        // Sweep first so TTL-expired peers emit their `Left` events
+        // into the same queue we're about to drain.
+        self.inner.borrow().presence.sweep();
+        let events = Rc::clone(&self.inner.borrow().presence_events);
+        let drained: Vec<prism_core::network::presence::PresenceChange> =
+            events.borrow_mut().drain(..).collect();
+        if drained.is_empty() {
+            return false;
+        }
+        let now = now_ms();
+        let mut guard = self.inner.borrow_mut();
+        let mut changed = false;
+        for change in &drained {
+            if guard.state.devtools.apply_presence_change(change, now) {
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Host/transport seam: feed a remote peer's awareness snapshot
+    /// into the presence manager. The resulting `PresenceChange` is
+    /// drained into the panel on the next [`Self::poll_presence`].
+    /// Wire transports (relay / WebRTC) own the call site per
+    /// `network::reactive` doctrine.
+    pub fn presence_receive_remote(&self, state: prism_core::network::presence::PresenceState) {
+        self.inner.borrow().presence.receive_remote(state);
     }
 
     /// ADR-009 follow-on: install (or replace) the stylesheet
@@ -1509,17 +1585,36 @@ impl Shell {
         let tick: prism_ui_runtime::backends::femtovg::TickHook =
             Box::new(move |_surface: &mut Surface| {
                 let mut guard = tick_inner.borrow_mut();
-                let Some(pm) = guard.project.as_mut() else {
-                    return;
-                };
-                if !pm.poll() {
-                    return;
+                let mut dirty = false;
+                // Presence first — runs every tick regardless of
+                // whether a project is open. Sweep TTL-expired peers,
+                // then drain the queued `PresenceChange`s into the
+                // DevTools presence lens.
+                guard.presence.sweep();
+                let drained: Vec<prism_core::network::presence::PresenceChange> =
+                    guard.presence_events.borrow_mut().drain(..).collect();
+                if !drained.is_empty() {
+                    let now = now_ms();
+                    for change in &drained {
+                        if guard.state.devtools.apply_presence_change(change, now) {
+                            dirty = true;
+                        }
+                    }
                 }
-                let files = pm.file_nodes();
-                guard.state.catalog.files = files;
-                guard
-                    .render_scope
-                    .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+                // Project watcher → object graph + explorer refresh.
+                if let Some(pm) = guard.project.as_mut() {
+                    if pm.poll() {
+                        let files = pm.file_nodes();
+                        guard.state.catalog.files = files;
+                        guard.state.reindex_luau_symbols(|p| std::fs::read(p).ok());
+                        dirty = true;
+                    }
+                }
+                if dirty {
+                    guard
+                        .render_scope
+                        .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+                }
             });
         self.run_inner(Some(tick))
     }

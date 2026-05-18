@@ -194,6 +194,17 @@ impl PanelKind {
         tag: Some("shell.devtools"),
     };
 
+    /// IDE-mode Phase 3 — the Luau diagnostics / problems panel.
+    pub const DIAGNOSTICS: PanelKind = PanelKind {
+        id: "diagnostics",
+        label: "Problems",
+        icon_hint: "diagnostics",
+        min_width: 240.0,
+        min_height: 140.0,
+        allow_multiple: false,
+        tag: Some("shell.diagnostics-panel"),
+    };
+
     /// Owned `PanelId` (kebab-case `String`). Equivalent to `id.to_string()`
     /// — kept as a method so the `PanelKind::BUILDER.panel_id()` call
     /// sites read consistently with the `WorkflowPage` / `DockNode`

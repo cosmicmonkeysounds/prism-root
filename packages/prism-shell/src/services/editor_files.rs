@@ -196,6 +196,8 @@ fn save_to(ctx: &mut MutCtx<'_>, path: PathBuf) {
         let src = ctx.state.canvas.code_buffer.source().to_string();
         ctx.state.index.symbols.rebuild_file(path.clone(), &src);
         ctx.state.index.refresh_results();
+        // IDE Phase 3 — diagnostics ride the same save cadence.
+        ctx.state.diagnostics.rebuild_file(path.clone(), &src);
     }
     ctx.state.canvas.record_active_tab_saved(path);
 }
@@ -413,6 +415,25 @@ mod tests {
             .open_editor_tab(path.clone(), "local function alpha() end", "luau");
         run_cmd(&mut state, "editor.file.save", &mut vfs);
         assert!(state.index.symbols.lookup("alpha").len() == 1);
+    }
+
+    #[test]
+    fn saving_luau_refreshes_diagnostics() {
+        let mut state = focused_state();
+        let mut vfs = InMemVfs::default();
+        let path = PathBuf::from("/proj/bad.luau");
+        // Broken source → at least one diagnostic on save.
+        state
+            .canvas
+            .open_editor_tab(path.clone(), "local x = = =", "luau");
+        run_cmd(&mut state, "editor.file.save", &mut vfs);
+        assert!(state.diagnostics.total() >= 1);
+        assert!(state.diagnostics.per_file.contains_key(&path));
+        // Fix it → the file drops out of the problems table.
+        state.canvas.code_buffer.editor.set_text("local x = 1");
+        run_cmd(&mut state, "editor.file.save", &mut vfs);
+        assert_eq!(state.diagnostics.total(), 0);
+        assert!(!state.diagnostics.per_file.contains_key(&path));
     }
 
     #[test]

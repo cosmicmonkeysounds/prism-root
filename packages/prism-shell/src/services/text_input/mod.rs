@@ -37,4 +37,5 @@ mod service;
 
 pub use declaration::{TextInputDeclaration, TextInputDeclarationBuilder};
 pub use dispatch::{dispatch_text_input, TextInputBindings, TextInputOutcome};
+pub(crate) use service::search_replace_all;
 pub use service::{builtin_declarations, DeclarativeTextInputService};
