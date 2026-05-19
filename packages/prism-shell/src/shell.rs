@@ -2322,14 +2322,18 @@ mod tests {
     /// composed skeleton the loop now feeds the renderer does not.
     #[test]
     fn per_frame_composition_grafts_app_body_into_app_window() {
-        fn app_window_element_children(nodes: &[prism_ui_ast::Node]) -> Option<usize> {
+        fn app_window_element_children(
+            nodes: &[prism_core::language::prism_ui::Node],
+        ) -> Option<usize> {
             for node in nodes {
-                if let prism_ui_ast::Node::Element(el) = node {
+                if let prism_core::language::prism_ui::Node::Element(el) = node {
                     if el.tag == "shell.app-window" {
                         return Some(
                             el.children
                                 .iter()
-                                .filter(|n| matches!(n, prism_ui_ast::Node::Element(_)))
+                                .filter(|n| {
+                                    matches!(n, prism_core::language::prism_ui::Node::Element(_))
+                                })
                                 .count(),
                         );
                     }
