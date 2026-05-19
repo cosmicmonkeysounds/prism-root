@@ -123,6 +123,18 @@ impl Workspace {
     pub fn target_dir(&self) -> PathBuf {
         self.root.join("target")
     }
+
+    /// Path to a compiled binary in the native profile dir, e.g.
+    /// `target/debug/prism-studio`. `dev` execs these directly
+    /// (after one combined `cargo build`) instead of running N
+    /// independent `cargo run -p <pkg>` children — that is what
+    /// keeps Cargo's per-invocation feature resolution stable, so
+    /// only genuinely-changed crates recompile. `release` is the
+    /// only non-debug native profile `prism` produces.
+    pub fn bin_path(&self, name: &str, release: bool) -> PathBuf {
+        let profile = if release { "release" } else { "debug" };
+        self.target_dir().join(profile).join(name)
+    }
 }
 
 fn is_prism_workspace_manifest(path: &Path) -> Result<bool> {

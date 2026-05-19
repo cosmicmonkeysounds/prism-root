@@ -48,14 +48,29 @@ prism/
 - **wasm-bindgen-cli** — `cargo install wasm-bindgen-cli` (version must match the `wasm-bindgen` crate in the workspace manifest)
 - **Node.js** ≥ 20 + **pnpm** ≥ 9 (optional — `pnpm` scripts are thin aliases over the `prism` CLI)
 
+### Install the CLI
+
+Everything goes through the unified `prism` CLI. Pick one:
+
+```bash
+# A. Zero setup — works the instant you clone, no install.
+#    (uses the committed `prism` alias in .cargo/config.toml)
+cargo prism dev shell
+
+# B. Real `prism` binary on PATH (so you can drop the `cargo ` prefix).
+#    One-time; re-run after pulling CLI changes.
+./scripts/install-cli.sh          # = cargo install --path packages/prism-cli --force
+prism dev shell
+```
+
+`cargo build -p prism-cli` only produces `target/debug/prism` — it does
+**not** put `prism` on your PATH. Use option A or B above instead.
+
 ### Dev
 
 ```bash
-# Build the prism CLI first
-cargo build -p prism-cli
-
 # Shell (native, fastest iteration)
-prism dev shell
+prism dev shell        # or: cargo prism dev shell
 
 # Shell (web, WASM via wasm-bindgen)
 prism dev web

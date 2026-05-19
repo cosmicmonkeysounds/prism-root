@@ -63,6 +63,14 @@ const WATCHER_POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// module uses).
 pub struct DevLoop {
     cmd: CommandBuilder,
+    /// Optional command run to completion before every (re)spawn of
+    /// `cmd`. `prism dev studio`/`shell` set this to the single
+    /// combined `cargo build` so a code change triggers exactly one
+    /// unified rebuild (only changed crates) and then re-execs the
+    /// prebuilt binary — instead of `cargo run -p <pkg>` re-resolving
+    /// features every respawn. A failing prebuild skips the spawn and
+    /// waits for the next change rather than running a stale binary.
+    prebuild: Option<CommandBuilder>,
     watch_paths: Vec<PathBuf>,
     debounce: Duration,
     extensions: Vec<String>,
@@ -92,6 +100,7 @@ impl DevLoop {
     pub fn new(cmd: CommandBuilder, watch_paths: Vec<PathBuf>) -> Self {
         Self {
             cmd,
+            prebuild: None,
             watch_paths,
             debounce: WatchLoop::DEFAULT_DEBOUNCE,
             extensions: DEFAULT_EXTENSIONS
@@ -101,6 +110,15 @@ impl DevLoop {
             sink: Arc::new(StdoutSink),
             color: Color::Cyan,
         }
+    }
+
+    /// Set a command run to completion before every (re)spawn of the
+    /// child. Used to drive the single combined `cargo build` so the
+    /// dev loop rebuilds (only changed crates, one feature set) and
+    /// then re-execs the prebuilt binary.
+    pub fn with_prebuild(mut self, prebuild: CommandBuilder) -> Self {
+        self.prebuild = Some(prebuild);
+        self
     }
 
     /// Route stdout/stderr lines through a caller-supplied sink.
@@ -188,6 +206,35 @@ impl DevLoop {
         let mut shutdown = Box::pin(shutdown);
 
         loop {
+            // One unified rebuild before each (re)spawn. cargo's
+            // native (inherited) output gives live progress; only
+            // changed crates recompile because the package set and
+            // feature resolution are identical every time.
+            if let Some(pre) = &self.prebuild {
+                emit_notice(&sink, &label, color, format!("$ {}", pre.display()));
+                let status = pre.build_tokio().status().await;
+                let ok = matches!(&status, Ok(s) if s.success());
+                if !ok {
+                    emit_notice(
+                        &sink,
+                        &label,
+                        color,
+                        "build failed — waiting for next change".to_string(),
+                    );
+                    let wait = tokio::select! {
+                        maybe_batch = batch_rx.recv() => maybe_batch.is_some(),
+                        _ = &mut shutdown => {
+                            outcome.interrupted = true;
+                            false
+                        }
+                    };
+                    if wait {
+                        continue;
+                    }
+                    break;
+                }
+            }
+
             let mut tokio_cmd = self.cmd.build_tokio();
             tokio_cmd.stdout(Stdio::piped());
             tokio_cmd.stderr(Stdio::piped());

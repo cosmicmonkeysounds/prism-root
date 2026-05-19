@@ -206,18 +206,31 @@ fn build_defaults_to_debug_ship_adds_release_flag() {
 }
 
 #[test]
-fn dev_shell_default_dry_run() {
+fn dev_shell_default_dry_run_is_combined_build_plus_bin_exec() {
     let out = run(&["--dry-run", "dev"]);
     assert!(out.status.success());
-    assert!(stdout(&out).contains("cargo run --package prism-shell"));
+    let s = stdout(&out);
+    // One unified cargo build warms the shared graph...
+    assert!(
+        s.contains(
+            "cargo build --package prism-shell --package prism-studio --package prism-relay"
+        ),
+        "{s}"
+    );
+    // ...then the prebuilt binary is exec'd directly (no `cargo run`).
+    assert!(s.contains("[combined-build]"), "{s}");
+    assert!(s.contains("[shell]"), "{s}");
+    assert!(s.contains("target/debug/prism-shell --watch-ui"), "{s}");
+    assert!(!s.contains("cargo run --package prism-shell"), "{s}");
 }
 
 #[test]
-fn dev_all_dry_run_prints_every_labeled_command() {
+fn dev_all_dry_run_prints_combined_build_then_labeled_commands() {
     let out = run(&["--dry-run", "dev", "all"]);
     assert!(out.status.success());
     let s = stdout(&out);
     for label in [
+        "[combined-build]",
         "[shell]",
         "[studio]",
         "[web-build]",
@@ -227,6 +240,17 @@ fn dev_all_dry_run_prints_every_labeled_command() {
     ] {
         assert!(s.contains(label), "missing {label} in:\n{s}");
     }
+    // Exactly one cargo build for every native run target.
+    assert!(
+        s.contains(
+            "cargo build --package prism-shell --package prism-studio --package prism-relay"
+        ),
+        "{s}"
+    );
+    // Supervised children are prebuilt binaries, not `cargo run`.
+    assert!(s.contains("target/debug/prism-studio"), "{s}");
+    assert!(s.contains("target/debug/prism-relayd"), "{s}");
+    assert!(!s.contains("cargo run --package"), "{s}");
     assert!(s.contains("python3 -m http.server"), "{s}");
     assert!(!s.contains("trunk"), "{s}");
     assert!(!s.contains("wasm32-unknown-emscripten"), "{s}");

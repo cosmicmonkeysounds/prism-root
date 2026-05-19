@@ -319,6 +319,30 @@ fn redraw(
 ) {
     let viewport = surface.viewport();
     let cmds: Vec<_> = surface.commands().to_vec();
+    // TEMP DIAGNOSTIC (blank-canvas regression). Remove after fix.
+    {
+        use crate::command::RenderCommand;
+        let rects = cmds
+            .iter()
+            .filter(|c| matches!(c, RenderCommand::Rectangle { .. }))
+            .count();
+        let texts: Vec<&str> = cmds
+            .iter()
+            .filter_map(|c| match c {
+                RenderCommand::Text { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        eprintln!(
+            "[PRISM_FRAME] vp={:.0}x{:.0} cmds={} rects={} texts={} :: {:?}",
+            viewport.width,
+            viewport.height,
+            cmds.len(),
+            rects,
+            texts.len(),
+            texts.iter().take(12).collect::<Vec<_>>()
+        );
+    }
     let canvas = &mut state.canvas;
     canvas.clear_rect(
         0,

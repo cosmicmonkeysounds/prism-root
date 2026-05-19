@@ -33,6 +33,59 @@ regression is somewhere in that wave, **not** in panel wiring (see §1).
 
 ## 1. P0 — The blank-screen regression (blocks everything else)
 
+> **CORRECTION (2026-05-19, supersedes the DIAGNOSIS / ROOT CAUSE /
+> VERIFIED blocks below).** Those blocks were reached with diagnostics
+> that are *structurally incapable* of seeing this bug, so their
+> "pipeline is correct / fixed / verified" conclusions do not hold for
+> the live window. Established empirically:
+>
+> 1. **The headless pipeline IS correct at HEAD — fully.** Dumping the
+>    real `Surface::commands()` (the exact path the femtovg backend
+>    runs, via `Surface::new(wrap_root(shell.render()))`) yields 119
+>    commands with the seeded document present in correct paint order
+>    and colour: `[092]` white `canvas-page`, `[093]` `Welcome to
+>    Studio` rgba(20,20,20,255) fs32, `[094]` paragraph, `[095]` blue
+>    Submit rect, `[096]` white `Submit`. Scissor depth is balanced
+>    (0); nothing clips the content. Tree, layout, and command
+>    emission have **no defect**.
+> 2. **Every diagnostic the superseded blocks relied on is blind to
+>    the actual failure.** `--scene default` is a literal no-op
+>    (`headless.rs`: `BuiltinScene::Default => {}`). `dump_png` /
+>    `prism visual` have **no glyph rasteriser** — `png_paint` draws
+>    each Text command as a 1px placeholder strip at the box bottom
+>    (`png_paint.rs`), so a text/glyph/femtovg regression is invisible
+>    to it. The JSON dump is pre-paint. So "VERIFIED via `--scene
+>    default --screenshot`" verified box geometry only — never a
+>    rendered glyph, never the live GL path.
+> 3. **Confirmed live symptom (user, `cargo run -p prism-shell`):**
+>    chrome (nav rail + menu + palette + properties panel) paints, but
+>    the centre canvas is an **empty white area** — *not* a dark
+>    rectangle, *not* the seeded heading/paragraph/button. Since the
+>    headless command stream for that exact region is correct, the
+>    regression is in the **live femtovg paint / window path** — i.e.
+>    the `(B) femtovg-runtime` hypothesis the blocks below explicitly
+>    (and wrongly) dismissed. It is *not* in any headlessly-reachable
+>    code, which is why the test suite is green and every prior
+>    diagnostic "passed".
+> 4. **One real latent colour bug found (not the blank-screen cause).**
+>    `ui/components/builder-canvas.prism-ui:39` sets
+>    `style:background="#040000"` — a 6-digit hex = opaque near-black
+>    RGB(4,0,0) α255 spanning the whole canvas. It should be
+>    `#04000000` (8-digit, alpha `00` = transparent), matching the
+>    empty-grid-cell value on line 75. Introduced in `de286ad`
+>    ("composable builders, dsl", 2026-05-13). In paint order the
+>    white `canvas-page` rect overpaints it, so it does not produce a
+>    visible dark rectangle — consistent with the user seeing white,
+>    not black — but it is still wrong and should be fixed.
+> 5. **Next step (requires the live window — not headlessly
+>    reproducible with current tooling):** instrument the femtovg
+>    `redraw()` / `paint::draw_at` (or land the femtovg-offscreen
+>    capture the `dump_png` comment already anticipates) and compare
+>    what femtovg paints for cmds 92–96 against the chrome cmds that
+>    *do* paint. The acceptance bar below stands; the bisection
+>    sequencing in §3 (item 1: "bisect for the render regression") is
+>    misdirected — there is nothing to bisect in headless code.
+
 **Symptom.** The 2026-05-18 build paints only the chrome shell
 (`app-window` nav rail + menu bar). The dock workspace — Builder
 canvas, component palette, properties panel — does not paint, even

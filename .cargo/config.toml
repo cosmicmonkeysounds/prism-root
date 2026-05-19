@@ -1,5 +1,49 @@
+# ─────────────────────────────────────────────────────────────────────
+# Linker (opt-in). A faster linker meaningfully cuts incremental build
+# time on the big femtovg/winit/glutin/studio binaries. It is
+# DELIBERATELY NOT enabled here by default:
+#
+#   This file is read by EVERY cargo invocation (raw `cargo`, the
+#   `prism` CLI, and rust-analyzer alike). Anything we put here is
+#   applied uniformly, so it never causes the "switch tools → full
+#   recompile" fingerprint thrash that a CLI-only RUSTFLAGS override
+#   does. The flip side: the rustup-bundled `ld64.lld` lives at a
+#   per-machine sysroot path we can't hardcode in a committed file.
+#
+# To turn lld on consistently for everyone on your machine, install a
+# PATH-visible lld once (so the fingerprint is identical across CLI,
+# raw cargo, and the IDE) and uncomment the matching block:
+#
+#   macOS (Apple Silicon already ships a fast default `ld`; lld is a
+#   marginal win there — measure before bothering):
+#     brew install llvm
+#     [target.aarch64-apple-darwin]
+#     rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+#
+#   Linux:
+#     # apt install lld   (or distro equivalent)
+#     [target.x86_64-unknown-linux-gnu]
+#     rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+#
+# `sccache` is wired separately by the `prism` CLI (see
+# `packages/prism-cli/src/accel.rs`) because RUSTC_WRAPPER does not
+# affect the artifact fingerprint and so cannot cause recompile thrash.
+# ─────────────────────────────────────────────────────────────────────
+
 [alias]
 # Quality-of-life shortcuts for the Rust half of the monorepo.
+#
+# `prism` is the unified front door. This alias makes `cargo prism …`
+# work with ZERO setup for anyone who clones (this file is committed),
+# so a missing global `prism` binary never blocks the dev loop:
+#
+#   cargo prism dev shell
+#   cargo prism build
+#   cargo prism test
+#
+# For a bare `prism` (no `cargo ` prefix) on PATH, run once:
+#   cargo install --path packages/prism-cli      (or: scripts/install-cli.sh)
+prism = "run -q -p prism-cli --"
 shell-web = "run -p prism-shell --target wasm32-unknown-unknown"
 shell-dev = "run -p prism-shell"
 xtest = "test --workspace --exclude prism-studio"

@@ -106,6 +106,19 @@ impl CommandBuilder {
         Self::new(Program::WasmBindgen)
     }
 
+    /// Run an already-built executable at `path` directly (no cargo
+    /// in front). `dev` uses this to launch `target/debug/<bin>`
+    /// after one combined `cargo build`, so each dev child does not
+    /// re-trigger Cargo's per-`-p` feature resolution (the source of
+    /// the "rebuilds everything when I switch targets" thrash).
+    /// Build acceleration env is intentionally not layered on — this
+    /// is not a cargo invocation.
+    pub fn exec(path: impl Into<PathBuf>) -> Self {
+        let mut b = Self::new(Program::Cargo);
+        b.program_override = Some(path.into().to_string_lossy().into_owned());
+        b
+    }
+
     /// Append a positional argument.
     pub fn arg(mut self, arg: impl Into<String>) -> Self {
         self.args.push(arg.into());

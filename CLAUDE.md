@@ -19,6 +19,15 @@ CRDT inheritance), wired through `license.workspace = true` on every crate.
 - `packages/prism-relay` — Rust. Axum-based Sovereign Portal SSR server (`prism-relayd`) that renders `prism_builder::BuilderDocument` trees to semantic HTML via `ui_runtime::lower_semantic_html`. Replaced the Hono TS relay 2026-04-15.
 
 ## Commands
+**Installing the CLI.** `cargo build -p prism-cli` does NOT put `prism`
+on PATH. Either run `./scripts/install-cli.sh` once (installs a real
+`prism` binary via `cargo install --path packages/prism-cli`), or use
+the committed cargo alias with zero setup: `cargo prism <subcommand>`
+(e.g. `cargo prism dev shell`). Both routes go through the same CLI;
+the bare `cargo run -p prism-shell` / `cargo build` paths skip build
+acceleration + GC and are the "ludicrous build times" trap — don't use
+them for the core loop.
+
 **Always go through the unified `prism` CLI — never invoke `cargo
 build`/`test`/`clippy`/`clean` directly.** The CLI is not just a
 dispatcher: it injects build acceleration (sccache + lld), defaults to
@@ -32,24 +41,24 @@ the expanded argv, so anything here can be audited with e.g.
 
 - `cargo run -p prism-cli -- test [-p <pkg>]` — `cargo test --workspace` (or scoped to a single crate). Legacy Playwright e2e flags were retired alongside the Hono TS relay on 2026-04-15.
 - `cargo run -p prism-cli -- build [--target desktop|studio|web|relay|all] [--ship]` — **defaults to the fast debug profile.** `--ship` opts into the slow runtime-optimised release profile (`codegen-units = 1` + thin LTO, ~10x slower to compile — only for actual release artifacts). `web` runs `cargo build --target wasm32-unknown-unknown -p prism-shell --no-default-features --features web` followed by `wasm-bindgen --target web --out-dir packages/prism-shell/web` over the emitted cdylib. No separate copy step — wasm-bindgen writes `prism_shell.js` + `prism_shell_bg.wasm` directly next to `web/index.html`.
-- `cargo run -p prism-cli -- dev [shell|studio|web|relay|all]` — run one or many dev servers. `dev web` runs the cargo + wasm-bindgen preflight, then serves `packages/prism-shell/web/` via `python3 -m http.server 1420`. `all` goes through the process supervisor.
+- `cargo run -p prism-cli -- dev [shell|studio|web|relay|all]` — run one or many dev servers. **Native run targets (`shell`/`studio`/`relay`, single or `all`) are compiled by ONE combined `cargo build -p prism-shell -p prism-studio -p prism-relay`, then the dev child *execs the prebuilt binary* (`target/debug/<bin>`) directly.** This is deliberate: a single fixed package set + feature resolution means only genuinely-changed crates recompile — alternating `dev shell` / `dev studio` / `dev all` no longer ping-pongs shared deps through different feature sets, and `dev all` no longer runs N concurrent `cargo run`s fighting the single `target/.cargo-lock`. Hot-reload re-runs that same combined build before each re-exec (via the `DevLoop` prebuild hook). Exceptions: `dev shell --hot=subsecond` keeps the legacy `cargo run -p prism-shell --features hot-reload` path (it needs the feature on the run itself); `dev web` is a separate wasm pipeline (cargo + wasm-bindgen preflight, then `python3 -m http.server 1420`).
 - `cargo run -p prism-cli -- lint` — `cargo clippy --workspace --all-targets -- -D warnings`.
 - `cargo run -p prism-cli -- fmt [--check]` — `cargo fmt --all`.
 - `cargo run -p prism-cli -- gc [--hard]` — **smart, size-aware reclamation.** The default prunes stale incremental sessions (>3d), an idle `wasm32-unknown-unknown` tree (>7d), and an idle build profile (>14d) **without ever touching the active profile's 772-crate dependency cache.** Runs automatically (silently) after every successful `build`/`test`/`dev`. `--hard` is the nuclear `cargo clean` — every subsequent build is a ~30-minute cold rebuild, so it is opt-in, never scheduled. `prism clean` is a back-compat alias for `gc --hard`. **Do not run frequent full cleans — that is the single biggest build-time anti-optimisation on this workspace.**
 
-### Build acceleration (automatic)
-The CLI auto-detects and wires, per cargo invocation, with graceful
-degradation if absent:
-- **`sccache`** → `RUSTC_WRAPPER`. Cross-clean / cross-branch compile
-  cache. Install once: `cargo install sccache`. Without it the cache
-  layer is simply absent — nothing breaks.
-- **`lld`** → native linker via `CARGO_TARGET_<host>_RUSTFLAGS`. Uses
-  the `ld64.lld` rustup already ships under
-  `<sysroot>/lib/rustlib/<host>/bin/gcc-ld/` — no external install.
-
-Set `PRISM_NO_ACCEL=1` to disable both. This is runtime-gated in the
-CLI (not hardcoded in `.cargo/config.toml`) precisely so a missing
-tool can never break a plain `cargo` invocation.
+### Build acceleration
+- **`sccache`** → `RUSTC_WRAPPER`, auto-wired by the CLI when on
+  `PATH` (install once: `cargo install sccache`; `PRISM_NO_ACCEL=1`
+  to disable). Safe to gate at the CLI because `RUSTC_WRAPPER` does
+  **not** change the artifact fingerprint — present-via-CLI /
+  absent-via-raw-cargo can't cause a recompile.
+- **Linker (lld)** is **opt-in via committed `.cargo/config.toml`**,
+  not the CLI. A CLI-only `RUSTFLAGS` linker override changes the
+  rustc fingerprint, so any cargo run that bypassed the CLI (raw
+  `cargo`, rust-analyzer) would see a different fingerprint and
+  trigger a full workspace recompile every time you switched tools.
+  Build-time flags must be applied uniformly or not at all — see the
+  commented opt-in block + rationale at the top of `.cargo/config.toml`.
 
 The root `package.json` exposes the same surface via pnpm scripts
 (`pnpm test`, `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm format`) for users

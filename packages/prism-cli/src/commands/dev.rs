@@ -116,98 +116,119 @@ impl DevArgs {
 /// The `.rs` respawn half is wired up separately in [`run`] — only
 /// single-target `prism dev shell` dispatches through
 /// [`crate::dev_loop::DevLoop`].
-pub fn plan(args: &DevArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
-    let targets: Vec<DevTarget> = match args.target {
-        DevTarget::All => vec![
-            DevTarget::Shell,
-            DevTarget::Studio,
-            DevTarget::Web,
-            DevTarget::Relay,
-        ],
-        one => vec![one],
-    };
+/// Native run targets (single or `all`) are compiled by **one**
+/// combined `cargo build -p prism-shell -p prism-studio -p
+/// prism-relay`. Because the package set and feature resolution are
+/// identical on every invocation, only genuinely-changed crates
+/// recompile — switching between `dev shell`, `dev studio`, and
+/// `dev all` no longer ping-pongs shared dependencies through
+/// different feature sets. The dev children then *exec the prebuilt
+/// binaries* rather than each running its own `cargo run -p <pkg>`
+/// (which would re-resolve features and fight the single
+/// `target/.cargo-lock`).
+const RUN_PACKAGES: [&str; 3] = ["prism-shell", "prism-studio", "prism-relay"];
 
-    let mut out = Vec::new();
-    for t in targets {
-        for b in builders_for(t, workspace, args.hot_reload(), args.use_subsecond()) {
-            out.push(b);
-        }
+/// `(label, on-disk bin filename)` for each native run target. The
+/// relay's `[[bin]]` is `prism-relayd`, not the package name.
+fn bin_file(label: &str) -> &'static str {
+    match label {
+        "shell" => "prism-shell",
+        "studio" => "prism-studio",
+        "relay" => "prism-relayd",
+        other => unreachable!("no bin mapping for dev label `{other}`"),
     }
-    out
 }
 
-fn builders_for(
+pub fn plan(args: &DevArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
+    match args.target {
+        DevTarget::All => all_plan(workspace),
+        one => single_plan(one, workspace, args.hot_reload(), args.use_subsecond()),
+    }
+}
+
+/// The single combined build that warms every native run target
+/// under one feature resolution.
+fn combined_build_builder(workspace: &Workspace) -> CommandBuilder {
+    let mut b = CommandBuilder::cargo().arg("build");
+    for pkg in RUN_PACKAGES {
+        b = b.package(pkg);
+    }
+    b.cwd(workspace.root()).label("combined-build")
+}
+
+/// Exec an already-built native binary (no cargo in front).
+fn bin_exec_builder(workspace: &Workspace, label: &str, watch_ui: bool) -> CommandBuilder {
+    let mut b = CommandBuilder::exec(workspace.bin_path(bin_file(label), false))
+        .cwd(workspace.root())
+        .label(label);
+    // C3 — the shell binary's own `.prism-ui` watcher. Applies
+    // literal skeleton edits in place; structural changes still fall
+    // through to the dev-loop's combined rebuild + re-exec.
+    if watch_ui && label == "shell" {
+        b = b.arg("--watch-ui");
+    }
+    b
+}
+
+fn single_plan(
     target: DevTarget,
     workspace: &Workspace,
     hot_reload: bool,
     use_subsecond: bool,
 ) -> Vec<CommandBuilder> {
     match target {
-        DevTarget::Shell => vec![cargo_run_dev_builder(
-            "prism-shell",
-            "shell",
-            workspace,
-            hot_reload,
-            use_subsecond,
-        )],
+        // Subsecond is special: it needs `--features hot-reload`
+        // baked into a cargo *run* of the shell, so it keeps the
+        // legacy single-crate cargo path (it intentionally accepts
+        // the shell-only feature resolution as the price of the
+        // in-process patch anchor).
+        DevTarget::Shell if use_subsecond => vec![cargo_run_subsecond_shell(workspace, hot_reload)],
+        DevTarget::Shell => vec![
+            combined_build_builder(workspace),
+            bin_exec_builder(workspace, "shell", hot_reload),
+        ],
         DevTarget::Studio => vec![
-            // Studio's `prism-daemond` sidecar lives next to the
-            // studio binary in `target/<profile>/`, so the cargo
-            // build for it has to land in the same profile before
-            // `cargo run -p prism-studio` fires. Treated as
-            // synchronous preflight (like web-build / web-bindgen),
-            // not a long-running supervised child.
+            combined_build_builder(workspace),
+            // `prism-daemond` sidecar must sit next to the studio
+            // binary in `target/<profile>/` before studio launches.
             super::build::daemon_bin_builder(workspace, false),
-            cargo_run_dev_builder(
-                "prism-studio",
-                "studio",
-                workspace,
-                hot_reload,
-                use_subsecond,
-            ),
+            bin_exec_builder(workspace, "studio", false),
+        ],
+        DevTarget::Relay => vec![
+            combined_build_builder(workspace),
+            bin_exec_builder(workspace, "relay", false),
         ],
         DevTarget::Web => vec![
             web_build_builder(workspace),
             super::build::web_bindgen_builder(workspace, false),
             web_serve_builder(workspace),
         ],
-        DevTarget::Relay => vec![CommandBuilder::cargo()
-            .arg("run")
-            .package("prism-relay")
-            .cwd(workspace.root())
-            .label("relay")],
-        DevTarget::All => unreachable!("expanded above"),
+        DevTarget::All => unreachable!("handled by all_plan"),
     }
 }
 
-fn cargo_run_dev_builder(
-    package: &str,
-    label: &str,
-    workspace: &Workspace,
-    hot_reload: bool,
-    use_subsecond: bool,
-) -> CommandBuilder {
+fn all_plan(workspace: &Workspace) -> Vec<CommandBuilder> {
+    vec![
+        combined_build_builder(workspace),
+        super::build::daemon_bin_builder(workspace, false),
+        bin_exec_builder(workspace, "shell", false),
+        bin_exec_builder(workspace, "studio", false),
+        bin_exec_builder(workspace, "relay", false),
+        web_build_builder(workspace),
+        super::build::web_bindgen_builder(workspace, false),
+        web_serve_builder(workspace),
+    ]
+}
+
+fn cargo_run_subsecond_shell(workspace: &Workspace, hot_reload: bool) -> CommandBuilder {
     let mut b = CommandBuilder::cargo()
         .arg("run")
-        .package(package)
+        .package("prism-shell")
+        .arg("--features")
+        .arg("hot-reload")
         .cwd(workspace.root())
-        .label(label);
-    if use_subsecond && package == "prism-shell" {
-        // Phase 9: turn on the `subsecond::call` anchor in the
-        // shell binary. The patch pipeline itself ships the
-        // generated dylib through `subsecond::register_handler` at
-        // runtime; that's a follow-up.
-        b = b.arg("--features").arg("hot-reload");
-    }
-    // C3 — pass `--watch-ui` to the shell binary so `prism dev
-    // shell` boots with the `.prism-ui` hot-reload watcher
-    // attached. Edits apply in place via
-    // `Shell::install_default_skeleton` /
-    // `install_app_skeleton` without a cargo respawn. The
-    // dev_loop's `.prism-ui` extension still triggers a respawn
-    // on structural changes that need a fresh cargo build, but
-    // the watcher catches literal edits first.
-    if hot_reload && package == "prism-shell" {
+        .label("shell");
+    if hot_reload {
         b = b.arg("--").arg("--watch-ui");
     }
     b
@@ -259,84 +280,97 @@ pub fn run(args: &DevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
         return exec_foreground(serve_cmd);
     }
 
-    // Single-target studio dev is two steps: cargo build the daemon
-    // sidecar (synchronous preflight, drops `prism-daemond` into
-    // target/debug/), then the long-running `cargo run -p
-    // prism-studio` — wrapped in a DevLoop when hot-reload is on,
-    // foreground exec otherwise.
-    if args.target == DevTarget::Studio {
-        let daemon = plan
-            .iter()
-            .find(|c| c.label_str() == Some("daemon-build"))
-            .expect("studio plan must include daemon-build");
-        let studio = plan
-            .iter()
-            .find(|c| c.label_str() == Some("studio"))
-            .expect("studio plan must include studio");
-        run_cmd_sync(daemon)?;
+    // Subsecond shell keeps the legacy single-crate `cargo run`
+    // path (it needs `--features hot-reload` on the run itself).
+    if args.target == DevTarget::Shell && args.use_subsecond() {
         if args.hot_reload() {
             return exec_dev_loop(
-                studio,
-                vec![
-                    workspace.shell_src_dir(),
-                    workspace.shell_ui_dir(),
-                    workspace.studio_src_dir(),
-                ],
+                &plan[0],
+                vec![workspace.shell_src_dir(), workspace.shell_ui_dir()],
+                None,
             );
         }
-        return exec_foreground(studio);
-    }
-
-    // Single-target shell with hot-reload on: wrap the cargo child
-    // in a DevLoop so `.rs` and `.prism-ui` changes kill + respawn
-    // the process. Wave 11.5 — the skeleton directory is watched
-    // alongside `src/` so editing `ui/app.prism-ui` picks up on
-    // the next boot.
-    if args.target == DevTarget::Shell && args.hot_reload() && plan.len() == 1 {
-        return exec_dev_loop(
-            &plan[0],
-            vec![workspace.shell_src_dir(), workspace.shell_ui_dir()],
-        );
-    }
-
-    // Single-target (non-web, non-studio) dev is just a foreground
-    // exec — no supervisor overhead, so Ctrl+C still lands on the
-    // child directly.
-    if plan.len() == 1 {
         return exec_foreground(&plan[0]);
     }
 
-    // Multi-target dev. Web needs its preflight (cargo + wasm-bindgen)
-    // and Studio needs its daemon-sidecar prebuild to finish before
-    // the supervisor starts fanning out workers, so the supervisor
-    // sees a clean list of long-running children: shell, studio,
-    // web-serve, relay.
-    let mut supervisor_plan: Vec<CommandBuilder> = Vec::with_capacity(plan.len());
-    let mut had_preflight = false;
-    for cmd in plan {
-        match cmd.label_str() {
-            Some("web-build") | Some("web-bindgen") | Some("daemon-build") => {
-                run_cmd_sync(&cmd)?;
-                had_preflight = true;
+    // `all` — combined build + daemon + web preflight (sequential,
+    // one cargo lock at a time), then the supervisor execs the
+    // prebuilt binaries + the static web server. No per-child cargo,
+    // so no feature re-resolution and no lock contention.
+    if args.target == DevTarget::All {
+        let mut supervisor_plan: Vec<CommandBuilder> = Vec::new();
+        let mut had_preflight = false;
+        for cmd in plan {
+            match cmd.label_str() {
+                Some("combined-build")
+                | Some("web-build")
+                | Some("web-bindgen")
+                | Some("daemon-build") => {
+                    run_cmd_sync(&cmd)?;
+                    had_preflight = true;
+                }
+                _ => supervisor_plan.push(cmd),
             }
-            _ => supervisor_plan.push(cmd),
         }
-    }
-    if had_preflight {
-        crate::gc::sweep(&workspace.target_dir());
+        if had_preflight {
+            crate::gc::sweep(&workspace.target_dir());
+        }
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        return runtime.block_on(async move {
+            let mut s = Supervisor::new();
+            for cmd in supervisor_plan {
+                s.add(cmd)?;
+            }
+            let outcome = s.run().await?;
+            Ok(outcome.exit_code)
+        });
     }
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    runtime.block_on(async move {
-        let mut s = Supervisor::new();
-        for cmd in supervisor_plan {
-            s.add(cmd)?;
-        }
-        let outcome = s.run().await?;
-        Ok(outcome.exit_code)
-    })
+    // Single native target (shell / studio / relay): one combined
+    // build warms the shared dependency graph under a single feature
+    // resolution; the dev child then execs the prebuilt binary. With
+    // hot-reload the DevLoop re-runs that same combined build before
+    // every re-exec — so a code change recompiles only the crates
+    // that changed, never the whole shared graph.
+    let combined = find_label(&plan, "combined-build");
+    let bin = plan
+        .iter()
+        .find(|c| matches!(c.label_str(), Some("shell" | "studio" | "relay")))
+        .expect("single native dev plan must include a run binary");
+
+    if let Some(daemon) = plan.iter().find(|c| c.label_str() == Some("daemon-build")) {
+        run_cmd_sync(daemon)?;
+    }
+
+    if args.hot_reload() {
+        return exec_dev_loop(bin, watch_paths(args.target, workspace), Some(combined));
+    }
+    run_cmd_sync(combined)?;
+    crate::gc::sweep(&workspace.target_dir());
+    exec_foreground(bin)
+}
+
+fn find_label<'a>(plan: &'a [CommandBuilder], label: &str) -> &'a CommandBuilder {
+    plan.iter()
+        .find(|c| c.label_str() == Some(label))
+        .unwrap_or_else(|| panic!("dev plan must include `{label}`"))
+}
+
+/// Source trees a single-target dev loop watches for `.rs` /
+/// `.prism-ui` / `.prss` changes.
+fn watch_paths(target: DevTarget, workspace: &Workspace) -> Vec<PathBuf> {
+    match target {
+        DevTarget::Shell => vec![workspace.shell_src_dir(), workspace.shell_ui_dir()],
+        DevTarget::Studio => vec![
+            workspace.shell_src_dir(),
+            workspace.shell_ui_dir(),
+            workspace.studio_src_dir(),
+        ],
+        DevTarget::Relay => vec![workspace.package("prism-relay").join("src")],
+        DevTarget::Web | DevTarget::All => unreachable!("not a single-target dev-loop target"),
+    }
 }
 
 /// Pull the `web-build`, `web-bindgen`, and `web` builders out of a
@@ -383,13 +417,21 @@ fn exec_foreground(cmd: &CommandBuilder) -> Result<u8> {
     Ok(status.code().unwrap_or(1) as u8)
 }
 
-/// Drive a cargo child through the `DevLoop` respawn supervisor.
-/// Watches the given source trees for `.rs` changes and kills +
-/// respawns the child on every debounced batch.
-fn exec_dev_loop(cmd: &CommandBuilder, watch_paths: Vec<PathBuf>) -> Result<u8> {
+/// Drive a child through the `DevLoop` respawn supervisor. Watches
+/// the given source trees and, on every debounced batch, runs
+/// `prebuild` (the single combined `cargo build`, if any) and then
+/// kills + re-execs the child.
+fn exec_dev_loop(
+    cmd: &CommandBuilder,
+    watch_paths: Vec<PathBuf>,
+    prebuild: Option<&CommandBuilder>,
+) -> Result<u8> {
     println!("$ {} (hot-reload)", cmd.display());
-    let dev_loop =
+    let mut dev_loop =
         DevLoop::new(cmd.clone(), watch_paths).with_sink(Arc::new(crate::supervisor::StdoutSink));
+    if let Some(pre) = prebuild {
+        dev_loop = dev_loop.with_prebuild(pre.clone());
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -432,40 +474,47 @@ mod tests {
         }
     }
 
+    fn combined_argv() -> Vec<&'static str> {
+        vec![
+            "build",
+            "--package",
+            "prism-shell",
+            "--package",
+            "prism-studio",
+            "--package",
+            "prism-relay",
+        ]
+    }
+
     #[test]
-    fn shell_is_the_default_target() {
-        let a = args(DevTarget::Shell);
-        let p = plan(&a, &ws());
-        assert_eq!(p.len(), 1);
-        assert_eq!(p[0].label_str(), Some("shell"));
-        let argv = p[0].argv().1;
-        // C3 — when hot-reload is on (the default), pass
-        // `--watch-ui` so the shell binary attaches its
-        // `.prism-ui` watcher and applies edits in-place.
+    fn shell_default_is_combined_build_plus_bin_exec_with_watch_ui() {
+        let p = plan(&args(DevTarget::Shell), &ws());
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].label_str(), Some("combined-build"));
+        assert_eq!(p[0].program(), crate::builder::Program::Cargo);
+        assert_eq!(p[0].argv().1, combined_argv());
+        assert_eq!(p[1].label_str(), Some("shell"));
+        // Execs the prebuilt binary directly — no cargo in front, so
+        // no per-target feature re-resolution on respawn.
         assert_eq!(
-            argv,
-            vec!["run", "--package", "prism-shell", "--", "--watch-ui"]
+            p[1].display(),
+            "/tmp/fake/target/debug/prism-shell --watch-ui"
         );
     }
 
     #[test]
-    fn shell_no_hot_reload_same_as_default() {
-        let a = args_no_reload(DevTarget::Shell);
-        let p = plan(&a, &ws());
-        assert_eq!(p.len(), 1);
-        let argv = p[0].argv().1;
-        assert_eq!(argv, vec!["run", "--package", "prism-shell"]);
+    fn shell_no_hot_reload_drops_watch_ui_but_keeps_bin_exec() {
+        let p = plan(&args_no_reload(DevTarget::Shell), &ws());
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[1].label_str(), Some("shell"));
+        assert_eq!(p[1].display(), "/tmp/fake/target/debug/prism-shell");
     }
 
     #[test]
-    fn shell_with_subsecond_strategy_injects_hot_reload_feature() {
-        // Phase 9 of `docs/dev/dioxus-inspiration.md`. The
-        // `--hot=subsecond` flag wires `--features hot-reload` onto
-        // the shell's cargo invocation; the in-shell anchor
-        // (`subsecond::call` around `render_tree`) goes live.
-        let a = args_subsecond(DevTarget::Shell);
-        let p = plan(&a, &ws());
+    fn shell_subsecond_keeps_cargo_run_feature_path() {
+        let p = plan(&args_subsecond(DevTarget::Shell), &ws());
         assert_eq!(p.len(), 1);
+        assert_eq!(p[0].label_str(), Some("shell"));
         assert_eq!(
             p[0].argv().1,
             vec![
@@ -481,28 +530,32 @@ mod tests {
     }
 
     #[test]
-    fn subsecond_strategy_disabled_when_no_hot_reload() {
-        // `--no-hot-reload --hot=subsecond` is the "drop the whole
-        // hot-reload apparatus" combo; the feature flag must not be
-        // injected.
+    fn subsecond_requires_hot_reload_else_falls_back_to_combined_path() {
+        // `--no-hot-reload --hot=subsecond` disables subsecond
+        // entirely (it needs the hot-reload apparatus), so this is
+        // just the normal combined-build + bin-exec path with no
+        // `--watch-ui`.
         let a = DevArgs {
             target: DevTarget::Shell,
             no_hot_reload: true,
             hot: HotReloadStrategy::Subsecond,
         };
         let p = plan(&a, &ws());
-        let argv = p[0].argv().1;
-        assert_eq!(argv, vec!["run", "--package", "prism-shell"]);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].label_str(), Some("combined-build"));
+        assert_eq!(p[1].label_str(), Some("shell"));
+        assert_eq!(p[1].display(), "/tmp/fake/target/debug/prism-shell");
     }
 
     #[test]
-    fn studio_prebuilds_daemon_sidecar() {
-        let a = args(DevTarget::Studio);
-        let p = plan(&a, &ws());
-        assert_eq!(p.len(), 2);
-        assert_eq!(p[0].label_str(), Some("daemon-build"));
+    fn studio_is_combined_build_then_daemon_then_studio_binary() {
+        let p = plan(&args(DevTarget::Studio), &ws());
+        assert_eq!(p.len(), 3);
+        assert_eq!(p[0].label_str(), Some("combined-build"));
+        assert_eq!(p[0].argv().1, combined_argv());
+        assert_eq!(p[1].label_str(), Some("daemon-build"));
         assert_eq!(
-            p[0].argv().1,
+            p[1].argv().1,
             vec![
                 "build",
                 "--package",
@@ -513,17 +566,16 @@ mod tests {
                 "transport-ipc"
             ]
         );
-        assert_eq!(p[1].label_str(), Some("studio"));
-        assert_eq!(p[1].argv().1, vec!["run", "--package", "prism-studio"]);
+        assert_eq!(p[2].label_str(), Some("studio"));
+        assert_eq!(p[2].display(), "/tmp/fake/target/debug/prism-studio");
     }
 
     #[test]
-    fn studio_no_hot_reload_same_as_default() {
-        let a = args_no_reload(DevTarget::Studio);
-        let p = plan(&a, &ws());
-        assert_eq!(p.len(), 2);
-        assert_eq!(p[0].label_str(), Some("daemon-build"));
-        assert_eq!(p[1].argv().1, vec!["run", "--package", "prism-studio"]);
+    fn studio_no_hot_reload_keeps_same_plan_shape() {
+        let p = plan(&args_no_reload(DevTarget::Studio), &ws());
+        assert_eq!(p.len(), 3);
+        assert_eq!(p[2].label_str(), Some("studio"));
+        assert_eq!(p[2].display(), "/tmp/fake/target/debug/prism-studio");
     }
 
     #[test]
@@ -561,31 +613,37 @@ mod tests {
     }
 
     #[test]
-    fn relay_runs_cargo_run_on_prism_relay() {
-        let a = args(DevTarget::Relay);
-        let p = plan(&a, &ws());
-        assert_eq!(p[0].argv().1, vec!["run", "--package", "prism-relay"]);
-        assert_eq!(p[0].label_str(), Some("relay"));
+    fn relay_is_combined_build_then_relayd_binary() {
+        let p = plan(&args(DevTarget::Relay), &ws());
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].label_str(), Some("combined-build"));
+        // The relay's [[bin]] is `prism-relayd`, not the crate name.
+        assert_eq!(p[1].label_str(), Some("relay"));
+        assert_eq!(p[1].display(), "/tmp/fake/target/debug/prism-relayd");
     }
 
     #[test]
-    fn all_target_fans_out_to_seven_labeled_commands() {
-        // shell + daemon-build + studio + web-build + web-bindgen + web (serve) + relay
-        let a = args(DevTarget::All);
-        let p = plan(&a, &ws());
-        assert_eq!(p.len(), 7);
+    fn all_is_one_combined_build_then_preflight_and_supervised_bins() {
+        let p = plan(&args(DevTarget::All), &ws());
         let labels: Vec<_> = p.iter().map(|c| c.label_str().unwrap()).collect();
         assert_eq!(
             labels,
             vec![
-                "shell",
+                "combined-build",
                 "daemon-build",
+                "shell",
                 "studio",
+                "relay",
                 "web-build",
                 "web-bindgen",
-                "web",
-                "relay"
+                "web"
             ]
         );
+        // Exactly one cargo build warms all native run targets.
+        assert_eq!(p[0].argv().1, combined_argv());
+        // Supervised children are prebuilt binaries, not `cargo run`.
+        assert_eq!(p[2].display(), "/tmp/fake/target/debug/prism-shell");
+        assert_eq!(p[3].display(), "/tmp/fake/target/debug/prism-studio");
+        assert_eq!(p[4].display(), "/tmp/fake/target/debug/prism-relayd");
     }
 }

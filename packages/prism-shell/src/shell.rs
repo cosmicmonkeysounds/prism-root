@@ -1371,27 +1371,35 @@ impl Shell {
                         }
                         c
                     };
+                    // ADR-009: graft the active app's skeleton body
+                    // into the host skeleton's `<shell.app-window>`
+                    // every frame — identical to the first-frame
+                    // `Shell::render()` path. Omitting this here was
+                    // the blank-canvas regression: every per-frame
+                    // re-render (any event / signal / animator tick)
+                    // rendered the bare host chrome (menu bar + nav
+                    // rail) with the entire dock workspace — palette,
+                    // builder canvas, properties — dropped, because
+                    // the dock lives in the app skeleton body.
+                    //
                     // A2 read seam (§2.3): when a host attached a
                     // skeleton `bind:*` context, project its bag into
-                    // a per-frame clone *inside* the render pass so
-                    // the subscribing reads re-enroll this frame's
-                    // reactive context (a `refresh` is what marked us
-                    // dirty to get here). `None` keeps the borrow-free
-                    // fast path — render the shared skeleton directly.
+                    // the composed per-frame doc *inside* the render
+                    // pass so the subscribing reads re-enroll this
+                    // frame's reactive context.
                     let sk = guard.skeleton_bindings.borrow();
-                    let mut bound_skeleton = sk.as_ref().map(|_| skeleton.clone());
+                    let mut composed = skeleton.with_app_body(guard.active_app_skeleton());
                     guard.render_scope.run_in_render_pass(|| {
-                        if let (Some(ctx), Some(bs)) = (sk.as_ref(), bound_skeleton.as_mut()) {
-                            ctx.apply_to_ast(&mut bs.doc);
+                        if let Some(ctx) = sk.as_ref() {
+                            ctx.apply_to_ast(&mut composed.doc);
                         }
-                        let active_skeleton = bound_skeleton.as_ref().unwrap_or(&skeleton);
                         render_with_hot_reload(|| {
                             // `render_with_hot_reload` accepts FnMut so
                             // the patch pipeline can re-invoke us; clone
                             // the caches each call so the inner closure
                             // doesn't move them out of its capture.
                             render_tree_with(
-                                active_skeleton,
+                                &composed,
                                 &guard.bindings,
                                 Arc::clone(&guard.resolver),
                                 &guard.prop_ctx(),
@@ -2301,6 +2309,59 @@ mod tests {
         shell.install_app_skeleton("flux", src).expect("install");
         let has = shell.inner.borrow().app_skeletons.contains_key("flux");
         assert!(has, "swap must register under the app id");
+    }
+
+    /// Regression: the blank-canvas bug. The per-frame re-render in
+    /// `run_inner` used to render the **bare host skeleton**, whose
+    /// `<shell.app-window>` body is empty — so every event/signal/
+    /// animator frame after the first dropped the entire dock
+    /// workspace (palette / builder canvas / properties), leaving
+    /// only chrome. Both render paths must compose
+    /// `host.with_app_body(active_app_skeleton())`. This pins the
+    /// input invariant: the bare host has an empty app-window, the
+    /// composed skeleton the loop now feeds the renderer does not.
+    #[test]
+    fn per_frame_composition_grafts_app_body_into_app_window() {
+        fn app_window_element_children(nodes: &[prism_ui_ast::Node]) -> Option<usize> {
+            for node in nodes {
+                if let prism_ui_ast::Node::Element(el) = node {
+                    if el.tag == "shell.app-window" {
+                        return Some(
+                            el.children
+                                .iter()
+                                .filter(|n| matches!(n, prism_ui_ast::Node::Element(_)))
+                                .count(),
+                        );
+                    }
+                    if let Some(found) = app_window_element_children(&el.children) {
+                        return Some(found);
+                    }
+                }
+            }
+            None
+        }
+
+        let shell = Shell::new().expect("boot");
+        // What the buggy per-frame path fed the renderer: bare host.
+        let bare = &shell.skeleton;
+        assert_eq!(
+            app_window_element_children(&bare.doc.nodes),
+            Some(0),
+            "host skeleton's <shell.app-window> must be empty — rendering \
+             it bare (the old per-frame bug) yields chrome with no dock"
+        );
+        // What both paths now feed the renderer: app body grafted.
+        let composed = {
+            let inner = shell.inner.borrow();
+            bare.with_app_body(inner.active_app_skeleton())
+        };
+        let grafted = app_window_element_children(&composed.doc.nodes)
+            .expect("composed skeleton still has an <shell.app-window>");
+        assert!(
+            grafted >= 1,
+            "composed skeleton must graft the app body (dock workspace) \
+             into <shell.app-window>; got {grafted} element children"
+        );
     }
 
     /// Detaching the stylesheet (`install_stylesheet(None)`) returns
