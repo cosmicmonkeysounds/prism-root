@@ -71,7 +71,7 @@ so the gap list is grounded in reality.
   tests in `prism-shell/tests/code_editor_e2e.rs`.
 
 ### Code panel — `shell.code-editor`
-- DSL-defined (`packages/prism-shell/ui/components/code-editor.prism-ui`),
+- DSL-defined (`packages/prism-shell/ui/components/code-editor.prui`),
   rendered through the runtime's `<input multiline="true" syntax-language="..."/>`.
 - Backed by `CanvasSlot::code_buffer` + `code_tabs` (multi-file tab
   strip).
@@ -134,9 +134,9 @@ so the gap list is grounded in reality.
 
 ### Apps
 - `apps/<id>/` directories hold per-app source: `manifest.toml`,
-  optional `shell.prism-ui`, `main.luau`, asset folders.
-- Hot-reload watcher (`hot_reload.rs`) picks up `app.prism-ui` and
-  each `apps/<id>/shell.prism-ui` edit; `.luau` source isn't watched
+  optional `shell.prui`, `main.luau`, asset folders.
+- Hot-reload watcher (`hot_reload.rs`) picks up `app.prui` and
+  each `apps/<id>/shell.prui` edit; `.luau` source isn't watched
   yet.
 
 ---

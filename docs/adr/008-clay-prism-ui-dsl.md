@@ -101,7 +101,7 @@ Rationale:
 
 - **Lower floor.** "It's HTML with extra attributes" is true and
   one-sentence-explainable. Non-programmers who edit web pages can
-  edit `.prism-ui` files immediately.
+  edit `.prui` files immediately.
 - **No ceiling penalty.** Every primitive from the strawman survives
   — facets, signals, control flow, design tokens, Luau handlers — as
   attribute namespaces with 1:1 lowerings to existing runtime types
@@ -128,7 +128,7 @@ single-line expression dialect parsed by the same Scanner, with
   out; the active backend lowers render commands to its native
   surface (femtovg / WebGL / HTML string). SSR and live UI render
   the same tree.
-- **No interpreter.** Live edits re-parse `.prism-ui` → diff
+- **No interpreter.** Live edits re-parse `.prui` → diff
   `BuilderDocument` → re-layout. The class of bugs ADR-007 documents
   cannot exist.
 - **Prism owns the language.** Grammar, diagnostics, completions,

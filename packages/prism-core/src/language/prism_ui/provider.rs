@@ -1,5 +1,5 @@
 //! `PrismUiSyntaxProvider` — diagnostics, completions, and hover for
-//! `.prism-ui` files.
+//! `.prui` files.
 //!
 //! Mirrors the `SlintSyntaxProvider` shape: lightweight, no runtime
 //! dependency, intended to give the editor enough intelligence to

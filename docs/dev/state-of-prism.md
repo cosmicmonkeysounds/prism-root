@@ -30,7 +30,7 @@ this one rots faster than they do.
 | 006 | Live bidirectional Slint builder | ❌ **superseded by ADR-008** (Slint exorcised) |
 | 007 | Slint 1.16 upgrade, interpreter scoped to builder | ❌ **superseded by ADR-008** |
 | 008 | Replace Slint with Taffy + `prism-ui` DSL | ✅ delivered (Phase 5 cutover) |
-| 009 | Per-app skeletons | ✅ each app ships its own `shell.prism-ui` |
+| 009 | Per-app skeletons | ✅ each app ships its own `shell.prui` |
 | 010 | Service factories with `ServiceContext` | ✅ `add_factory_scoped` + `rebuild_app_services` shipping |
 
 ADRs 006 and 007 are intentionally retained as history — they document the
@@ -41,7 +41,7 @@ flag in their own headers would help (see §3 cleanup).
 
 | Plan | Headline status | Notable remaining work |
 |---|---|---|
-| `clay-migration-plan.md` | UI cutover done; 6k-line plan is now mostly historical | A2 (bind:), A3 (token interpolation), A4 (`fct:*`/`sig:*` lowering), A5 (UTF-8 comment-scanner bug), B3 (web frame loop), C3 (`.prism-ui` hot-reload), D4 (per-app shell file selection) |
+| `clay-migration-plan.md` | UI cutover done; 6k-line plan is now mostly historical | A2 (bind:), A3 (token interpolation), A4 (`fct:*`/`sig:*` lowering), A5 (UTF-8 comment-scanner bug), B3 (web frame loop), C3 (`.prui` hot-reload), D4 (per-app shell file selection) |
 | `composable-builder-plan.md` | 13 of 21 micro-items shipped | Test fixture helpers, `ObjectSnapshot` large-variant boxing, `prism-shell/src/app/` decomposition, `#[visual_node]` migration |
 | `dioxus-inspiration.md` | **All 11 phases ✅ (2026-05-11).** `Signal<T>` is the unified primitive across local/IPC/federated/SSR | None — this plan delivered end-to-end |
 | `declarative-refactorings.md` | 13 ✅ / 3 🟡 / 5 ⬜ | Same residual items as composable-builder-plan; cleanup not architecture |
@@ -181,7 +181,7 @@ Sorted high-impact to cosmetic.
   host** (`ui-migration-followups.md` D2). The daemon already has
   persistent Luau; the shell stub is the last seam holding back the
   Phase 3 reactive subscriptions and the manifest-scripted apps.
-- **Fix the UTF-8 em-dash bug in the `.prism-ui` comment scanner**
+- **Fix the UTF-8 em-dash bug in the `.prui` comment scanner**
   (clay-migration A5). It's a one-line panic that bites any author
   who copies prose into a comment.
 
@@ -193,7 +193,7 @@ Sorted high-impact to cosmetic.
   `ui-migration-followups.md`.
 - **Web backend frame loop** (B3) — currently renders one frame, no
   `requestAnimationFrame` loop.
-- **Hot-reload of `.prism-ui` source** (C3) — anchor is in place from
+- **Hot-reload of `.prui` source** (C3) — anchor is in place from
   the Dioxus phase-9 work; just needs the per-frame integration.
 - **Decompose `packages/prism-shell/src/app/`** — last remaining item
   from `declarative-refactorings.md` and one of the biggest god-modules
@@ -239,7 +239,7 @@ If we tackled this end-to-end, the order I'd argue for:
    lowering). These three should land together because authors who
    reach for `bind:` also reach for `fct:` and `{tokens.…}`.
 4. Inline-template editing in the property panel.
-5. Web frame loop (B3) + `.prism-ui` hot reload (C3). Pairs naturally
+5. Web frame loop (B3) + `.prui` hot reload (C3). Pairs naturally
    with the shell-side hot-reload anchor that's already installed.
 6. Cleanup pass: rename `src-tauri/`, banner-head the superseded docs,
    archive the closed phases of `clay-migration-plan.md`, rename
@@ -328,7 +328,7 @@ recommendation at the bottom was rewritten:
 - **C2** (`--scene` / `--screenshot` flags) — present on
   `prism-shell/src/bin/native.rs`, with `--app` / `--panel`
   alongside.
-- **D4** (per-app shells) — `apps/{flux,lattice,musica}/shell.prism-ui`
+- **D4** (per-app shells) — `apps/{flux,lattice,musica}/shell.prui`
   ship; `Shell::new` loads them into `app_skeletons`;
   `current_skeleton()` picks the active one and falls back to
   the default.
@@ -377,15 +377,15 @@ Six items closed in one batch, with tests:
   consumer wants it") stays scoped out; the carry-through itself
   is the predicate every future consumer agrees on.
 - **C1 — `prism-shell/build.rs`.** New build script calls
-  `prism_ui_build::compile()` against `ui/app.prism-ui` and every
-  `ui/components/*.prism-ui` (59 files). Parse errors fail the
+  `prism_ui_build::compile()` against `ui/app.prui` and every
+  `ui/components/*.prui` (59 files). Parse errors fail the
   build with a path-qualified message instead of producing a
   binary that panics in `Skeleton::load` at boot.
   `cargo:rerun-if-changed=` per file keeps incremental builds
   honest.
-- **C3 — `.prism-ui` hot reload.** Two new `Shell` methods:
+- **C3 — `.prui` hot reload.** Two new `Shell` methods:
   `install_default_skeleton(source) -> Result<(), String>` swaps
-  the canonical `app.prism-ui` in place; `install_app_skeleton(app_id, source)`
+  the canonical `app.prui` in place; `install_app_skeleton(app_id, source)`
   swaps a per-app skeleton. Both parse via `Skeleton::from_source`
   and mark the render scope dirty so the next event tick redraws.
   Parse errors leave the previous skeleton intact. Three new
@@ -473,7 +473,7 @@ The third slice landed, completing the feature end-to-end:
   via `resolve_facet_template_path_ref`, pulls its component
   schema from the registry, and emits field-editor rows whose
   props carry `template-path` + the facet node `target-id`.
-- **Write routing.** The `field-editor.prism-ui` block now emits
+- **Write routing.** The `field-editor.prui` block now emits
   `data-template-path`; a new `write_field_value` seam in
   `events.rs` (split-borrow over `ShellInner`) routes every
   click-driven field write to `set_facet_template_prop` when

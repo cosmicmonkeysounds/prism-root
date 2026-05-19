@@ -3,7 +3,7 @@
 //! shape of `starter::BUILTINS`: one row per primitive, each carrying
 //! schema + lower + signals. The catalogue exists so:
 //!
-//! 1. Wave 11's `.prism-ui` self-hosting migration has a stable set of
+//! 1. Wave 11's `.prui` self-hosting migration has a stable set of
 //!    primitives to compose against (`<popover>`, `<list-picker>`,
 //!    `<collapsible>`, `<split-handle>`, …).
 //! 2. The inspector / properties panel can surface a primitive's prop
@@ -819,9 +819,9 @@ fn text_buffer_schema() -> Vec<FieldSpec> {
 }
 
 /// Wave 11.4 — `<prism.builder-host/>` is the runtime surface that
-/// hosts a builder document inside a `.prism-ui` shell. The shell's
+/// hosts a builder document inside a `.prui` shell. The shell's
 /// `shell.builder-canvas` block is the consumer wrapper today; this
-/// primitive lifts the abstraction so any `.prism-ui` document can
+/// primitive lifts the abstraction so any `.prui` document can
 /// embed a builder canvas without depending on the shell's chrome
 /// catalog. Props mirror the canvas's authored surface: a binding
 /// path for the hosted `BuilderDocument`, a viewport hint, and a
@@ -879,7 +879,7 @@ pub const TEXT_BUFFER_SPEC: BlockSpec =
 /// `TextInput` primitive. `text-area` matches the HTML element name
 /// most authors search for; `text-buffer` is the original Prism
 /// terminology. Adding the alias means `<prism.text-area/>` works
-/// in `.prism-ui` source identically to `<prism.text-buffer/>` —
+/// in `.prui` source identically to `<prism.text-buffer/>` —
 /// useful when a designer reaches for the textbook name.
 pub const TEXT_AREA_SPEC: BlockSpec =
     BlockSpec::new("prism.text-area", text_buffer_schema).lower(text_buffer_lower);
@@ -892,7 +892,7 @@ pub const BUILDER_HOST_SPEC: BlockSpec =
 /// The 15-row primitive catalogue — Waves 10 + 11.4 of the plan. The
 /// list is closed and ordered for stable iteration (snapshot tests,
 /// name completion). Each entry is referenced by name through the
-/// `prism.<id>` tag in `.prism-ui` source.
+/// `prism.<id>` tag in `.prui` source.
 pub const PRIMITIVES: &[&BlockSpec] = &[
     &TEXT_INPUT_SPEC,
     &DRAG_SCRUB_SPEC,

@@ -68,7 +68,7 @@ regression is somewhere in that wave, **not** in panel wiring (see §1).
 >    code, which is why the test suite is green and every prior
 >    diagnostic "passed".
 > 4. **One real latent colour bug found (not the blank-screen cause).**
->    `ui/components/builder-canvas.prism-ui:39` sets
+>    `ui/components/builder-canvas.prui:39` sets
 >    `style:background="#040000"` — a 6-digit hex = opaque near-black
 >    RGB(4,0,0) α255 spanning the whole canvas. It should be
 >    `#04000000` (8-digit, alpha `00` = transparent), matching the
@@ -96,7 +96,7 @@ defaults to the Edit page.
 intact end-to-end:
 
 - Shell root tree built in `prism-shell/src/render.rs:424-501`
-  (`render_tree_with`), skeleton `prism-shell/ui/app.prism-ui`,
+  (`render_tree_with`), skeleton `prism-shell/ui/app.prui`,
   app body grafted via `Skeleton::with_app_body()`
   (`prism-shell/src/shell.rs:1159`).
 - Seed hydrates a real document: `prism-shell/src/seed.rs:54`
@@ -109,8 +109,8 @@ intact end-to-end:
 - All three panel tags (`shell.builder-canvas`,
   `shell.component-palette`, `shell.properties-panel`) are bound to
   AppState slots: `prism-shell/src/props.rs:225,242,243`, and
-  dispatched through `dock-panel.prism-ui` /
-  `dock-node.prism-ui` (no stubs).
+  dispatched through `dock-panel.prui` /
+  `dock-node.prui` (no stubs).
 
 **DIAGNOSIS (2026-05-19) — the render pipeline at HEAD is correct.**
 Closed by empirical bisection through six independent diagnostics run
@@ -164,10 +164,10 @@ found the real defect:
 populates a write-once `OnceLock` shared resolver
 (`prism_ui_loader.rs:105,286`). `register_full_shell_chrome` called
 it **before** `Shell::new` ran `register_document_builtins`
-(`shell.rs:369-372`). So the resolver every `.prism-ui` block uses
+(`shell.rs:369-372`). So the resolver every `.prui` block uses
 snapshotted the registry **without** the `prism.*` primitives
 (including `prism.builder-host`) and **without** the document
-builtins (`text` / `button` / …). Inside `builder-canvas.prism-ui`,
+builtins (`text` / `button` / …). Inside `builder-canvas.prui`,
 `<prism.builder-host>` resolved to nothing → the seeded document was
 never grafted onto the page → the canvas (the dominant central
 region) rendered empty. Chrome survived because every `shell.*` block
@@ -243,7 +243,7 @@ that "restore the regression" is not mistaken for "reach parity".
 ### 2.1 Top tab bar / document tabs
 Slint had a real tab strip: `Flux | Canvas | Settings | Preview | +`
 with close affordances. Current shell has only the OS menu bar.
-- Now: `workflow-page-bar.prism-ui` / `workflow-page-button.prism-ui`
+- Now: `workflow-page-bar.prui` / `workflow-page-button.prui`
   exist and bind at `props.rs:240` but render the Edit/Design/Code
   *mode* pages, not document/app tabs.
 - **Gap:** open-document tab strip with new-tab (`+`) and per-tab
@@ -251,7 +251,7 @@ with close affordances. Current shell has only the OS menu bar.
 
 ### 2.2 Workspace tabs (Components / Inspector / Explorer)
 Slint grouped the left dock into three named tabs. Current shell has
-a dockable tab bar (`dock-tab-bar.prism-ui`) but no seeded
+a dockable tab bar (`dock-tab-bar.prui`) but no seeded
 Inspector/Explorer grouping — only the palette shows.
 - **Gap:** seed the left dock with the three-tab group and wire
   Inspector + Explorer panel content (Explorer file tree exists in
@@ -295,7 +295,7 @@ shows a single stray `Edit` label.
 
 ### 2.7 Status bar
 Slint footer: `Editor · Flux · Canvas · Selected · 1 nodes · Prism
-Studio`. `status-bar.prism-ui` exists (added in the
+Studio`. `status-bar.prui` exists (added in the
 `93997e05..HEAD` diff) but is not visible.
 - **Gap:** lay out and bind the status bar (active editor, app, panel,
   selection, node count).

@@ -59,7 +59,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter"] }
 
 # UI toolkit — `prism-ui-runtime` owns the declarative UI language
-# (`.prism-ui` files) and the render + windowing stack via winit +
+# (`.prui` files) and the render + windowing stack via winit +
 # femtovg native and wasm32-unknown-unknown + webgl on the web.
 # (Slint was fully retired in the Phase 5 cutover, 2026-05-10. See
 # `docs/dev/clay-migration-plan.md` for the migration history.)

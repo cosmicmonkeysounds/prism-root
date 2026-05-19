@@ -2,7 +2,7 @@
 //!
 //! `prism-ui` is the HTMX-flavoured declarative surface for Prism's
 //! Clay-based UI runtime (see `docs/dev/clay-migration-plan.md` and
-//! ADR-008). Files use the `.prism-ui` extension and carry tag-element
+//! ADR-008). Files use the `.prui` extension and carry tag-element
 //! markup with attribute-namespace behaviour (`on:click`, `bind:value`,
 //! `style:background`, `fct:items`, `sig:clicked`, `if`/`for`/`else`).
 //!

@@ -1,5 +1,5 @@
 //! Wave 11.2 of `docs/dev/composable-builder-plan.md` — load
-//! `.prism-ui` source files as registered shell `Block`s.
+//! `.prui` source files as registered shell `Block`s.
 //!
 //! ## Smart-pattern shape
 //!
@@ -10,7 +10,7 @@
 //! pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
 //!     PrismUiSpec::new(
 //!         "shell.toolbar-separator",
-//!         include_str!("../../ui/components/toolbar-separator.prism-ui"),
+//!         include_str!("../../ui/components/toolbar-separator.prui"),
 //!     ),
 //!     // …
 //! ];
@@ -19,7 +19,7 @@
 //! [`register_prism_ui_components`] parses each source at boot, wraps
 //! it in a [`PrismUiBlock`] that implements [`Block`], and fans the
 //! batch through the same [`register_specs`]-style path the native
-//! `SHELL_BUILTINS` use. Adding a migration is **one .prism-ui file +
+//! `SHELL_BUILTINS` use. Adding a migration is **one .prui file +
 //! one row** — no per-component struct, no per-component test seam
 //! (the cross-cutting tests in this module exercise the loader's
 //! behaviour against the table).
@@ -55,7 +55,7 @@ use serde_json::Value;
 
 use crate::components::registry::ShellComponentRegistry;
 
-/// Declarative spec for a `.prism-ui`-authored shell component.
+/// Declarative spec for a `.prui`-authored shell component.
 /// Mirrors the shape of [`prism_builder::BlockSpec`] but trades the
 /// imperative `lower: LowerFn` field for a `source` string that the
 /// runtime interprets at render time.
@@ -104,7 +104,7 @@ fn empty_schema() -> Vec<FieldSpec> {
 /// the registry rebuilds the entire shell, not the cell.
 pub type SharedResolver = Arc<OnceLock<Arc<dyn TagResolver>>>;
 
-/// Runtime [`Block`] backing a `.prism-ui`-authored shell component.
+/// Runtime [`Block`] backing a `.prui`-authored shell component.
 /// Holds the parsed AST plus the shared resolver cell; `lower_ui`
 /// snapshots `node.props` into a [`LowerScope`] and walks the AST.
 pub struct PrismUiBlock {
@@ -152,7 +152,7 @@ impl Block for PrismUiBlock {
         }
 
         // **Wave 14.1** — seed the design-token table as a global
-        // `tokens` binding so every migrated `.prism-ui` file can
+        // `tokens` binding so every migrated `.prui` file can
         // read visual constants through one source of truth. Layered
         // before schema defaults / `node.props` so a caller-supplied
         // prop named `tokens` wins (unlikely but principled).
@@ -160,7 +160,7 @@ impl Block for PrismUiBlock {
 
         // Seed schema defaults first so `{title}` / `{enabled}`
         // interpolations have a sensible fallback when the caller
-        // didn't pass the prop. Authored `.prism-ui` source treats a
+        // didn't pass the prop. Authored `.prui` source treats a
         // missing prop the same as an empty one in `if=` / `else=`
         // checks, so a schema default lets the DSL inherit the
         // Rust-side `with_default` value without re-stating it.
@@ -228,7 +228,7 @@ impl Block for PrismUiBlock {
 }
 
 /// Collapse the AST's lowered root list into a single `UiNode`. The
-/// migration convention is **single-root .prism-ui per component**;
+/// migration convention is **single-root .prui per component**;
 /// when an author writes a multi-rooted source we wrap it in a flow
 /// container so the shape stays predictable for the caller. Empty
 /// sources fall back to the bare default container.
@@ -318,12 +318,12 @@ impl std::error::Error for PrismUiLoadError {}
 
 // ── Tier-1 migrated component sources ──
 //
-// Each row: an id in the `shell.*` namespace plus a `.prism-ui`
+// Each row: an id in the `shell.*` namespace plus a `.prui`
 // source embedded via `include_str!`. Optional `.schema(fn)` /
 // `.signals(fn)` to override the empty defaults.
 //
 // Author a new migration:
-//   1. Write `ui/components/<id>.prism-ui` (single-root container).
+//   1. Write `ui/components/<id>.prui` (single-root container).
 //   2. Add one `PrismUiSpec::new(...)` row here.
 //   3. Delete the old `components/<id>.rs` Rust file + its
 //      `pub mod` row in `mod.rs` + its row in `SHELL_BUILTINS`.
@@ -466,7 +466,7 @@ fn add_modifier_button_schema() -> Vec<FieldSpec> {
 // (ternary, C-style `&&`/`||`/`!`, dotted-path comparison, dynamic
 // `<dispatch>`). Each was previously blocked on one of the four
 // substrate features the plan called out at §11.2; with the substrate
-// in place every block here is a single `.prism-ui` file + one row.
+// in place every block here is a single `.prui` file + one row.
 
 fn toast_schema() -> Vec<FieldSpec> {
     vec![
@@ -574,7 +574,7 @@ fn properties_panel_schema() -> Vec<FieldSpec> {
 //
 // The remaining Tier-1 components share a small set of visual recipes
 // (icon-button glyph, active-underline tab pill). Lifting those recipes
-// to .prism-ui source — and authoring every consumer in DSL — removes
+// to .prui source — and authoring every consumer in DSL — removes
 // the per-call-site `chrome::*_node` helper coupling. Wave 11.2's
 // "shared-chrome lift" substrate, landed declaratively.
 
@@ -1389,130 +1389,130 @@ fn inspector_row_signals() -> Vec<SignalDef> {
 pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     PrismUiSpec::new(
         "shell.toolbar-separator",
-        include_str!("../../ui/components/toolbar-separator.prism-ui"),
+        include_str!("../../ui/components/toolbar-separator.prui"),
     )
     .schema(no_schema),
     PrismUiSpec::new(
         "shell.help-tooltip",
-        include_str!("../../ui/components/help-tooltip.prism-ui"),
+        include_str!("../../ui/components/help-tooltip.prui"),
     )
     .schema(help_tooltip_schema),
     PrismUiSpec::new(
         "shell.docs-view",
-        include_str!("../../ui/components/docs-view.prism-ui"),
+        include_str!("../../ui/components/docs-view.prui"),
     )
     .schema(docs_view_schema),
     PrismUiSpec::new(
         "shell.docs-sidebar",
-        include_str!("../../ui/components/docs-sidebar.prism-ui"),
+        include_str!("../../ui/components/docs-sidebar.prui"),
     )
     .schema(docs_sidebar_schema),
     PrismUiSpec::new(
         "shell.toast-stack",
-        include_str!("../../ui/components/toast-stack.prism-ui"),
+        include_str!("../../ui/components/toast-stack.prui"),
     )
     .schema(no_schema),
     PrismUiSpec::new(
         "shell.launchpad",
-        include_str!("../../ui/components/launchpad.prism-ui"),
+        include_str!("../../ui/components/launchpad.prui"),
     )
     .schema(launchpad_schema),
     // Wave 11.2 batch — 7 Tier-1 migrations
     PrismUiSpec::new(
         "shell.explorer",
-        include_str!("../../ui/components/explorer.prism-ui"),
+        include_str!("../../ui/components/explorer.prui"),
     )
     .schema(explorer_schema),
     PrismUiSpec::new(
         "shell.docs-content",
-        include_str!("../../ui/components/docs-content.prism-ui"),
+        include_str!("../../ui/components/docs-content.prui"),
     )
     .schema(docs_content_schema),
     PrismUiSpec::new(
         "shell.section-header",
-        include_str!("../../ui/components/section-header.prism-ui"),
+        include_str!("../../ui/components/section-header.prui"),
     )
     .schema(section_header_schema)
     .signals(section_header_signals),
     PrismUiSpec::new(
         "shell.nav-button",
-        include_str!("../../ui/components/nav-button.prism-ui"),
+        include_str!("../../ui/components/nav-button.prui"),
     )
     .schema(nav_button_schema)
     .signals(nav_button_signals),
     PrismUiSpec::new(
         "shell.inspector-tree",
-        include_str!("../../ui/components/inspector-tree.prism-ui"),
+        include_str!("../../ui/components/inspector-tree.prui"),
     )
     .schema(inspector_tree_schema),
     PrismUiSpec::new(
         "shell.nav-page-list",
-        include_str!("../../ui/components/nav-page-list.prism-ui"),
+        include_str!("../../ui/components/nav-page-list.prui"),
     )
     .schema(nav_page_list_schema),
     PrismUiSpec::new(
         "shell.signals-panel",
-        include_str!("../../ui/components/signals-panel.prism-ui"),
+        include_str!("../../ui/components/signals-panel.prui"),
     )
     .schema(signals_panel_schema),
     PrismUiSpec::new(
         "shell.workflow-page-bar",
-        include_str!("../../ui/components/workflow-page-bar.prism-ui"),
+        include_str!("../../ui/components/workflow-page-bar.prui"),
     )
     .schema(workflow_page_bar_schema),
     PrismUiSpec::new(
         "shell.menu-dropdown",
-        include_str!("../../ui/components/menu-dropdown.prism-ui"),
+        include_str!("../../ui/components/menu-dropdown.prui"),
     )
     .schema(items_only_schema),
     PrismUiSpec::new(
         "shell.context-menu",
-        include_str!("../../ui/components/context-menu.prism-ui"),
+        include_str!("../../ui/components/context-menu.prui"),
     )
     .schema(items_only_schema),
     PrismUiSpec::new(
         "shell.add-modifier-button",
-        include_str!("../../ui/components/add-modifier-button.prism-ui"),
+        include_str!("../../ui/components/add-modifier-button.prui"),
     )
     .schema(add_modifier_button_schema),
     PrismUiSpec::new(
         "shell.add-connection-button",
-        include_str!("../../ui/components/add-connection-button.prism-ui"),
+        include_str!("../../ui/components/add-connection-button.prui"),
     )
     .schema(no_schema),
     // Batch 3 — substrate-unblocked migrations.
     PrismUiSpec::new(
         "shell.toast",
-        include_str!("../../ui/components/toast.prism-ui"),
+        include_str!("../../ui/components/toast.prui"),
     )
     .schema(toast_schema)
     .signals(toast_signals),
     PrismUiSpec::new(
         "shell.menu-item",
-        include_str!("../../ui/components/menu-item.prism-ui"),
+        include_str!("../../ui/components/menu-item.prui"),
     )
     .schema(menu_item_schema),
     PrismUiSpec::new(
         "shell.signal-connection-row",
-        include_str!("../../ui/components/signal-connection-row.prism-ui"),
+        include_str!("../../ui/components/signal-connection-row.prui"),
     )
     .schema(signal_connection_row_schema)
     .signals(signal_connection_row_signals),
     PrismUiSpec::new(
         "shell.schema-row",
-        include_str!("../../ui/components/schema-row.prism-ui"),
+        include_str!("../../ui/components/schema-row.prui"),
     )
     .schema(schema_row_schema)
     .signals(schema_row_signals),
     PrismUiSpec::new(
         "shell.nav-page-row",
-        include_str!("../../ui/components/nav-page-row.prism-ui"),
+        include_str!("../../ui/components/nav-page-row.prui"),
     )
     .schema(nav_page_row_schema)
     .signals(nav_page_row_signals),
     PrismUiSpec::new(
         "shell.properties-panel",
-        include_str!("../../ui/components/properties-panel.prism-ui"),
+        include_str!("../../ui/components/properties-panel.prui"),
     )
     .schema(properties_panel_schema),
     // Batch 4 — chrome lift. shell.icon-button moves to DSL, taking
@@ -1520,33 +1520,33 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // new shared recipe powering shell.dock-tab + shell.workflow-page-button.
     PrismUiSpec::new(
         "shell.icon-button",
-        include_str!("../../ui/components/icon-button.prism-ui"),
+        include_str!("../../ui/components/icon-button.prui"),
     )
     .schema(icon_button_schema)
     .signals(icon_button_signals),
     PrismUiSpec::new(
         "shell.tab-button",
-        include_str!("../../ui/components/tab-button.prism-ui"),
+        include_str!("../../ui/components/tab-button.prui"),
     )
     .schema(tab_button_schema),
     PrismUiSpec::new(
         "shell.dock-tab",
-        include_str!("../../ui/components/dock-tab.prism-ui"),
+        include_str!("../../ui/components/dock-tab.prui"),
     )
     .schema(dock_tab_schema),
     PrismUiSpec::new(
         "shell.workflow-page-button",
-        include_str!("../../ui/components/workflow-page-button.prism-ui"),
+        include_str!("../../ui/components/workflow-page-button.prui"),
     )
     .schema(workflow_page_button_schema),
     PrismUiSpec::new(
         "shell.status-bar",
-        include_str!("../../ui/components/status-bar.prism-ui"),
+        include_str!("../../ui/components/status-bar.prui"),
     )
     .schema(status_bar_schema),
     PrismUiSpec::new(
         "shell.menu-bar-row",
-        include_str!("../../ui/components/menu-bar-row.prism-ui"),
+        include_str!("../../ui/components/menu-bar-row.prui"),
     )
     .schema(menu_bar_row_schema)
     .signals(menu_bar_row_signals),
@@ -1554,81 +1554,81 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // substrate (`attach_style_overrides` in `prism-builder::ui_resolver`).
     PrismUiSpec::new(
         "shell.component-palette",
-        include_str!("../../ui/components/component-palette.prism-ui"),
+        include_str!("../../ui/components/component-palette.prui"),
     )
     .schema(component_palette_schema)
     .signals(component_palette_signals),
     PrismUiSpec::new(
         "shell.inspector-row",
-        include_str!("../../ui/components/inspector-row.prism-ui"),
+        include_str!("../../ui/components/inspector-row.prui"),
     )
     .schema(inspector_row_schema)
     .signals(inspector_row_signals),
     PrismUiSpec::new(
         "shell.app-card",
-        include_str!("../../ui/components/app-card.prism-ui"),
+        include_str!("../../ui/components/app-card.prui"),
     )
     .schema(app_card_schema),
     PrismUiSpec::new(
         "shell.modifier-header",
-        include_str!("../../ui/components/modifier-header.prism-ui"),
+        include_str!("../../ui/components/modifier-header.prui"),
     )
     .schema(modifier_header_schema),
     PrismUiSpec::new(
         "shell.modifier-picker",
-        include_str!("../../ui/components/modifier-picker.prism-ui"),
+        include_str!("../../ui/components/modifier-picker.prui"),
     )
     .schema(modifier_picker_schema),
     PrismUiSpec::new(
         "shell.builder-toolbar",
-        include_str!("../../ui/components/builder-toolbar.prism-ui"),
+        include_str!("../../ui/components/builder-toolbar.prui"),
     )
     .schema(builder_toolbar_schema)
     .signals(builder_toolbar_signals),
     PrismUiSpec::new(
         "shell.app-window",
-        include_str!("../../ui/components/app-window.prism-ui"),
+        include_str!("../../ui/components/app-window.prui"),
     )
     .schema(app_window_schema)
     .signals(app_window_signals),
     PrismUiSpec::new(
         "shell.dock-divider",
-        include_str!("../../ui/components/dock-divider.prism-ui"),
+        include_str!("../../ui/components/dock-divider.prui"),
     )
     .schema(dock_divider_schema),
     PrismUiSpec::new(
         "shell.resize-handle",
-        include_str!("../../ui/components/resize-handle.prism-ui"),
+        include_str!("../../ui/components/resize-handle.prui"),
     )
     .schema(resize_handle_schema)
     .signals(resize_handle_signals),
     PrismUiSpec::new(
         "shell.gizmo-move",
-        include_str!("../../ui/components/gizmo-move.prism-ui"),
+        include_str!("../../ui/components/gizmo-move.prui"),
     )
     .schema(gizmo_move_schema)
     .signals(gizmo_move_signals),
     PrismUiSpec::new(
         "shell.gizmo-rotate",
-        include_str!("../../ui/components/gizmo-rotate.prism-ui"),
+        include_str!("../../ui/components/gizmo-rotate.prui"),
     )
     .schema(gizmo_rotate_schema)
     .signals(gizmo_rotate_signals),
     PrismUiSpec::new(
         "shell.gizmo-scale",
-        include_str!("../../ui/components/gizmo-scale.prism-ui"),
+        include_str!("../../ui/components/gizmo-scale.prui"),
     )
     .schema(gizmo_scale_schema)
     .signals(gizmo_scale_signals),
     PrismUiSpec::new(
         "shell.drag-number-field",
-        include_str!("../../ui/components/drag-number-field.prism-ui"),
+        include_str!("../../ui/components/drag-number-field.prui"),
     )
     .schema(drag_number_field_schema)
     .signals(drag_number_field_signals),
     PrismUiSpec::new(
         "shell.connection-picker",
-        include_str!("../../ui/components/connection-picker.prism-ui"),
+        include_str!("../../ui/components/connection-picker.prui"),
     )
     .schema(connection_picker_schema),
     // Wave 2.4 — anchored overlay opened by the field-editor color
@@ -1636,7 +1636,7 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // through `set_color_picker_value`.
     PrismUiSpec::new(
         "shell.color-picker",
-        include_str!("../../ui/components/color-picker.prism-ui"),
+        include_str!("../../ui/components/color-picker.prui"),
     )
     .schema(color_picker_schema),
     // Wave 2.3 — anchored dropdown opened by a select-kind field-edit
@@ -1645,18 +1645,18 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // Replaces the legacy click-to-cycle interaction.
     PrismUiSpec::new(
         "shell.select-dropdown",
-        include_str!("../../ui/components/select-dropdown.prism-ui"),
+        include_str!("../../ui/components/select-dropdown.prui"),
     )
     .schema(select_dropdown_schema),
     PrismUiSpec::new(
         "shell.component-picker",
-        include_str!("../../ui/components/component-picker.prism-ui"),
+        include_str!("../../ui/components/component-picker.prui"),
     )
     .schema(component_picker_schema)
     .signals(component_picker_signals),
     PrismUiSpec::new(
         "shell.dock-tab-bar",
-        include_str!("../../ui/components/dock-tab-bar.prism-ui"),
+        include_str!("../../ui/components/dock-tab-bar.prui"),
     )
     .schema(dock_tab_bar_schema),
     // Wave 11.3 — Tier-2 migration of dock_panel.rs (the first of
@@ -1667,7 +1667,7 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // authored an explicit body.
     PrismUiSpec::new(
         "shell.dock-panel",
-        include_str!("../../ui/components/dock-panel.prism-ui"),
+        include_str!("../../ui/components/dock-panel.prui"),
     )
     .schema(dock_panel_schema),
     // Wave 11.3 — Tier-2 migration of dock_workspace.rs. The
@@ -1680,12 +1680,12 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // time.
     PrismUiSpec::new(
         "shell.dock-workspace",
-        include_str!("../../ui/components/dock-workspace.prism-ui"),
+        include_str!("../../ui/components/dock-workspace.prui"),
     )
     .schema(dock_workspace_schema),
     PrismUiSpec::new(
         "shell.dock-node",
-        include_str!("../../ui/components/dock-node.prism-ui"),
+        include_str!("../../ui/components/dock-node.prui"),
     )
     .schema(dock_node_schema),
     // Wave 11.3 — Tier-2 migration of field_editor.rs (the largest
@@ -1699,7 +1699,7 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // round-trip through `field_editor_signals` for codegen.
     PrismUiSpec::new(
         "shell.field-editor",
-        include_str!("../../ui/components/field-editor.prism-ui"),
+        include_str!("../../ui/components/field-editor.prui"),
     )
     .schema(field_editor_schema)
     .signals(field_editor_signals),
@@ -1714,7 +1714,7 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // never need a runtime match.
     PrismUiSpec::new(
         "shell.builder-canvas",
-        include_str!("../../ui/components/builder-canvas.prism-ui"),
+        include_str!("../../ui/components/builder-canvas.prui"),
     )
     .schema(builder_canvas_schema)
     .signals(builder_canvas_signals),
@@ -1728,7 +1728,7 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // calls into it.
     PrismUiSpec::new(
         "shell.code-editor",
-        include_str!("../../ui/components/code-editor.prism-ui"),
+        include_str!("../../ui/components/code-editor.prui"),
     )
     .schema(code_editor_schema)
     .signals(code_editor_signals),
@@ -1737,26 +1737,26 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // pages); no substrate change required.
     PrismUiSpec::new(
         "shell.nav-graph",
-        include_str!("../../ui/components/nav-graph.prism-ui"),
+        include_str!("../../ui/components/nav-graph.prui"),
     )
     .schema(nav_graph_schema),
     // Wave 11.3 — Tier-2 migration of schema_designer.rs.
     PrismUiSpec::new(
         "shell.schema-designer",
-        include_str!("../../ui/components/schema-designer.prism-ui"),
+        include_str!("../../ui/components/schema-designer.prui"),
     )
     .schema(schema_designer_schema),
     // Wave 11.3 — Tier-2 migration of transform_editor.rs.
     PrismUiSpec::new(
         "shell.transform-editor",
-        include_str!("../../ui/components/transform-editor.prism-ui"),
+        include_str!("../../ui/components/transform-editor.prui"),
     )
     .schema(transform_editor_schema)
     .signals(transform_editor_signals),
     // Wave 11.3 — Tier-2 migration of command_palette.rs.
     PrismUiSpec::new(
         "shell.command-palette",
-        include_str!("../../ui/components/command-palette.prism-ui"),
+        include_str!("../../ui/components/command-palette.prui"),
     )
     .schema(command_palette_schema)
     .signals(command_palette_signals),
@@ -1764,7 +1764,7 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // same TextEditor wiring, same modal-capture shape.
     PrismUiSpec::new(
         "shell.search-overlay",
-        include_str!("../../ui/components/search-overlay.prism-ui"),
+        include_str!("../../ui/components/search-overlay.prui"),
     )
     .schema(search_overlay_schema)
     .signals(search_overlay_signals),
@@ -1773,7 +1773,7 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // fuzzy-ranked over the project-wide Luau symbol index.
     PrismUiSpec::new(
         "shell.symbol-palette",
-        include_str!("../../ui/components/symbol-palette.prism-ui"),
+        include_str!("../../ui/components/symbol-palette.prui"),
     )
     .schema(symbol_palette_schema)
     .signals(symbol_palette_signals),
@@ -1781,7 +1781,7 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // the `PresenceManager` ingest drained on the idle tick.
     PrismUiSpec::new(
         "shell.presence-overlay",
-        include_str!("../../ui/components/presence-overlay.prism-ui"),
+        include_str!("../../ui/components/presence-overlay.prui"),
     )
     .schema(presence_overlay_schema)
     .signals(presence_overlay_signals),
@@ -1790,7 +1790,7 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // Probes, Bindings) in one tabbed panel.
     PrismUiSpec::new(
         "shell.devtools",
-        include_str!("../../ui/components/devtools.prism-ui"),
+        include_str!("../../ui/components/devtools.prui"),
     )
     .schema(devtools_schema)
     .signals(devtools_signals),
@@ -1798,7 +1798,7 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // `state.diagnostics`; rows jump via `editor_files::open_at_offset`.
     PrismUiSpec::new(
         "shell.diagnostics-panel",
-        include_str!("../../ui/components/diagnostics-panel.prism-ui"),
+        include_str!("../../ui/components/diagnostics-panel.prui"),
     )
     .schema(diagnostics_panel_schema)
     .signals(diagnostics_panel_signals),

@@ -9,7 +9,7 @@
 //! no AST re-evaluation, no diff walk.
 //!
 //! This module computes the same two fingerprints for a Prism
-//! `.prism-ui` template:
+//! `.prui` template:
 //!
 //! * [`structural_hash`] — ignores literal attribute *values*,
 //!   keeps tag names + attribute *names* + nesting shape. Same

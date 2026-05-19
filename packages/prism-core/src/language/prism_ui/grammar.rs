@@ -38,7 +38,7 @@ fn is_raw_text_tag(tag: &str) -> bool {
     matches!(tag, "script" | "style" | "language")
 }
 
-/// Parse a `.prism-ui` source file into a typed [`Document`].
+/// Parse a `.prui` source file into a typed [`Document`].
 ///
 /// Returns the document plus a list of recoverable [`ParseError`]s —
 /// the parser tries to keep going after a malformed element so the
@@ -353,7 +353,7 @@ impl<'s> Parser<'s> {
         // `app.foo-bar`) so we scan a wider character class than the
         // generic identifier scanner — alpha start, then alphanumeric
         // / `_` / `-` / `.`. Keeps the registry-resolved component
-        // tags addressable from `.prism-ui` source without forcing the
+        // tags addressable from `.prui` source without forcing the
         // host to encode dots as some other separator.
         let tag_start = self.scanner.position();
         let first = self.scanner.peek();

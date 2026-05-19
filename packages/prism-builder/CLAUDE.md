@@ -86,8 +86,8 @@ wrappers and the `prism-luau-derive` macro.
   `template()` and pipes through `lower_template`. Authors write a
   pure data-returning function; rendering wiring is invisible.
 
-### `.prism-ui` source emitter — REMOVED
-The `prism_ui_emit` module (Slint-era document→`.prism-ui` text
+### `.prui` source emitter — REMOVED
+The `prism_ui_emit` module (Slint-era document→`.prui` text
 emitter) and the `Page::ensure_source` / `Page::regenerate_source`
 hooks it backed were deleted (roadmap §4.2/§4.4 — vestigial, only
 test-only consumers). `Page.source` / `SavedPage.source` remain as a

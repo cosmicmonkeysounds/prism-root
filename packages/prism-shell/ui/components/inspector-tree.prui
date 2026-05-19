@@ -4,7 +4,7 @@
   inspector_tree.rs.
 
   The `nodes` JSON array drives the dispatched-row path (the §43 C3
-  selection-driven binding); `<host-children/>` lets a `.prism-ui`
+  selection-driven binding); `<host-children/>` lets a `.prui`
   caller embed extra rows inline (used by the canonical skeleton tests).
 -->
 <container

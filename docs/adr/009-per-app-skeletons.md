@@ -5,7 +5,7 @@
 
 ## Context
 
-Today `packages/prism-shell/ui/app.prism-ui` is **the** Prism Studio
+Today `packages/prism-shell/ui/app.prui` is **the** Prism Studio
 skeleton. One file, parsed once at boot via `include_str!`, drives
 every Prism app. Its root element hard-codes
 `app-name="Studio"`; its body is one `<shell.dock-workspace/>` element
@@ -39,8 +39,8 @@ Two pressures push back on the single-skeleton model:
 Two architectural questions arise:
 
 - **Full skeleton replacement or slot composition?** Either each app
-  ships a complete `.prism-ui` file that replaces today's
-  `app.prism-ui` outright, or there's a shared host skeleton that
+  ships a complete `.prui` file that replaces today's
+  `app.prui` outright, or there's a shared host skeleton that
   exposes a `<slot>` and apps only declare what fills it.
 
 - **Boot mount or active-app swap?** Either the shell mounts one
@@ -74,7 +74,7 @@ chrome; each app declares an app skeleton that fills a named slot.
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│ host skeleton — packages/prism-shell/ui/app.prism-ui          │
+│ host skeleton — packages/prism-shell/ui/app.prui          │
 │                                                               │
 │   <shell.app-window>                                          │
 │     <slot name="app-content"/>     ← app skeleton mounts here │
@@ -94,7 +94,7 @@ chrome; each app declares an app skeleton that fills a named slot.
                               │ slot fill
                               │
 ┌───────────────────────────────────────────────────────────────┐
-│ app skeleton — apps/<id>/shell.prism-ui                       │
+│ app skeleton — apps/<id>/shell.prui                       │
 │                                                               │
 │   <shell.dock-workspace id="dock"/>      ← Studio / Lattice   │
 │                                                               │
@@ -165,7 +165,7 @@ pub struct ShellInner {
 }
 ```
 
-The host skeleton stays at `ui/app.prism-ui` and is the only one
+The host skeleton stays at `ui/app.prui` and is the only one
 parsed via `include_str!` (no I/O on the hot path).
 
 ### Render-side changes
@@ -186,7 +186,7 @@ the rest. No new pipeline, no new resolver, no new fan-out.
 
 Phase 0 (this ADR's implementation):
 
-1. Add `<slot name="app-content"/>` to `app.prism-ui` between
+1. Add `<slot name="app-content"/>` to `app.prui` between
    `<shell.app-window>` and `</shell.app-window>`. The previous
    `<shell.dock-workspace/>` body moves *out* of the host skeleton.
 2. Add `default_app_skeleton()` returning a `Skeleton` parsed from a
@@ -195,7 +195,7 @@ Phase 0 (this ADR's implementation):
 3. Add `AppLoader` skeleton discovery + the `LoadedApp.skeleton`
    field.
 4. Add `ShellInner.app_skeletons` + the slot-fill render hook.
-5. Author `apps/lattice/shell.prism-ui` containing the same
+5. Author `apps/lattice/shell.prui` containing the same
    single-element body so we can prove per-app skeletons land
    correctly without changing observable behaviour.
 
@@ -203,7 +203,7 @@ Phase 1 (follow-on):
 
 - ~~Author distinct skeletons for Musica + Flux that prove the
   framework supports app-specific chrome.~~ Landed 2026-05-13:
-  `apps/musica/shell.prism-ui` + `apps/flux/shell.prism-ui` ship
+  `apps/musica/shell.prui` + `apps/flux/shell.prui` ship
   with `musica-stage` / `flux-canvas` dock root ids so the swap is
   observable end-to-end. The matching `<musica.transport>` /
   `<musica.timeline>` / `<flux.canvas>` components remain unbuilt
@@ -245,14 +245,14 @@ Phase 2 (persistent Luau, landed 2026-05-13):
   The total new code is one map field, one parse step, one
   slot-fill call.
 - **No new IPC, no new file format.** App skeletons are
-  `.prism-ui` files just like the host skeleton. The same parser,
+  `.prui` files just like the host skeleton. The same parser,
   the same lowering, the same TagResolver.
 
 ## Consequences
 
-- `ui/app.prism-ui` loses its `<shell.dock-workspace/>` child; that
+- `ui/app.prui` loses its `<shell.dock-workspace/>` child; that
   element migrates to the default app skeleton (or to per-app
-  `shell.prism-ui` files).
+  `shell.prui` files).
 - `LoadedApp` grows a `skeleton: Option<Skeleton>` field. The
   field is `Option` so apps that declare no skeleton (or whose
   skeleton fails to parse) don't break — they fall back.

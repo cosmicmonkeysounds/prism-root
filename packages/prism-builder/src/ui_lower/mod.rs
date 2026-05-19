@@ -493,7 +493,7 @@ impl<'a> LowerCtx<'a> {
     }
 
     /// The live [`ComponentRegistry`] the cascade walk is dispatching
-    /// against. Exposed so composition seams (the Wave 11.2 `.prism-ui`
+    /// against. Exposed so composition seams (the Wave 11.2 `.prui`
     /// shell-component loader, future DSL-authored prefab hosts) can
     /// build a fresh [`crate::ui_resolver::RegistryTagResolver`] over
     /// the same id namespace the calling render walk uses. `None` on

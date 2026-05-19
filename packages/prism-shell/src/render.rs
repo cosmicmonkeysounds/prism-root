@@ -1,5 +1,5 @@
 //! Per-frame `render_tree` — folds `ShellPropBindings::snapshot` into
-//! the parsed `app.prism-ui` skeleton, then lowers the result through
+//! the parsed `app.prui` skeleton, then lowers the result through
 //! `RegistryTagResolver` into a flat `Vec<Node>` ready for
 //! `Surface::set_tree`.
 //!
@@ -30,7 +30,7 @@ use serde_json::Value;
 
 use crate::props::{PropCtx, PropEmission, ShellPropBindings};
 
-/// Pre-parsed `app.prism-ui` skeleton. Held once at boot — every
+/// Pre-parsed `app.prui` skeleton. Held once at boot — every
 /// frame clones the AST, merges emissions into attributes, and lowers.
 #[derive(Clone, Debug)]
 pub struct Skeleton {
@@ -38,11 +38,11 @@ pub struct Skeleton {
 }
 
 impl Skeleton {
-    /// Parse the on-disk `ui/app.prism-ui` source. Errors surface as
+    /// Parse the on-disk `ui/app.prui` source. Errors surface as
     /// a single concatenated diagnostic; the source is shipped in the
     /// crate so any parse error is a build-time defect.
     pub fn load() -> Result<Self, String> {
-        Self::from_source(include_str!("../ui/app.prism-ui"))
+        Self::from_source(include_str!("../ui/app.prui"))
     }
 
     pub fn from_source(source: &str) -> Result<Self, String> {
@@ -646,7 +646,7 @@ mod tests {
 
     #[test]
     fn skeleton_loads_from_disk() {
-        let skel = Skeleton::load().expect("parse app.prism-ui");
+        let skel = Skeleton::load().expect("parse app.prui");
         assert!(!skel.doc.nodes.is_empty());
     }
 

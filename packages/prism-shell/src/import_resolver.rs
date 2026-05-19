@@ -74,7 +74,7 @@ impl FsImportResolver {
         match kind {
             "script" | "dialect" => &["luau", "lua"],
             "stylesheet" => &["prss"],
-            "widget" => &["prui", "prism-ui"],
+            "widget" => &["prui"],
             _ => &[],
         }
     }

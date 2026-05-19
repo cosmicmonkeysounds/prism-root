@@ -67,8 +67,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || matches!(cli, Cli::WatchUi)
     {
         // C3 — hot-reload watcher. Watches the bundled
-        // `ui/app.prism-ui` skeleton + every per-app
-        // `apps/<id>/shell.prism-ui` discovered at boot. Edits apply
+        // `ui/app.prui` skeleton + every per-app
+        // `apps/<id>/shell.prui` discovered at boot. Edits apply
         // in place without a cargo respawn.
         let specs = build_watch_specs();
         return shell.run_with_hot_reload(specs);
@@ -77,10 +77,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     shell.run()
 }
 
-/// Build the list of `.prism-ui` files the C3 hot-reload watcher
+/// Build the list of `.prui` files the C3 hot-reload watcher
 /// observes. Always includes the canonical
-/// `packages/prism-shell/ui/app.prism-ui` (the default skeleton);
-/// each `apps/<id>/shell.prism-ui` is included when the file exists.
+/// `packages/prism-shell/ui/app.prui` (the default skeleton);
+/// each `apps/<id>/shell.prui` is included when the file exists.
 /// Paths resolve relative to the workspace root, walked up from the
 /// current working directory until a `Cargo.toml` containing
 /// `[workspace]` is found.
@@ -91,7 +91,7 @@ fn build_watch_specs() -> Vec<prism_shell::hot_reload::WatchSpec> {
         return specs;
     };
 
-    let app = workspace_root.join("packages/prism-shell/ui/app.prism-ui");
+    let app = workspace_root.join("packages/prism-shell/ui/app.prui");
     if app.exists() {
         specs.push(WatchSpec {
             path: app,
@@ -116,7 +116,7 @@ fn build_watch_specs() -> Vec<prism_shell::hot_reload::WatchSpec> {
             if !path.is_dir() {
                 continue;
             }
-            let skeleton = path.join("shell.prism-ui");
+            let skeleton = path.join("shell.prui");
             if !skeleton.exists() {
                 continue;
             }
@@ -166,8 +166,8 @@ enum Cli {
     /// No flags — boot into the femtovg event loop.
     Run,
     /// `--watch-ui` — boot the event loop with a hot-reload
-    /// watcher attached to `ui/app.prism-ui` + every
-    /// `apps/<id>/shell.prism-ui`. Closes C3 of
+    /// watcher attached to `ui/app.prui` + every
+    /// `apps/<id>/shell.prui`. Closes C3 of
     /// `docs/dev/ui-migration-followups.md`.
     WatchUi,
     /// `--scene <name>` — apply the scene, run the event loop.

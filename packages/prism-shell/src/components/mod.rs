@@ -6,7 +6,7 @@
 //! `SHELL_BUILTINS` table in `registry.rs`. The strategy and rationale
 //! are documented in `docs/dev/clay-migration-plan.md` §12 + §33.
 
-// `builder_canvas` migrated to `ui/components/builder-canvas.prism-ui`
+// `builder_canvas` migrated to `ui/components/builder-canvas.prui`
 // 2026-05-13 (Wave 11.4 / Tier-3). The imperative `tag_canvas_subtree`
 // walk (the only non-declarative piece) lives in the
 // `prism.builder-host` primitive body in `prism-builder/src/primitives.rs`;
@@ -21,30 +21,30 @@
 // `state::format_drag_value` for `drag-display-value`) or became
 // unused as the DSL overlay-gate pattern (Wave 11.2 batch 5)
 // replaced `hidden_overlay`.
-// `code_editor` migrated to `ui/components/code-editor.prism-ui`
+// `code_editor` migrated to `ui/components/code-editor.prui`
 // 2026-05-13 (Wave 11.4 / Tier-3). The body was already declarative;
 // the binding (`state::code_editor_props`) now pre-derives `lines` /
 // `cursor-line` / `cursor-column` / `status-label` so the DSL is one
 // for-loop over the gutter + body columns. Keystroke handling lands
 // on the `prism.text-buffer` primitive when a Luau-authored editor
 // dispatches against it.
-// `dock_panel` migrated to `ui/components/dock-panel.prism-ui`
+// `dock_panel` migrated to `ui/components/dock-panel.prui`
 // 2026-05-13 (Wave 11.3). `prism_ui_loader::SHELL_PRISM_UI_COMPONENTS`
 // owns the contract; the dock-workspace binding pre-resolves
 // `content-tag` so the DSL block dispatches dynamic content via
 // `<dispatch component="{content-tag}"/>` without a Rust router.
 //
-// `dock_workspace` migrated to `ui/components/dock-workspace.prism-ui`
-// + the new recursive `ui/components/dock-node.prism-ui` helper
+// `dock_workspace` migrated to `ui/components/dock-workspace.prui`
+// + the new recursive `ui/components/dock-node.prui` helper
 // 2026-05-13 (Wave 11.3). `state::enrich_dock_node` pre-resolves
 // every `TabGroup` leaf's `panel-id` / `content-tag` / `tabs`
 // shape so the DSL recursion is one expression-light file per
 // tree variant.
-// `field_editor` migrated to `ui/components/field-editor.prism-ui`
+// `field_editor` migrated to `ui/components/field-editor.prui`
 // 2026-05-13 (Wave 11.3). The kind-dispatch table collapsed to an
 // `if`/`else-if` chain; substrate fields are pre-computed by
 // `state::property_row_from_spec`.
-// `nav_graph` migrated to `ui/components/nav-graph.prism-ui`
+// `nav_graph` migrated to `ui/components/nav-graph.prui`
 // 2026-05-13 (Wave 11.4 / Tier-3). Body was already declarative —
 // the Tier-3 designation was nominal pending the
 // `prism.canvas-paint` primitive landing. The edges + cards

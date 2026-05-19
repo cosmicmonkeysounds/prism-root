@@ -8,7 +8,7 @@ use super::grammar::parse_to_root;
 use super::provider::PrismUiSyntaxProvider;
 
 pub const PRISM_UI_ID: &str = "prism:prism-ui";
-pub const PRISM_UI_EXTENSIONS: &[&str] = &[".prism-ui"];
+pub const PRISM_UI_EXTENSIONS: &[&str] = &[".prui"];
 const PRISM_UI_MIME_TYPE: &str = "text/x-prism-ui";
 
 pub fn create_prism_ui_contribution<R, E>() -> LanguageContribution<R, E> {
@@ -46,7 +46,7 @@ mod tests {
     fn contribution_has_identity_fields() {
         let c = create_prism_ui_contribution::<(), ()>();
         assert_eq!(c.id, PRISM_UI_ID);
-        assert_eq!(c.extensions, vec![".prism-ui"]);
+        assert_eq!(c.extensions, vec![".prui"]);
         assert_eq!(c.display_name, "Prism UI");
         assert_eq!(c.mime_type.as_deref(), Some(PRISM_UI_MIME_TYPE));
     }
@@ -79,8 +79,8 @@ mod tests {
         registry.register(create_prism_ui_contribution());
 
         let hit = registry
-            .resolve(ResolveOptions::by_filename("ui/app.prism-ui"))
-            .expect("resolve .prism-ui");
+            .resolve(ResolveOptions::by_filename("ui/app.prui"))
+            .expect("resolve .prui");
         assert_eq!(hit.id, PRISM_UI_ID);
     }
 

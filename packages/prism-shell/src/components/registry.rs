@@ -86,7 +86,7 @@ impl ShellComponentRegistry {
         &self.inner
     }
 
-    /// Build a [`TagResolver`] for `.prism-ui` source that references
+    /// Build a [`TagResolver`] for `.prui` source that references
     /// any registered shell primitive by tag (e.g.
     /// `<shell.icon-button …/>`). Hand the returned `Arc` to
     /// [`prism_ui_runtime::interpret::LowerScope::with_resolver`] and
@@ -107,7 +107,7 @@ impl ShellComponentRegistry {
 /// file. Adding a primitive = one new const + one row here.
 pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     // Wave 11.2 — the following ids were Rust-authored before being
-    // migrated to `.prism-ui` source. Each row was deleted alongside
+    // migrated to `.prui` source. Each row was deleted alongside
     // its `components/<id>.rs` file:
     //   First wave  (2026-05-12 a9c199c): toolbar-separator, help-tooltip,
     //     docs-view, docs-sidebar, toast-stack, launchpad.
@@ -170,7 +170,7 @@ pub fn register_shell_builtins(reg: &mut ShellComponentRegistry) -> Result<(), R
     register_specs(&mut reg.inner, SHELL_BUILTINS)
 }
 
-/// Register every native + `.prism-ui`-authored shell block alongside
+/// Register every native + `.prui`-authored shell block alongside
 /// each other and finalize the shared resolver cell. Wave 11.2: the
 /// chrome catalog spans both `SHELL_BUILTINS` (native) and
 /// [`super::prism_ui_loader::SHELL_PRISM_UI_COMPONENTS`] (DSL); tests
@@ -225,7 +225,7 @@ pub fn register_document_builtins(reg: &mut ShellComponentRegistry) -> Result<()
     // Wave 10 — the 14-row primitive registry alongside the document
     // builtins. `prism.text-input` / `prism.popover` / etc. resolve
     // through the same registry so the resolver dispatches Wave 11's
-    // `.prism-ui` source consistently.
+    // `.prui` source consistently.
     prism_builder::primitives::register_primitives(&mut reg.inner)
 }
 
@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn tag_resolver_lowers_app_window_with_prism_ui_authored_children() {
         // Composition-style block: `<shell.app-window>…</shell.app-window>`
-        // hosting real subtrees from `.prism-ui` source. Exercises the
+        // hosting real subtrees from `.prui` source. Exercises the
         // resolver-children seam (RegistryTagResolver pre-lowers AST
         // children → LowerCtx::host_children → AppWindow consumes).
         // 12/13 chrome blocks ignore the slot; AppWindow is the
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn canonical_app_prism_ui_skeleton_lowers_end_to_end() {
-        // The keystone artifact: `ui/app.prism-ui` is the source-driven
+        // The keystone artifact: `ui/app.prui` is the source-driven
         // replacement for `ui/app.slint`. ADR-009 split it into a host
         // skeleton (empty `<shell.app-window>` body) plus per-app
         // skeletons grafted via `Skeleton::with_app_body`. The default

@@ -1,17 +1,17 @@
-//! Build-time validation of every `.prism-ui` source shipped by
+//! Build-time validation of every `.prui` source shipped by
 //! `prism-shell`. Closes C1 of `docs/dev/ui-migration-followups.md`:
 //! a parse error in any included skeleton or component file fails
 //! the build instead of producing a binary that panics in
 //! `Skeleton::load` at boot.
 //!
-//! The shell's `ui/app.prism-ui` + `ui/components/*.prism-ui` files
+//! The shell's `ui/app.prui` + `ui/components/*.prui` files
 //! are all consumed at runtime via `include_str!` + a fresh
 //! `prism_ui_runtime::interpret::interpret` call. This script runs
 //! the same `prism_core::language::prism_ui::parse` pipeline
 //! `prism-ui-build::compile` wraps, so build-time and runtime
 //! agree on what "parses" means.
 //!
-//! Per-app skeletons (`apps/<id>/shell.prism-ui`) are validated at
+//! Per-app skeletons (`apps/<id>/shell.prui`) are validated at
 //! runtime by `app_loader` because they live outside the crate
 //! manifest dir and may be added/removed without touching the shell.
 
@@ -23,7 +23,7 @@ fn main() {
     let ui_dir = Path::new(&manifest_dir).join("ui");
 
     let mut paths: Vec<std::path::PathBuf> = Vec::new();
-    let app = ui_dir.join("app.prism-ui");
+    let app = ui_dir.join("app.prui");
     if app.exists() {
         paths.push(app);
     }
@@ -33,7 +33,7 @@ fn main() {
             let mut files: Vec<_> = entries
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
-                .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("prism-ui"))
+                .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("prui"))
                 .collect();
             // Deterministic order so cargo's rerun-if-changed lines
             // are stable across builds.

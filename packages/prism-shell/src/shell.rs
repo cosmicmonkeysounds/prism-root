@@ -362,7 +362,7 @@ impl Shell {
     pub fn new() -> Result<Self, ShellError> {
         let mut registry = ShellComponentRegistry::new();
         // Wave 11.2 single-call bootstrap: native `SHELL_BUILTINS` +
-        // `.prism-ui`-authored `SHELL_PRISM_UI_COMPONENTS` land into
+        // `.prui`-authored `SHELL_PRISM_UI_COMPONENTS` land into
         // the same registry, then `finalize_prism_ui_resolver` lets
         // composed `<shell.*>` / `<prism.*>` tags inside a DSL source
         // dispatch against the live merged registry.
@@ -984,10 +984,10 @@ impl Shell {
         }
     }
 
-    /// Install (or replace) the default `app.prism-ui` skeleton from
+    /// Install (or replace) the default `app.prui` skeleton from
     /// fresh source. Used by the C3 hot-reload watcher in
     /// `docs/dev/ui-migration-followups.md`: `prism dev shell` (or
-    /// any host) detects a change to `ui/app.prism-ui` via
+    /// any host) detects a change to `ui/app.prui` via
     /// `prism_ui_build::template_watch`, calls this with the new
     /// source, and the next frame renders against the swapped
     /// skeleton. A parse error returns `Err(msg)` so the host can
@@ -1003,7 +1003,7 @@ impl Shell {
     }
 
     /// Same as [`Self::install_default_skeleton`] but targets a
-    /// per-app skeleton (`apps/<id>/shell.prism-ui`). When the
+    /// per-app skeleton (`apps/<id>/shell.prui`). When the
     /// active app's skeleton is the one being swapped, the next
     /// frame re-renders with the new tree; otherwise the swap is
     /// silent until the user switches to that app.
@@ -1450,7 +1450,7 @@ impl Shell {
     /// Same as [`Self::run`] but spawns a [`crate::hot_reload`]
     /// watcher first and drains its channel each tick. Closes C3 of
     /// `docs/dev/ui-migration-followups.md`: editing a watched
-    /// `.prism-ui` file applies in-place without dropping the event
+    /// `.prui` file applies in-place without dropping the event
     /// loop or rebuilding cargo. `--watch-ui` on the shell binary
     /// is the canonical user-facing surface.
     ///
@@ -2267,7 +2267,7 @@ mod tests {
         assert!(dirty, "install_stylesheet must mark the render frame dirty");
     }
 
-    /// C3 — installing a fresh `app.prism-ui` source swaps the
+    /// C3 — installing a fresh `app.prui` source swaps the
     /// default skeleton in place. Subsequent `render` calls walk the
     /// new tree; a parse error in the new source returns `Err`
     /// without clobbering the cached skeleton.
@@ -2387,7 +2387,7 @@ mod tests {
     /// and assert the chrome containers carrying `class="..."` get
     /// the configured background pulled from PRSS.
     ///
-    /// The shipped `app.prism-ui` doesn't author a static `class`
+    /// The shipped `app.prui` doesn't author a static `class`
     /// attribute today, so this test uses a custom skeleton via
     /// the `from_source` constructor. The pipeline that flows
     /// — `Shell::install_stylesheet` → `Shell::render` →

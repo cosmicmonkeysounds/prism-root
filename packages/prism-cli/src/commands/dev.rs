@@ -25,7 +25,7 @@
 //! `packages/prism-shell/src/` (plus any extra roots the supervisor
 //! adds) for `.rs` changes and kills + respawns the child when a
 //! batch lands. cargo's incremental compilation keeps iteration fast.
-//! `.prism-ui` skeleton edits are picked up on the next respawn —
+//! `.prui` skeleton edits are picked up on the next respawn —
 //! the source-first runtime parses the file at boot. `--no-hot-reload`
 //! disables the respawn loop.
 
@@ -161,7 +161,7 @@ fn bin_exec_builder(workspace: &Workspace, label: &str, watch_ui: bool) -> Comma
     let mut b = CommandBuilder::exec(workspace.bin_path(bin_file(label), false))
         .cwd(workspace.root())
         .label(label);
-    // C3 — the shell binary's own `.prism-ui` watcher. Applies
+    // C3 — the shell binary's own `.prui` watcher. Applies
     // literal skeleton edits in place; structural changes still fall
     // through to the dev-loop's combined rebuild + re-exec.
     if watch_ui && label == "shell" {
@@ -359,7 +359,7 @@ fn find_label<'a>(plan: &'a [CommandBuilder], label: &str) -> &'a CommandBuilder
 }
 
 /// Source trees a single-target dev loop watches for `.rs` /
-/// `.prism-ui` / `.prss` changes.
+/// `.prui` / `.prss` changes.
 fn watch_paths(target: DevTarget, workspace: &Workspace) -> Vec<PathBuf> {
     match target {
         DevTarget::Shell => vec![workspace.shell_src_dir(), workspace.shell_ui_dir()],

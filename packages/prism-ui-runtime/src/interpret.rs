@@ -1,4 +1,4 @@
-//! Interpret path — parse a `.prism-ui` source string and lower the
+//! Interpret path — parse a `.prui` source string and lower the
 //! resulting AST onto the runtime's typed [`layout::Node`] tree.
 //!
 //! This is the runtime half of the codegen story (Phase 2 tail, plan
@@ -46,7 +46,7 @@ use crate::layout::{
 // Tag resolver — DI hook for unknown tags
 // ---------------------------------------------------------------------------
 
-/// Resolve a `.prism-ui` element whose tag the runtime doesn't own
+/// Resolve a `.prui` element whose tag the runtime doesn't own
 /// (`<shell.icon-button …/>`, `<my.card …/>`, …) into runtime
 /// [`Node`]s.
 ///
@@ -516,7 +516,7 @@ impl LowerScope {
     }
 
     /// Wave 11.2 — install the pre-lowered children the `<host-children/>`
-    /// element should emit. The shell's `.prism-ui` loader sets this
+    /// element should emit. The shell's `.prui` loader sets this
     /// before invoking [`lower_document_with_scope`] so a DSL-authored
     /// wrapper component (toast-stack, launchpad) consumes its caller's
     /// children via one declarative element instead of a Rust `ctx.host_children()`
@@ -641,7 +641,7 @@ impl LowerScope {
     }
 
     /// **Wave 14.1** — seed the design-token table as a `tokens`
-    /// binding. Every migrated `.prism-ui` file authors visual
+    /// binding. Every migrated `.prui` file authors visual
     /// constants today as hardcoded hex / px — `style:background="#161a22ff"`,
     /// `padding="12"`. With the token binding in scope, the same
     /// authoring surface reads `style:background="{tokens.colors.surface}"`
@@ -1492,7 +1492,7 @@ fn teleport_target(el: &Element) -> Option<String> {
 /// so [`TagResolver`] impls can pre-lower an element's children
 /// before invoking a host-supplied component (e.g. composition-style
 /// blocks like `shell.app-window` that host real subtrees from
-/// `.prism-ui` source). Re-uses the same control-flow + slot +
+/// `.prui` source). Re-uses the same control-flow + slot +
 /// resolver-propagation logic the document walk uses — single
 /// chokepoint for every "lower these AST children" call.
 pub fn lower_ast_children(nodes: &[AstNode], scope: &LowerScope) -> Vec<Node> {
@@ -1859,7 +1859,7 @@ fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
         // Wave 11.2 — `<host-children/>` injection point. A DSL-
         // authored shell component (toast-stack, launchpad, app-window)
         // composes its caller's pre-lowered children at this seam.
-        // The shell's `.prism-ui` loader installs the children via
+        // The shell's `.prui` loader installs the children via
         // [`LowerScope::with_host_children_ui`] before invoking
         // `lower_document_with_scope`; here the runtime emits the
         // stored `Vec<Node>` verbatim. Falls back to the element's own
@@ -2374,12 +2374,17 @@ fn expand_control_flow(
         let AstNode::Element(el) = node else {
             // Whitespace-only text between tags is the parser's way of
             // round-tripping source layout — it must not break a
-            // sibling `if`/`else-if`/`else` chain. Real text content
-            // (or interpolations / comments-with-content) does break
-            // the chain, matching the HTMX/Svelte rule that an
-            // intervening render node ends conditional grouping.
+            // sibling `if`/`else-if`/`else` chain. `<!-- … -->`
+            // comments are likewise never rendered output (they exist
+            // only for formatter round-trip), so an HTML comment
+            // between branches must not reset the chain either — this
+            // matches the Svelte/HTMX rule that only an intervening
+            // *render* node ends conditional grouping. Real text
+            // content and `{…}` interpolations are render nodes and do
+            // break the chain.
             let breaks_chain = match node {
                 AstNode::Text { value, .. } => !value.trim().is_empty(),
+                AstNode::Comment { .. } => false,
                 _ => true,
             };
             if breaks_chain {
@@ -2826,7 +2831,7 @@ fn spacer_from(el: &Element, scope: &LowerScope) -> Node {
 /// Lower `<image src="…" width="…" height="…"/>` to [`Node::Image`].
 /// Wave 11.2: closes the last shape gap blocking icon-bearing shell
 /// components (icon-button, nav-button, section-header, app-card, …)
-/// from migrating to `.prism-ui` source. Same attr vocabulary the
+/// from migrating to `.prui` source. Same attr vocabulary the
 /// container shape uses — `width`/`height` parse through
 /// [`parse_sizing`], `style:radius` builds a uniform [`CornerRadius`],
 /// `style:tint` parses through [`parse_color`], `aria-label` /
@@ -3260,7 +3265,7 @@ fn apply_container_attributes(
                         props.height = s;
                     }
                 }
-                // Wave 11.2 — Semantic surface for `.prism-ui`-authored
+                // Wave 11.2 — Semantic surface for `.prui`-authored
                 // shell components. Hand-rolled Rust blocks build
                 // `Semantic::tag(..).with_role(..).with_aria_label(..)`
                 // imperatively; the DSL needs the same vocabulary so
@@ -3357,7 +3362,7 @@ fn apply_container_attributes(
             // `data-<key>` semantic attribute. Lifts the hit-test
             // routing convention — `data-role`, `data-target-id`,
             // `data-direction`, etc. — into a typed namespace so
-            // `.prism-ui` authors write
+            // `.prui` authors write
             // `<container route:role="resize-handle" route:direction="br"/>`
             // instead of the bare `data-` ladder. The runtime
             // contract is the same — `data-*` attrs flow through
@@ -6115,6 +6120,46 @@ mod tests {
     }
 
     #[test]
+    fn else_if_chain_survives_interleaved_comments() {
+        // Regression: `field-editor.prui` documents every branch
+        // with a leading `<!-- … -->`. Comments are never rendered
+        // output, so they must not reset the if/else-if/else chain —
+        // otherwise only the standalone `<text if>` survives and every
+        // editor kind body silently vanishes (the "Properties panel
+        // shows only labels" bug).
+        let (doc, _) = parse(
+            r#"<container>
+                <!-- label always shows -->
+                <text if="show_label">Label</text>
+                <!-- ── boolean branch ── -->
+                <text if="is_bool">BOOL</text>
+                <!-- ── select branch ── -->
+                <text else-if="is_select">SELECT</text>
+                <!-- ── text fallback ── -->
+                <text else>TEXT</text>
+            </container>"#,
+        );
+        let scope = LowerScope::default()
+            .with_binding("show_label", json!(true))
+            .with_binding("is_bool", json!(false))
+            .with_binding("is_select", json!(false));
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        // Label + the `else` fallback — the chain must reach `else`
+        // even though a comment precedes every branch.
+        let texts: Vec<&str> = children
+            .iter()
+            .filter_map(|c| match c {
+                Node::Text { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["Label", "TEXT"]);
+    }
+
+    #[test]
     fn for_loop_supports_dotted_field_access_on_object_items() {
         let scope = LowerScope::default().with_binding(
             "items",
@@ -6788,7 +6833,7 @@ mod tests {
     /// `<container>` set the dedicated `Semantic` fields directly.
     /// Hand-rolled Rust shell components build these via
     /// `Semantic::tag(..).with_role(..).with_aria_label(..)`; the
-    /// DSL needs the same vocabulary for the `.prism-ui`-authored
+    /// DSL needs the same vocabulary for the `.prui`-authored
     /// shell-component migration. The `attrs` vec used by `aria:` /
     /// `data:` namespaces is independent — these three set the
     /// typed fields the HTML emitter reads at the same seam it

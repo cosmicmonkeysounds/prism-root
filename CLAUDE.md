@@ -12,7 +12,7 @@ CRDT inheritance), wired through `license.workspace = true` on every crate.
 - `packages/prism-core` — Rust. Shared foundations: design tokens, shell mode, boot config, kernel store + `Shell` wrapper.
 - `packages/prism-builder` — Rust. The page builder that replaced Puck. Owns the component registry, document tree, Taffy-backed layout engine, and the unified `lower_ui` render pipeline that drives both the shell renderer and relay SSR.
 - `packages/prism-ui-runtime` — Rust. Retained-mode UI runtime: `Surface` + Taffy layout + `RenderCommand` stream + the femtovg / semantic-HTML / hit-testing backends. Consumed by `prism-shell` (live render) and `prism-relay` (SSR).
-- `packages/prism-ui-build` — Rust. Build-time helpers for the `.prism-ui` DSL (parser, codegen).
+- `packages/prism-ui-build` — Rust. Build-time helpers for the `.prui` DSL (parser, codegen).
 - `packages/prism-shell` — Rust (`cdylib` + `rlib`). Single source of truth for the UI tree. Renders via `prism-ui-runtime::Surface` over winit + femtovg natively; browser build goes through `wasm32-unknown-unknown` + `wasm-bindgen` (the `web` feature), producing `prism_shell.js` + `prism_shell_bg.wasm` next to a hand-written `web/index.html`.
 - `packages/prism-studio/src-tauri` — Rust. Packaged desktop shell that spawns `prism-daemon` as a sibling process over `interprocess` + `postcard` and then hands control to `prism_shell::Shell`. The `prism-ui-runtime` backend owns windowing + GPU end-to-end — no Tauri / wry / webview / tao / wgpu anywhere. The `src-tauri/` directory name is a pre-cutover historical artefact; renaming it is a cleanup followup.
 - `packages/prism-cli` — Rust. The unified `prism` binary — one front door for `test`, `build`, `dev`, `lint`, `fmt` across every Rust crate. `prism dev all` spawns every dev server behind a tokio process supervisor with colored prefixed logs and Ctrl+C fan-out. See its `CLAUDE.md` for the full subcommand surface.
@@ -74,7 +74,7 @@ that matches the `wasm-bindgen` crate pinned in the workspace manifest.
 
 ## Architecture
 - Loro CRDT = source of truth (via the `loro` Rust crate).
-- `prism-ui-runtime` = sole UI runtime. Taffy-backed CSS Grid / Flex / Block layout, retained-mode `Surface`, declarative `.prism-ui` DSL compiled at build time for hand-written components and walked at runtime for the drag-droppable blocks that `prism-builder` materialises from a `BuilderDocument`. No React, no Tailwind, no Puck, no Slint, no Clay, no hand-vendored wgpu renderer.
+- `prism-ui-runtime` = sole UI runtime. Taffy-backed CSS Grid / Flex / Block layout, retained-mode `Surface`, declarative `.prui` DSL compiled at build time for hand-written components and walked at runtime for the drag-droppable blocks that `prism-builder` materialises from a `BuilderDocument`. No React, no Tailwind, no Puck, no Slint, no Clay, no hand-vendored wgpu renderer.
 - Rust → WASM for web (`wasm32-unknown-unknown` + `wasm-bindgen`); Rust → native binary for desktop/mobile.
 - Desktop shell is pure `prism-shell` on top of `winit` + `femtovg` — no external windowing or GPU layer to wrangle. Packaging/signing/updater land via `cargo-packager` + `self_update` + the standalone shell crates (`tray-icon`, `notify-rust`, `rfd`, `arboard`, `keyring`).
 - Daemon runs as a sibling process launched by the Studio shell on desktop (IPC via `interprocess` + `postcard`), as an in-process tokio subsystem on mobile, and is remote (WebSocket relay) on web.

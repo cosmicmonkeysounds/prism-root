@@ -64,7 +64,7 @@ summary = "Collaborative workspace with real-time CRDT sync."
 # Optional. If absent, app inherits the host's default skeleton +
 # every built-in service/panel and just shows up as a launchpad tile.
 [entry]
-skeleton = "shell.prism-ui"      # relative path
+skeleton = "shell.prui"      # relative path
 styles = "app.prss"              # relative path
 script = "main.luau"             # relative path
 
@@ -186,7 +186,7 @@ Each step lands with:
 
 - ~~**Per-app skeletons.**~~ Promoted to **ADR-009**, landed.
   `apps/<id>/manifest.toml`'s `[entry] skeleton` field points at a
-  `.prism-ui` file; `AppLoader` parses it; `ShellInner.app_skeletons`
+  `.prui` file; `AppLoader` parses it; `ShellInner.app_skeletons`
   caches; `Shell::render` grafts the active app's body into the host
   skeleton's `<shell.app-window>` via `Skeleton::with_app_body`.
   Default app skeleton (`<shell.dock-workspace/>`) preserves
@@ -276,7 +276,7 @@ Each step lands with:
       `shell_render_composes_host_with_active_app_body` which
       drives the full chain and asserts the composed tree contains
       the app skeleton's id.
-    - `apps/lattice/shell.prism-ui` ships as a proof-of-concept
+    - `apps/lattice/shell.prui` ships as a proof-of-concept
       app skeleton.
   - **ADR-010** (`docs/adr/010-service-factories.md`):
     `ServiceRegistry::add_factory_scoped` registers a closure
@@ -399,9 +399,9 @@ Each step lands with:
      component + service through a single script body — the
      realistic shape of a real app's `main.luau`).
 - 2026-05-13: **ADR-009 Phase 1 advanced — Musica + Flux skeletons.**
-  `apps/musica/shell.prism-ui` and `apps/flux/shell.prism-ui` ship as
+  `apps/musica/shell.prui` and `apps/flux/shell.prui` ship as
   proof-of-concept distinct skeletons (`musica-stage` / `flux-canvas`
-  dock root ids). Both manifests gain `[entry] skeleton = "shell.prism-ui"`.
+  dock root ids). Both manifests gain `[entry] skeleton = "shell.prui"`.
   The matching `<musica.transport>` / `<musica.timeline>` / `<flux.canvas>`
   components remain unbuilt — until they land the skeletons use a
   distinct dock id so the swap is observable without depending on

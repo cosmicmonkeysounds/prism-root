@@ -21,7 +21,7 @@
 | 7 | `FederatedSignal` / `PeerSignal` / `RelaySignal` + `LocalHub` | ✅ done (trait seam + production-shape fan-out hub; per-transport wire integration is host-side) |
 | 8 | `SsrCache` wired into prism-relay routes | ✅ done — `SsrWorker` single-threaded worker + `portal_detail` cache hit/miss path |
 | 9 | `subsecond` hot-reload anchor in shell | ✅ done — `--features hot-reload` wraps render walk; patch pipeline integration deferred |
-| 10 | `.prism-ui` template hash fast-path | ✅ done — `FingerprintCache::observe` returns `TemplateChange::{NoChange,LiteralOnly,Structural,…}` |
+| 10 | `.prui` template hash fast-path | ✅ done — `FingerprintCache::observe` returns `TemplateChange::{NoChange,LiteralOnly,Structural,…}` |
 
 ### Phase 4b shape (as landed)
 
@@ -314,7 +314,7 @@ Being explicit about this prevents drift later.
   to feed a virtual-DOM `Mutation` stream that backends apply to
   a real DOM. Prism has a retained-mode `Surface` already — there
   is nothing to diff. Hot-reload templates and the literal-patch
-  trick are interesting for `.prism-ui`, but they belong in a
+  trick are interesting for `.prui`, but they belong in a
   separate effort (`prism-ui-build` codegen) and are not part of
   the reactive overhaul.
 - **The VDOM scheduler / `ScopeId` / `Mutation` queue.** None of
@@ -611,9 +611,9 @@ without dropping the `Surface` tree or the `Owner` graph.
 Pairs naturally with Phase 3 because the retained-mode tree
 survives the patch — only the dirty queue needs to be replayed.
 
-### Phase 10 — `.prism-ui` template hashing (optional)
+### Phase 10 — `.prui` template hashing (optional)
 
-If `.prism-ui` literal-only edits become a common hot-reload
+If `.prui` literal-only edits become a common hot-reload
 case, lift Dioxus's `rsx!` template-hash trick into
 `prism-ui-build`'s codegen: hash each template, fast-path
 literal-only patches without re-evaluating the structure. Lower

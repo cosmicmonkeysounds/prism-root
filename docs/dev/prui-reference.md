@@ -9,7 +9,7 @@ in `packages/prism-core/src/language/prism_ui/`; lowering in
 `packages/prism-ui-runtime/src/interpret.rs`; build pipeline in
 `packages/prism-ui-build/`; resolver-side composition in
 `packages/prism-builder/src/ui_resolver.rs`. Today's files still carry
-the legacy `.prism-ui` extension; the `.prui` rename pass is a sibling
+the legacy `.prui` extension; the `.prui` rename pass is a sibling
 follow-up. Everything else here is current.
 
 **Recently landed (2026-05-13):** `for-step` (`for="i in 0..100 step 10"`),
@@ -78,7 +78,7 @@ canonical surface ADR-008 set:
 
 ## 2. File format
 
-- **Extension:** `.prui` (canonical). Legacy `.prism-ui` is still
+- **Extension:** `.prui` (canonical). Legacy `.prui` is still
   accepted by `prism_core::language::prism_ui::create_prism_ui_contribution()`'s
   `PRISM_UI_EXTENSIONS`.
 - **Encoding:** UTF-8.

@@ -2,7 +2,7 @@
 //! `docs/dev/ui-migration-followups.md`.
 //!
 //! Spawns a `notify::RecommendedWatcher` on a separate OS thread
-//! that observes a set of `.prism-ui` paths and posts every change
+//! that observes a set of `.prui` paths and posts every change
 //! to an `std::sync::mpsc` channel. The femtovg backend's per-event
 //! tick hook (`run_with_tick`) drains the channel each idle wait
 //! and calls back into `Shell::install_default_skeleton` /
@@ -27,9 +27,9 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 /// [`Shell::install_default_skeleton`] / [`install_app_skeleton`].
 #[derive(Debug, Clone)]
 pub enum ReloadTarget {
-    /// The canonical `ui/app.prism-ui` skeleton.
+    /// The canonical `ui/app.prui` skeleton.
     DefaultSkeleton,
-    /// A per-app skeleton (`apps/<id>/shell.prism-ui`) keyed by
+    /// A per-app skeleton (`apps/<id>/shell.prui`) keyed by
     /// `app_id`.
     AppSkeleton { app_id: String },
     /// A `.prss` stylesheet. `app_id = None` is the host sheet
@@ -106,7 +106,7 @@ fn target_key(t: &ReloadTarget) -> String {
 ///
 /// Errors during watcher construction surface as `Err(String)`;
 /// per-file watch failures are logged to stderr and skipped (the
-/// remaining files still get watched). A `.prism-ui` file that
+/// remaining files still get watched). A `.prui` file that
 /// doesn't exist at spawn time is also skipped with a warning.
 pub fn spawn_hot_reload_watcher(specs: Vec<WatchSpec>) -> Result<HotReloadHandle, String> {
     let (tx, rx) = channel::<ReloadEvent>();
@@ -223,7 +223,7 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    /// End-to-end smoke test: write a `.prism-ui` file, spawn the
+    /// End-to-end smoke test: write a `.prui` file, spawn the
     /// watcher, modify the file, drain the handle. The reload event
     /// should carry the updated source.
     ///
@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn watcher_emits_reload_event_on_file_change() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("app.prism-ui");
+        let path = dir.path().join("app.prui");
         {
             let mut f = std::fs::File::create(&path).expect("create");
             writeln!(f, r#"<container/>"#).expect("write initial");
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn stylesheet_targets_coalesce_independently_of_skeletons() {
-        // §3.2 — a `.prss` save and a `.prism-ui` save target
+        // §3.2 — a `.prss` save and a `.prui` save target
         // different keys, and the host vs per-app sheets are
         // distinct; only the freshest per key survives a drain.
         let evts = vec![
@@ -366,7 +366,7 @@ mod tests {
             ReloadTarget::Stylesheet { app_id: Some(id) } if id == "flux"
         )));
         // The host stylesheet key must differ from the skeleton key
-        // so a `.prss` save never clobbers a pending `.prism-ui` one.
+        // so a `.prss` save never clobbers a pending `.prui` one.
         assert_ne!(
             target_key(&ReloadTarget::Stylesheet { app_id: None }),
             target_key(&ReloadTarget::DefaultSkeleton)

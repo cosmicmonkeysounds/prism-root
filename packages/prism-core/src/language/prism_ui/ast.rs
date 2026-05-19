@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::language::syntax::SourceRange;
 
-/// Top-level parsed `.prism-ui` source file.
+/// Top-level parsed `.prui` source file.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     pub nodes: Vec<Node>,

@@ -510,7 +510,7 @@ under a watched path triggers the reload pipeline. Each save:
      diagnostic / retry on next batch.
 
 Same `DevLoop` from `prism-cli`, no new infrastructure — the
-`.prss` extension joins `.rs` and `.prism-ui` in the default
+`.prss` extension joins `.rs` and `.prui` in the default
 respawn filter.
 
 ---

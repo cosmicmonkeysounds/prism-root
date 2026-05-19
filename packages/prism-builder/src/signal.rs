@@ -111,7 +111,7 @@ pub enum ActionKind {
     },
 }
 
-/// §43 A1: parsed shape of a `.prism-ui` `on:*` attribute value.
+/// §43 A1: parsed shape of a `.prui` `on:*` attribute value.
 ///
 /// Authoring grammar (plan §4.4):
 ///
@@ -169,7 +169,7 @@ pub enum ParsedAction {
     Unsupported { raw: String },
 }
 
-/// Parse the right-hand side of a `.prism-ui` `on:*` attribute.
+/// Parse the right-hand side of a `.prui` `on:*` attribute.
 ///
 /// The grammar splits the trimmed string into `verb rest` on the first
 /// whitespace run. Empty input or a verb with no body falls through to

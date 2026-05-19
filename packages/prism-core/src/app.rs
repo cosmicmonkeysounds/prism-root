@@ -145,7 +145,7 @@ mod tests {
             summary = "Collaborative workspace."
 
             [entry]
-            skeleton = "shell.prism-ui"
+            skeleton = "shell.prui"
             styles = "app.prss"
             script = "main.luau"
 
@@ -163,7 +163,7 @@ mod tests {
             min_width = 240
         "#;
         let m = AppManifest::parse(src).unwrap();
-        assert_eq!(m.entry.skeleton.as_deref(), Some("shell.prism-ui"));
+        assert_eq!(m.entry.skeleton.as_deref(), Some("shell.prui"));
         assert_eq!(m.services.required, vec!["selection", "builder"]);
         assert_eq!(m.panels.include, vec!["builder", "inspector"]);
         assert_eq!(m.panels.add.len(), 1);

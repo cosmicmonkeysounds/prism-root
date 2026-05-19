@@ -223,7 +223,7 @@ button — but the click does nothing.
   parsed action to the block as a `Connection`), and one wire
   through `SignalsService::on_event`.
 - **Why it matters:** every click / hover / submit declared in
-  `.prism-ui` source is dead until this lands. Today the host
+  `.prui` source is dead until this lands. Today the host
   works around it with `data-role` hit-test routes in
   `prism-shell/src/events.rs` — a parallel path that should
   collapse onto the action grammar once it works.
@@ -459,20 +459,20 @@ button — but the click does nothing.
 ### C1. `prism-ui-build` wiring in `prism-shell/build.rs`
 - **Status:** `packages/prism-ui-build/src/lib.rs` ships
   `compile_source` + `compile(path)` that validate the
-  `.prism-ui` source at build time and emit a Rust module
+  `.prui` source at build time and emit a Rust module
   carrying `SOURCE` / `COMPONENT_NAMES` / `nodes()`. **No
   consumer**: `prism-shell` does not have a `build.rs`, and
-  `Skeleton::load` reads `include_str!("../ui/app.prism-ui")`
+  `Skeleton::load` reads `include_str!("../ui/app.prui")`
   and re-parses at runtime
   (`prism-shell/src/render.rs:37-42`).
 - **Why deferred:** the runtime parse is also the live-edit
   path, so wiring `prism-ui-build` is *correctness gating*,
-  not *behaviour gating* — today a parse error in `app.prism-ui`
+  not *behaviour gating* — today a parse error in `app.prui`
   is a runtime panic in `Skeleton::load` rather than a build
   failure.
 - **Lands in:** new
   `packages/prism-shell/build.rs` calling
-  `prism_ui_build::compile("ui/app.prism-ui")`, plus the
+  `prism_ui_build::compile("ui/app.prui")`, plus the
   emission re-validates against the resolver registry shape
   so unknown shell tags fail the build.
 
@@ -484,13 +484,13 @@ button — but the click does nothing.
   through these. Unknown scenes fail with an enumeration of
   available names.
 
-### C3. Live edit / hot reload of `.prism-ui`
+### C3. Live edit / hot reload of `.prui`
 - **Plan §:** §4.6 and the "What breaks (and is fine)" list in
   §17 ("File-watch reload comes back as a `Surface::set_tree`
-  re-lower against the same `app.prism-ui` source — strictly
+  re-lower against the same `app.prui` source — strictly
   simpler.").
 - **Status:** no file-watcher exists. `prism dev shell` rebuilds
-  on `.rs` changes only; `app.prism-ui` edits require a respawn
+  on `.rs` changes only; `app.prui` edits require a respawn
   via cargo recompile because the file is `include_str!`-ed.
 - **Lands in:** a small `notify`-backed watcher in
   `dev_loop::DevLoop` (or `prism-shell`'s native binary) that
@@ -557,10 +557,10 @@ button — but the click does nothing.
   click and dispatches into the same service.
 
 ### D4. Per-app shells — LANDED
-- **Status:** Each app ships its own `shell.prism-ui` skeleton
-  (`apps/flux/shell.prism-ui`, `apps/lattice/shell.prism-ui`,
-  `apps/musica/shell.prism-ui`; Studio uses the default
-  `packages/prism-shell/ui/app.prism-ui`). `Shell::new` loads
+- **Status:** Each app ships its own `shell.prui` skeleton
+  (`apps/flux/shell.prui`, `apps/lattice/shell.prui`,
+  `apps/musica/shell.prui`; Studio uses the default
+  `packages/prism-shell/ui/app.prui`). `Shell::new` loads
   every app manifest, parses its skeleton into
   `ShellInner.app_skeletons: HashMap<String, Skeleton>`, and
   `current_skeleton()` picks the active app's entry —
@@ -598,7 +598,7 @@ configuration, signing, and a host shim equivalent to
   comment explaining "the Slint DSL emission path was
   deleted in the Phase 5 cutover follow-up" — accurate, but
   the comment should move to a one-line "post-Slint, this
-  crate emits `.prism-ui` via §29's `prism_ui_emit`".
+  crate emits `.prui` via §29's `prism_ui_emit`".
 - **`prism-builder/src/prism_ui_emit.rs:3-4`**, **`schemas.rs:2,134`** —
   same Slint references in module headers.
 - **`packages/prism-studio/src-tauri/`** directory name is
@@ -630,7 +630,7 @@ residue removed). See each section for evidence.
    carry-through is already in; this is the
    `BuilderDocument::install_bindings` shape, scoped to the
    parsed shell skeleton. ~1 day.
-2. **C1 + C3 — `.prism-ui` build validation + hot reload.**
+2. **C1 + C3 — `.prui` build validation + hot reload.**
    `prism-ui-build::compile` and `template_watch` already
    ship; the missing piece is a `prism-shell/build.rs` that
    calls one, plus a notify-driven dev-loop consumer that

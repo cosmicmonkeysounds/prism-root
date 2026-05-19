@@ -5,7 +5,7 @@
   Reads `connections` (JSON array → spread onto signal-connection-row),
   optional `title` for the section header, and `show-add` (default
   true) to append the "+ Add Connection" footer. `<host-children/>`
-  lets `.prism-ui` source author bespoke headers / footers above the
+  lets `.prui` source author bespoke headers / footers above the
   dispatched rows.
 -->
 <container

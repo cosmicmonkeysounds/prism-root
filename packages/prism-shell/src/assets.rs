@@ -19,7 +19,7 @@ use prism_ui_runtime::images::AssetLoader;
 /// than producing a silently-blank icon at runtime.
 ///
 /// The convention is `"icons/<name>.svg"` to match the strings
-/// authored in `.prism-ui` components.
+/// authored in `.prui` components.
 const ICONS: &[(&str, &[u8])] = &[
     (
         "icons/arrow-left.svg",

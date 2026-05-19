@@ -1,4 +1,4 @@
-//! Registry-aware [`TagResolver`] — the bridge that lets `.prism-ui`
+//! Registry-aware [`TagResolver`] — the bridge that lets `.prui`
 //! source reference any registered [`Component`] (`shell.icon-button`,
 //! `app.foo`, user prefabs) by tag.
 //!
@@ -13,7 +13,7 @@
 //!
 //! There is no parallel "runtime block" trait. The resolver re-uses
 //! the same [`Component::lower_ui`] every block already implements,
-//! so adding a new tag to the `.prism-ui` vocabulary is **zero
+//! so adding a new tag to the `.prui` vocabulary is **zero
 //! additional work** beyond the standard block registration. The
 //! mapping is:
 //!
@@ -126,7 +126,7 @@ impl TagResolver for RegistryTagResolver {
         //
         // Fallback to the propagated `tag_emissions` snapshot: the
         // root-only `host_children_by_tag` map does NOT survive the
-        // descent through nested `.prism-ui` blocks (each
+        // descent through nested `.prui` blocks (each
         // `PrismUiBlock` rebuilds a fresh `LowerScope`), but
         // `tag_emissions` *is* forwarded at every level. So a deeply
         // routed tag (dock-workspace → dock-node → dock-panel →

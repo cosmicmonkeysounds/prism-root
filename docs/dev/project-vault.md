@@ -166,7 +166,7 @@ pub struct ProjectManager {
   `crdt` feature the shell's `native` feature already pulls in. The
   wasm matrix never compiles it.
 - The watcher uses `notify::RecommendedWatcher` **directly in the
-  shell** (already a `native` dep, same pattern as the `.prism-ui`
+  shell** (already a `native` dep, same pattern as the `.prui`
   hot-reload watcher) rather than going through `prism-daemon` IPC —
   the shell's `native` feature deliberately excludes the daemon, so
   host-side watching keeps the feature boundary intact. `Shell::poll_project`

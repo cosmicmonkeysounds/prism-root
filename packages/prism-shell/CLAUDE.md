@@ -5,7 +5,7 @@ Single source of truth for the Prism UI tree. Renders through
 Slint and the entire Slint stack were exorcised in the 2026-05-10
 Phase 5 cutover (see `docs/dev/clay-migration-plan.md` §17 + §24-§28).
 The shell is now a thin host for three contracts: a parsed
-`ui/app.prism-ui` skeleton, a property-bindings table, and a service
+`ui/app.prui` skeleton, a property-bindings table, and a service
 registry.
 
 ## Build & Test
@@ -22,13 +22,13 @@ registry.
   skeleton renders.
 - `prism dev shell` — runs the native binary at `src/bin/native.rs`
   inside `dev_loop::DevLoop`. `.rs` changes kill+respawn the child;
-  `.prism-ui` skeleton edits are picked up on the next respawn.
+  `.prui` skeleton edits are picked up on the next respawn.
 
 ## Crate layout
 - `crate-type = ["cdylib", "rlib"]` — `rlib` for native consumers
   (Studio host, tests), `cdylib` for `wasm-bindgen` to wrap.
 - `src/bin/native.rs` — minimal entry point: `Shell::new()?.run()`.
-- `ui/app.prism-ui` — the canonical skeleton parsed at boot via
+- `ui/app.prui` — the canonical skeleton parsed at boot via
   `prism_ui_runtime::interpret`. Per §28 the root is
   `<shell.app-window><shell.dock-workspace/></shell.app-window>` plus
   overlay siblings; the active dock tree drives panel routing
@@ -202,7 +202,7 @@ spec at runtime. Chrome blocks lower through promote-then-reuse
 helpers (`chrome::drag_number_field_node`, `format_drag_value`, …)
 so adding a new transform-row variant or field-editor kind is one
 literal in the relevant declarative table. The `ShellComponentRegistry`
-exposes a `TagResolver` so `<shell.*>` tags in `app.prism-ui` route
+exposes a `TagResolver` so `<shell.*>` tags in `app.prui` route
 to the matching block. See §33 of the migration plan for the
 collapse rationale.
 

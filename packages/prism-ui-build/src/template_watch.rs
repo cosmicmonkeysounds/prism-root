@@ -2,7 +2,7 @@
 //!
 //! Sits next to the `template_hash` primitive: a [`FingerprintCache`]
 //! keeps the last-seen [`TemplateFingerprint`] of every watched
-//! `.prism-ui` file and classifies each on-disk edit into a
+//! `.prui` file and classifies each on-disk edit into a
 //! [`TemplateChange`] (no-op / literal-only / structural / parse
 //! error / new file). The CLI's dev loop uses this to decide
 //! whether to take the literal-only fast path (patch the running
@@ -21,7 +21,7 @@
 //!
 //! ```ignore
 //! let mut cache = FingerprintCache::new();
-//! let change = cache.observe("ui/app.prism-ui");
+//! let change = cache.observe("ui/app.prui");
 //! match change {
 //!     TemplateChange::FirstSighting { .. } => /* seed; no patch */ ,
 //!     TemplateChange::NoChange => /* skip respawn */ ,
@@ -38,7 +38,7 @@ use prism_core::language::prism_ui::parse;
 
 use crate::template_hash::{compare_fingerprints, LiteralPatch, PatchOutcome, TemplateFingerprint};
 
-/// Classified outcome of observing a `.prism-ui` file on disk.
+/// Classified outcome of observing a `.prui` file on disk.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TemplateChange {
     /// First time this path has been observed — fingerprint seeded,
@@ -74,7 +74,7 @@ impl TemplateChange {
 }
 
 /// Path → last-seen fingerprint. Used by the dev loop to classify
-/// each `.prism-ui` change.
+/// each `.prui` change.
 #[derive(Default)]
 pub struct FingerprintCache {
     seen: HashMap<PathBuf, TemplateFingerprint>,
@@ -167,7 +167,7 @@ mod tests {
     #[test]
     fn first_sighting_seeds_cache() {
         let mut cache = FingerprintCache::new();
-        let change = cache.observe_source("ui/app.prism-ui".into(), r#"<button label="Save"/>"#);
+        let change = cache.observe_source("ui/app.prui".into(), r#"<button label="Save"/>"#);
         assert!(matches!(change, TemplateChange::FirstSighting { .. }));
         assert_eq!(cache.len(), 1);
     }
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn identical_content_is_no_change() {
         let mut cache = FingerprintCache::new();
-        let path: PathBuf = "ui/app.prism-ui".into();
+        let path: PathBuf = "ui/app.prui".into();
         let _ = cache.observe_source(path.clone(), r#"<button label="Save"/>"#);
         let change = cache.observe_source(path, r#"<button label="Save"/>"#);
         assert_eq!(change, TemplateChange::NoChange);
@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn label_edit_classifies_as_literal_only() {
         let mut cache = FingerprintCache::new();
-        let path: PathBuf = "ui/app.prism-ui".into();
+        let path: PathBuf = "ui/app.prui".into();
         let _ = cache.observe_source(path.clone(), r#"<button label="Save"/>"#);
         let change = cache.observe_source(path, r#"<button label="Submit"/>"#);
         match change {
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn tag_change_classifies_as_structural() {
         let mut cache = FingerprintCache::new();
-        let path: PathBuf = "ui/app.prism-ui".into();
+        let path: PathBuf = "ui/app.prui".into();
         let _ = cache.observe_source(path.clone(), r#"<button label="x"/>"#);
         let change = cache.observe_source(path, r#"<heading label="x"/>"#);
         assert_eq!(change, TemplateChange::Structural);
@@ -210,8 +210,7 @@ mod tests {
     #[test]
     fn parse_errors_surface_messages() {
         let mut cache = FingerprintCache::new();
-        let change =
-            cache.observe_source("broken.prism-ui".into(), r#"<button label="unterminated"#);
+        let change = cache.observe_source("broken.prui".into(), r#"<button label="unterminated"#);
         match change {
             TemplateChange::ParseError { message } => {
                 assert!(!message.is_empty());
@@ -223,7 +222,7 @@ mod tests {
     #[test]
     fn cache_can_be_cleared_for_a_path() {
         let mut cache = FingerprintCache::new();
-        let path: PathBuf = "ui/app.prism-ui".into();
+        let path: PathBuf = "ui/app.prui".into();
         let _ = cache.observe_source(path.clone(), r#"<x/>"#);
         assert!(cache.contains(&path));
         assert!(cache.forget(&path));
@@ -236,7 +235,7 @@ mod tests {
     #[test]
     fn read_error_surfaces_when_file_missing() {
         let mut cache = FingerprintCache::new();
-        let change = cache.observe("/this/path/does/not/exist.prism-ui");
+        let change = cache.observe("/this/path/does/not/exist.prui");
         assert!(matches!(change, TemplateChange::ReadError { .. }));
     }
 

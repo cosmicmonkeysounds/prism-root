@@ -3,7 +3,7 @@
 //! `<script>` / `<style>` blocks.
 //!
 //! The plain [`crate::template_watch::FingerprintCache`] keys a whole
-//! `.prism-ui` file by path and classifies it as literal-only or
+//! `.prui` file by path and classifies it as literal-only or
 //! structural. That is too coarse once a single-file widget carries
 //! colocated Luau and PRSS: editing a `<script>` body should reload
 //! *only* that script's Lua frame, and editing a `<style>` body

@@ -94,8 +94,8 @@ chrono = { workspace = true }
 indexmap = { workspace = true }
 
 [build-dependencies]
-# Build-time validation of every `.prism-ui` source the shell ships
-# (`ui/app.prism-ui` + `ui/components/*.prism-ui`). A parse error in
+# Build-time validation of every `.prui` source the shell ships
+# (`ui/app.prui` + `ui/components/*.prui`). A parse error in
 # any of them fails the build instead of producing a binary that
 # panics in `Skeleton::load`. Closes C1 of
 # `docs/dev/ui-migration-followups.md`.

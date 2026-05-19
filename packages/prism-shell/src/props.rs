@@ -108,7 +108,7 @@ impl ShellPropBindings {
 
     /// Walk every registered binding once and collect emissions keyed
     /// by block id. Used by [`crate::render::render_tree`] to fold
-    /// emissions into the parsed `app.prism-ui` skeleton.
+    /// emissions into the parsed `app.prui` skeleton.
     pub fn snapshot(&self, ctx: &PropCtx) -> HashMap<&'static str, PropEmission> {
         self.table
             .iter()
@@ -373,7 +373,7 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         );
     }
 
-    // Wave 11.2 — every `.prism-ui`-authored shell component lands in
+    // Wave 11.2 — every `.prui`-authored shell component lands in
     // the registry alongside the native `SHELL_BUILTINS` rows, so the
     // auto-stub binding pass must walk the DSL table too. Without
     // this, a migrated component renders with no prop snapshot at all
@@ -516,7 +516,7 @@ mod tests {
         // or derived stub). The stub-pass loop in
         // `register_builtin_bindings` walks both tables; this
         // assertion pins the parity so a future migration that adds a
-        // `.prism-ui` row without seeding a binding surfaces as a
+        // `.prui` row without seeding a binding surfaces as a
         // test failure, not a blank panel at runtime.
         use crate::components::prism_ui_loader::SHELL_PRISM_UI_COMPONENTS;
         use crate::components::SHELL_BUILTINS;
@@ -529,7 +529,7 @@ mod tests {
         }
         assert_eq!(
             binding_ids, block_ids,
-            "every registered shell block (native or .prism-ui) must have a binding (and vice versa)"
+            "every registered shell block (native or .prui) must have a binding (and vice versa)"
         );
     }
 
@@ -623,7 +623,7 @@ mod tests {
         // would silently register a dead binding (and shadow the stub
         // derivation). Catch that at test time. A SLOT_BINDINGS row
         // can target either a native (`SHELL_BUILTINS`) or
-        // `.prism-ui`-authored (`SHELL_PRISM_UI_COMPONENTS`) block.
+        // `.prui`-authored (`SHELL_PRISM_UI_COMPONENTS`) block.
         use crate::components::prism_ui_loader::SHELL_PRISM_UI_COMPONENTS;
         use crate::components::SHELL_BUILTINS;
         let mut block_ids: std::collections::HashSet<&str> =

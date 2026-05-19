@@ -154,7 +154,7 @@ contract is unchanged.
    instead of curly-brace blocks, behaviour declared as attributes
    (`on:click`, `bind:value`, `if`, `for`), facets and signals are
    first-class attribute namespaces. Goal: a non-programmer who knows
-   HTML can read and edit `.prism-ui` files; an engineer loses no
+   HTML can read and edit `.prui` files; an engineer loses no
    expressiveness vs. the strawman in the prior draft.
 4. **Retained-mode layout (added 2026-05-04).** The runtime does **not**
    recompute the Clay layout every frame. Layout is cached in a
@@ -249,11 +249,11 @@ new UI runtime.
 
 | Surface | Today (Slint) | Tomorrow (Clay + `prism-ui`) |
 |---|---|---|
-| `prism-shell/ui/app.slint` (~2500 LOC, 7 components) | hand-written `.slint` | hand-written `.prism-ui` (new DSL), compiled by `prism-ui-build` codegen |
+| `prism-shell/ui/app.slint` (~2500 LOC, 7 components) | hand-written `.slint` | hand-written `.prui` (new DSL), compiled by `prism-ui-build` codegen |
 | `prism-shell/build.rs` `slint_build::compile` | build-time Slint compile | build-time `prism_ui_build::compile` → generated Rust module |
 | `slint::include_modules!()` | inlines generated types | `prism_ui::include_modules!()` (or direct `include!`) |
 | `prism-shell` runtime | Slint event loop + femtovg | `prism-ui-runtime` ⇒ winit + femtovg native, winit-web + WebGL2 web |
-| `prism-builder::slint_source::SlintEmitter` | emits `.slint` text | `prism_ui_emit::Emitter` emits `.prism-ui` text on the same `SourceBuilder` |
+| `prism-builder::slint_source::SlintEmitter` | emits `.slint` text | `prism_ui_emit::Emitter` emits `.prui` text on the same `SourceBuilder` |
 | `prism-builder::render::compile_slint_source` (interpreter) | runtime `slint-interpreter` | runtime `prism_ui::interpret` — parses DSL → `BuilderDocument` → render-command stream (no separate compile step) |
 | `Component::render_slint` + `render_html` | two walkers | one `Component::layout(props, children) -> Vec<UiNode>` — Clay layout pass + HTML lowering both consume the same node stream |
 | `prism-relay` SSR | `render_document_html` | `prism_ui::lower_html(BuilderDocument)` — same render-command stream lowered to HTML/CSS instead of a draw list |
@@ -285,7 +285,7 @@ Two walkers, two output formats, two parsers, two registries
 Proposed:
 
 ```
-.prism-ui source ─┬─► parse (Prism Syntax Scanner) ──► BuilderDocument (typed tree)
+.prui source ─┬─► parse (Prism Syntax Scanner) ──► BuilderDocument (typed tree)
                   │
 BuilderDocument ──► layout pass (Clay)               ──► Vec<RenderCommand>
                                                             │
@@ -316,7 +316,7 @@ is a keyword or attribute namespace; every element in the DSL is a
 annotations. **HTMX-inspired:** the markup looks like HTML, behaviour
 lives in attributes, control flow lives in attributes, data binding
 lives in attributes — so a non-programmer who knows HTML can read,
-copy, and edit `.prism-ui` files; an engineer can drop into Luau via
+copy, and edit `.prui` files; an engineer can drop into Luau via
 the same attribute surface without leaving the file.
 
 ### 4.1 Design principles
@@ -428,11 +428,11 @@ queue verbatim.
 ### 4.6 Compile-time vs. runtime
 
 - `<component name="...">` declarations in
-  `packages/prism-shell/ui/*.prism-ui` are compiled at build time by
+  `packages/prism-shell/ui/*.prui` are compiled at build time by
   `prism-ui-build` into a Rust module — same role
   `slint::include_modules!()` plays today.
 - `<component>` declarations authored at *runtime* (the builder panel
-  emitting a `BuilderDocument` and serialising back to `.prism-ui`)
+  emitting a `BuilderDocument` and serialising back to `.prui`)
   go through the same parser, no second compile path. Live edits
   re-parse the file → diff against current `BuilderDocument` →
   re-layout. ADR-007's interpreter-fragility class of bugs simply
@@ -469,7 +469,7 @@ consumed by:
   (props/signals/facets as concrete structs). Replaces today's
   `slint::include_modules!()` role.
 
-Compile-time `.prism-ui` files in `packages/prism-shell/ui/` are read
+Compile-time `.prui` files in `packages/prism-shell/ui/` are read
 by `prism-ui-build` (a build-script crate sibling to
 `prism-core::language::codegen`), parsed, and lowered to a generated
 `mod ui { ... }` Rust module — same ergonomics as
@@ -583,9 +583,9 @@ it's a Slint property; tomorrow it's a `request_redraw()` call).
 | **Design token** | `tokens.*` referenced via Slint globals | `tokens.*` resolved at parse time, baked into render commands |
 | **Layout** | Slint flow / GridLayout / HorizontalLayout | Clay flex / grid / scroll containers |
 | **Style cascade** | Re-implemented in `panels::properties` | Same logic, now *also* consumed by HTML lowering — one cascade, two outputs |
-| **Live edit** | `slint-interpreter` re-compile per change | re-parse `.prism-ui` file → derive `BuilderDocument` → re-layout. No second compiler. |
+| **Live edit** | `slint-interpreter` re-compile per change | re-parse `.prui` file → derive `BuilderDocument` → re-layout. No second compiler. |
 | **HTML SSR** | `Component::render_html` walker | `lower_html(commands)` lowering of the same tree the shell renders |
-| **Source-first (ADR-006)** | `.slint` source canonical, `BuilderDocument` derived | `.prism-ui` source canonical, `BuilderDocument` derived (same shape, same `SourceMap` markers, same edit operations) |
+| **Source-first (ADR-006)** | `.slint` source canonical, `BuilderDocument` derived | `.prui` source canonical, `BuilderDocument` derived (same shape, same `SourceMap` markers, same edit operations) |
 | **Luau scripting** | `PrismContext` + `LuauComponent` impls `Block` for both render targets | Same `PrismContext`; `LuauComponent` returns a `UiTree` (single render contract) |
 | **Live preview** | disabled for `app.slint` (ADR-007) | first-class — runtime *is* the parser, no second engine |
 
@@ -705,7 +705,7 @@ CLI surface unchanged.
   `SyntaxProvider`.
 - `prism-cli codegen` learns the `prism-ui.d.luau` and
   `prism-ui-types.rs` emitters.
-- Round-trip test: `.prism-ui` → AST → Rust → render commands → HTML →
+- Round-trip test: `.prui` → AST → Rust → render commands → HTML →
   parse HTML → assert structural equivalence.
 - **Update 2026-05-08:** `prism-ui-build` now wires through
   `prism_core::language::prism_ui::parse`. `compile_source` and
@@ -752,7 +752,7 @@ CLI surface unchanged.
   code, divider, spacer, columns, list, table, tabs).
 - Drop `HtmlRegistry`; `prism-relay` calls
   `prism_ui_runtime::html::lower_document` against the unified tree.
-- Source-first machinery (ADR-006) re-pointed at `.prism-ui` markers.
+- Source-first machinery (ADR-006) re-pointed at `.prui` markers.
 - **Update 2026-05-08 (Block::lower_ui — first three blocks migrated):**
   built-in lowering moved from a string-dispatch branch in
   `ui_runtime::translate_node` to a `Component::lower_ui` method every
@@ -1050,7 +1050,7 @@ CLI surface unchanged.
 
 ### Phase 4 — Shell port
 - Translate `ui/app.slint` (now ~4400 lines, 13 components) into
-  `ui/app.prism-ui`. Behind a `prism-ui` cargo feature on `prism-shell`
+  `ui/app.prui`. Behind a `prism-ui` cargo feature on `prism-shell`
   for a parallel-build period; native bin and wasm bin both build both
   variants until parity is reached.
 - Re-target visual harness + `BuiltinScene` + `TestScript` /
@@ -1621,7 +1621,7 @@ CLI surface unchanged.
 (Compiled during the codebase survey on 2026-05-04 — these are the
 exact files Phase 5 deletes or rewrites.)
 
-- `packages/prism-shell/ui/app.slint` *(rewrite as `ui/app.prism-ui`)*
+- `packages/prism-shell/ui/app.slint` *(rewrite as `ui/app.prui`)*
 - `packages/prism-shell/build.rs` *(swap `slint_build` for `prism_ui_build`)*
 - `packages/prism-shell/src/lib.rs` *(`slint::include_modules!()` → DSL include)*
 - `packages/prism-builder/src/slint_source.rs` *(replace with `prism_ui_emit`)*
@@ -1630,7 +1630,7 @@ exact files Phase 5 deletes or rewrites.)
   `instantiate_document`) — replaced by direct
   `BuilderDocument` → render-command stream
 - `packages/prism-builder/src/live.rs` *(retain shape, retarget at
-  `.prism-ui` source + new `SourceMap` markers)*
+  `.prui` source + new `SourceMap` markers)*
 - `packages/prism-builder/src/syntax_provider.rs` *(rewire to the new
   grammar's `SyntaxProvider`)*
 - `packages/prism-core/src/language/slint_lang/*` *(replaced by
@@ -1710,7 +1710,7 @@ separate namespace so document palettes do not surface chrome.
   every shell primitive uses the same `LowerCtx` helpers the 13
   content builtins do. Adding a primitive is 5–15 lines.
 - **Authoring stays declarative.** A shell component is referenced
-  from `.prism-ui` source by tag name (`<shell.icon-button …/>`),
+  from `.prui` source by tag name (`<shell.icon-button …/>`),
   resolved through `lower_semantic_html_with_registry` /
   `render_commands_with_registry` exactly like a content block. No
   per-primitive walker arm, no string-dispatch branch.
@@ -1727,7 +1727,7 @@ in `prism-builder/CLAUDE.md`):
    *not* hand-roll `UiNode::Container { … }` literals.
 2. Add a row to `register_shell_builtins`'s `reg!(…)` macro table
    in `prism-shell/src/components/registry.rs`.
-3. Reference the component from `.prism-ui` source by its registered
+3. Reference the component from `.prui` source by its registered
    id (`shell.<name>`). Resolution flows through the standard
    lowering pipeline — no shell-specific dispatch.
 4. Cover lowering shape, ARIA / semantic propagation, schema, and
@@ -1748,11 +1748,11 @@ control-flow, text-input, overlay z-layer); image-tint is the
 lone deferred extension and is not on the critical path. 419
 prism-shell tests + clippy `-D warnings` clean.
 
-## 13. Tag-resolver DI — `.prism-ui` source addresses every registered component
+## 13. Tag-resolver DI — `.prui` source addresses every registered component
 
 **Strategy locked 2026-05-09.** With the chrome scoreboard closed at
 13/13, the next blocker for translating `ui/app.slint` into
-`ui/app.prism-ui` was the runtime's closed tag vocabulary: the
+`ui/app.prui` was the runtime's closed tag vocabulary: the
 `prism_ui_runtime::interpret` lowering only knew six built-in tags
 (`container`, `text`, `heading`, `spacer`, `input`, `slot`) and
 silently dropped everything else. Author-side, that meant
@@ -1777,7 +1777,7 @@ component-registry-agnostic; the builder owns the `Block` →
   implement it.
 - **Composition over inheritance.** `RegistryTagResolver` re-uses
   every block's existing `Component::lower_ui` impl unchanged — adding
-  a new tag to the `.prism-ui` vocabulary is **zero additional work**
+  a new tag to the `.prui` vocabulary is **zero additional work**
   beyond the standard `register_block` call. The same `lower_ui` body
   drives the editor render path (`document_to_ui_tree` → `lower`),
   the SSR path (`lower_semantic_html_with_registry`), *and* now the
@@ -1847,7 +1847,7 @@ opening / closing tag paths.
   with `<button>` semantic + `aria-label="Close"`;
   `tag_resolver_unknown_tag_falls_through_to_runtime_default` confirms
   the default behaviour is preserved). 13/13 chrome primitives now
-  reachable from `.prism-ui` source by tag.
+  reachable from `.prui` source by tag.
 
 **Children deferred.** The v0 resolver passes `children: Vec::new()`
 to the block — fine for the 12/13 chrome primitives whose visual
@@ -1855,32 +1855,32 @@ structure comes from props (IconButton, ToolbarSeparator, NavButton,
 DragNumberField, TransformEditor, FieldEditor, Toast, AppCard,
 DocsContent, InspectorRow, MenuBarRow, SectionHeader). `AppWindow` is
 the lone composition-style block that walks `node.children`; once
-`ui/app.prism-ui` lands and AppWindow needs to host real subtrees from
+`ui/app.prui` lands and AppWindow needs to host real subtrees from
 source, the resolver will pre-lower AST children through the runtime
 and inject them via the existing `<slot/>` mechanism — a one-method
 extension that keeps every other primitive unchanged.
 
-**Why this is the keystone.** With this in, `ui/app.prism-ui` can
+**Why this is the keystone.** With this in, `ui/app.prui` can
 *finally* be authored: every shell-chrome primitive is referenceable
 by tag, every runtime gap from the original punch list is filled, and
 the cascade / SSR / native render paths all converge on the same
 `Component::lower_ui` declarations the chrome scoreboard already
 landed. The Phase-4 tail ("translate `ui/app.slint` into
-`ui/app.prism-ui`") is now mechanical authoring rather than blocked
+`ui/app.prui`") is now mechanical authoring rather than blocked
 infrastructure work.
 
 **Decision-log entry:**
 
 | Date | Decision | Rationale |
 |---|---|---|
-| 2026-05-09 | `TagResolver` DI seam in `prism-ui-runtime::interpret` + `RegistryTagResolver` impl in `prism-builder`; `ShellComponentRegistry::tag_resolver()` wraps the shell registry | Closed tag vocabulary in the runtime was the last blocker for translating `ui/app.slint` into `ui/app.prism-ui`. Single trait extension (one method, `Option<Vec<Node>>` return) lets every host-supplied component vocabulary plug into the same lowering pipeline. No parallel walker, no new abstraction layer — every block's existing `Component::lower_ui` is reused. Parser tag-scanner widened to allow `.` and `-` in tag names so `<shell.icon-button>` parses. Verified end-to-end via `prism-shell` test that lowers a `.prism-ui` source containing `<shell.icon-button …/>` through the registered IconButton block. |
+| 2026-05-09 | `TagResolver` DI seam in `prism-ui-runtime::interpret` + `RegistryTagResolver` impl in `prism-builder`; `ShellComponentRegistry::tag_resolver()` wraps the shell registry | Closed tag vocabulary in the runtime was the last blocker for translating `ui/app.slint` into `ui/app.prui`. Single trait extension (one method, `Option<Vec<Node>>` return) lets every host-supplied component vocabulary plug into the same lowering pipeline. No parallel walker, no new abstraction layer — every block's existing `Component::lower_ui` is reused. Parser tag-scanner widened to allow `.` and `-` in tag names so `<shell.icon-button>` parses. Verified end-to-end via `prism-shell` test that lowers a `.prui` source containing `<shell.icon-button …/>` through the registered IconButton block. |
 
 ## 14. Resolver children — `LowerCtx::host_children` opt-in slot
 
 **Strategy locked 2026-05-09 (same-day follow-up to §13).** Closing
 the resolver-children deferral noted at the bottom of §13. With
 `<shell.app-window>…</shell.app-window>` now reachable from
-`.prism-ui` source, composition-style blocks need a way to receive
+`.prui` source, composition-style blocks need a way to receive
 the *AST children* the author wrote between the open/close tags.
 The v0 resolver discarded them. The deferred plan was to "pre-lower
 AST children through the runtime and inject them via the existing
@@ -2006,7 +2006,7 @@ unaffected by the change.
 **What this unblocks.** The Phase-4 tail at the end of §13 ("the
 Phase-4 tail is now mechanical authoring rather than blocked
 infrastructure work") is now also unblocked for composition: the
-canonical `ui/app.prism-ui` skeleton —
+canonical `ui/app.prui` skeleton —
 
 ```prism-ui
 <shell.app-window id="root" status="Ready" app-name="Studio">
@@ -2016,15 +2016,15 @@ canonical `ui/app.prism-ui` skeleton —
 
 — resolves end-to-end through the registered AppWindow block with
 the inner subtree flowing into the `<main>` content area. Authoring
-`ui/app.prism-ui` now requires zero further runtime extensions.
+`ui/app.prui` now requires zero further runtime extensions.
 
 **Decision-log entry:**
 
 | Date | Decision | Rationale |
 |---|---|---|
-| 2026-05-09 | `LowerCtx::host_children` slot + `lower_ast_children` runtime helper; `RegistryTagResolver` pre-lowers AST children; `AppWindow` opts in via fallback chain | Closes the §13 resolver-children deferral. Single sparse field on the existing `LowerCtx` is the smallest seam that lets composition-style blocks consume `<shell.app-window>…</shell.app-window>` subtrees from `.prism-ui` source. No new abstraction, no parallel context type, no marker trait — opt-in by reading the accessor. Plain blocks unchanged. Resolver pre-lowering routes through the runtime's existing scope (control-flow / `<slot/>` / nested resolver dispatch all propagate uniformly). Slot intentionally drops on `LowerCtx::lower` recursion so it stays bound to one block per resolver call. Phase-4 `ui/app.prism-ui` authoring is now fully unblocked end-to-end. |
+| 2026-05-09 | `LowerCtx::host_children` slot + `lower_ast_children` runtime helper; `RegistryTagResolver` pre-lowers AST children; `AppWindow` opts in via fallback chain | Closes the §13 resolver-children deferral. Single sparse field on the existing `LowerCtx` is the smallest seam that lets composition-style blocks consume `<shell.app-window>…</shell.app-window>` subtrees from `.prui` source. No new abstraction, no parallel context type, no marker trait — opt-in by reading the accessor. Plain blocks unchanged. Resolver pre-lowering routes through the runtime's existing scope (control-flow / `<slot/>` / nested resolver dispatch all propagate uniformly). Slot intentionally drops on `LowerCtx::lower` recursion so it stays bound to one block per resolver call. Phase-4 `ui/app.prui` authoring is now fully unblocked end-to-end. |
 
-## 15. Embedded chrome via `LowerCtx::lower_as` + canonical `ui/app.prism-ui` skeleton
+## 15. Embedded chrome via `LowerCtx::lower_as` + canonical `ui/app.prui` skeleton
 
 **Strategy locked 2026-05-09 (continuation of §14).** With the
 resolver-children seam in place, the next blocker for the Phase-4
@@ -2117,9 +2117,9 @@ After the refactor:
   so the structural-shape tests stay independent of registry
   attachment.
 
-**Canonical `ui/app.prism-ui` skeleton landed.** The §14 keystone
+**Canonical `ui/app.prui` skeleton landed.** The §14 keystone
 example now exists on disk at
-`packages/prism-shell/ui/app.prism-ui` as the source-driven
+`packages/prism-shell/ui/app.prui` as the source-driven
 replacement for the legacy `ui/app.slint`. Contents:
 
 ```prism-ui
@@ -2148,7 +2148,7 @@ grammar's HTML-style comment scanner (`grammar.rs:600`,
 `consume_until_gt`) panics when a multi-byte UTF-8 character (e.g.
 em-dash) appears inside a `<!-- … -->` block — it slices the
 source by byte offset without char-boundary checks. The
-`app.prism-ui` skeleton sidesteps the bug by sticking to ASCII in
+`app.prui` skeleton sidesteps the bug by sticking to ASCII in
 comments. Fix is a 2-line check in the scanner; not on the
 critical path for Phase-4 authoring, but should land before the
 panel translations import author-written prose with typographic
@@ -2163,7 +2163,7 @@ punctuation.
 - `prism-shell`: 423 lib tests (1 new in
   `components::registry::tests` —
   `canonical_app_prism_ui_skeleton_lowers_end_to_end` walks the
-  on-disk `ui/app.prism-ui` through the full pipeline). The
+  on-disk `ui/app.prui` through the full pipeline). The
   pre-existing `app_window` tests (`menu_bar_includes_menus_from_props`,
   `activity_bar_lowers_each_nav_button_from_props`) now opt into a
   `lower_with_full_registry` helper that attaches the real shell
@@ -2198,7 +2198,7 @@ embedded chrome routing through DI, the rest of Phase-4 is
 `ui/app.slint` (sidebars, dock layout, builder canvas, properties
 panel, code editor, command palette overlay) becomes either a
 new `Block` impl (one row in `register_shell_builtins`) or a tag
-in `app.prism-ui` (one element). The infrastructure case is
+in `app.prui` (one element). The infrastructure case is
 closed — no further runtime extensions, DI seams, or context
 threading is anticipated to translate any specific panel.
 
@@ -2206,11 +2206,11 @@ threading is anticipated to translate any specific panel.
 
 | Date | Decision | Rationale |
 |---|---|---|
-| 2026-05-09 | `LowerCtx::lower_as` embedding seam; `AppWindow` refactored to dispatch embedded chrome through it; canonical `ui/app.prism-ui` skeleton landed with end-to-end test | Closes the embedded-chrome registry-bypass duplication noted at the bottom of §14. Single new method on the existing `LowerCtx` namespace lets composition blocks dispatch any registered chrome by id without importing the concrete `Block` impl — host-supplied overrides take effect for embedded chrome the same way they do for top-level resolver dispatch. AppWindow's `synth_menu_bar` / `synth_activity_bar` shrink to one-call helpers; the `derived_node` private helper and the per-block imports are deleted. The on-disk `ui/app.prism-ui` skeleton is the keystone artifact §14 promised — proves the Phase-4 authoring pipeline (parse → resolver → composition-block lowering with `host_children`) end-to-end through a registry-driven test. Phase-4 panel translations are now purely declarative additions; no further runtime extensions or DI seams anticipated. Filed: prism_ui parser bug at `grammar.rs:600` panics on non-ASCII inside comments (sidestepped via ASCII-only skeleton; 2-line scanner fix queued). |
-| 2026-05-09 | `Scanner::advance_unicode` lands; prism_ui comment + text scanners use it; non-ASCII content in `<!-- … -->` and text nodes round-trips | Closes the parser bug filed in the previous entry. The legacy `Scanner::advance` is byte-stepping by design (the syntactic vocabulary is ASCII-only); a sibling `advance_unicode` reads the full UTF-8 codepoint via `source[offset..].chars().next()` and steps `offset` by `len_utf8`, so the cursor always lands on a char boundary. Only the two scanners whose body content can hold non-ASCII (`parse_comment`, `parse_text_or_interpolation`) opt in — every other caller stays byte-precise. Two new prism_ui tests (`comment_with_non_ascii_content_round_trips`, `text_node_with_non_ascii_content_round_trips`) cover em-dash + curly-quote + accented content. `app.prism-ui` can now use typographic punctuation in author-written prose. |
-| 2026-05-09 | Image-tint runtime extension lands (`Node::Image::tint`, `RenderCommand::Image::tint`, `tinted_image_node` helper, `chrome::icon_button_node_tinted`, `IconButton` block `tint` prop) | The lone deferred runtime extension from the original Phase-4 punch list (gap #3 — "Image::colorize"). Sparse `Option<Color>` field on the existing `Node::Image` / `RenderCommand::Image` variants — `None` paints the image verbatim, `Some(c)` instructs the renderer to mask-paint the colour through it (the canonical icon-tint pattern). HTML backend lowers tinted images to a `mask-image` + `background-color` pair (CSS icon-tint hack); femtovg backend already pre-multiplies mask glyphs with a colour and resolves images the same way once the asset decoder phase lands. `IconButton` block now exposes a `tint` schema field so `<shell.icon-button icon="…" tint="#ff0000"/>` reproduces the Slint `colorize` behaviour from `.prism-ui` source. `chrome::icon_button_node_tinted` is the new sibling helper; `icon_button_node` delegates to it with `tint: None` so the four existing untinted call-sites (InspectorRow chevrons / trash, MenuBar add-page button, IconButton without prop) compile unchanged. Two new prism-shell tests cover the prop → glyph-tint propagation and the missing-prop fallback. Two new html-backend tests cover the masked-span + plain-img branches. Image-tint was the only "lone deferred extension" still on the list per the §13/§15 closing remarks; punch list is now empty. |
+| 2026-05-09 | `LowerCtx::lower_as` embedding seam; `AppWindow` refactored to dispatch embedded chrome through it; canonical `ui/app.prui` skeleton landed with end-to-end test | Closes the embedded-chrome registry-bypass duplication noted at the bottom of §14. Single new method on the existing `LowerCtx` namespace lets composition blocks dispatch any registered chrome by id without importing the concrete `Block` impl — host-supplied overrides take effect for embedded chrome the same way they do for top-level resolver dispatch. AppWindow's `synth_menu_bar` / `synth_activity_bar` shrink to one-call helpers; the `derived_node` private helper and the per-block imports are deleted. The on-disk `ui/app.prui` skeleton is the keystone artifact §14 promised — proves the Phase-4 authoring pipeline (parse → resolver → composition-block lowering with `host_children`) end-to-end through a registry-driven test. Phase-4 panel translations are now purely declarative additions; no further runtime extensions or DI seams anticipated. Filed: prism_ui parser bug at `grammar.rs:600` panics on non-ASCII inside comments (sidestepped via ASCII-only skeleton; 2-line scanner fix queued). |
+| 2026-05-09 | `Scanner::advance_unicode` lands; prism_ui comment + text scanners use it; non-ASCII content in `<!-- … -->` and text nodes round-trips | Closes the parser bug filed in the previous entry. The legacy `Scanner::advance` is byte-stepping by design (the syntactic vocabulary is ASCII-only); a sibling `advance_unicode` reads the full UTF-8 codepoint via `source[offset..].chars().next()` and steps `offset` by `len_utf8`, so the cursor always lands on a char boundary. Only the two scanners whose body content can hold non-ASCII (`parse_comment`, `parse_text_or_interpolation`) opt in — every other caller stays byte-precise. Two new prism_ui tests (`comment_with_non_ascii_content_round_trips`, `text_node_with_non_ascii_content_round_trips`) cover em-dash + curly-quote + accented content. `app.prui` can now use typographic punctuation in author-written prose. |
+| 2026-05-09 | Image-tint runtime extension lands (`Node::Image::tint`, `RenderCommand::Image::tint`, `tinted_image_node` helper, `chrome::icon_button_node_tinted`, `IconButton` block `tint` prop) | The lone deferred runtime extension from the original Phase-4 punch list (gap #3 — "Image::colorize"). Sparse `Option<Color>` field on the existing `Node::Image` / `RenderCommand::Image` variants — `None` paints the image verbatim, `Some(c)` instructs the renderer to mask-paint the colour through it (the canonical icon-tint pattern). HTML backend lowers tinted images to a `mask-image` + `background-color` pair (CSS icon-tint hack); femtovg backend already pre-multiplies mask glyphs with a colour and resolves images the same way once the asset decoder phase lands. `IconButton` block now exposes a `tint` schema field so `<shell.icon-button icon="…" tint="#ff0000"/>` reproduces the Slint `colorize` behaviour from `.prui` source. `chrome::icon_button_node_tinted` is the new sibling helper; `icon_button_node` delegates to it with `tint: None` so the four existing untinted call-sites (InspectorRow chevrons / trash, MenuBar add-page button, IconButton without prop) compile unchanged. Two new prism-shell tests cover the prop → glyph-tint propagation and the missing-prop fallback. Two new html-backend tests cover the masked-span + plain-img branches. Image-tint was the only "lone deferred extension" still on the list per the §13/§15 closing remarks; punch list is now empty. |
 
-## 16. Panel-by-panel translation: each region of `ui/app.slint` → one row in `register_shell_builtins` *or* one tag in `app.prism-ui`
+## 16. Panel-by-panel translation: each region of `ui/app.slint` → one row in `register_shell_builtins` *or* one tag in `app.prui`
 
 **Strategy locked 2026-05-09 (continuation of §15).** With the
 infrastructure case closed (parser, lowering pipeline, registry,
@@ -2225,7 +2225,7 @@ buckets:
    composition children. Most overlays (toasts, tooltips, menus)
    and most "content of a single dock panel" implementations land
    here.
-2. **Composition chrome** → a tag in `app.prism-ui` whose body is
+2. **Composition chrome** → a tag in `app.prui` whose body is
    itself a tree of registered tags. The block reaches for
    `ctx.host_children()` (§14) to adopt the inner subtree, and
    delegates embedded-but-unrelated chrome to `ctx.lower_as`
@@ -2280,7 +2280,7 @@ shipped, host block pending) · ⬜ pending.
 That is **23 new `Block` impls** (one row each in
 `register_shell_builtins`) and **3 composition tags**
 (`shell.dock-panel`, `shell.workflow-page-bar`, `shell.launchpad`)
-to land before `app.prism-ui` is structurally complete. Six leaves
+to land before `app.prui` is structurally complete. Six leaves
 already exist (`icon-button`, `nav-button`, `app-card`, `toast`,
 `docs-content`, `inspector-row`, `field-editor`, `section-header`,
 `transform-editor`, `drag-number-field`, `toolbar-separator`,
@@ -2291,7 +2291,7 @@ collapse into thin wrappers (`shell.toast-stack`, `shell.docs-sidebar`,
 
 ### Order
 
-The order is dictated by the `app.prism-ui` skeleton's outside-in
+The order is dictated by the `app.prui` skeleton's outside-in
 shape — once a region is registered, the skeleton can name it,
 and end-to-end tests (`canonical_app_prism_ui_skeleton_lowers_end_to_end`-style
 fixtures) lock the result.
@@ -2299,7 +2299,7 @@ fixtures) lock the result.
 1. **Frame chrome.** `shell.status-bar`, `shell.workflow-page-bar`
    (+ `shell.workflow-page-button`). AppWindow's inline status-bar
    synthesis moves out behind `lower_as` for parity. After this
-   step, the entire outer frame of `app.prism-ui` is registry-driven.
+   step, the entire outer frame of `app.prui` is registry-driven.
 2. **Dock skeleton.** `shell.dock-panel` (composition),
    `shell.dock-tab-bar` (+ `shell.dock-tab`), `shell.dock-divider`.
    Establishes the body region as nested registered tags; the
@@ -2318,7 +2318,7 @@ fixtures) lock the result.
 
 ### Authoring shape (illustrative)
 
-By the end of the migration, `app.prism-ui` reads top-to-bottom as a
+By the end of the migration, `app.prui` reads top-to-bottom as a
 flat composition of registered tags — every region above maps to
 one element:
 
@@ -2363,7 +2363,7 @@ established in §13–§15 holds without modification:
   `parse → lower_document_with_scope → RegistryTagResolver →
   Block::lower_ui` pipeline against a `<shell.foo>…</shell.foo>`
   string fixture.
-- The canonical `app.prism-ui` skeleton extends as each composition
+- The canonical `app.prui` skeleton extends as each composition
   block lands. The outside-in order above guarantees the skeleton
   is always parseable and always renders — no half-registered
   tag breaks the keystone test.
@@ -2375,11 +2375,11 @@ No new test-infrastructure work is anticipated; the harness from
 
 | Date | Decision | Rationale |
 |---|---|---|
-| 2026-05-09 | Phase-4 panel translation strategy locked: each region of legacy `ui/app.slint` is either a new `Block` impl in `register_shell_builtins` (leaves + leaf-list hosts) or a tag in `app.prism-ui` (composition blocks reading `host_children` and embedding chrome via `lower_as`). 23 new blocks, 3 composition tags, ordering frame-chrome → dock-skeleton → per-panel → overlays. | Crystallises the §15 closing claim ("Phase-4 panel translations are now purely declarative additions; no further runtime extensions or DI seams anticipated") into a concrete punch list. The two-bucket discipline is the load-bearing constraint: if any panel pushes for a third bucket, that is a defect of the plan rather than a new feature. The order is dictated by the `app.prism-ui` skeleton's outside-in shape — frame chrome first means the skeleton stays parseable end-to-end at every commit, eliminating a class of half-registered breakage. Test discipline carries forward unchanged from §13–§15: per-block unit tests for shape + fallback, per-composition end-to-end tests through the resolver, and an extending canonical skeleton fixture. No further infrastructure work is anticipated. |
-| 2026-05-09 | Dock skeleton + overlay leaves + composition wrappers + first 3 panel-content leaves (`shell.properties-panel`, `shell.component-palette`, `shell.explorer`) land in one declarative batch (17 new shell blocks total): `shell.dock-divider`, `shell.dock-tab`, `shell.dock-tab-bar`, `shell.dock-panel`, `shell.toast-stack`, `shell.inspector-tree`, `shell.launchpad`, `shell.command-palette`, `shell.help-tooltip`, `shell.menu-item`, `shell.menu-dropdown`, `shell.context-menu`, `shell.docs-sidebar`, `shell.docs-view`, `shell.properties-panel`, `shell.component-palette`, `shell.explorer`. Registry now at 33 shell primitives. | The two-bucket discipline §16 locked held: every new block is either a leaf (one row in `register_shell_builtins`) or a composition (`host_children` for the body, `lower_as` for embedded chrome). Zero new helpers needed — every visual shape composes from the existing `ui_lower` namespace (`bare_container`, `colored_text_node`, `text_input_node`, `parse_color`, `hover_bg`, `uniform_radius`) plus the `chrome.rs` recipes (`icon_button_node`, `drag_number_field_node`). The dock skeleton is the load-bearing piece: `shell.dock-panel` is the canonical composition recipe — optional tab bar dispatched via `lower_as`, body adopts inner subtree via `host_children`. The overlay leaves (palette / tooltip / menu / context menu) are sibling-mounted in the canonical `app.prism-ui` skeleton; whether they paint at any frame is host state, the source declares them once. Three composition wrappers (`toast-stack`, `inspector-tree`, `launchpad`) are <60-line files because they own only the outer chrome shape — the actual row visuals already live in their child primitives (§13 chrome scoreboard). Verification: 461 prism-shell lib tests pass (up from 423 at §15 close); 30+ block fixture tests across the new files; canonical-skeleton end-to-end test extended to walk through `<shell.dock-panel>` and assert the inner `<container id="content-root">` round-trips through `host_children`; clippy `-D warnings` clean across the workspace. **Phase-4 scoreboard:** 21/26 panel-table targets now ✅ (was 6/26 at §16 lock). Remaining 5 are panel-content leaves with substantial bespoke layout: `shell.builder-canvas`, `shell.component-palette`, `shell.code-editor`, `shell.explorer`, `shell.nav-graph` + page list, `shell.schema-designer`, `shell.signals-panel`, `shell.properties-panel`, `shell.component-picker` — each will land as the panel-content step of §16's order. |
-| 2026-05-09 | §16 step 1 lands: `shell.status-bar`, `shell.workflow-page-button`, `shell.workflow-page-bar` blocks registered; `AppWindow::synth_status_bar` refactored to dispatch via `lower_as`; canonical `app.prism-ui` skeleton extended with sibling `<shell.workflow-page-bar id="workflow"/>`; keystone test asserts both AppWindow and workflow-page-bar lower end-to-end. | Frame-chrome step of the §16 ordering. Three new rows in `register_shell_builtins` (16 total), zero new infrastructure: every change composes with seams already shipped — `lower_as` for embedded dispatch (§15), the existing `pages` → per-entry `lower_as` JSON-array idiom from `nav-buttons` (§13). Status-bar lowering is now registry-routed for parity with menu-bar/activity-bar; `AppWindow` no longer imports any concrete chrome `Block` impl. Workflow-page-bar mirrors activity-bar's prop-driven composition pattern (no `host_children`, since the legacy Slint version reads from a `[WorkflowPageItem]` model). Workflow-page-button mirrors nav-button's selected/resting visual fork via cascade props + `hover` overrides. Skeleton sibling placement validates the §16 claim that overlays / window-relative chrome live as top-level siblings rather than `host_children`. Verification: prism-shell 437 lib tests (8 new — 3 status-bar, 3 workflow-page-button, 4 workflow-page-bar; keystone test extended); workspace `cargo test --workspace --lib` green; `cargo clippy --workspace --all-targets -D warnings` clean. §16 status table updates: status-bar ✅, workflow-page-bar ✅. |
+| 2026-05-09 | Phase-4 panel translation strategy locked: each region of legacy `ui/app.slint` is either a new `Block` impl in `register_shell_builtins` (leaves + leaf-list hosts) or a tag in `app.prui` (composition blocks reading `host_children` and embedding chrome via `lower_as`). 23 new blocks, 3 composition tags, ordering frame-chrome → dock-skeleton → per-panel → overlays. | Crystallises the §15 closing claim ("Phase-4 panel translations are now purely declarative additions; no further runtime extensions or DI seams anticipated") into a concrete punch list. The two-bucket discipline is the load-bearing constraint: if any panel pushes for a third bucket, that is a defect of the plan rather than a new feature. The order is dictated by the `app.prui` skeleton's outside-in shape — frame chrome first means the skeleton stays parseable end-to-end at every commit, eliminating a class of half-registered breakage. Test discipline carries forward unchanged from §13–§15: per-block unit tests for shape + fallback, per-composition end-to-end tests through the resolver, and an extending canonical skeleton fixture. No further infrastructure work is anticipated. |
+| 2026-05-09 | Dock skeleton + overlay leaves + composition wrappers + first 3 panel-content leaves (`shell.properties-panel`, `shell.component-palette`, `shell.explorer`) land in one declarative batch (17 new shell blocks total): `shell.dock-divider`, `shell.dock-tab`, `shell.dock-tab-bar`, `shell.dock-panel`, `shell.toast-stack`, `shell.inspector-tree`, `shell.launchpad`, `shell.command-palette`, `shell.help-tooltip`, `shell.menu-item`, `shell.menu-dropdown`, `shell.context-menu`, `shell.docs-sidebar`, `shell.docs-view`, `shell.properties-panel`, `shell.component-palette`, `shell.explorer`. Registry now at 33 shell primitives. | The two-bucket discipline §16 locked held: every new block is either a leaf (one row in `register_shell_builtins`) or a composition (`host_children` for the body, `lower_as` for embedded chrome). Zero new helpers needed — every visual shape composes from the existing `ui_lower` namespace (`bare_container`, `colored_text_node`, `text_input_node`, `parse_color`, `hover_bg`, `uniform_radius`) plus the `chrome.rs` recipes (`icon_button_node`, `drag_number_field_node`). The dock skeleton is the load-bearing piece: `shell.dock-panel` is the canonical composition recipe — optional tab bar dispatched via `lower_as`, body adopts inner subtree via `host_children`. The overlay leaves (palette / tooltip / menu / context menu) are sibling-mounted in the canonical `app.prui` skeleton; whether they paint at any frame is host state, the source declares them once. Three composition wrappers (`toast-stack`, `inspector-tree`, `launchpad`) are <60-line files because they own only the outer chrome shape — the actual row visuals already live in their child primitives (§13 chrome scoreboard). Verification: 461 prism-shell lib tests pass (up from 423 at §15 close); 30+ block fixture tests across the new files; canonical-skeleton end-to-end test extended to walk through `<shell.dock-panel>` and assert the inner `<container id="content-root">` round-trips through `host_children`; clippy `-D warnings` clean across the workspace. **Phase-4 scoreboard:** 21/26 panel-table targets now ✅ (was 6/26 at §16 lock). Remaining 5 are panel-content leaves with substantial bespoke layout: `shell.builder-canvas`, `shell.component-palette`, `shell.code-editor`, `shell.explorer`, `shell.nav-graph` + page list, `shell.schema-designer`, `shell.signals-panel`, `shell.properties-panel`, `shell.component-picker` — each will land as the panel-content step of §16's order. |
+| 2026-05-09 | §16 step 1 lands: `shell.status-bar`, `shell.workflow-page-button`, `shell.workflow-page-bar` blocks registered; `AppWindow::synth_status_bar` refactored to dispatch via `lower_as`; canonical `app.prui` skeleton extended with sibling `<shell.workflow-page-bar id="workflow"/>`; keystone test asserts both AppWindow and workflow-page-bar lower end-to-end. | Frame-chrome step of the §16 ordering. Three new rows in `register_shell_builtins` (16 total), zero new infrastructure: every change composes with seams already shipped — `lower_as` for embedded dispatch (§15), the existing `pages` → per-entry `lower_as` JSON-array idiom from `nav-buttons` (§13). Status-bar lowering is now registry-routed for parity with menu-bar/activity-bar; `AppWindow` no longer imports any concrete chrome `Block` impl. Workflow-page-bar mirrors activity-bar's prop-driven composition pattern (no `host_children`, since the legacy Slint version reads from a `[WorkflowPageItem]` model). Workflow-page-button mirrors nav-button's selected/resting visual fork via cascade props + `hover` overrides. Skeleton sibling placement validates the §16 claim that overlays / window-relative chrome live as top-level siblings rather than `host_children`. Verification: prism-shell 437 lib tests (8 new — 3 status-bar, 3 workflow-page-button, 4 workflow-page-bar; keystone test extended); workspace `cargo test --workspace --lib` green; `cargo clippy --workspace --all-targets -D warnings` clean. §16 status table updates: status-bar ✅, workflow-page-bar ✅. |
 | 2026-05-09 | §16 close-out: host-side bridge `prism_shell::panel_props` lands — typed `panels::*` data → JSON props for every shell block. 12 bridge fns (`inspector_rows`, `signals_panel_props`, `nav_page_row_entries`, `nav_graph_props`, `schema_designer_props`, `schema_list_entries`, `properties_panel_props`, `command_palette_props`, `toast_stack_entries`, `dock_tab_bar_props`, `workflow_page_bar_props`, `menu_bar_row_props`, `app_window_props`). | The "host-side wiring" half of the §16 close-out. Each function is a pure mapping from the existing typed `panels::*` data structures (`SignalsPanel::connection_rows`, `NavigationPanel::page_rows` / `graph_nodes` / `graph_edges`, `SchemaDesignerPanel::schema_list_rows`, `PropertySection`, `CommandRegistry::filter`, `ToastData`, `DockWorkspace::pages` / `active_dock`) into the JSON shape the corresponding shell block reads — single seam, zero new abstractions, pure data. The two end-to-end tests (`app_window_props_lower_through_registry_resolver`, `workflow_page_bar_props_lower_through_registry_resolver`) prove the bridge → registry → block-lowering pipeline by feeding the bridge output into a real registered block and asserting the resulting `UiNode` shape — the supervisor wire-up that Phase 5 needs is now mechanical. Verification: prism-shell 514 lib tests (17 new in `panel_props::tests`; up from 497); workspace `cargo check --workspace --lib` green; `cargo clippy --lib --all-targets -D warnings` clean. The remaining §16 close-out work is now purely the Phase 5 Slint tear-out — every block has a JSON-prop bridge from a typed source, and the resolver dispatches them end-to-end. |
-| 2026-05-09 | §16 panel-content batch lands the final 14 shell blocks: `shell.signal-connection-row`, `shell.signals-panel`, `shell.schema-row`, `shell.schema-designer`, `shell.nav-page-row`, `shell.nav-page-list`, `shell.nav-graph`, `shell.code-editor`, `shell.gizmo-move`, `shell.gizmo-rotate`, `shell.gizmo-scale`, `shell.resize-handle`, `shell.builder-canvas`, `shell.component-picker`. Registry now at 47 shell primitives; canonical `app.prism-ui` skeleton swaps the welcome `<text>` for `<shell.builder-canvas id="builder"/>` and adds `<shell.component-picker id="picker"/>` to the overlay siblings. | The two-bucket discipline §16 locked held a third time, with zero new runtime extensions: every panel-content target is a leaf (`signals-panel` and `schema-designer` are thin column hosts that dispatch their per-row props through `lower_as` exactly like `inspector-tree` / `nav-page-list`); the builder-canvas leaf composes its overlay layer from `lower_as("shell.resize-handle", …)` × 8 plus a `tool`-driven dispatch into one of `shell.gizmo-{move,rotate,scale}`, with a runtime fallback when no resolver is wired up. Every new block exposes its host-driven state purely through typed props or JSON arrays — `selection-rect`, `grid-cells`, `pages`, `edges`, `categories`, `lines` — so the host can drive them from `BuilderDocument` / `DockWorkspace` / `panels::*` snapshots without bespoke widget plumbing. Verification: prism-shell 497 lib tests (36 new across 14 files; up from 461); workspace `cargo clippy --workspace --lib -D warnings` clean. **Phase-4 scoreboard:** 26/26 panel-table targets now ✅ — every legacy `app.slint` region has a registered shell tag. Remaining work for the §17 close-out is purely host-side wiring (binding `panels::signals` / `panels::navigation` / schema editor / `BuilderDocument` snapshots into the JSON props each block reads) and the planned Slint tear-out (Phase 5). |
+| 2026-05-09 | §16 panel-content batch lands the final 14 shell blocks: `shell.signal-connection-row`, `shell.signals-panel`, `shell.schema-row`, `shell.schema-designer`, `shell.nav-page-row`, `shell.nav-page-list`, `shell.nav-graph`, `shell.code-editor`, `shell.gizmo-move`, `shell.gizmo-rotate`, `shell.gizmo-scale`, `shell.resize-handle`, `shell.builder-canvas`, `shell.component-picker`. Registry now at 47 shell primitives; canonical `app.prui` skeleton swaps the welcome `<text>` for `<shell.builder-canvas id="builder"/>` and adds `<shell.component-picker id="picker"/>` to the overlay siblings. | The two-bucket discipline §16 locked held a third time, with zero new runtime extensions: every panel-content target is a leaf (`signals-panel` and `schema-designer` are thin column hosts that dispatch their per-row props through `lower_as` exactly like `inspector-tree` / `nav-page-list`); the builder-canvas leaf composes its overlay layer from `lower_as("shell.resize-handle", …)` × 8 plus a `tool`-driven dispatch into one of `shell.gizmo-{move,rotate,scale}`, with a runtime fallback when no resolver is wired up. Every new block exposes its host-driven state purely through typed props or JSON arrays — `selection-rect`, `grid-cells`, `pages`, `edges`, `categories`, `lines` — so the host can drive them from `BuilderDocument` / `DockWorkspace` / `panels::*` snapshots without bespoke widget plumbing. Verification: prism-shell 497 lib tests (36 new across 14 files; up from 461); workspace `cargo clippy --workspace --lib -D warnings` clean. **Phase-4 scoreboard:** 26/26 panel-table targets now ✅ — every legacy `app.slint` region has a registered shell tag. Remaining work for the §17 close-out is purely host-side wiring (binding `panels::signals` / `panels::navigation` / schema editor / `BuilderDocument` snapshots into the JSON props each block reads) and the planned Slint tear-out (Phase 5). |
 
 ## 19. Slot-typed `AppState` — three-layer no-duplication contract for the port wave
 
@@ -3258,7 +3258,7 @@ adds one row.
 ## 17. Slint tear-out: `ShellPropBindings` + `Surface` boot, rip-and-replace
 
 **Strategy locked 2026-05-09 (continuation of §16).** Phase 4 closed
-with 47 registered shell blocks, a canonical `ui/app.prism-ui`
+with 47 registered shell blocks, a canonical `ui/app.prui`
 skeleton that lowers end-to-end through `RegistryTagResolver`, and
 12 ad-hoc bridge functions in `prism_shell::panel_props` mapping
 typed `panels::*` / `DockWorkspace` / `BuilderDocument` snapshots
@@ -3289,7 +3289,7 @@ either a JSON `Value` (for prop-driven blocks) or a `Vec<UiNode>`
 (for composition blocks that want host_children) or both. A single
 `bind!(...)` macro (sibling of `reg!`) registers each binding in
 one line. The supervisor walks the bindings table once per frame,
-emits a `BuilderDocument` whose root is the parsed `app.prism-ui`
+emits a `BuilderDocument` whose root is the parsed `app.prui`
 skeleton with each composition body filled from the matching
 `PropEmission::children`, and lowers the whole thing through the
 already-shipped `lower_document_with_scope` + `RegistryTagResolver`
@@ -3357,7 +3357,7 @@ block in `app/shell.rs`).** The Phase-5 boot path:
 
 ```rust
 // Phase 5 supervisor (replaces the AppWindow::new + bind_model! block)
-let skeleton = parse(include_str!("../ui/app.prism-ui"))?;
+let skeleton = parse(include_str!("../ui/app.prui"))?;
 let bindings = ShellPropBindings::with_builtins();
 let surface  = Surface::new(viewport)?;          // prism-ui-runtime backend
 // per-frame loop (driven by the runtime's redraw notifier):
@@ -3411,7 +3411,7 @@ replaces them:
 
 | Deleted | Was doing | Replaced by |
 |---|---|---|
-| `ui/app.slint` (~4300 lines) | declarative root component, every chrome region duplicated as a `Rectangle`+`Text` tree | `ui/app.prism-ui` (already on disk, §15) parsed once, lowered through `RegistryTagResolver` per frame |
+| `ui/app.slint` (~4300 lines) | declarative root component, every chrome region duplicated as a `Rectangle`+`Text` tree | `ui/app.prui` (already on disk, §15) parsed once, lowered through `RegistryTagResolver` per frame |
 | `build.rs` `slint_build::compile` line | codegen of the `AppWindow` Rust type | nothing — `Surface` is constructed directly from a `Node` tree |
 | `slint`, `slint-build`, `slint-interpreter` deps | the entire UI stack | `prism-ui-runtime` (already a workspace dep) |
 | `slint::include_modules!()` in `lib.rs` | injects `AppWindow` + every model item type (`GridCellItem`, `InspectorNode`, `WorkflowPageItem`, …) into the crate root | nothing — every "model item type" was a Slint-shaped DTO; the bindings emit `serde_json::Value` directly into block prop bags |
@@ -3426,7 +3426,7 @@ replaces them:
 
 ```rust
 pub fn new() -> Result<Self, ShellError> {
-    let skeleton = parse_prism_ui(include_str!("../ui/app.prism-ui"))?;
+    let skeleton = parse_prism_ui(include_str!("../ui/app.prui"))?;
     let registry = build_shell_registry();
     let bindings = ShellPropBindings::with_builtins();
     let inner    = Rc::new(RefCell::new(ShellInner::new(registry, bindings)));
@@ -3585,7 +3585,7 @@ not optional):**
 
 - The `live-preview` feature and `prism dev shell --no-hot-reload`
   flag stop existing. File-watch reload comes back as a `Surface::set_tree`
-  re-lower against the same `app.prism-ui` source — strictly simpler.
+  re-lower against the same `app.prui` source — strictly simpler.
 - The current `prism e2e --record` screenshot baselines invalidate
   (different renderer = different pixels). Re-record once after
   the rip; new baselines are the canonical set.
@@ -3665,7 +3665,7 @@ table:
   blank panel at runtime.
 - One supervisor-level test
   (`fill_compositions_round_trips_through_resolver`) parses the
-  on-disk `app.prism-ui` skeleton, runs the bindings snapshot
+  on-disk `app.prui` skeleton, runs the bindings snapshot
   against a fixture state, folds emissions into the document, and
   asserts the resolver lowers the result without unresolved tags
   and without panic. This is the §15
@@ -4309,7 +4309,7 @@ host has to know which row corresponds to which feature.
 | 2026-05-09 | §22 port wave — `CanvasSlot` (read + write) lands as the terminal port; the seven canvas-family stubs (`shell.code-editor`, `shell.builder-canvas`, `shell.gizmo-{move,rotate,scale}`, `shell.resize-handle`, `shell.component-picker`) promote to real `bind_slot!` rows in one batch. Six bindings, one slot, one shared rule-of-three helper (`gizmo_props(kind)`) and one shared geometry helper (`selection_center()`) — both load-bearing. First wave with a write side: the event router gains three pointer arms (`Down`/`Move`/`Up`) that forward unconditionally to `CanvasSlot::pointer_*` mutators; the dispatch over `(ToolMode, DragKind)` lives on the slot, in *one* private `apply_gizmo_delta` method, so the router never grows tool-mode awareness. `DragState` is private to the slot — no binding emits "drag in progress"; the *effect* (mutated `document` + `selection.transform`) is what gizmo bindings already pull. `TransformSnapshot::capture` + `commit_drag` collapse the pre-§22 `DragSnapshot`/`ResizeSnapshot` halves into one capture/commit path. Stub-loop shrinks 25 → 18 (the remaining 18 are *intentional* leaves whose data flows down inside parent JSON arrays — promoting them would create second serialisation sites). `panel_props.rs` deletes from disk in the same PR (six bridge functions go to legacy; remaining count is zero). New tests (11): seven slot-unit reads (one per `*_props`, including the gizmo rule-of-three parity), three pointer-drag round-trips (one per tool mode), one cross-binding flow test (`selection_center_drives_gizmo_and_handle_bindings`), plus one keystone integration test on the router (`pointer_events_route_through_canvas_slot_under_active_tool`). The 47-binding parity test still passes; 214 lib tests green (was 203). | Closes the §17 contract: every registered block has a real binding *or* is an intentional row-shaped leaf, every typed-shape helper lives on its owning slot, the router is one `match` over `Event` variants with one arm per variant, and the four registration tables (component registry, resolver tag table, shell block registry, bindings table) are flat and declarative. The deferred-from-§21 grouping was correct: the six canvas bindings share *one* underlying datum (active document + selection transform under active tool mode), and porting them sequentially would have re-invented the same selection/tool/hit-test plumbing six times — the precise duplication the slot pattern prevents. The write-side mutators are the first place in the port where pointer events route through a *typed* mutator on the slot rather than a free-function callback in `app/callbacks/*.rs`; the symmetry (`bindings.snapshot` reads, `dispatch_event` writes, both keyed by slot) is the structural property that makes "add a new tool" or "add a new gizmo arm" a single-edit change. The visibility-as-shape rule (`gizmo_props` emits `visible: bool` as a data field, not a per-binding `if`) generalises §20 `OverlaySlot::help_tooltip_props` from "is this overlay open" to "which gizmo set is the active tool" — same pattern, two domains, zero per-binding branches on the host. The terminal-state property is now measurable, not aspirational: every subsequent change in this codebase reads as "add a block" (two declarative rows) or "add a datum" (one slot field + one accessor); no infrastructure work, no DI seams, no runtime extensions remain. The migration is done. |
 | 2026-05-09 | §19 port wave — `WorkspaceSlot` lands and three more stub bindings promote out of the placeholder loop. `WorkspaceSlot` wraps `prism_dock::DockWorkspace` and owns one JSON shape (`pages_json`) plus one crate-public helper (`tabs_json`) shared between two consumer methods on `ChromeSlot`. The cross-slot composition pattern is exercised for the first time: `ChromeSlot::app_window_props(&self, ws: &WorkspaceSlot)` and `ChromeSlot::menu_bar_row_props(&self, ws: &WorkspaceSlot)` take the secondary slot as a `&` argument, so chrome owns the row's identity *and* the JSON shape lives on exactly one method per binding — no two methods construct the same tabs array, no closure inlines JSON. `ChromeSlot` also absorbs the `nav_buttons` and `menus` lists as typed `Vec<NavButton>` / `Vec<MenuLabel>` so the JSON emitters are plain `iter().map().collect()` folds (no inline `json!([…])` literals as data). Bindings table: four real `bind_slot!` rows now (`shell.app-window`, `shell.menu-bar-row`, `shell.status-bar`, `shell.workflow-page-bar`); stub-loop shrinks from 45 to 41 entries. New tests (5): three slot-unit tests (`workflow_page_bar_marks_exactly_one_active`, `menu_bar_row_pulls_tabs_from_workspace`, `app_window_composes_chrome_with_workspace_tabs`), one switch-flow test on the slot (`switching_page_moves_active_flag`), and one end-to-end snapshot test (`workspace_page_switch_propagates_to_three_bindings`) that asserts a single `workspace.switch_page_by_id` call shows up consistently in all three workspace-driven emissions — the load-bearing duplication check for cross-slot reads. The 47-binding parity test still passes; 177 lib tests green (was 172). | Validates the §19 secondary-arg pattern under real load, and proves the rule-of-three threshold for shape extraction works: `tabs_json` is consumed by exactly two methods on `ChromeSlot` and would have been duplicated if either method had inlined the array build, so it's pulled up as a `pub(crate)` helper on `WorkspaceSlot` (where the data lives) rather than free-floating or copied. Equivalent reasoning applies to `menus_json`/`nav_buttons_json` on `ChromeSlot`: each has exactly one consumer today but is a private helper anyway, so when a future binding (e.g. `shell.menu-dropdown` reading the same menu list) lands, it forwards to the same method instead of reconstructing the shape. The pattern composes — every subsequent slot port is now mechanical: define the typed slot, write `*_props` methods (composing siblings via `&` args when needed), promote rows from the stub-loop. The `panel_props.rs` legacy file shrinks by three more functions of intent (`workflow_page_bar_props`, `menu_bar_row_props`, half of `app_window_props`); the remaining 14 are the next port targets in the same shape. |
 | 2026-05-09 | §19 lands the slot-typed `AppState`: a struct of typed *slots*, one per data domain (chrome, workspace, selection, overlay, builder, project, …), each owning its typed accessors *and* its JSON emitters. Slots replace the unit `AppState` placeholder that existed between §17 and the panel ports. Three rules become structural and load-bearing: (1) **JSON shape lives on the slot**, never inside a binding closure — `ChromeSlot::status_bar_props(&self) -> Value` is the single source of the status string's wire format; (2) **bindings forward, never compute** — every row in `register_builtin_bindings` is one line via the new `bind_slot!(reg, "shell.foo", \|s: &AppState\| s.<slot>.<method>())` macro, which expands to a `bind!` whose closure does nothing but read the slot; (3) **adding a datum is always two edits** — one struct field on the right slot, one method that returns the JSON shape its block consumes. Existing bindings keep compiling; the bindings table never grows arms or branches. First slot landed: `ChromeSlot { app_name, status }` with two methods (`app_window_props`, `status_bar_props`); two rows promoted from the stub-loop into real `bind_slot!` calls (`shell.app-window`, `shell.status-bar`). New tests (3): two on the slot itself, one end-to-end (`slot_data_flows_through_snapshot_into_emissions`) asserting that bumping `state.chrome.status` shows up in `bindings.snapshot(ctx)["shell.status-bar"].props["status"]` *and* `["shell.app-window"].props["status"]` — the same data flowing through two bindings, with zero duplication of the JSON shape. The 47-binding parity test still passes; 172 lib tests green (was 169). | This is the standing discipline for every panel port that follows. The risk that §17 left open was: the bindings table is 47 closures and `panel_props.rs` is 17 typed-shape helpers — without a rule, ports could either (a) inline JSON construction inside closures (bypassing `panel_props.rs`), (b) duplicate the same shape across two bindings (e.g. `status` on app-window and status-bar), or (c) reach across slot boundaries from inside one closure. The slot pattern closes all three: (a) is impossible because the closure has no `serde_json` access — it just calls a method; (b) is structurally avoided because both bindings call the same slot method (or different methods on the same slot, which dedup the source data); (c) is avoided because `bind_slot!` takes a single slot path. The macro is one-line sugar (no new abstraction layer) — it expands to the same `bind!` already shipped, so the bindings table reads identically whether a row is stubbed or live. The "rule of three" check passes: chrome data is read by ≥2 bindings today, will be read by ≥3 once `shell.menu-bar-row` lands, and the alternative ("inline `json!({...})` in every closure") was already growing into the duplication this section prevents. The migration's terminal-state property holds: from this point forward, the only edits a new panel needs are slot-local. The bindings table, the resolver, the skeleton, and the event router are all "done" — they exist exactly once and grow only by registration. |
-| 2026-05-09 | §18 lands the §17 contract in code (still pre-port). Three host-runtime modules now exist as small, complete implementations — no per-block dispatch, no parallel render walker, no second prop-routing layer. **`render::Skeleton`** parses `ui/app.prism-ui` once via `prism_core::language::prism_ui::parse` and holds the `ast::Document`. **`render::fill_compositions`** is a single recursive walk: for each `<shell.foo>` element, look up `emissions["shell.foo"]`, merge its `Value::Object` keys as synthetic `Bare` attributes (author attrs win, JSON arrays/objects round-trip as serialised string attributes for blocks to decode via `serde_json::from_str`). **`render::render_tree`** is the four-line pipeline: `bindings.snapshot(ctx)` → `fill_compositions` → `LowerScope::default().with_resolver(resolver)` → `lower_document_with_scope`. **`Shell::run`** wraps the lowered `Vec<UiNode>` in a single root container and hands `(Surface, EventHandler)` to `prism_ui_runtime::backends::femtovg::run`; the handler calls `dispatch_event` and re-renders only when it returns `true`. **`events::dispatch_event`** has one arm per `Event` variant — `Resize` updates `inner.viewport` (the only datum currently observable through `bindings`); pointer/key/text/wheel/focus arms remain no-ops until each `app/callbacks/*.rs` body ports onto its `ShellInner` mutator. **`ShellInner`** caches `Arc<dyn TagResolver>` once at boot (no per-frame `Arc::clone(registry)` waste) and exposes `prop_ctx()` as the single carrier for every binding. New tests (7) exercise: skeleton parse, full-skeleton lower-through-resolver, prop merge, author-attribute precedence, JSON-array attribute round-trip, resize-redraws, and shell-render determinism. The 47-binding parity test still passes. | Builds the §17 surface end-to-end without touching any of the 47 chrome blocks, the resolver, or `panel_props`. Every emitter remains a *one-line forwarder* that future per-feature ports (panel_props rewrites against the new `ShellInner` shape) drop into place; the bindings table already has a row per id. The merge step's "author attr wins" rule is the property that lets the skeleton pin structural identity (`id="root"`, `panel-id="builder"`) while still letting the host inject every datum a panel needs. Wrapping the lowered roots in a synthetic container is the single unconditional shape adapter between "skeleton has N top-level overlay siblings" and "Surface takes one root Node" — no branching, no condition-on-overlay-count. The compile path is now load-bearing: any new shell block must register in both `register_shell_builtins` *and* `ShellPropBindings::with_builtins` or `bindings_cover_every_registered_shell_block` fails. The web build stays linkable via a `cfg(not(feature = "native"))` no-op `run`, so the §17 wiring doesn't block any in-flight web work — when `prism-ui-runtime/web::run` lands, that arm gets one line. Workspace `cargo check` is green; `cargo test -p prism-shell --lib` is green at 169 tests (was 162 before — the seven new tests above). |
+| 2026-05-09 | §18 lands the §17 contract in code (still pre-port). Three host-runtime modules now exist as small, complete implementations — no per-block dispatch, no parallel render walker, no second prop-routing layer. **`render::Skeleton`** parses `ui/app.prui` once via `prism_core::language::prism_ui::parse` and holds the `ast::Document`. **`render::fill_compositions`** is a single recursive walk: for each `<shell.foo>` element, look up `emissions["shell.foo"]`, merge its `Value::Object` keys as synthetic `Bare` attributes (author attrs win, JSON arrays/objects round-trip as serialised string attributes for blocks to decode via `serde_json::from_str`). **`render::render_tree`** is the four-line pipeline: `bindings.snapshot(ctx)` → `fill_compositions` → `LowerScope::default().with_resolver(resolver)` → `lower_document_with_scope`. **`Shell::run`** wraps the lowered `Vec<UiNode>` in a single root container and hands `(Surface, EventHandler)` to `prism_ui_runtime::backends::femtovg::run`; the handler calls `dispatch_event` and re-renders only when it returns `true`. **`events::dispatch_event`** has one arm per `Event` variant — `Resize` updates `inner.viewport` (the only datum currently observable through `bindings`); pointer/key/text/wheel/focus arms remain no-ops until each `app/callbacks/*.rs` body ports onto its `ShellInner` mutator. **`ShellInner`** caches `Arc<dyn TagResolver>` once at boot (no per-frame `Arc::clone(registry)` waste) and exposes `prop_ctx()` as the single carrier for every binding. New tests (7) exercise: skeleton parse, full-skeleton lower-through-resolver, prop merge, author-attribute precedence, JSON-array attribute round-trip, resize-redraws, and shell-render determinism. The 47-binding parity test still passes. | Builds the §17 surface end-to-end without touching any of the 47 chrome blocks, the resolver, or `panel_props`. Every emitter remains a *one-line forwarder* that future per-feature ports (panel_props rewrites against the new `ShellInner` shape) drop into place; the bindings table already has a row per id. The merge step's "author attr wins" rule is the property that lets the skeleton pin structural identity (`id="root"`, `panel-id="builder"`) while still letting the host inject every datum a panel needs. Wrapping the lowered roots in a synthetic container is the single unconditional shape adapter between "skeleton has N top-level overlay siblings" and "Surface takes one root Node" — no branching, no condition-on-overlay-count. The compile path is now load-bearing: any new shell block must register in both `register_shell_builtins` *and* `ShellPropBindings::with_builtins` or `bindings_cover_every_registered_shell_block` fails. The web build stays linkable via a `cfg(not(feature = "native"))` no-op `run`, so the §17 wiring doesn't block any in-flight web work — when `prism-ui-runtime/web::run` lands, that arm gets one line. Workspace `cargo check` is green; `cargo test -p prism-shell --lib` is green at 169 tests (was 162 before — the seven new tests above). |
 | 2026-05-09 | §17 locks the rip-and-replace: Slint deleted in one stroke, no parity layer. New host-runtime contract is three files — `prism_shell::props` (`ShellPropBindings` registration table mirroring `register_shell_builtins`, ~120 LoC), `prism_shell::render` (`render_tree` skeleton-fold + lower, ~80 LoC), `prism_shell::events` (one `dispatch_event` match over runtime events, ~150 LoC). Deletion targets: `ui/app.slint` (~4300 lines), `app/sync/` (9 files), `app/callbacks/` (6 files), the 30-line `bind_model!` block, every `slint::*` import, the `slint`/`slint-build`/`slint-interpreter` deps, the `live-preview` feature, the `cdylib` crate-type half. Net diff: ~5800 LoC out, ~250 LoC in. | The user's instruction was explicit: no parity, breakage is fine if the new system is better. The rip-and-replace makes the smart-pattern load-bearing — every duplication that the registration table eliminates *cannot be worked around*, because the alternative path is gone. The host-runtime contract collapses to two functions (`render_tree`, `dispatch_event`) and one declarative table (`ShellPropBindings::with_builtins`), each composing with already-shipped seams (the 47 registered blocks from §13–§16, the resolver from §7, the `host_children` slot from §14, the `lower_as` embedding from §15, the `panel_props::*` bridge functions). Every `pub struct …Item` Slint required deletes — bindings emit `serde_json::Value` directly into the prop bags blocks already speak. The `prism-studio/src-tauri` downstream is a one-line `shell.window().run()` → `shell.run()` change. The keystone test (`bindings_cover_every_registered_shell_block`) makes "forgot to wire a new block" a compile failure. Test-suite shrinkage is real and welcome: assertions against `window.get_*` Slint properties were testing that the binding fired, not that the user-visible shape was correct; assertions against `render_tree` output test the actual Node tree. After the rip lands, the migration is the terminal state — every subsequent change reads as "add a block" (two rows: registry + bindings) or "add an event" (one arm in `dispatch_event`). |
 | 2026-05-09 | §20 port wave — three slots in one batch (`OverlaySlot`, `BuilderSlot`, `NavigationSlot`), nine more stub bindings promote out of the placeholder loop. **`OverlaySlot`** owns toasts, the command palette, and the help tooltip; visibility is data-driven (`Vec<Toast>` empty, `command_palette.open == false`, `help_tooltip == None` collapse the emission shape) — no per-binding `if open { … }` branch on the host. Three methods, three disjoint shapes, no shared private helpers (rule-of-three threshold not met). **`BuilderSlot`** consolidates inspector / properties / signals / schema onto one slot, because all four bindings ultimately read from the same selection cursor — cross-panel consistency becomes a slot pre-condition by construction, not a cross-binding contract. Per-row blocks (`shell.signal-connection-row`, `shell.schema-row`, `shell.inspector-row`, `shell.field-editor`) stay stubs: their data flows down inside the parent's `rows` / `connections` / `fields` JSON arrays, never through their own binding row, so a row binding emitting on its own would be a *second* serialisation site for the same shape. `PropertyRow { component, props: Value }` deliberately carries `serde_json::Value` directly — the properties panel emits a heterogeneous list of sub-component descriptors, and forcing a typed enum here would invent a vocabulary that exists only to be serialised. **`NavigationSlot`** owns `pages: Vec<NavPage>` + `edges: Vec<NavEdge>`; `nav_page_list_props` and `nav_graph_props` are the load-bearing siblings — both fold the same `Vec<NavPage>` but emit different shapes (list needs `node-count`/`link-count`, graph needs `x`/`y`/positions). The shared subset (`page-title`, `route`, `is-active`) lives in two short folds rather than a premature `base_page_fields(&NavPage) -> Map<String, Value>` extraction (rule-of-three: only two consumers today). Bindings table: 13 real `bind_slot!` rows now (was 4 at §19 close); stub-loop shrinks from 41 to 32 entries. New tests (13): four overlay slot-unit tests (toast kind serialisation, palette default-closed, tooltip visible/invisible), four builder slot-unit tests (one per `*_props` method), three navigation slot-unit tests (list emits no edges, graph carries positions+edges, the shared `is-active` flag flows through both folds), plus two end-to-end snapshot tests on the bindings layer (`nav_active_flag_propagates_to_list_and_graph_bindings`, `overlay_command_palette_open_propagates_to_emission`). The 47-binding parity test still passes; 190 lib tests green (was 177). | Validates the §19 batch property: porting three panels in one wave is no harder than one, because every artifact is slot-local. The duplication risk a sequential port would create — three independently-invented "list of `{title, body}`" shapes, three near-identical row-emission patterns, a row binding that re-emits parent data — is structurally caught at design time when all three slots are visible against each other. The "stub bindings stay stubs" rule for per-row blocks is the load-bearing call: the keystone parity test asserts every registered block has *a* binding, not that every binding is non-empty, so the bindings table's shape (one row per registered id) is preserved without forcing every row to carry data. The `BuilderSlot` / `PropertyRow` carrying `Value` is the first deliberate exception to the "JSON shape lives on the slot" rule, and is correct: the heterogeneous wire format already exists at the *block* (the properties panel renders an arbitrary mix of section headers, field editors, drag-number rows), so the slot's typed-shape promise covers the *list of rows*, not the contents of any single row — the closure still cannot forge a row without going through `properties_panel_props`. The three slots together demote nine more `panel_props.rs` functions (`toast_stack_entries`, `command_palette_props`, `inspector_rows`, `properties_panel_props`, `signals_panel_props`, `schema_designer_props`, `nav_page_row_entries`, `nav_graph_props`, plus the implied list-rollup) to legacy; the file is on track to zero by the close of the port wave. The remaining seven Phase-4 panels (code editor, explorer, component palette, launchpad, docs, menus, builder canvas + gizmos + handles + picker) land in the same shape — one slot, N methods, N stub-row promotions, no infrastructure moves. |
 | 2026-05-09 | §21 port wave — three slots in one batch (`CatalogSlot`, `DocsSlot`, `MenuSlot`), seven more stub bindings promote out of the placeholder loop. **`CatalogSlot`** owns launchpad apps, explorer files, and component-palette items — three disjoint shapes, no shared helper (rule-of-three trigger = identical keys, not "three short methods"). `palette_selected: Option<String>` collapses to key-omission in `component_palette_props` rather than emitting an empty sentinel — same data-driven visibility pattern as `OverlaySlot`. **`DocsSlot`** is the first in-batch rule-of-three extraction: `docs_view_props` and `docs_sidebar_props` both call `topic_props(&self) -> Value` for the byte-identical `{ title, summary, body }` shape and only overlay binding-specific `mode`. The cross-binding flow test (`docs_topic_shape_propagates_to_view_and_sidebar_bindings`) makes drift impossible. **`MenuSlot`** extracts `items_json(&[MenuItem]) -> Value` as a static helper (slice argument, no `&self`) so both `dropdown` and `context` fold through the same code path. `MenuItem::separator()` is the typed constructor — callers never leave label empty + flip a flag. Bindings table: 20 real `bind_slot!` rows now (was 13 at §20 close); stub-loop shrinks from 32 to 25 entries. New tests (13): four catalog slot-unit tests (launchpad title+apps, explorer depth/kind, the palette selected-omitted/-included pair), four docs slot-unit tests (view-mode pinned, sidebar default, sidebar explicit, shared-topic parity), three menu slot-unit tests (dropdown shortcut+command, context key-set equality, `separator()` constructor), plus two end-to-end snapshot tests on the bindings layer. The 47-binding parity test still passes; 203 lib tests green (was 190). | First port wave where rule-of-three fires *on landing* (twice: `topic_props`, `items_json`). Both extractions are honest — two consumers + identical key sets + zero plausible per-binding deviation — so the helper is the single source of the wire format and a drift would require editing one site to keep the cross-binding flow tests green. The `CatalogSlot` declined-extraction is the symmetric discipline: three consumers with *disjoint* key sets do not justify a `CatalogItem` enum, because the enum would invent a vocabulary that exists only to be serialised (the same anti-pattern §20 caught for `BuilderSlot`-`PropertyRow` and declined). The `MenuItem::separator()` constructor is the §20 doctrine extended to constructors: typed shape carries the vocabulary, hosts never assemble shape via field-flag gymnastics. The remaining four Phase-4 stubs (`shell.code-editor`, `shell.builder-canvas`, gizmos, resize-handle, component-picker — six bindings sharing one underlying datum) form `CanvasSlot` in §22; they are the one place in the port where the slot itself is mutated by event dispatch (drag deltas), which requires `events::dispatch_event` to forward pointer events into slot mutators — same `OverlaySlot` data-driven-visibility pattern plus a write side, no new infrastructure. The `panel_props.rs` legacy file shrinks by seven more functions of intent and is on track to zero. |
@@ -4609,7 +4609,7 @@ Nothing else in the host has to learn the feature exists.
 feature module ported off the legacy stack and the §16 panel
 table entirely landed, the one missing piece for end-to-end
 proof is *connecting* the active workflow page's `DockState` to
-the parsed `app.prism-ui` skeleton. The §16 closing claim — "every
+the parsed `app.prui` skeleton. The §16 closing claim — "every
 panel is one row in a table" — needed a runtime walker before it
 could drive the actual Studio chrome.
 
@@ -4635,7 +4635,7 @@ are authored AND `panel-id` is non-empty, fall through to
 (`PANEL_ROUTES`) is the single source of truth for "what visual
 lives in this leaf?" — adding a dockable panel is one row in the
 table; the dock-panel block, the workspace walker, and every
-parsed `app.prism-ui` skeleton inherit the new mapping with zero
+parsed `app.prui` skeleton inherit the new mapping with zero
 additional edits. A test in `panel_routing.rs` keeps the table in
 lockstep with `register_shell_builtins` (every routed tag must be
 a registered shell block).
@@ -4701,9 +4701,9 @@ Registry now at 48 shell primitives.
 
 | Date | Decision | Rationale |
 |---|---|---|
-| 2026-05-10 | §28 lands: `shell.dock-workspace` block + `panel_routing::PANEL_ROUTES` table + `Sizing::Percent` runtime variant + `value_for` JSON auto-parse for `[`/`{`-prefixed attribute strings + `dock-panel` panel-id auto-dispatch. Skeleton (`ui/app.prism-ui`) collapses to `<shell.app-window><shell.dock-workspace/></shell.app-window>` plus overlay siblings. 255 lib tests, 48 shell primitives, registry/bindings parity restored. | The §16 closing claim ("every panel is one row in a table") was previously a *static* property of the panel registry; §28 makes it a *runtime* property of the skeleton. The active dock tree drives content selection without any new dispatch pattern — the existing `lower_as` seam (§15), the existing slot-method binding shape (§19), and the existing `Block` registration table (§12) all compose without growth. The runtime gained one variant (`Sizing::Percent`) and one defensive parse rule (`value_for` JSON auto-parse) — both additive, both load-bearing across consumers beyond the dock walker (every binding that emits an array prop now round-trips correctly through the resolver). The smart-pattern budget for the wave is two new files (`panel_routing.rs`, `dock_workspace.rs`) totalling ~250 LoC; legacy `push_dock_layout`-style rectangle-flattening stays deleted. |
+| 2026-05-10 | §28 lands: `shell.dock-workspace` block + `panel_routing::PANEL_ROUTES` table + `Sizing::Percent` runtime variant + `value_for` JSON auto-parse for `[`/`{`-prefixed attribute strings + `dock-panel` panel-id auto-dispatch. Skeleton (`ui/app.prui`) collapses to `<shell.app-window><shell.dock-workspace/></shell.app-window>` plus overlay siblings. 255 lib tests, 48 shell primitives, registry/bindings parity restored. | The §16 closing claim ("every panel is one row in a table") was previously a *static* property of the panel registry; §28 makes it a *runtime* property of the skeleton. The active dock tree drives content selection without any new dispatch pattern — the existing `lower_as` seam (§15), the existing slot-method binding shape (§19), and the existing `Block` registration table (§12) all compose without growth. The runtime gained one variant (`Sizing::Percent`) and one defensive parse rule (`value_for` JSON auto-parse) — both additive, both load-bearing across consumers beyond the dock walker (every binding that emits an array prop now round-trips correctly through the resolver). The smart-pattern budget for the wave is two new files (`panel_routing.rs`, `dock_workspace.rs`) totalling ~250 LoC; legacy `push_dock_layout`-style rectangle-flattening stays deleted. |
 
-## 29. `BuilderDocument` → `.prism-ui` source emitter
+## 29. `BuilderDocument` → `.prui` source emitter
 
 **Strategy locked 2026-05-10 (post-§28).** The Slint exorcism (§17 +
 slint-source rip) deleted `render_document_slint_*`, `SlintEmitter`,
@@ -4716,7 +4716,7 @@ fidelity without re-introducing any of the deleted infrastructure.
 
 **The emitter.** `prism_builder::prism_ui_emit::emit_document(doc)`
 (plus the per-node `emit_node`) walks a `BuilderDocument`/`Node`
-tree depth-first and produces well-formed `.prism-ui` text. One
+tree depth-first and produces well-formed `.prui` text. One
 function, no two-step IR, no registry dependency — the `Node`
 already carries its own `component` tag.
 
@@ -4797,7 +4797,7 @@ new tests in `app::tests` (`ensure_source` idempotency,
 
 | Date | Decision | Rationale |
 |---|---|---|
-| 2026-05-10 | §29 lands: `prism_builder::prism_ui_emit` module + `Page::ensure_source` (emit-when-empty) + `Page::regenerate_source` (force-rewrite). One declarative walker (`emit_document` / `emit_node`), one attribute-shape table, alphabetised attrs for byte-stability. 330 builder lib tests, 17 new emitter tests, all workspace tests + clippy clean. | The Slint exorcism left `Page::source` orphaned — the field still serialised to disk but lost its auto-population path. §29 restores the round-trip without reviving any of the deleted Slint infrastructure: the emitter is the inverse of the canonical `.prism-ui` parser, depends only on `serde_json::Value` shape, and stays orthogonal to the registry / resolver / block layers added in §12-§28. The grammar's existing `{expr}` interpolation absorbs object/array attributes; scalar attributes round-trip as plain quoted text; determinism through alphabetical attr ordering keeps golden tests stable. The wiring discipline (`ensure_source` lazy-fills, `regenerate_source` force-overwrites) mirrors the lazy-fill seams already used elsewhere in the host so no new pattern lands. |
+| 2026-05-10 | §29 lands: `prism_builder::prism_ui_emit` module + `Page::ensure_source` (emit-when-empty) + `Page::regenerate_source` (force-rewrite). One declarative walker (`emit_document` / `emit_node`), one attribute-shape table, alphabetised attrs for byte-stability. 330 builder lib tests, 17 new emitter tests, all workspace tests + clippy clean. | The Slint exorcism left `Page::source` orphaned — the field still serialised to disk but lost its auto-population path. §29 restores the round-trip without reviving any of the deleted Slint infrastructure: the emitter is the inverse of the canonical `.prui` parser, depends only on `serde_json::Value` shape, and stays orthogonal to the registry / resolver / block layers added in §12-§28. The grammar's existing `{expr}` interpolation absorbs object/array attributes; scalar attributes round-trip as plain quoted text; determinism through alphabetical attr ordering keeps golden tests stable. The wiring discipline (`ensure_source` lazy-fills, `regenerate_source` force-overwrites) mirrors the lazy-fill seams already used elsewhere in the host so no new pattern lands. |
 
 ## 30. `TemplateNode` → runtime walker (`lower_template`)
 

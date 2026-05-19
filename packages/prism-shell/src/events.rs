@@ -1310,7 +1310,7 @@ fn write_field_value(
 /// `set` / `toggle` / `navigate` / `play` / `luau` parse cleanly
 /// (see `prism_builder::signal::parse_action`) but the executor is
 /// a no-op pending their owning subsystems — the parse step is
-/// what keeps `.prism-ui` source author-clean today.
+/// what keeps `.prui` source author-clean today.
 ///
 /// **Wave 14.3 — event modifiers.** Every `data-on-click*` attr on
 /// the hit is dispatched in attribute order; the modifier suffix

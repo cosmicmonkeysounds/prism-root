@@ -490,7 +490,7 @@ tag = "lattice.peers-panel"
 
 #[test]
 fn manifest_declared_skeleton_loads_and_caches_in_shell() {
-    // The manifest points at `shell.prism-ui` in the same dir. The
+    // The manifest points at `shell.prui` in the same dir. The
     // loader reads + parses it; Shell::new caches it in
     // `ShellInner.app_skeletons`.
     let manifests: &[(&str, &str)] = &[(
@@ -499,7 +499,7 @@ fn manifest_declared_skeleton_loads_and_caches_in_shell() {
 label = "Lattice"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 "#,
     )];
     with_apps_dir("skeleton_loads", manifests, || {
@@ -507,7 +507,7 @@ skeleton = "shell.prism-ui"
         let root = std::env::var("PRISM_APPS_DIR").unwrap();
         let skel_path = std::path::Path::new(&root)
             .join("lattice")
-            .join("shell.prism-ui");
+            .join("shell.prui");
         std::fs::write(&skel_path, r#"<shell.dock-workspace id="custom-dock"/>"#).unwrap();
 
         let shell = prism_shell::Shell::new().expect("Shell::new");
@@ -531,7 +531,7 @@ fn missing_skeleton_file_falls_back_silently_without_aborting_boot() {
 label = "Broken"
 
 [entry]
-skeleton = "does-not-exist.prism-ui"
+skeleton = "does-not-exist.prui"
 "#,
     )];
     with_apps_dir("skeleton_missing", manifests, || {
@@ -557,14 +557,14 @@ fn active_app_skeleton_selects_per_app_or_default() {
 label = "Lattice"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 "#,
     )];
     with_apps_dir("active_app_skel", manifests, || {
         let root = std::env::var("PRISM_APPS_DIR").unwrap();
         let skel_path = std::path::Path::new(&root)
             .join("lattice")
-            .join("shell.prism-ui");
+            .join("shell.prui");
         std::fs::write(&skel_path, r#"<shell.dock-workspace id="lattice-dock"/>"#).unwrap();
 
         let shell = prism_shell::Shell::new().expect("Shell::new");
@@ -599,14 +599,14 @@ fn shell_render_composes_host_with_active_app_body() {
 label = "Lattice"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 "#,
     )];
     with_apps_dir("shell_render_compose", manifests, || {
         let root = std::env::var("PRISM_APPS_DIR").unwrap();
         let skel_path = std::path::Path::new(&root)
             .join("lattice")
-            .join("shell.prism-ui");
+            .join("shell.prui");
         std::fs::write(&skel_path, r#"<shell.dock-workspace id="lattice-dock"/>"#).unwrap();
 
         let shell = prism_shell::Shell::new().expect("Shell::new");
@@ -835,7 +835,7 @@ fn full_swap_chain_skeleton_stylesheet_services_all_track() {
 label = "Lattice"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 styles = "app.prss"
 
 [services]
@@ -846,7 +846,7 @@ required = ["builder"]
         let root = std::env::var("PRISM_APPS_DIR").unwrap();
         let dir = std::path::Path::new(&root).join("lattice");
         std::fs::write(
-            dir.join("shell.prism-ui"),
+            dir.join("shell.prui"),
             r#"<shell.dock-workspace id="lattice-dock"/>"#,
         )
         .unwrap();
@@ -966,7 +966,7 @@ styles = "app.prss"
 #[test]
 fn musica_and_flux_each_swap_in_a_distinct_app_skeleton() {
     // ADR-009 Phase 1: Musica + Flux author distinct skeletons under
-    // `apps/<id>/shell.prism-ui`. The active-app cursor swap selects
+    // `apps/<id>/shell.prui`. The active-app cursor swap selects
     // the matching skeleton; each app's rendered tree contains a
     // root container with the app-specific dock id.
     let manifests: &[(&str, &str)] = &[
@@ -976,7 +976,7 @@ fn musica_and_flux_each_swap_in_a_distinct_app_skeleton() {
 label = "Lattice"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 "#,
         ),
         (
@@ -985,7 +985,7 @@ skeleton = "shell.prism-ui"
 label = "Musica"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 "#,
         ),
         (
@@ -994,7 +994,7 @@ skeleton = "shell.prism-ui"
 label = "Flux"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 "#,
         ),
     ];
@@ -1002,25 +1002,23 @@ skeleton = "shell.prism-ui"
         let root = std::env::var("PRISM_APPS_DIR").unwrap();
         // Author each app's skeleton inline so the test is fully
         // self-contained — it doesn't depend on the on-disk
-        // `apps/<id>/shell.prism-ui` fixtures.
+        // `apps/<id>/shell.prui` fixtures.
         std::fs::write(
             std::path::Path::new(&root)
                 .join("lattice")
-                .join("shell.prism-ui"),
+                .join("shell.prui"),
             r#"<shell.dock-workspace id="lattice-dock"/>"#,
         )
         .unwrap();
         std::fs::write(
             std::path::Path::new(&root)
                 .join("musica")
-                .join("shell.prism-ui"),
+                .join("shell.prui"),
             r#"<shell.dock-workspace id="musica-stage"/>"#,
         )
         .unwrap();
         std::fs::write(
-            std::path::Path::new(&root)
-                .join("flux")
-                .join("shell.prism-ui"),
+            std::path::Path::new(&root).join("flux").join("shell.prui"),
             r#"<shell.dock-workspace id="flux-canvas"/>"#,
         )
         .unwrap();
@@ -1070,7 +1068,7 @@ fn app_main_luau_registers_component_whose_render_dispatches_through_runtime() {
 label = "Lattice"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 script = "main.luau"
 "#,
     )];
@@ -1080,7 +1078,7 @@ script = "main.luau"
         // The skeleton hosts a custom `<my.card name="Hi"/>` tag —
         // the Luau-registered component the script provides.
         std::fs::write(
-            dir.join("shell.prism-ui"),
+            dir.join("shell.prui"),
             r#"<my.card id="card-1" name="Hi"/>"#,
         )
         .unwrap();
@@ -1167,14 +1165,14 @@ fn app_main_luau_with_no_render_fn_falls_back_to_placeholder() {
 label = "Lattice"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 script = "main.luau"
 "#,
     )];
     with_apps_dir("persistent_luau_placeholder", manifests, || {
         let root = std::env::var("PRISM_APPS_DIR").unwrap();
         let dir = std::path::Path::new(&root).join("lattice");
-        std::fs::write(dir.join("shell.prism-ui"), r#"<my.card id="card-1"/>"#).unwrap();
+        std::fs::write(dir.join("shell.prui"), r#"<my.card id="card-1"/>"#).unwrap();
         std::fs::write(
             dir.join("main.luau"),
             r#"prism.app:register_component({ id = "my.card" })"#,
@@ -1334,7 +1332,7 @@ fn musica_main_luau_drives_full_render_chain() {
 label = "Musica"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 script = "main.luau"
 "#,
     )];
@@ -1344,14 +1342,14 @@ script = "main.luau"
         .expect("workspace root")
         .to_path_buf();
     let real_skeleton =
-        std::fs::read_to_string(workspace_root.join("apps/musica/shell.prism-ui")).unwrap();
+        std::fs::read_to_string(workspace_root.join("apps/musica/shell.prui")).unwrap();
     let real_script =
         std::fs::read_to_string(workspace_root.join("apps/musica/main.luau")).unwrap();
 
     with_apps_dir("musica_full_chain", manifests, || {
         let root = std::env::var("PRISM_APPS_DIR").unwrap();
         let dir = std::path::Path::new(&root).join("musica");
-        std::fs::write(dir.join("shell.prism-ui"), &real_skeleton).unwrap();
+        std::fs::write(dir.join("shell.prui"), &real_skeleton).unwrap();
         std::fs::write(dir.join("main.luau"), &real_script).unwrap();
 
         let shell = prism_shell::Shell::new().expect("Shell::new");
@@ -1432,7 +1430,7 @@ fn flux_main_luau_renders_nested_canvas_with_nodes() {
 label = "Flux"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 script = "main.luau"
 "#,
     )];
@@ -1442,13 +1440,13 @@ script = "main.luau"
         .expect("workspace root")
         .to_path_buf();
     let real_skeleton =
-        std::fs::read_to_string(workspace_root.join("apps/flux/shell.prism-ui")).unwrap();
+        std::fs::read_to_string(workspace_root.join("apps/flux/shell.prui")).unwrap();
     let real_script = std::fs::read_to_string(workspace_root.join("apps/flux/main.luau")).unwrap();
 
     with_apps_dir("flux_full_chain", manifests, || {
         let root = std::env::var("PRISM_APPS_DIR").unwrap();
         let dir = std::path::Path::new(&root).join("flux");
-        std::fs::write(dir.join("shell.prism-ui"), &real_skeleton).unwrap();
+        std::fs::write(dir.join("shell.prui"), &real_skeleton).unwrap();
         std::fs::write(dir.join("main.luau"), &real_script).unwrap();
 
         let shell = prism_shell::Shell::new().expect("Shell::new");
@@ -1508,14 +1506,14 @@ fn install_app_script_hot_swaps_render_body() {
 label = "Lattice"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 script = "main.luau"
 "#,
     )];
     with_apps_dir("hot_reload_swap", manifests, || {
         let root = std::env::var("PRISM_APPS_DIR").unwrap();
         let dir = std::path::Path::new(&root).join("lattice");
-        std::fs::write(dir.join("shell.prism-ui"), r#"<my.greet id="card-1"/>"#).unwrap();
+        std::fs::write(dir.join("shell.prui"), r#"<my.greet id="card-1"/>"#).unwrap();
         std::fs::write(
             dir.join("main.luau"),
             r#"
@@ -1606,14 +1604,14 @@ fn install_app_script_errors_surface_without_corrupting_state() {
 label = "Lattice"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 script = "main.luau"
 "#,
     )];
     with_apps_dir("hot_reload_err", manifests, || {
         let root = std::env::var("PRISM_APPS_DIR").unwrap();
         let dir = std::path::Path::new(&root).join("lattice");
-        std::fs::write(dir.join("shell.prism-ui"), r#"<my.greet id="card-1"/>"#).unwrap();
+        std::fs::write(dir.join("shell.prui"), r#"<my.greet id="card-1"/>"#).unwrap();
         std::fs::write(
             dir.join("main.luau"),
             r#"
@@ -1695,7 +1693,7 @@ fn luau_component_children_render_through_prism_slot() {
 label = "Lattice"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 script = "main.luau"
 "#,
     )];
@@ -1703,7 +1701,7 @@ script = "main.luau"
         let root = std::env::var("PRISM_APPS_DIR").unwrap();
         let dir = std::path::Path::new(&root).join("lattice");
         std::fs::write(
-            dir.join("shell.prism-ui"),
+            dir.join("shell.prui"),
             r#"<my.box id="b1">
                 <my.inner id="i1" label="alpha"/>
                 <my.inner id="i2" label="beta"/>
@@ -1802,14 +1800,14 @@ fn luau_slot_out_of_range_renders_oob_placeholder() {
 label = "Lattice"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 script = "main.luau"
 "#,
     )];
     with_apps_dir("slot_oob", manifests, || {
         let root = std::env::var("PRISM_APPS_DIR").unwrap();
         let dir = std::path::Path::new(&root).join("lattice");
-        std::fs::write(dir.join("shell.prism-ui"), r#"<my.box id="b1"/>"#).unwrap();
+        std::fs::write(dir.join("shell.prui"), r#"<my.box id="b1"/>"#).unwrap();
         std::fs::write(
             dir.join("main.luau"),
             r#"
@@ -1878,7 +1876,7 @@ fn luau_script_watcher_drives_install_app_script_end_to_end() {
 label = "Lattice"
 
 [entry]
-skeleton = "shell.prism-ui"
+skeleton = "shell.prui"
 script = "main.luau"
 "#,
     )];
@@ -1886,7 +1884,7 @@ script = "main.luau"
         let root = std::env::var("PRISM_APPS_DIR").unwrap();
         let dir = std::path::Path::new(&root).join("lattice");
         let script_path = dir.join("main.luau");
-        std::fs::write(dir.join("shell.prism-ui"), r#"<my.greet id="g-1"/>"#).unwrap();
+        std::fs::write(dir.join("shell.prui"), r#"<my.greet id="g-1"/>"#).unwrap();
         std::fs::write(
             &script_path,
             r#"

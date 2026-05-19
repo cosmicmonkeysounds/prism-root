@@ -180,7 +180,7 @@ fn directory_rows_do_not_open_anything() {
 fn rendered_explorer_carries_path_data_attribute() {
     // The explorer's `data-path` attribute is what the click router
     // reads — this test confirms the round-trip from `FileNode.path`
-    // through `files_json` and the `.prism-ui` interpolation.
+    // through `files_json` and the `.prui` interpolation.
     let shell = Shell::new().expect("shell boots");
     let canonical_path = PathBuf::from("/tmp/prism-ide-test/some-file.luau");
     seed_explorer_with(
