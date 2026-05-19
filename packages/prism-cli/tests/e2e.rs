@@ -59,7 +59,7 @@ fn help_lists_every_subcommand() {
     let out = run(&["--help"]);
     assert!(out.status.success());
     let help = stdout(&out);
-    for expected in ["test", "build", "dev", "lint", "fmt", "clean"] {
+    for expected in ["test", "build", "dev", "lint", "fmt", "gc", "clean"] {
         assert!(
             help.contains(expected),
             "--help output missing `{expected}`: {help}"
@@ -109,6 +109,28 @@ fn build_target_all_dry_run() {
         String::from_utf8_lossy(&out.stderr)
     );
     let s = stdout(&out);
+    // Fast debug is the default — no --release anywhere.
+    assert!(s.contains("cargo build --package prism-shell"), "{s}");
+    assert!(s.contains("cargo build --package prism-studio"), "{s}");
+    assert!(!s.contains("--release"), "{s}");
+    assert!(
+        s.contains("cargo build --target wasm32-unknown-unknown --package prism-shell"),
+        "{s}"
+    );
+    assert!(s.contains("--no-default-features --features web"), "{s}");
+    assert!(s.contains("wasm-bindgen --target web --out-dir"), "{s}");
+    assert!(s.contains("cargo build --package prism-relay"), "{s}");
+    // trunk + emscripten + the Hono TS relay are all retired.
+    assert!(!s.contains("trunk"), "{s}");
+    assert!(!s.contains("wasm32-unknown-emscripten"), "{s}");
+    assert!(!s.contains("pnpm --filter @prism/relay run build"), "{s}");
+}
+
+#[test]
+fn build_ship_all_dry_run_adds_release_everywhere() {
+    let out = run(&["--dry-run", "build", "--ship"]);
+    assert!(out.status.success());
+    let s = stdout(&out);
     assert!(
         s.contains("cargo build --package prism-shell --release"),
         "{s}"
@@ -118,19 +140,13 @@ fn build_target_all_dry_run() {
         "{s}"
     );
     assert!(
-        s.contains("cargo build --target wasm32-unknown-unknown --package prism-shell"),
-        "{s}"
-    );
-    assert!(s.contains("--no-default-features --features web"), "{s}");
-    assert!(s.contains("wasm-bindgen --target web --out-dir"), "{s}");
-    assert!(
         s.contains("cargo build --package prism-relay --release"),
         "{s}"
     );
-    // trunk + emscripten + the Hono TS relay are all retired.
-    assert!(!s.contains("trunk"), "{s}");
-    assert!(!s.contains("wasm32-unknown-emscripten"), "{s}");
-    assert!(!s.contains("pnpm --filter @prism/relay run build"), "{s}");
+    assert!(
+        s.contains("wasm32-unknown-unknown/release/prism_shell.wasm"),
+        "{s}"
+    );
 }
 
 #[test]
@@ -138,10 +154,8 @@ fn build_relay_only_dry_run() {
     let out = run(&["--dry-run", "build", "--target", "relay"]);
     assert!(out.status.success());
     let s = stdout(&out);
-    assert!(
-        s.contains("cargo build --package prism-relay --release"),
-        "{s}"
-    );
+    assert!(s.contains("cargo build --package prism-relay"), "{s}");
+    assert!(!s.contains("--release"), "{s}");
     // When the user asks for relay only, desktop/web/studio should NOT appear.
     assert!(!s.contains("cargo build --package prism-shell"), "{s}");
     assert!(!s.contains("wasm32-unknown-unknown"), "{s}");
@@ -163,10 +177,11 @@ fn build_web_only_dry_run_uses_wasm_bindgen_pipeline() {
         s.contains("cargo build --target wasm32-unknown-unknown --package prism-shell"),
         "{s}"
     );
-    assert!(s.contains("--features web --release"), "{s}");
+    assert!(s.contains("--features web"), "{s}");
+    assert!(!s.contains("--release"), "{s}");
     assert!(s.contains("wasm-bindgen --target web --out-dir"), "{s}");
     assert!(
-        s.contains("wasm32-unknown-unknown/release/prism_shell.wasm"),
+        s.contains("wasm32-unknown-unknown/debug/prism_shell.wasm"),
         "{s}"
     );
     assert!(!s.contains("trunk"), "{s}");
@@ -174,12 +189,20 @@ fn build_web_only_dry_run_uses_wasm_bindgen_pipeline() {
 }
 
 #[test]
-fn build_debug_omits_release_flag() {
-    let out = run(&["--dry-run", "build", "--target", "desktop", "--debug"]);
-    assert!(out.status.success());
-    let s = stdout(&out);
+fn build_defaults_to_debug_ship_adds_release_flag() {
+    let dbg = run(&["--dry-run", "build", "--target", "desktop"]);
+    assert!(dbg.status.success());
+    let s = stdout(&dbg);
     assert!(s.contains("cargo build --package prism-shell"), "{s}");
     assert!(!s.contains("--release"), "{s}");
+
+    let ship = run(&["--dry-run", "build", "--target", "desktop", "--ship"]);
+    assert!(ship.status.success());
+    let s = stdout(&ship);
+    assert!(
+        s.contains("cargo build --package prism-shell --release"),
+        "{s}"
+    );
 }
 
 #[test]
@@ -249,6 +272,22 @@ fn clean_dry_run_prints_cargo_clean() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(stdout(&out).contains("cargo clean"));
+}
+
+#[test]
+fn gc_soft_dry_run_is_a_smart_sweep_not_cargo_clean() {
+    let out = run(&["--dry-run", "gc"]);
+    assert!(out.status.success());
+    let s = stdout(&out);
+    assert!(s.contains("smart sweep"), "{s}");
+    assert!(!s.contains("cargo clean"), "{s}");
+}
+
+#[test]
+fn gc_hard_dry_run_delegates_to_cargo_clean() {
+    let out = run(&["--dry-run", "gc", "--hard"]);
+    assert!(out.status.success());
+    assert!(stdout(&out).contains("cargo clean"), "{}", stdout(&out));
 }
 
 #[test]

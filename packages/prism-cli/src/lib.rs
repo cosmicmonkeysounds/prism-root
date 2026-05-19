@@ -31,6 +31,7 @@
 //! integration suite — the `prism` binary itself is a thin `clap`
 //! wrapper over [`commands::run`].
 
+pub mod accel;
 pub mod builder;
 pub mod commands;
 pub mod dev_loop;

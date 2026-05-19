@@ -45,10 +45,13 @@ pub struct BuildArgs {
     #[arg(long, value_enum, default_value_t = BuildTarget::All)]
     pub target: BuildTarget,
 
-    /// Force a debug build. By default `prism build` produces
-    /// release artifacts; use this flag for fast iteration.
+    /// Build the slow, runtime-optimised ship profile (release +
+    /// thin LTO + `codegen-units = 1`). By default `prism build`
+    /// produces fast-iteration debug artifacts; only pass `--ship`
+    /// when you actually need a release binary — it is ~10x slower
+    /// to compile on Prism's 772-crate graph.
     #[arg(long)]
-    pub debug: bool,
+    pub ship: bool,
 }
 
 /// Pure-data plan for `prism build`.
@@ -71,16 +74,16 @@ pub fn plan(args: &BuildArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
                     "prism-shell",
                     "desktop-build",
                     workspace,
-                    !args.debug,
+                    args.ship,
                 ));
             }
             BuildTarget::Studio => {
-                plan.push(daemon_bin_builder(workspace, !args.debug));
+                plan.push(daemon_bin_builder(workspace, args.ship));
                 plan.push(build_cargo_target(
                     "prism-studio",
                     "studio-build",
                     workspace,
-                    !args.debug,
+                    args.ship,
                 ));
             }
             BuildTarget::Web => {
@@ -93,18 +96,18 @@ pub fn plan(args: &BuildArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
                     .arg("--features")
                     .arg("web")
                     .label("web-build");
-                if !args.debug {
+                if args.ship {
                     cargo_cmd = cargo_cmd.release();
                 }
                 plan.push(cargo_cmd.cwd(workspace.root()));
-                plan.push(web_bindgen_builder(workspace, !args.debug));
+                plan.push(web_bindgen_builder(workspace, args.ship));
             }
             BuildTarget::Relay => {
                 plan.push(build_cargo_target(
                     "prism-relay",
                     "relay-build",
                     workspace,
-                    !args.debug,
+                    args.ship,
                 ));
             }
             BuildTarget::All => unreachable!("expanded above"),
@@ -194,8 +197,12 @@ mod tests {
     fn args(target: BuildTarget) -> BuildArgs {
         BuildArgs {
             target,
-            debug: false,
+            ship: false,
         }
+    }
+
+    fn ship_args(target: BuildTarget) -> BuildArgs {
+        BuildArgs { target, ship: true }
     }
 
     #[test]
@@ -218,8 +225,14 @@ mod tests {
     }
 
     #[test]
-    fn desktop_defaults_to_release() {
+    fn desktop_defaults_to_fast_debug() {
         let p = plan(&args(BuildTarget::Desktop), &ws());
+        assert_eq!(p[0].argv().1, vec!["build", "--package", "prism-shell"]);
+    }
+
+    #[test]
+    fn desktop_ship_adds_release_flag() {
+        let p = plan(&ship_args(BuildTarget::Desktop), &ws());
         assert_eq!(
             p[0].argv().1,
             vec!["build", "--package", "prism-shell", "--release"]
@@ -227,18 +240,29 @@ mod tests {
     }
 
     #[test]
-    fn desktop_debug_omits_release_flag() {
-        let mut a = args(BuildTarget::Desktop);
-        a.debug = true;
-        let p = plan(&a, &ws());
-        assert_eq!(p[0].argv().1, vec!["build", "--package", "prism-shell"]);
-    }
-
-    #[test]
-    fn studio_prebuilds_daemon_sidecar() {
+    fn studio_prebuilds_daemon_sidecar_debug_by_default() {
         let p = plan(&args(BuildTarget::Studio), &ws());
         assert_eq!(p.len(), 2);
         assert_eq!(p[0].label_str(), Some("daemon-build"));
+        assert_eq!(
+            p[0].argv().1,
+            vec![
+                "build",
+                "--package",
+                "prism-daemon",
+                "--bin",
+                "prism-daemond",
+                "--features",
+                "transport-ipc"
+            ]
+        );
+        assert_eq!(p[1].label_str(), Some("studio-build"));
+        assert_eq!(p[1].argv().1, vec!["build", "--package", "prism-studio"]);
+    }
+
+    #[test]
+    fn studio_ship_adds_release_flag_on_both_steps() {
+        let p = plan(&ship_args(BuildTarget::Studio), &ws());
         assert_eq!(
             p[0].argv().1,
             vec![
@@ -252,31 +276,10 @@ mod tests {
                 "--release"
             ]
         );
-        assert_eq!(p[1].label_str(), Some("studio-build"));
         assert_eq!(
             p[1].argv().1,
             vec!["build", "--package", "prism-studio", "--release"]
         );
-    }
-
-    #[test]
-    fn studio_debug_omits_release_flag_on_both_steps() {
-        let mut a = args(BuildTarget::Studio);
-        a.debug = true;
-        let p = plan(&a, &ws());
-        assert_eq!(
-            p[0].argv().1,
-            vec![
-                "build",
-                "--package",
-                "prism-daemon",
-                "--bin",
-                "prism-daemond",
-                "--features",
-                "transport-ipc"
-            ]
-        );
-        assert_eq!(p[1].argv().1, vec!["build", "--package", "prism-studio"]);
     }
 
     #[test]
@@ -292,48 +295,41 @@ mod tests {
         assert!(argv.contains(&"--no-default-features".to_string()));
         assert!(argv.contains(&"--features".to_string()));
         assert!(argv.contains(&"web".to_string()));
-        assert!(argv.contains(&"--release".to_string()));
+        // Fast debug by default — no --release.
+        assert!(!argv.contains(&"--release".to_string()));
         assert_eq!(p[0].label_str(), Some("web-build"));
     }
 
     #[test]
-    fn web_bindgen_step_targets_web_out_dir_and_release_wasm() {
+    fn web_defaults_to_debug_wasm_artifact() {
         let p = plan(&args(BuildTarget::Web), &ws());
         assert_eq!(p[1].program(), crate::builder::Program::WasmBindgen);
-        assert_eq!(p[1].label_str(), Some("web-bindgen"));
         let argv = p[1].argv().1;
-        assert_eq!(argv[0], "--target");
-        assert_eq!(argv[1], "web");
-        assert_eq!(argv[2], "--out-dir");
         assert!(argv[3].ends_with("packages/prism-shell/web"));
-        assert!(argv[4].ends_with("wasm32-unknown-unknown/release/prism_shell.wasm"));
+        assert!(argv[4].ends_with("wasm32-unknown-unknown/debug/prism_shell.wasm"));
     }
 
     #[test]
-    fn web_debug_omits_release_flag_and_reads_debug_wasm() {
-        let mut a = args(BuildTarget::Web);
-        a.debug = true;
-        let p = plan(&a, &ws());
-        assert!(!p[0].argv().1.contains(&"--release".to_string()));
+    fn web_ship_adds_release_flag_and_reads_release_wasm() {
+        let p = plan(&ship_args(BuildTarget::Web), &ws());
+        assert!(p[0].argv().1.contains(&"--release".to_string()));
         let bindgen_argv = p[1].argv().1;
-        assert!(bindgen_argv[4].ends_with("wasm32-unknown-unknown/debug/prism_shell.wasm"));
+        assert!(bindgen_argv[4].ends_with("wasm32-unknown-unknown/release/prism_shell.wasm"));
     }
 
     #[test]
-    fn relay_uses_cargo_build_release_by_default() {
+    fn relay_defaults_to_fast_debug() {
         let p = plan(&args(BuildTarget::Relay), &ws());
-        assert_eq!(
-            p[0].argv().1,
-            vec!["build", "--package", "prism-relay", "--release"]
-        );
+        assert_eq!(p[0].argv().1, vec!["build", "--package", "prism-relay"]);
         assert_eq!(p[0].label_str(), Some("relay-build"));
     }
 
     #[test]
-    fn relay_debug_omits_release_flag() {
-        let mut a = args(BuildTarget::Relay);
-        a.debug = true;
-        let p = plan(&a, &ws());
-        assert_eq!(p[0].argv().1, vec!["build", "--package", "prism-relay"]);
+    fn relay_ship_adds_release_flag() {
+        let p = plan(&ship_args(BuildTarget::Relay), &ws());
+        assert_eq!(
+            p[0].argv().1,
+            vec!["build", "--package", "prism-relay", "--release"]
+        );
     }
 }

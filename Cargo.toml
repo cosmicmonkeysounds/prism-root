@@ -200,6 +200,35 @@ insta = "1"
 proptest = "1"
 tempfile = "3"
 
+# Fast-iteration profile — the default for `prism build`, `prism dev`,
+# `prism test`, and every raw `cargo` invocation in the workspace.
+#
+# The knobs that actually move the needle on a 772-crate graph:
+#
+# - `debug = "line-tables-only"` keeps backtraces + panic locations but
+#   drops the multi-GB of full DWARF that nothing in the dev loop reads.
+# - `split-debuginfo = "unpacked"` skips the macOS `dsymutil` pass
+#   entirely — on Apple Silicon that pass is a large fraction of every
+#   incremental link.
+# - `[profile.dev.package."*"]` compiles *dependencies* (femtovg, winit,
+#   glutin, resvg, cosmic-text, vendored Luau, image, tokio, …) at
+#   `opt-level = 2` with no debuginfo. Deps change ~never, so this cost
+#   is paid once and cached forever; workspace crates stay at
+#   `opt-level = 0` so our own edit→build loop stays fast.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+codegen-units = 256
+
+# Ship profile — slow to build, fastest at runtime. NOT a default;
+# reached only via `prism build --ship` (or raw `cargo build
+# --release`). `codegen-units = 1` + thin LTO trade ~10x build time
+# for the last few percent of runtime perf, only worth it for actual
+# release artifacts.
 [profile.release]
 opt-level = 3
 lto = "thin"

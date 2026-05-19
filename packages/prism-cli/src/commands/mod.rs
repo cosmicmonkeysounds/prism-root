@@ -18,6 +18,7 @@ pub mod codegen;
 pub mod dev;
 pub mod e2e;
 pub mod fmt;
+pub mod gc;
 pub mod lint;
 pub mod new;
 pub mod scripts;
@@ -65,7 +66,13 @@ pub enum Command {
     /// Run end-to-end tests — automated input sequences + state
     /// assertions through the same code paths a human uses.
     E2e(e2e::E2eArgs),
-    /// Run `cargo clean` to remove all build artefacts.
+    /// Smart, size-aware reclamation of `target/` — prunes stale
+    /// incremental sessions, an idle wasm tree, and an idle build
+    /// profile without nuking the active dependency cache. Pass
+    /// `--hard` for a full `cargo clean`.
+    Gc(gc::GcArgs),
+    /// Full `cargo clean` (alias for `prism gc --hard`). The nuclear
+    /// option — every subsequent build is a cold rebuild.
     Clean,
     /// Emit derived artefacts (Luau type stubs, etc.) from the
     /// workspace's `#[luau_expose]` annotations.
@@ -90,6 +97,7 @@ pub fn run(cli: &Cli, workspace: &Workspace) -> Result<u8> {
         Command::Fmt { check } => fmt::run(*check, workspace, cli.dry_run),
         Command::Visual(args) => visual::run(args, workspace, cli.dry_run),
         Command::E2e(args) => e2e::run(args, workspace, cli.dry_run),
+        Command::Gc(args) => gc::run(args, workspace, cli.dry_run),
         Command::Clean => clean::run(workspace, cli.dry_run),
         Command::Codegen(args) => codegen::run(args, workspace, cli.dry_run),
         Command::Scripts(args) => scripts::run(args, workspace, cli.dry_run),

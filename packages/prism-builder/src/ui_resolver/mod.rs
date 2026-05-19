@@ -86,16 +86,21 @@ impl TagResolver for RegistryTagResolver {
         // any block that wants to materialise children whose component
         // ids only exist in data — recursive trees, plugin-authored
         // overlays, etc.
-        let (component_id, dispatched_node) = if element.tag == "dispatch" {
+        let (component_id, dispatched_node, resolved_tag) = if element.tag == "dispatch" {
             let target = dynamic_dispatch_target(element, scope)?;
             let component = self.registry.get(&target)?;
             (
                 component,
                 dispatch_element_to_builder_node(element, &target, scope),
+                target,
             )
         } else {
             let component = self.registry.get(&element.tag)?;
-            (component, element_to_builder_node(element, scope))
+            (
+                component,
+                element_to_builder_node(element, scope),
+                element.tag.clone(),
+            )
         };
         let component = component_id;
         let node = dispatched_node;
@@ -111,9 +116,33 @@ impl TagResolver for RegistryTagResolver {
         // the block doesn't care which path produced them. See
         // `LowerScope::with_host_children_by_tag` for the host-side
         // injection seam.
+        // Key host-children lookup by the *resolved* tag, not the
+        // source element tag: a dock-panel routes content through
+        // `<dispatch component="shell.builder-canvas"/>`, so
+        // `element.tag` is `"dispatch"` while the binding harvested
+        // the document under `"shell.builder-canvas"`. Using the
+        // source tag here left the canvas with zero host children
+        // (the empty-canvas regression).
+        //
+        // Fallback to the propagated `tag_emissions` snapshot: the
+        // root-only `host_children_by_tag` map does NOT survive the
+        // descent through nested `.prism-ui` blocks (each
+        // `PrismUiBlock` rebuilds a fresh `LowerScope`), but
+        // `tag_emissions` *is* forwarded at every level. So a deeply
+        // routed tag (dock-workspace → dock-node → dock-panel →
+        // `<dispatch component="shell.builder-canvas">`) only sees its
+        // harvested children here. `harvest_tag_emissions` keeps the
+        // children slice, so this is the live document for the canvas.
         let host_supplied: Option<Vec<UiNode>> = scope
-            .host_children_for(&element.tag)
-            .map(|slice| slice.to_vec());
+            .host_children_for(&resolved_tag)
+            .map(|slice| slice.to_vec())
+            .or_else(|| {
+                scope
+                    .tag_emissions_arc()
+                    .get(resolved_tag.as_str())
+                    .map(|e| e.children.clone())
+                    .filter(|c| !c.is_empty())
+            });
         // Wave 13.1 — partition AST children by their `slot="X"`
         // attribute. The default bucket (`""`) plus the legacy single-
         // slot contract land in `host_children`; each named bucket

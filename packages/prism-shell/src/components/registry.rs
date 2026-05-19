@@ -198,6 +198,15 @@ pub fn register_full_shell_chrome(reg: &mut ShellComponentRegistry) -> Result<()
             }
         }
     })?;
+    // Document builtins (`text` / `button` / …) + the `prism.*`
+    // primitives (incl. `prism.builder-host`) must land in `reg`
+    // *before* the single `finalize` snapshot — the shared resolver
+    // is a write-once `OnceLock`, so anything registered after this
+    // point would be invisible to every DSL block's `lower_ui`
+    // dispatch (the empty-canvas regression: `<prism.builder-host>`
+    // and the seeded document's `text`/`button` resolved to nothing
+    // because they registered after finalize).
+    register_document_builtins(reg)?;
     finalize_prism_ui_resolver(&resolver, reg);
     Ok(())
 }
@@ -547,8 +556,9 @@ mod tests {
         // `shell.*` / `prism.*` vs unprefixed document builtins, so
         // the merge can't shadow.
         let mut reg = ShellComponentRegistry::new();
+        // `register_full_shell_chrome` folds in the document builtins
+        // before finalising the resolver — no separate call needed.
         register_full_shell_chrome(&mut reg).expect("shell");
-        register_document_builtins(&mut reg).expect("document");
         // A representative shell tag still resolves…
         assert!(reg.get("shell.icon-button").is_some());
         // …and the merged builder builtins do too.

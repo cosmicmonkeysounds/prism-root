@@ -20,7 +20,7 @@ use prism_ui_runtime::event::Event;
 use prism_ui_runtime::interpret::TagResolver;
 use prism_ui_runtime::layout::{HitRect, Node as UiNode, Surface, Viewport};
 
-use crate::components::{register_document_builtins, ShellComponentRegistry};
+use crate::components::ShellComponentRegistry;
 use crate::events::dispatch_event;
 use crate::props::{PropCtx, ShellPropBindings};
 use crate::render::{default_app_skeleton, render_tree_with, RenderCaches, Skeleton, Stylesheet};
@@ -366,9 +366,12 @@ impl Shell {
         // the same registry, then `finalize_prism_ui_resolver` lets
         // composed `<shell.*>` / `<prism.*>` tags inside a DSL source
         // dispatch against the live merged registry.
+        // `register_full_shell_chrome` now also folds in the document
+        // builtins + `prism.*` primitives before it finalises the
+        // shared resolver — see its doc comment. A separate
+        // `register_document_builtins` call here would double-register
+        // and surface as `RegistryError::AlreadyRegistered`.
         crate::components::registry::register_full_shell_chrome(&mut registry)
-            .map_err(|e| ShellError::Registry(e.to_string()))?;
-        register_document_builtins(&mut registry)
             .map_err(|e| ShellError::Registry(e.to_string()))?;
         let bindings = ShellPropBindings::with_builtins();
         let mut services = ServiceRegistry::with_builtins();

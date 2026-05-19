@@ -42,8 +42,12 @@ expanded argv without executing anything.
   manual interaction needed.
 - Screenshot capture uses `screencapture` on macOS.
 
-### `prism build [--target desktop|studio|web|relay|all] [--debug]`
-- Defaults to `--target all` + release builds.
+### `prism build [--target desktop|studio|web|relay|all] [--ship]`
+- Defaults to `--target all` + **fast debug** builds. `--ship` opts
+  into the slow runtime-optimised release profile (`codegen-units = 1`
+  + thin LTO; ~10x slower to compile — only for real release
+  artifacts). The old `--debug` flag is gone: debug is the default
+  now, `--ship` is the explicit slow path.
 - `desktop` → `cargo build -p prism-shell`.
 - `studio` → two cargo builds in order: first
   `cargo build -p prism-daemon --bin prism-daemond --features
@@ -128,10 +132,36 @@ expanded argv without executing anything.
   (requires `prism-shell/e2e` feature + display + accessibility).
 - No flags → runs all 12 built-in tests. Exit code 1 if any fail.
 
+### `prism gc [--hard]`
+Smart, size-aware reclamation of `target/`. Default (no flag) is the
+same sweep that runs automatically after every build (see § Automatic
+build-artefact GC): stale incremental sessions, an idle wasm tree, an
+idle build profile — **never the active profile's dependency cache**.
+Prints a one-line summary of what it reclaimed. `--hard` is the
+nuclear `cargo clean` (delegates to `commands::clean::plan`, so the
+argv lives in one place).
+
 ### `prism clean`
-`cargo clean` — removes the entire `target/` tree. Use this when
-artefacts have grown large or when a build is behaving unexpectedly.
-For routine housekeeping, rely on the automatic GC described below.
+Back-compat alias for `prism gc --hard` — full `cargo clean`, removes
+the entire `target/` tree. The nuclear option: every subsequent build
+is a ~30-minute cold rebuild of all 772 crates. Use only when
+artefacts are corrupt, **never** for routine housekeeping (that is
+what the default `prism gc` / automatic sweep is for).
+
+### Build acceleration (`accel` module)
+Every `cargo` command the CLI spawns is transparently accelerated,
+runtime-detected with graceful degradation:
+- `sccache` on `PATH` (and no pre-existing `RUSTC_WRAPPER`) →
+  `RUSTC_WRAPPER=sccache`. Install: `cargo install sccache`.
+- rustup's `gcc-ld/ld64.lld` (macOS) / `ld.lld` (else) under
+  `<sysroot>/lib/rustlib/<host>/bin/` → injected as
+  `CARGO_TARGET_<HOST>_RUSTFLAGS=-Clink-arg=-fuse-ld=<path>`. Scoped
+  to the host triple so the wasm leg (already wasm-ld) is untouched.
+`PRISM_NO_ACCEL=1` disables both. Detection is memoised per process
+and only applied at `CommandBuilder::build{,_tokio}()` time for the
+`Cargo` program, so `argv()` / `--dry-run` / unit tests are
+unaffected. Runtime-gated (not in `.cargo/config.toml`) so a missing
+tool can never break a plain `cargo` call.
 
 ### `prism lint [--types]`
 `cargo clippy --workspace --all-targets -- -D warnings`.
@@ -160,12 +190,18 @@ scaffold — does not shell out. Lives in `commands::new`.
 
 ## Automatic build-artefact GC
 After every successful `prism build`, `prism test`, or `prism dev`
-(web preflight), the CLI runs `gc::sweep` over `target/`. The sweep
-removes incremental session directories under
-`target/{debug,release}/incremental/` (and matching cross-compilation
-paths like `target/wasm32-unknown-unknown/*/incremental/`) that
-haven't been modified in 3 days. Incremental data is always
-regenerable on the next compile, so this reclaim is provably safe.
+(web preflight), the CLI runs `gc::sweep` over `target/` and returns a
+`SweepReport`. The sweep reclaims, in increasing order of blast radius
+(all provably regenerable, none touching the active dep cache):
+1. incremental session dirs under `target/{debug,release}/incremental/`
+   (+ cross-compile paths) not modified in **3 days**;
+2. the whole `target/wasm32-unknown-unknown/` tree if nothing in it
+   was touched in **7 days** (only live during web work);
+3. one of `debug/` / `release/` if **both** exist and one is idle
+   **14 days** — the freshly-built profile always has a recent mtime
+   so it is never the victim; this reclaims the *other* profile you
+   stopped using while leaving the active profile's 772-crate
+   dependency cache fully intact.
 
 **Why we don't dedup `deps/` / `.fingerprint/`.** An earlier draft
 deduped `<crate>-<hash>` artefacts down to the newest hash per
@@ -189,6 +225,13 @@ sibling crates can reach into it without going through `std::process`.
   constructors, `package()` / `workspace()` / `release()` /
   `arg()` / `args()` / `cwd()` / `env()` / `label()` combinators,
   and `argv()` / `display()` / `build()` / `build_tokio()` outputs.
+  `build{,_tokio}()` layer `accel::cargo_env()` onto `Cargo`
+  commands for keys the caller didn't set explicitly; `argv()` is
+  intentionally left pure so `--dry-run` and unit tests are stable.
+- `accel::cargo_env()` — memoised, runtime-detected build
+  acceleration env (`RUSTC_WRAPPER=sccache`, host-scoped lld
+  `RUSTFLAGS`). Empty when tools are absent or `PRISM_NO_ACCEL` is
+  set. See § Build acceleration.
 - `workspace::Workspace` — filesystem discovery; walks up from
   the current directory until it finds a `Cargo.toml` that lists
   `packages/prism-cli` as a workspace member. Also exposes
@@ -212,18 +255,20 @@ sibling crates can reach into it without going through `std::process`.
   has a store-preserving reload path. Tests in `src/watch.rs`
   cover a tempfile round-trip, an idle non-block, and a quiet-dir
   timeout.
-- `gc::sweep(target_dir)` — post-build GC. Removes incremental
-  session directories older than 3 days from both native
-  (`target/{debug,release}/incremental/`) and cross-compilation
-  (`target/<triple>/*/incremental/`) directories. Called automatically
-  on successful `build`, `test`, and `dev` (web preflight) runs;
-  see § Automatic build-artefact GC. `gc::trim_incremental` is
-  preserved as a thin alias for older callers.
-- `commands::{test, build, dev, lint, fmt, clean}` — each exposes a
-  `plan(args, workspace) -> Vec<CommandBuilder>` pure function
-  and a `run(...)` wrapper. Everything shell-worthy funnels
-  through `commands::execute_plan` so `--dry-run` lives in one
-  place.
+- `gc::sweep(target_dir) -> SweepReport` — post-build GC. Trims
+  stale incremental sessions (3d), an idle wasm tree (7d), and an
+  idle build profile (14d), never the active dep cache. Called
+  automatically on successful `build`, `test`, and `dev` (web
+  preflight) runs; see § Automatic build-artefact GC.
+  `gc::trim_incremental` is preserved as a thin (return-discarding)
+  alias for older callers.
+- `commands::{test, build, dev, lint, fmt, gc, clean}` — each
+  exposes a `plan(args, workspace) -> Vec<CommandBuilder>` pure
+  function and a `run(...)` wrapper. `gc` (soft) is the exception:
+  it sweeps the filesystem directly and its `plan` is empty unless
+  `--hard` (which reuses `clean`'s plan). Everything shell-worthy
+  funnels through `commands::execute_plan` so `--dry-run` lives in
+  one place.
 
 ## package.json integration
 The root `package.json` scripts all delegate to `prism` via

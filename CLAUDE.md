@@ -19,24 +19,43 @@ CRDT inheritance), wired through `license.workspace = true` on every crate.
 - `packages/prism-relay` — Rust. Axum-based Sovereign Portal SSR server (`prism-relayd`) that renders `prism_builder::BuilderDocument` trees to semantic HTML via `ui_runtime::lower_semantic_html`. Replaced the Hono TS relay 2026-04-15.
 
 ## Commands
-The preferred front door is the unified `prism` CLI — every subcommand has a
-`--dry-run` flag that prints the expanded argv without executing, so anything in
-this list can be audited with e.g. `prism --dry-run test`.
+**Always go through the unified `prism` CLI — never invoke `cargo
+build`/`test`/`clippy`/`clean` directly.** The CLI is not just a
+dispatcher: it injects build acceleration (sccache + lld), defaults to
+the fast iteration profile, and runs smart `target/` GC on every run.
+Raw `cargo` skips all of that and is the main reason builds felt
+"ludicrous". Only drop to raw `cargo` for something the CLI genuinely
+doesn't wrap yet (e.g. `cargo tree`, `cargo expand`), never for the
+core build/test/lint loop. Every subcommand has `--dry-run` to print
+the expanded argv, so anything here can be audited with e.g.
+`prism --dry-run build`.
 
 - `cargo run -p prism-cli -- test [-p <pkg>]` — `cargo test --workspace` (or scoped to a single crate). Legacy Playwright e2e flags were retired alongside the Hono TS relay on 2026-04-15.
-- `cargo run -p prism-cli -- build [--target desktop|studio|web|relay|all] [--debug]` — build every deployable. `web` runs `cargo build --target wasm32-unknown-unknown -p prism-shell --no-default-features --features web` followed by `wasm-bindgen --target web --out-dir packages/prism-shell/web` over the emitted cdylib. No separate copy step — wasm-bindgen writes `prism_shell.js` + `prism_shell_bg.wasm` directly next to `web/index.html`.
+- `cargo run -p prism-cli -- build [--target desktop|studio|web|relay|all] [--ship]` — **defaults to the fast debug profile.** `--ship` opts into the slow runtime-optimised release profile (`codegen-units = 1` + thin LTO, ~10x slower to compile — only for actual release artifacts). `web` runs `cargo build --target wasm32-unknown-unknown -p prism-shell --no-default-features --features web` followed by `wasm-bindgen --target web --out-dir packages/prism-shell/web` over the emitted cdylib. No separate copy step — wasm-bindgen writes `prism_shell.js` + `prism_shell_bg.wasm` directly next to `web/index.html`.
 - `cargo run -p prism-cli -- dev [shell|studio|web|relay|all]` — run one or many dev servers. `dev web` runs the cargo + wasm-bindgen preflight, then serves `packages/prism-shell/web/` via `python3 -m http.server 1420`. `all` goes through the process supervisor.
 - `cargo run -p prism-cli -- lint` — `cargo clippy --workspace --all-targets -- -D warnings`.
 - `cargo run -p prism-cli -- fmt [--check]` — `cargo fmt --all`.
-- `cargo run -p prism-cli -- clean` — `cargo clean` to remove the entire `target/` tree. For routine housekeeping, `build`, `test`, and `dev` (web preflight) automatically run `gc::sweep` after every successful run: incremental session directories older than 3 days are removed (always-regenerable data, safe to nuke). Deeper cleanup is `cargo clean -p <crate>` — cargo-aware, honours per-consumer hash pinning.
+- `cargo run -p prism-cli -- gc [--hard]` — **smart, size-aware reclamation.** The default prunes stale incremental sessions (>3d), an idle `wasm32-unknown-unknown` tree (>7d), and an idle build profile (>14d) **without ever touching the active profile's 772-crate dependency cache.** Runs automatically (silently) after every successful `build`/`test`/`dev`. `--hard` is the nuclear `cargo clean` — every subsequent build is a ~30-minute cold rebuild, so it is opt-in, never scheduled. `prism clean` is a back-compat alias for `gc --hard`. **Do not run frequent full cleans — that is the single biggest build-time anti-optimisation on this workspace.**
+
+### Build acceleration (automatic)
+The CLI auto-detects and wires, per cargo invocation, with graceful
+degradation if absent:
+- **`sccache`** → `RUSTC_WRAPPER`. Cross-clean / cross-branch compile
+  cache. Install once: `cargo install sccache`. Without it the cache
+  layer is simply absent — nothing breaks.
+- **`lld`** → native linker via `CARGO_TARGET_<host>_RUSTFLAGS`. Uses
+  the `ld64.lld` rustup already ships under
+  `<sysroot>/lib/rustlib/<host>/bin/gcc-ld/` — no external install.
+
+Set `PRISM_NO_ACCEL=1` to disable both. This is runtime-gated in the
+CLI (not hardcoded in `.cargo/config.toml`) precisely so a missing
+tool can never break a plain `cargo` invocation.
 
 The root `package.json` exposes the same surface via pnpm scripts
 (`pnpm test`, `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm format`) for users
-who prefer that entry point. Everything still decomposes to raw `cargo`
-under the hood — `prism` is purely a dispatcher, not a new layer of
-abstraction. The web target additionally expects `wasm-bindgen` on PATH:
-`cargo install wasm-bindgen-cli` with a version that matches the
-`wasm-bindgen` crate pinned in the workspace manifest.
+who prefer that entry point. The web target additionally expects
+`wasm-bindgen` on PATH: `cargo install wasm-bindgen-cli` with a version
+that matches the `wasm-bindgen` crate pinned in the workspace manifest.
 
 ## Style
 - Rust 2021 edition, strict clippy.
@@ -55,7 +74,7 @@ abstraction. The web target additionally expects `wasm-bindgen` on PATH:
 ## Workflow
 After every implementation:
 1. Write/update Rust tests in `src/**/*.rs` (`#[cfg(test)]`).
-2. Run `cargo test --workspace` (and `cargo clippy` if you touched anything non-trivial).
+2. Run `prism test` (and `prism lint` if you touched anything non-trivial) — via the CLI, never raw `cargo`, so acceleration + GC apply.
 3. Update the affected package's `CLAUDE.md` if the public API changed.
 4. Update `docs/dev/clay-migration-plan.md` if phasing or decisions moved.
 5. **For UI / `prism-ui-runtime` changes**: use the visual testing harness to verify.

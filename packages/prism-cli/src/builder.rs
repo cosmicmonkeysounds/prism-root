@@ -200,6 +200,19 @@ impl CommandBuilder {
         out
     }
 
+    /// Build-acceleration env (sccache wrapper + lld linker) layered
+    /// onto every `cargo` command, but only for keys the caller did
+    /// not set explicitly. Non-cargo programs and `--dry-run` argv
+    /// rendering are untouched, so this never affects [`Self::argv`]
+    /// or unit tests that assert on it. See [`crate::accel`].
+    fn accel_env(&self) -> impl Iterator<Item = (&str, &str)> {
+        let is_cargo = self.program == Program::Cargo && self.program_override.is_none();
+        crate::accel::cargo_env()
+            .iter()
+            .filter(move |(k, _)| is_cargo && !self.env.contains_key(k))
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+
     /// Materialise a synchronous [`std::process::Command`].
     pub fn build(&self) -> Command {
         let (program, argv) = self.argv();
@@ -209,6 +222,9 @@ impl CommandBuilder {
             cmd.current_dir(cwd);
         }
         for (k, v) in &self.env {
+            cmd.env(k, v);
+        }
+        for (k, v) in self.accel_env() {
             cmd.env(k, v);
         }
         cmd
@@ -223,6 +239,9 @@ impl CommandBuilder {
             cmd.current_dir(cwd);
         }
         for (k, v) in &self.env {
+            cmd.env(k, v);
+        }
+        for (k, v) in self.accel_env() {
             cmd.env(k, v);
         }
         cmd
