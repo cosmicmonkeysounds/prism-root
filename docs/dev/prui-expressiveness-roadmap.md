@@ -57,6 +57,20 @@ What this RFC adds:
 
 Phasing (§5) lands Wave J in five tight slices.
 
+> **Companion Wave K (§9 below, added 2026-05-20).** Wave J is
+> *additive* — richer expressiveness through inheritance,
+> contracts, mixins, OKLCH. Wave K is the *subtractive* mirror:
+> the codebase audit at the bottom of this doc found three
+> "ideological duplications" (Facet means three things; Component
+> / Widget / Prefab / Block name the same concept across four
+> registration paths; `<host-children/>` and `<slot/>` overlap
+> in role) and several attribute namespaces that earn nothing.
+> Wave J and Wave K share the same ratchet — fewer ways to say the
+> same thing — and should land together. If a Wave J feature is
+> superseded by a Wave K deletion, the Wave K deletion wins
+> (§9.3 on the `<component>` element is the active fork). Read
+> §9 before committing to Wave J Phase 2.
+
 > **One-way-to-do-it principle (Python).** Every file-level
 > composition feature below rides the four existing `<import>`
 > projections from fusion §5.4. New projections are added only
@@ -147,7 +161,14 @@ Cite-grounded — each row is a real `file:line` lookup.
 | Area | Current state | Cite |
 |---|---|---|
 | PRUI parser entry | `parse(source) -> (Document, Vec<ParseError>)` | `prism-core/src/language/prism_ui/grammar.rs:46` |
-| PRUI primitives | `container`, `text`, `heading`, `spacer`, `image`, `input`, `slot`, `host-children`, `component`, `fragment`, `let` | grammar `ast.rs` + `interpret.rs` element tables |
+| PRUI primitives | `container`, `text`, `heading`, `spacer`, `image`, `input`, `slot`, `host-children`, `component`, `fragment`, `let`, `facet`, `teleport`, `script`, `style`, `import`, `match`, `case`, `suspense`, `fallback`, `language`, `dispatch` | grammar `ast.rs` + `interpret.rs` element tables |
+| `<component>` element semantics | **alias for `<container>`** — `"container" \| "component" => { … }` in one match arm; no declaration semantics today (this is the seam Wave J §4.1/§4.3 would change, §9.3 questions whether it should) | `prism-ui-runtime/src/interpret.rs:1739` |
+| `<facet>` element runtime | repeats children once per item in resolved `from=` source — sugar for `<container for="x in items">…</container>` | `prism-ui-runtime/src/interpret.rs:1894-1908` |
+| `<facet>` production usage | **zero** uses across `packages/prism-shell/ui/**` and `apps/*` (grep) | — |
+| `FacetComponent` builder block | `Component::lower_ui` impl reading `items` + `max_items` from `node.props`; clones template per item | `packages/prism-builder/src/facet/render.rs:24-101` |
+| `BuilderDocument.facets` field | **does not exist** — the prism-builder CLAUDE.md row at `:190-194` mentioning `FacetDef` / `FacetKind` / `FacetDataSource` / `FacetTemplate` / `FacetOutput` / `FacetBinding` / `FacetLayout` is stale; grep confirms zero matches for any of those types | `prism-builder/src/document.rs:21-37` |
+| `fct:` namespace runtime | lowers to `data-fct-<key>` semantic attr; no other runtime behaviour | `interpret.rs:3109`, `:3595` |
+| `widget=` import projection | parsed in `collect_imports` but the only handler skips it (matches `"script" \| "dialect"` only) — **dead path** | parser at `interpret.rs:1210`; dispatch at `:1018` |
 | Attribute namespaces (17) | `Bare`, `On`, `Bind`, `ControlFlow`, `Style`, `Facet`, `Signal`, `Aria`, `Data`, `Route`, `Transition`, `Use`, `Class`, `Animate`, `Probe`, `At`, `Identifier` | `prism_ui/ast.rs::AttributeNamespace` |
 | PRSS class inheritance | `extends = "<parent>"` flattens with cycle detection | `prism-core/src/language/prss/stylesheet.rs:111`, `:411`, `:664` |
 | PRSS state variants (parsed) | `:hovered`, `:selected`, `:focused` (suffix list) | `STATE_SUFFIXES` in `interpret.rs:5439` |
@@ -847,14 +868,379 @@ check" was the answer collapses to one declarative line.
 
 ---
 
-## 9. Closing thought
+## 9. Wave K — Ideological consolidation (the Prefab thesis)
+
+**Status:** sketch, added 2026-05-20 after a deep audit of the
+`prism-ui-runtime` element table, the `prism-builder`
+`ComponentRegistry`, and the production `.prui` corpus. Wave J
+adds *new* expressive features (inheritance, contracts, defaults,
+mixins, OKLCH). Wave K is the *subtractive* mirror: it deletes
+mechanisms that exist today but say the same thing in three
+different ways. The two waves are complementary — Wave J makes
+the language *richer*, Wave K makes it *narrower*. Both must land
+for the surface to feel coherent. The user's framing — "facets
+and widgets are fuzzy constructs, really small parts of Prism's
+old Prefab system, which is just a user-facing construct for
+aggregating / composing components" — is the through-line.
+
+### 9.1 The Prefab thesis
+
+At the authoring layer, every named UI artifact is a
+**Component** — the trait that exposes `lower_ui` to the render
+walk and registers a tag with a `TagResolver`. The codebase
+currently registers Components through **five** distinct entry
+points; the user sees one concept, the runtime exposes five:
+
+| Path | Source of truth | Cite |
+|---|---|---|
+| `BUILTINS` table | declarative `BlockSpec` rows (`SpecBlock` interprets them) | `prism-builder/src/starter.rs` — 17 built-ins (`text`/`image`/`container`/`form`/`input`/`button`/`card`/`code`/`divider`/`spacer`/`columns`/`list`/`table`/`tabs`/`accordion`/`facet`/`graph-view`) |
+| `register_core_widgets` | engine-supplied `WidgetContribution` (a `TemplateNode` IR) wrapped in `CoreWidgetBlock` | `prism-builder/src/core_widget.rs` — 45+ Flux / Fitness / CRM / Calendar / etc. domain widgets |
+| `PrefabComponent` | user-authored `PrefabDef` (a node subtree + `ExposedSlot` pins + variants) | `prism-builder/src/prefab.rs` |
+| `LuauComponent` (`luau` feat) | `#[derive(PrismBlock)]` proc-macro that walks a `template()` function through `lower_template` | `prism-builder/src/luau_component.rs` |
+| `<import widget="…">` | parsed by `collect_imports` (`interpret.rs:1210`) — **dead**, the only handler (`:1018`) matches `"script" \| "dialect"` and skips `widget` | `prism-ui-runtime/src/interpret.rs:1018,1210` |
+
+Three live paths exist because each authoring surface
+(declarative spec, IR-from-engine, document-tree-with-slots,
+Luau-from-derive) has structural needs the others don't. But from
+the **user's** side they are all "a thing I write once, register
+under a name, and invoke with a tag." That's one concept dressed
+in five costumes; one of the five is purely vestigial.
+
+**Wave K's claim:** *Prefab*, *Widget*, *Component*, and *Block*
+are not distinct categories — they are the same concept at
+different authoring surfaces. The `Component` trait survives. The
+five registration paths collapse into one logical authoring
+*concept* (a registered tag with a body + props + slots + signals)
+expressed through three *authoring surfaces* (Rust spec, `.prui`
+file, Luau function). The internal "Block trait", "BlockSpec",
+"CoreWidgetBlock", "PrefabComponent", "LuauComponent" become
+implementation details of one path each. The user only writes
+`prism.component{…}` (Luau) or a `<component>` tag (`.prui`) or a
+`BlockSpec` (Rust); the registry only sees a `Component`.
+
+This is the moment the `widget` projection rename in Wave J §4.9
+becomes load-bearing: it isn't just a name cleanup, it is the
+**naming surface** of the consolidation. Wave K is what makes
+Wave J §4.9 honest.
+
+### 9.2 The Facet trinity
+
+`facet` exists in three places that conceptually share one job —
+"repeat children once per item in a data source":
+
+1. **PRUI element** `<facet name="x" from="…">…</facet>` —
+   `interpret.rs:1894-1908`. The comment at `:1884-1886`
+   explicitly admits the redundancy: "Sugars `<container
+   for="post in state.posts">…</container>` into a dedicated tag
+   that reads at the call site as data iteration rather than
+   control-flow plumbing."
+2. **Builder block** `FacetComponent` —
+   `prism-builder/src/facet/render.rs:24-101`. A `Component`
+   reading `items` + `max_items` from `node.props`, cloning the
+   child template per item. Registered as a `BUILTINS` row in
+   `starter.rs`.
+3. **Attribute namespace** `Facet` (`fct:`) — `ast.rs:89`.
+   Classifies any attribute prefixed `fct:` and lowers it to a
+   `data-fct-<key>` semantic attr (`interpret.rs:3109`, `:3595`).
+   Pure pass-through — no runtime behaviour beyond emitting the
+   attribute string.
+
+**Production usage**, verified by grep across
+`packages/prism-shell/ui/**` and `apps/*`:
+
+- `<facet>` element: **zero** uses
+- `fct:` namespace: **zero** uses
+- `FacetComponent` block: only appears in its own unit tests
+  + the `BUILTINS` registration row
+
+**`BuilderDocument` has no `facets` field.** The
+`prism-builder/CLAUDE.md` row at `:190-194` (`FacetDef`,
+`FacetKind`, `FacetDataSource`, `FacetTemplate`, `FacetOutput`,
+`FacetBinding`, `FacetLayout`, `AggregateOp`, `ScriptLanguage`,
+`FacetVariantRule`, `ResolvedFacetData`, `FacetSchema`,
+`SchemaField`, `SchemaFieldKind`, `FacetRecord`,
+`ValidationError`, `FACET_KIND_TAGS`, `AGGREGATE_OP_TAGS`, plus
+the `apply_scalar_bindings` / `evaluate_calculations` /
+`promote_inline_to_component` / `parse_filter_expr` /
+`apply_aggregate` helpers) is **stale** — workspace-wide grep
+returns zero matches for *any* of those types. They were deleted
+in the migration noted at `prism-builder/src/facet/mod.rs:8`:
+"This replaced the `FacetDef` data-model subsystem". The current
+`facet/` directory holds three files (`mod.rs`, `render.rs`,
+`resolve.rs`) and exports two symbols (`FacetComponent`,
+`resolve_template_expressions`).
+
+**Recommendation (Wave K.1).** Delete the `<facet>` element from
+the runtime (line 1894-1908). Delete `FacetComponent` from the
+builder. Delete the `Facet` attribute namespace (or fold `fct:`
+into a generic `data:` pass-through). One repeater primitive:
+`<container for="x in items">…</container>`. Update
+`prism-builder/CLAUDE.md` to remove the dead-type catalogue.
+
+Net change: ~150 LOC deleted, zero features lost, three concepts
+collapsed to one. The same data-iteration ability is available
+through `<container for="x in y">` *and* through composing a user
+component named `<facet>` if the call-site phrasing matters.
+
+### 9.3 The `<component>` element question — is it a tag or a synonym?
+
+`interpret.rs:1739`:
+
+```rust
+"container" | "component" => { … }
+```
+
+`<component>` adds **no** semantics over `<container>` at the
+runtime today. It is an *alias*, not a declaration site. Wave J
+§4.1 / §4.3 propose making `<component name=…>` a real
+declaration site, with `<property>` / `<slot>` children and
+`extends=`. That is **Option A** below. Wave K opens two
+alternatives:
+
+- **(A) Markup component declarations.** Keep Wave J §4.1/§4.3 as
+  drafted. `<component name=…, extends=…>` is the declaration
+  site; the file can hold multiple. This is the Vue SFC route.
+- **(B) File-as-component.** Every `.prui` file's outer element
+  *is* the component body. Properties / slots / inheritance go
+  into a small `<component>` head element at the top, or into a
+  sibling `.luau` (convention pairing). The `<component>`
+  element retires as a tag — its only legal position is the
+  document head. This is the React / Svelte route — the file is
+  the unit.
+- **(C) Luau-as-declaration.** `prism.component{…}` (Wave J §4.9
+  Luau builder) is the *sole* declaration site. `.prui` files
+  are just markup imported by a Luau wrapper that returns the
+  component table. The `<component>` element retires entirely.
+
+The strongest argument for **(A)** is incrementalism — markup
+inheritance is the smallest change from today, and `.prui`-first
+authors don't need to learn Luau. The strongest argument for
+**(B)** is that the file path already names the component, so a
+top-level `<component name=Button>` restates information the
+import already carries — and one tag can be deleted from the
+grammar. The strongest argument for **(C)** is the "one bounded
+runtime" principle from the fusion doc — every component is a
+Luau table the runtime calls, period; markup is just one way to
+*build* that table.
+
+**This is a structural fork.** Wave J Phase 2 (§5.2) lands
+`<component extends=…>` markup; it cannot ship before Wave K
+picks A / B / C. Lean: **(B)** — it kills the worst current
+duplication (the `<component>`-alias-for-`<container>` overload)
+without forcing every author through Luau. But the call needs
+explicit user buy-in; flagged in §10 Open questions of this doc
+and in `docs/dev/clay-migration-plan.md` decision log.
+
+### 9.4 Slot vs. host-children — pick one spelling
+
+`<slot name="X"/>` (interpret.rs:1848-1858) and
+`<host-children name="X"/>` (`:1909-1919`) cover the same use
+case with slightly different precedence:
+
+- `<slot/>` first checks `LowerScope::slots` (template-time AST
+  bindings), then `host_children_by_slot`, then falls back to its
+  own children.
+- `<host-children/>` first checks `host_children_for_slot`, then
+  the broader pre-lowered `host_children_ui`, then its own
+  children.
+
+The runtime distinguishes them because Wave 11.2 added
+`<host-children/>` first and Wave 13.1 retrofitted the named-slot
+map onto both. The comment at `:1865-1867` admits the equivalence:
+"same semantics `<slot/>` carries."
+
+**Production usage** (grep across `packages/prism-shell/ui/**`):
+
+- `<slot name="X">…fallback…</slot>` — **1 file**
+  (`app-window.prui`, three named slots: `menu` / `nav` / `status`)
+- `<host-children/>` — **9 files** (`schema-designer`,
+  `properties-panel`, `app-window` *also*, `launchpad`,
+  `inspector-tree`, `dock-panel`, `builder-canvas`,
+  `signals-panel`, `toast-stack`)
+
+The current convention is *de facto* "use `<host-children/>` for
+the default content slot; use `<slot name=…>` when you want
+named slots with fallbacks." `<slot/>` is the more general form —
+a bare `<slot/>` *is* a `<host-children/>`, and named
+`<slot name="X">…fallback…</slot>` is what `<host-children>`
+can't express today (host-children with named=… exists but
+without inline-fallback semantics in the same readable shape).
+
+**Recommendation (Wave K.4).** Standardise on `<slot/>` —
+specifically:
+
+- `<slot/>` (no name) ≡ today's `<host-children/>` — splice the
+  caller's default children here, or own-children as fallback.
+- `<slot name="X">…fallback…</slot>` — named projection with
+  inline fallback (today's `<slot>` pattern, exactly).
+
+Sunset `<host-children/>` with a one-release deprecation
+diagnostic. Rewrite the 9 production files (mechanical: replace
+`<host-children/>` with `<slot/>`, `<host-children name="X"/>`
+with `<slot name="X"/>`). Drop the runtime arm at `:1909-1919`.
+Delete `host_children_for_slot` / `host_children_ui` from the
+`LowerScope` surface. Net change: one fewer special tag, zero
+features lost.
+
+### 9.5 Attribute namespace audit — load-bearing vs. sugar
+
+The 17 namespaces (`ast.rs:74-152`) split into three tiers based
+on (a) whether the runtime actually dispatches on the namespace
+and (b) whether production code uses the namespace:
+
+**Tier 1 — Load-bearing semantics (keep):**
+
+| NS | What earns its keep | Production .prui files |
+|---|---|---|
+| `Bare` | direct prop assignment | every file |
+| `On` (`@e`) | event handler, lowers to `Connection` | 6 files |
+| `Bind` (`:p`) | two-way signal binding sugar | 0 today, but the design lands with Wave J Phase 2 |
+| `ControlFlow` | `if`/`else-if`/`else`/`for` expansion | every file |
+| `Style` (`style:`) | token-resolved style attribute | most files |
+| `Signal` (`sig:`) | declared signal r/w | 0 today (signal authoring still flows through `<script>` blocks) |
+| `Class` (`class:p`) | reactive class toggle | 0 today |
+| `Identifier` (`class`, `id`) | CSS / inspector addressing | every file |
+
+**Tier 2 — Pure sugar (collapse candidates):**
+
+| NS | What it lowers to | Production uses | Verdict |
+|---|---|---|---|
+| `Aria` (`aria:`) | `aria-*` HTML pass-through | 5 files | **keep** — load-bearing for SSR / a11y |
+| `Data` (`data:`) | `data-*` HTML pass-through | many files | **keep** — bare names would collide with prop assignment |
+| `Route` (`route:`) | `data-<key>` — **`ast.rs:96-106` explicitly states the equivalence**: "the namespace is sugar, not a new runtime concept" | **0** | **delete**, use `data:` |
+| `Facet` (`fct:`) | `data-fct-*` semantic attr | **0** | **delete** (see §9.2) |
+| `Probe` (`probe:`) | `data-probe-*` + Luau `prism.probes:on` hook | 0 in .prui, but the Luau side is wired | **keep** — the runtime subscribes |
+
+**Tier 3 — Incomplete deferred (finish or delete):**
+
+| NS | Status | Production uses | Action |
+|---|---|---|---|
+| `Transition` (`transition:`) | parsed; runtime install deferred (Wave 9.4) | 0 | ship in Wave J Phase 1 *or* delete |
+| `Animate` (`animate:`) | parsed; install deferred (Wave 14.6) | 0 | same — ship or delete |
+| `At` (`at:`) | parsed; multi-stop animation deferred | 0 | same |
+| `Use` (`use:`) | parsed; lowers to `data-use-<id>`; modifier integration pending | 0 (the lone grep hit is a doc-comment in `dock-panel.prui:4`, not a directive) | finish or delete |
+
+**Recommendation (Wave K.2 + K.3).** Two deletions
+(`Route`, `Facet`) drop the namespace count from 17 to 15 with
+zero production impact. The Tier 3 audit then forces a
+ship-or-cut decision per namespace: anything with zero production
+uses and no scheduled implementation in Wave J Phase 1 is up for
+deletion. The "ship eventually" rationale is the same drift that
+left `widget=` parsed-but-dead — let it set the bar.
+
+### 9.6 The `widget=` import projection — already on the books
+
+Wave J §4.9 covered the rename + wire. Wave K's amendment is the
+**deeper question**: given §9.3, does the projection need to
+exist at all?
+
+If the §9.3 fork lands on:
+
+- **Option (A) (markup declarations).** Yes —
+  `<import component="./button.prui"/>` is the obvious shape,
+  matching the rename. Wave J §4.9 stands.
+- **Option (B) (file-as-component).** Yes — same shape; the
+  imported file's outer element *is* the component, the import
+  registers it under the file stem or `as=` alias. Wave J §4.9
+  stands.
+- **Option (C) (Luau-as-declaration).** Mostly no — component
+  imports flow through `<import script="./button.luau"/>` (already
+  wired in §5.4) plus the `prism.component{…}` Luau builder. The
+  `component` projection becomes a narrow synonym for `script`,
+  and may not be worth the slot.
+
+Either way, the dead-code wiring at
+`interpret.rs:1018` must be *fixed* (Wave J §4.9 (b)) or the
+parser entry at `:1210` must be *deleted*. The current state —
+parsed but skipped — is the worst of both worlds: source code
+that promises a behaviour and ships nothing.
+
+### 9.7 Phasing — Wave K slices
+
+Wave K is mostly **subtraction**, so each slice is small and
+independently testable. Lowest-risk-first ordering:
+
+| Slice | Scope | LOC delta | Reversibility |
+|---|---|---|---|
+| K.1 | Delete `<facet>` element + `FacetComponent` + `Facet` namespace + `BUILTINS` row; verify zero production breakage; update `prism-builder/CLAUDE.md` (drop the stale `FacetDef`/`FacetKind`/… catalogue) | ~150 deleted | reversible (git revert) |
+| K.2 | Delete `Route` namespace (`route:` → diagnostics: "use `data:`"); reroute through `Data` | ~20 deleted | reversible |
+| K.3 | Audit Tier 3 namespaces (`Transition` / `Animate` / `At` / `Use`) against Wave J Phase 1 ship list; delete the ones we're not shipping | ~30-100 deleted per namespace dropped | semi-reversible (would need to re-add parser + dispatch) |
+| K.4 | Sunset `<host-children/>` in favour of `<slot/>` with named-slot + fallback semantics; rewrite the 9 production files; delete the runtime arm | ~80 deleted, 9 files touched | reversible during deprecation window |
+| K.5 | Decide §9.3's A/B/C fork *before* Wave J Phase 2 lands `<component extends=…>`; document the decision in `clay-migration-plan.md` | n/a (decision) | one-way once Phase 2 ships |
+| K.6 | Unify the five registration paths in `ComponentRegistry` behind one authoring concept with three skins (Rust `BlockSpec`, `.prui` file, Luau `prism.component{…}`); fold `CoreWidgetBlock` / `PrefabComponent` / `LuauComponent` into implementation details of one path each | ~300 reorg | requires migration of every block + every prefab |
+
+K.1-K.4 are safe near-term wins (a week or two of careful
+deletion + test pass). K.5 is the structural fork Wave J §4.1 /
+§4.3 hinge on — must close before Wave J Phase 2 starts. K.6 is
+the long arc; it ratchets in over several phases and is the
+ultimate destination of the rename in Wave J §4.9.
+
+### 9.8 What Wave K gives us (the subtraction table, mirror of §8)
+
+| Today | After Wave K |
+|---|---|
+| Three ways to repeat children (`<facet>`, `FacetComponent`, `<container for=>`) | One: `<container for="x in items">` |
+| Two ways to splice caller content (`<slot/>`, `<host-children/>`) | One: `<slot name="X">…fallback…</slot>` |
+| Five paths to register a component (`BUILTINS`, `register_core_widgets`, `PrefabComponent`, `LuauComponent`, dead `<import widget>`) | One concept, three authoring skins |
+| 17-entry `AttributeNamespace` enum with 4 pure-sugar variants | 12-14 entries after Tier 2 + Tier 3 cuts |
+| `<component>` element silently aliases `<container>` | one of: real declaration site (A), file head only (B), retired (C) — picked, not drifted |
+| `prism-builder/CLAUDE.md` lies about `FacetDef` etc. | accurate, post-deletion |
+| `widget=` projection parsed-but-dead | wired and renamed (J §4.9) *or* deleted (K.6) |
+
+The ratchet is the same as Wave J's: every cell where "two or
+three mechanisms exist for the same job" collapses to one. Wave J
+adds the *new* features that one mechanism needs to be enough;
+Wave K performs the *deletions* that prove it.
+
+### 9.9 Risks and open questions
+
+1. **The `<facet>` element has zero production uses today but is
+   a documented language feature.** Deleting it is a breaking
+   change for downstream `.prui` authors outside this monorepo
+   (if any). Mitigation: emit a parser diagnostic for one release
+   pointing at the `for=` form before removing.
+2. **The Tier 3 namespace audit (K.3) requires committing to or
+   abandoning the deferred animation pieces.** That's a real
+   product call — does Prism ship the CSS-transition / keyframe
+   surface in Wave J Phase 1, or move it to a later wave? If
+   "later wave", the namespaces should be ripped now and re-added
+   on the day they ship — vestigial grammar attracts drift.
+3. **K.6 (registration unification) interacts with the `Block`
+   trait / `Component` trait split in `prism-builder`.** `Block`
+   was added as "single-trait sugar" over `Component`; if every
+   registered tag becomes a `Component` via one path, the `Block`
+   trait either becomes the canonical name or disappears entirely.
+   Either choice is a workspace-wide rename.
+4. **The `<host-children/>` sunset (K.4) ripples through
+   `packages/prism-shell/ui/components/*.prui`.** Nine files of
+   mechanical replacement, but they're all in the same workspace,
+   so the deletion + rewrite + test pass is one PR.
+5. **The §9.3 fork is genuinely open.** A skim of similar systems
+   (Vue SFC, Svelte, React, SwiftUI, Slint) shows every viable
+   option works in the wild. The right call depends on whether
+   Prism's primary author surface is markup-first (favours A or
+   B) or scripting-first (favours C). The fusion doc's "one
+   bounded runtime" principle leans C; the user's "everything is
+   a Prefab" framing leans B; the path of least disruption is A.
+
+---
+
+## 10. Closing thought
 
 Waves A–H made PRUI *runnable* — script, macro, dialect, lifecycle,
-suspense, animation, multi-projection. Wave J makes it
-*reusable*: inheritance for the cases composition can't reach,
-contracts for the cases nominal-shape would help, defaults so
-authoring doesn't reach into the host, and a PRSS surface as
-expressive as Tailwind v4 + Sass + CSS Color 5 combined while
-staying in one file format with one type story. The fusion doc's
-ratchet — every new feature must collapse N lines to 1 — applies
-here too; the table in §8 is the receipts.
+suspense, animation, multi-projection. Wave J makes it *reusable*:
+inheritance for the cases composition can't reach, contracts for
+the cases nominal-shape would help, defaults so authoring doesn't
+reach into the host, and a PRSS surface as expressive as Tailwind
+v4 + Sass + CSS Color 5 combined — all while staying in one file
+format with one type story. Wave K (§9) makes it *coherent*: the
+audit found five paths to register a component, three ways to
+repeat children, two spellings for slot injection, and four
+attribute namespaces that earn nothing. Each duplication is a
+small papercut on its own; together they're the reason the DSL
+feels larger than it is. The fusion doc's ratchet — every new
+feature must collapse N lines to 1 — applies in both directions:
+**§8 is the additive receipts (Wave J), §9.8 is the subtractive
+receipts (Wave K).** The end state is a surface that's more
+expressive *and* smaller than today's, which is the only kind of
+language change that ages well.
