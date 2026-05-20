@@ -23,10 +23,11 @@ use prism_core::language::prism_ui::{
 use crate::command::{Color, CornerRadius};
 use crate::layout::{ContainerProps, Direction, HoverOverrides, Padding, Sizing};
 
-use super::{
-    eval_truthy, evaluate_expression, interpolate, lookup_path_owned, resolved_attribute_string,
-    stringify_value, LowerScope,
+use super::elements::resolved_attribute_string;
+use super::expression::{
+    eval_truthy, evaluate_expression, interpolate, lookup_path_owned, stringify_value,
 };
+use super::LowerScope;
 
 const REM_PX: f32 = 16.0;
 

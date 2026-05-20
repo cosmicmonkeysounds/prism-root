@@ -1,6 +1,9 @@
 use super::*;
-use crate::layout::{compute, Viewport};
+use crate::command::Color;
+use crate::layout::{compute, ContainerProps, Sizing, TextProps, Viewport};
 use serde_json::json;
+
+use super::style::{parse_f32, parse_sizing};
 
 const FIVE_ELEMENT_SOURCE: &str = r##"<container direction="column" gap="8" padding="16" width="grow" height="grow" style:background="#f0f0f0">
   <text id="title" font-size="24" style:color="#141414">Prism</text>

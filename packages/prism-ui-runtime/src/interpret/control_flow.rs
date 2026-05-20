@@ -16,12 +16,13 @@ use prism_core::language::prism_ui::{
 };
 use prism_core::language::syntax::SourceRange;
 
+use super::elements::{
+    attribute_string, bare_attr_value, evaluate_bare_attr_typed, lower_children,
+};
+use super::expression::{eval_truthy, evaluate_expression, lookup_path_owned};
 #[cfg(feature = "luau")]
 use super::lower_document_with_scope;
-use super::{
-    attribute_string, bare_attr_value, eval_truthy, evaluate_bare_attr_typed, evaluate_expression,
-    lookup_path_owned, lower_children, LowerScope, Node,
-};
+use super::{LowerScope, Node};
 
 /// Build a synthetic control-flow [`Attribute`] (`if` / `else-if` /
 /// `else`) carrying `body` as a `{expr}` value. `range` is the
