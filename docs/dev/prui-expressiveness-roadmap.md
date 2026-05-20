@@ -38,12 +38,14 @@ not on the immediate path.
 | Three ways to repeat children (`<facet>` / `FacetComponent` / `<container for=>`) | One way (`<container for=>`) |
 | Two ways to splice caller content (`<slot/>` / `<host-children/>`) | One way (`<slot/>` with optional `name=` + fallback) |
 | State variants restate property × selector at each cell (N × M lines) | Nested records + pipelines + named values (N + M lines) |
-| Inheritance only via PRSS `extends=`; no markup-level composition | `<component extends=…>` + mixins (`with=[…]`) + derives (`derive=[…]`) |
+| Inheritance only via PRSS `extends=`; no markup-level composition | `<extends file="./parent.prui"/>` head decl + mixins (`with=[…]`) + derives (`derive=[…]`) |
 | Style-modifying behaviours wired by editing the runtime | User-defined attribute macros (`prism.macro{…}`) and traits (`prism.trait{…}`) |
 | Host services (clipboard / network / fs) reached via magic globals | Typed `<capability>` declarations the host provides at lower-time |
 | `darken`/`lighten`/`mix` lerp in sRGB → desaturated colours | OKLCH-backed (callers unchanged) + `with(c, l=±, a=…)` channel adjust + slash-alpha (`accent/50`) |
 | Component props: anything goes, host decides | Declared `<property>` with types, defaults, `required`, discriminated unions |
 | Two closure forms (`\|args\| expr` and `\fn(args)…end`) | One: `\|args\| expr` only (see §2, §9) |
+| Each authoring surface (`.prui` / Luau / Rust / `prism-luau-derive`) emits *its own* downstream artifacts — Luau stubs only auto-flow from PRUI (Wave I), Rust typed handles never auto-flow at all, PRSS isn't callable from Luau or Rust typed-ly | **Schema-first unification** — one canonical `ComponentSchema` / `TraitSchema` per artifact, all surfaces auto-generated from it. Declare in PRUI → Rust gets typed handles + Luau gets stubs for free; declare in Luau → Rust + PRUI get them; declare in Rust via `prism-luau-derive` → Luau + PRUI get them. (§6.14) |
+| Component invocation: `<component>` markup wrapper (alias for `<container>`); shell tags `<shell.icon-button/>` are mixed-case dotted; "is this a primitive or a user component" requires looking at the docs | **PascalCase rule (React / Vue convention)** — `<Card/>` / `<CustomForm/>` / `<AppWindow/>` are components by their PascalCase name; `<container/>` / `<text/>` / `<slot/>` are primitives by their lowercase name. The `<component>` markup tag retires entirely. (§3, §6.1 Part 1) |
 
 The trajectory in three sentences:
 
@@ -143,27 +145,32 @@ the proposal not the principle.
 This doc uses **component** (lowercase, no backticks) as the
 *noun* for any reusable UI definition — what a `.prui` file
 holds, what `prism.component{…}` returns from Luau, what a
-`BlockSpec` row declares in Rust, what `<component name=…>`
-declares inside a parent `.prui` file. **Same artifact,
-different authoring surfaces.** Prism Studio shows them as
-"components" in its UI; this doc keeps that convention.
+`BlockSpec` row declares in Rust. **Same artifact, different
+authoring surfaces.** Prism Studio shows them as "components"
+in its UI; this doc keeps that convention.
 
-### Authoring surfaces — five spellings, one noun
+### Authoring surfaces — three input forms, one noun, one call site
 
-| You write | You call it | Where it lives at runtime |
+| You write | You call it | Tag at the call site |
 |---|---|---|
-| A `.prui` file whose outer element *is* the body | a component (file-as-component) | one `ComponentRegistry` entry; tag = file stem (or `as` alias) |
-| `<component name=Foo>…</component>` inside a `.prui` file | a component (markup decl) | one `ComponentRegistry` entry; tag = `Foo` |
-| `prism.component{props=…, render=…}` in `.luau` | a component (Luau decl) | one `ComponentRegistry` entry; tag = `as` alias |
-| `BlockSpec` row in `starter.rs` / `prism-shell/.../registry.rs` | a component (Rust decl) | one `ComponentRegistry` entry; tag = spec id |
-| `WidgetContribution` + `CoreWidgetBlock` + `register_core_widgets` | a component (engine-provided) | one `ComponentRegistry` entry |
-| `PrefabDef` + `PrefabComponent` | a component (user compound) | one `ComponentRegistry` entry |
+| A `.prui` file (head declarations + body) | a component (file-as-component) | PascalCase of the file stem: `card.prui` → `<Card/>`; `app-window.prui` → `<AppWindow/>` |
+| `prism.component{name="Card", …}` in a `.luau` file | a component (Luau decl) | the `name` field: `<Card/>` |
+| `BlockSpec::new("Card", …)` row in Rust | a component (Rust decl) | the spec id: `<Card/>` (PascalCase) or `<button/>` (lowercase, when overriding a primitive name) |
 
-All six rows produce the *same noun*. The `ComponentRegistry`
-sees a `Component` (the trait); the resolver looks up a tag and
-invokes `Component::lower_ui`. Differences are *where the
-author types* and *what shape the source has* — not what the
-runtime registers.
+All three produce the *same noun*. The `ComponentRegistry`
+sees a `Component` (the trait); the resolver looks up the
+PascalCase tag and invokes `Component::lower_ui`. Differences
+are *where the author types* and *what shape the source has* —
+not what the runtime registers.
+
+The internal Rust-side variants (`WidgetContribution` +
+`CoreWidgetBlock` for engine-shipped components; `PrefabDef` +
+`PrefabComponent` for user compounds; `LuauComponent` for
+derive-emitted) are *bridges from a specific authoring shape to
+the universal schema*, not separate authoring surfaces at the
+language layer. §6.14 (schema unification) makes the bridge
+shape explicit and folds `prism-luau-derive` into one
+schema-codegen pipeline that produces all consumer artifacts.
 
 ### Codebase names that aren't separate concepts
 
@@ -179,15 +186,57 @@ they write a component. The codebase names survive as
 internal-source-level clarity; the authoring surface knows only
 "component".
 
-### The `<component>` PRUI tag is a *separate* construct
+### Components are invoked by name — the PascalCase rule (React / Vue)
 
-- **component** (lowercase, no backticks) — the *noun*. Always
-  "a reusable UI definition."
-- **`<component>`** (backticks + angle brackets) — the specific
-  PRUI markup tag. Today it is a silent alias for `<container>`
-  (`interpret.rs:1739`). §6.1 proposes giving it real
-  declaration semantics; the §6.1 A/B/C fork (Q1 in §8) decides
-  whether the tag survives at all.
+End state: **the component's name *is* the tag**. There is no
+`<component>` markup tag. The PascalCase / lowercase split
+disambiguates:
+
+- **PascalCase tag** (`<Card/>`, `<CustomForm>…</CustomForm>`,
+  `<AppWindow>…</AppWindow>`) → component invocation, looked up
+  by name in the `ComponentRegistry`.
+- **lowercase tag** (`<container>`, `<text>`, `<heading>`,
+  `<input>`, `<image>`, `<slot>`, etc.) → built-in primitive or
+  HTML pass-through.
+
+This is the React / Vue convention. Mature ecosystems converged
+on it for a reason — the visual cue (capital first letter)
+makes "this is a user-defined thing" obvious at the call site,
+and the parser dispatch becomes one branch: "first character
+uppercase? → registry lookup; else → primitive table."
+
+Today's `<component name=Foo>` markup wrapper retires entirely
+(see §6.13). The declaration site moves to one of the three
+authoring surfaces in §6.1; all three register `Foo` so that
+`<Foo/>` works as the call.
+
+### How declarations look — head + body in a `.prui` file
+
+A `.prui` file is one component. Top-of-file declarations
+(`<property>`, `<slot>`, `<contract>`, `<impls>`, `<extends>`)
+form the head; the file's outer body element is the render
+target.
+
+```prui
+<!-- ./card.prui — registers <Card/> -->
+<property name=title, type=string, required>
+<property name=tone,  type=enum<default|primary|danger>, default=default>
+<slot     name=children, signature=() -> ui, optional>
+
+<container with=[Pointable], style={…}>
+  <heading level=3>{props.title}</heading>
+  <slot name=children/>
+</container>
+```
+
+The file stem (`card.prui`) PascalCase-normalises to the tag
+(`<Card/>`). Hyphens uppercase the next letter
+(`app-window.prui` → `<AppWindow/>`). The §6.1 A/B/C fork
+discusses how this generalises to multi-component files,
+Luau-defined components, and Rust-side `BlockSpec`.
+
+### Names in the codebase that aren't the same thing
+
 - **`Component` trait** (`prism-builder/src/component.rs`) —
   the Rust trait every registered component impls. The
   `Component::lower_ui` method is the render contract.
@@ -198,7 +247,10 @@ internal-source-level clarity; the authoring surface knows only
 ### Reading rule
 
 - Lowercase "component" without backticks → the noun.
-- `<component>` in backticks → the PRUI markup tag.
+- `<PascalCase/>` in backticks → an invocation of the named
+  component (`<Card/>`, `<CustomForm/>`).
+- `<lowercase/>` in backticks → a primitive element
+  (`<container/>`, `<slot/>`).
 - `Component` capitalised, no backticks → the Rust trait.
 - "components" (plural) in narrative → the noun, plural.
 
@@ -214,7 +266,8 @@ Each row is a real `file:line` lookup, not a doc claim.
 |---|---|---|
 | Parser entry | `parse(source) -> (Document, Vec<ParseError>)` | `prism-core/src/language/prism_ui/grammar.rs:46` |
 | Element table | `container`, `text`, `heading`, `spacer`, `image`, `input`, `slot`, `host-children`, `component`, `fragment`, `let`, `facet`, `teleport`, `script`, `style`, `import`, `match`, `case`, `suspense`, `fallback`, `language`, `dispatch` | `interpret.rs:1738-1948` |
-| `<component>` semantics | **alias for `<container>`** — one match arm: `"container" \| "component" => { … }`; no declaration semantics today | `interpret.rs:1739` |
+| `<component>` semantics | **alias for `<container>`** — one match arm: `"container" \| "component" => { … }`; no declaration semantics today. **Retires entirely in Phase 6** (§6.13); components are invoked by PascalCase tag (§3, §6.1). | `interpret.rs:1739` |
+| Tag dispatch — PascalCase rule | Not enforced today; unknown tags fall through to a `TagResolver` regardless of case. Mixed-case shell tags (`<shell.icon-button/>`) use dot-namespacing. | `interpret.rs:1929-1948` |
 | `<facet>` runtime | Repeats children once per item in resolved `from=` source — sugar for `<container for="x in items">` | `interpret.rs:1894-1908` |
 | `<facet>` production usage | **zero** uses across `packages/prism-shell/ui/**` and `apps/*` (grep) | — |
 | `<slot/>` runtime | Resolves `LowerScope::slots` → `host_children_by_slot` → own children | `interpret.rs:1848-1858` |
@@ -297,25 +350,26 @@ a brief comparison to today, and a forward link to the detailed
 design in §6. Read this for the destination; read §6 for the
 rationale and §7 for the order.
 
-### 5.1 Authoring a component
+### 5.1 Authoring and invoking a component
 
-Three authoring surfaces (file / markup / Luau), one noun.
+Three authoring surfaces (file / Luau / Rust). One call site
+convention: **PascalCase tag = component invocation; lowercase
+tag = primitive** (React / Vue rule).
 
 ```prui
-<!-- ./button.prui — a file IS a component -->
-<component>
-  <property name=label, type=string, required>
-  <property name=tone,  type=union<default, primary, danger>, default=default>
+<!-- ./button.prui — a file IS a component; registers <Button/> -->
+<property name=label, type=string, required>
+<property name=tone,  type=union<default, primary, danger>, default=default>
 
-  <container with=[Pointable, Focusable], style={…}>
-    <text>{props.label}</text>
-  </container>
-</component>
+<container with=[Pointable, Focusable], style={…}>
+  <text>{props.label}</text>
+</container>
 ```
 
 ```luau
--- ./icon.luau — Luau-authored component
+-- ./icon.luau — Luau-authored component; registers <Icon/>
 return prism.component {
+  name = "Icon",
   props = {
     glyph = { type = "string", required = true },
     size  = { type = "int",    default  = 16 },
@@ -327,20 +381,35 @@ return prism.component {
 ```
 
 ```rust
-// In starter.rs — Rust-authored component
-const ICON_SPEC: BlockSpec = BlockSpec::new("icon", icon_schema)
+// In starter.rs — Rust-authored component; registers <Icon/>
+const ICON_SPEC: BlockSpec = BlockSpec::new("Icon", icon_schema)
     .lower(icon_lower)
     .help("builder.components.icon", "Icon", "…");
 ```
 
-All three register as components in the same `ComponentRegistry`
-under the same tag-resolution path. The `<button/>` callsite
-doesn't care which surface authored the body.
+Use sites — same call shape, regardless of which surface
+authored the component:
 
-**See §6.1** for declaration syntax + the A/B/C fork.
-**§6.2** for property declarations. **§6.3** for inheritance,
-contracts, traits, mixins, derives. **§6.11** for the import
-family.
+```prui
+<container direction=column gap=8>
+  <Button label="Save" tone=primary/>
+  <Icon glyph="check" size=24/>
+</container>
+```
+
+There is no `<component>` markup tag anywhere — declaration
+lives in the file head (or the Luau builder, or the Rust
+spec). Invocation is always the PascalCase name. All three
+surfaces register into the same `ComponentRegistry` and resolve
+through one `TagResolver` — `<Button/>` reads identically
+regardless of which surface authored its body.
+
+**See §6.1** for declaration syntax + the multi-component-file
+question. **§6.2** for property declarations. **§6.3** for
+inheritance, contracts, traits, mixins, derives. **§6.11** for
+the import family. **§6.14** for the schema-first cross-
+language unification that makes typed handles flow
+automatically between PRUI, Luau, and Rust.
 
 ### 5.2 The attribute system — open trait registry
 
@@ -450,21 +519,22 @@ with optional `name=`, optional fallback, optional typed
 signature.
 
 ```prui
-<component>
-  <!-- typed slot with caller-provided scope -->
-  <slot name=row,   signature=(item: Task, index: int) -> ui>
-  <slot name=empty, signature=() -> ui, optional>
-    <text>No tasks yet</text>
-  </slot>
+<!-- ./list.prui — registers <List/> -->
+<property name=items, type=array<Task>, required>
+<slot name=row,   signature=(item: Task, index: int) -> ui>
+<slot name=empty, signature=() -> ui, optional>
+  <text>No tasks yet</text>
+</slot>
 
-  <container if={#items > 0}>
-    <fragment for={t, i in props.items}>
-      <invoke slot=row, args={item=t, index=i}/>
-    </fragment>
-  </container>
-  <invoke slot=empty if={#items == 0}/>
-</component>
+<container if={#items > 0}>
+  <fragment for={t, i in props.items}>
+    <invoke slot=row, args={item=t, index=i}/>
+  </fragment>
+</container>
+<invoke slot=empty if={#items == 0}/>
+```
 
+```prui
 <!-- caller -->
 <List items={tasks}>
   <slot name=row args={item, index}>
@@ -552,7 +622,12 @@ order of runtime cost:
 </macro>
 
 <container with=[Hoverable]>…</container>
-<component name=Card, derive=[Draggable]>…</component>
+
+<!-- ./card.prui — registers <Card/> -->
+<derive traits=[Draggable]/>
+<container>…</container>
+
+<!-- elsewhere -->
 <field label="Title" value={state.title}/>
 ```
 
@@ -565,12 +640,11 @@ provides them at lower-time; missing capabilities fail at
 parse, not at runtime. No magic globals.
 
 ```prui
-<component name=ShareButton>
-  <capability name=clipboard, type=Clipboard>
-  <capability name=network,   type=Network, optional>
+<!-- ./share-button.prui — registers <ShareButton/> -->
+<capability name=clipboard, type=Clipboard>
+<capability name=network,   type=Network, optional>
 
-  <button on:click=$clipboard.write(props.text)>Copy</button>
-</component>
+<button on:click=$clipboard.write(props.text)>Copy</button>
 ```
 
 The relay refuses to provide `FileSystem` to a public-facing
@@ -586,20 +660,21 @@ Props that are "one of these shapes" carry their variant
 fields declaratively; the body pattern-matches.
 
 ```prui
-<component name=Toast>
-  <property name=tone, type=union<
-    info,
-    success { duration: int = 2000 },
-    error   { dismissable: bool = true, retry: action? }
-  >>
+<!-- ./toast.prui — registers <Toast/> -->
+<property name=tone, type=union<
+  info,
+  success { duration: int = 2000 },
+  error   { dismissable: bool = true, retry: action? }
+>>
 
-  <match on=props.tone>
-    <case info>           …                                            </case>
-    <case success(d)>     <progress duration={d}/> …                   </case>
-    <case error(dis, r)>  … <button if={r != nil} on:click={r}>Retry</button> </case>
-  </match>
-</component>
+<match on=props.tone>
+  <case info>           …                                            </case>
+  <case success(d)>     <progress duration={d}/> …                   </case>
+  <case error(dis, r)>  … <button if={r != nil} on:click={r}>Retry</button> </case>
+</match>
+```
 
+```prui
 <Toast tone={error(dismissable=true, retry=$retry-upload)}/>
 ```
 
@@ -630,72 +705,142 @@ Each subsection follows the same shape: Problem → Design →
 Rationale → Wave / Phase → What it deletes → Open questions.
 Forward references to §7 phasing and §8 open questions.
 
-### 6.1 Components — declaration, registration, the three surfaces
+### 6.1 Components — declaration, invocation, the three authoring surfaces
 
 **Problem.** Five distinct registration paths for what is
 conceptually one noun (see §3 Terminology, §4 snapshot). The
 PRUI `<component>` markup tag is a silent alias for
 `<container>` today and has no declaration semantics
 (`interpret.rs:1739`). Authors don't know which surface to
-write to.
+write to, and the call-site syntax (`<shell.icon-button/>`,
+`<facet/>`, mixed-case ad-hoc) has no consistent rule.
 
-**Design.** Three authoring surfaces, one noun, one
-`ComponentRegistry`:
+**Design — two parts.**
 
-1. **File-as-component (`.prui`).** Every `.prui` file's outer
-   element is the component body. Properties / slots /
-   inheritance live in a `<component>` head block at the top of
-   the file (or — depending on the A/B/C fork below — in a
-   sibling `.luau`). Imported as
-   `<import component="./button.prui"/>`, tag name = file stem.
-2. **Markup declaration (`<component name=Foo>…</component>`).**
-   For multiple components in one file; rarely used once
-   file-as-component lands but kept for the in-file case (a
-   `<form>` with three private sub-components).
-3. **Luau (`prism.component{…}`).** Returned from a `.luau`
-   file imported as `component` or `script`. The
-   `prism.component{…}` builder is part of the
-   `prism.<kind>{…}` family (§6.11).
+#### Part 1: Invocation — the PascalCase rule
 
-All three convert to one `Component` trait impl that the
-`ComponentRegistry` holds. The `Block` / `BlockSpec` /
+**Components are invoked by their name.** The first character
+disambiguates:
+
+- **PascalCase** (`<Card/>`, `<AppWindow/>`,
+  `<CustomForm>…</CustomForm>`) → component invocation;
+  resolves via the `ComponentRegistry`'s `TagResolver`.
+- **lowercase** (`<container/>`, `<text/>`, `<slot/>`,
+  `<input/>`) → built-in primitive or HTML pass-through.
+
+Same convention as React, Vue, Svelte, SolidJS. The
+`<component>` markup tag retires entirely (§6.13). Existing
+shell-side tags rename from `<shell.icon-button/>` to
+`<ShellIconButton/>` or `<IconButton/>` under a namespace; the
+migration is mechanical (the dot-namespacing in
+`shell.icon-button` already maps cleanly to PascalCase).
+
+#### Part 2: Declaration — three authoring surfaces
+
+Three surfaces produce a component registration:
+
+1. **File-as-component (`.prui`).** Every `.prui` file *is* a
+   component. Top-of-file declarations (`<property>`,
+   `<slot>`, `<extends>`, `<impls>`, `<contract>`) form the
+   head; the file's outer body element is the render target.
+   The file stem PascalCase-normalises to the tag name
+   (`card.prui` → `<Card/>`; `app-window.prui` →
+   `<AppWindow/>`).
+
+   ```prui
+   <!-- ./card.prui — registers <Card/> -->
+   <property name=title, type=string, required>
+   <property name=tone,  type=enum<default|primary|danger>, default=default>
+   <slot     name=children, signature=() -> ui, optional>
+
+   <container with=[Pointable]>
+     <heading level=3>{props.title}</heading>
+     <slot name=children/>
+   </container>
+   ```
+2. **Luau (`prism.component{…}`).** Returned from a `.luau`
+   file imported as `component` or `script`. Registered tag
+   name comes from the `name = "Card"` field (or the
+   `as` alias at the import site).
+
+   ```luau
+   return prism.component {
+     name  = "Card",
+     props = { title = { type = "string", required = true } },
+     render = |props| prui [[ <container>…</container> ]],
+   }
+   ```
+3. **Rust `BlockSpec`.** A const spec row registers the tag.
+   The spec id is the canonical tag (`BlockSpec::new("Card", …)`
+   → `<Card/>`); lowercase ids stay lowercase
+   (`BlockSpec::new("button", …)` → `<button/>` as a primitive
+   override, used for the 17 starter built-ins).
+
+   ```rust
+   const CARD_SPEC: BlockSpec = BlockSpec::new("Card", card_schema)
+       .lower(card_lower)
+       .help("builder.components.card", "Card", "…");
+   ```
+
+All three flow into one `Component` trait impl in the
+`ComponentRegistry`. The `Block` / `BlockSpec` /
 `CoreWidgetBlock` / `PrefabComponent` / `LuauComponent`
-Rust-side types are kept as source-level clarity but are
-*invisible* at the authoring layer.
+Rust-side types stay as source-level clarity but are
+*invisible* at the authoring layer (§3 Terminology, §6.14
+schema unification).
 
-**The A/B/C fork (Q1 in §8).** Where does the *declaration
-site* live?
+#### Multi-component `.prui` files
 
-- **(A) Markup decl is canonical.** `<component name=…,
-  extends=…>` declarations inside `.prui` files are the
-  declaration site; the file can hold multiple. Vue SFC route.
-- **(B) File-as-component.** Every `.prui` file *is* a
-  component body; declarations live in a head block. The
-  `<component>` element retires as a tag — its only legal
-  position is the document head. React / Svelte route.
-  **Doc lean.**
-- **(C) Luau-as-decl.** `prism.component{…}` is the sole
-  declaration site. `.prui` files are markup imported by a
-  Luau wrapper. The `<component>` element retires entirely.
+A `.prui` file is conventionally one component (file =
+component). The Q6 question (multi-component files in §8)
+asks whether to support multiple top-level PascalCase decls
+in one file. Doc lean: discourage in favour of one file per
+component; the file system + import family (§6.11) makes
+splitting cheap.
 
-Lean (B) because the file path already names the component; a
-top-level `<component name=Button>` restates information the
-import carries. (B) kills the worst current duplication
-(`<component>`-as-alias-for-`<container>`) without forcing
-every author through Luau.
+If multi-component files do land, the syntax is multiple
+top-level PascalCase blocks with their own head + body:
+
+```prui
+<!-- ./forms.prui — registers <forms.TextField/> + <forms.DropdownField/> -->
+<TextField>
+  <property name=label, type=string>
+  <container>…</container>
+</TextField>
+
+<DropdownField>
+  <property name=options, type=array<string>>
+  <container>…</container>
+</DropdownField>
+```
+
+Imported as `<import component="./forms.prui"/> as forms`, the
+tags are `<forms.TextField/>` and `<forms.DropdownField/>`.
+The outer PascalCase element with `<property>` / `<slot>`
+children at top level IS the decl; nested PascalCase is
+invocation, same rule.
 
 **Wave / Phase.** Phase 6 (component declarations + properties
-+ extends) unblocks once the A/B/C decision (Phase 5) closes.
-The decision is one-way; once Phase 6 ships, retreating
-requires a migration.
++ extends). The earlier "A/B/C fork" framing (now Q1 in §8)
+collapses: with PascalCase invocation, the choice is no longer
+"does the `<component>` tag survive?" but "where does the
+declaration text live?" — and the three authoring surfaces
+above each answer it differently for their use case. Default
+recommendation: file-as-component for `.prui`-first authors;
+Luau builder for cross-cutting library distribution; Rust
+`BlockSpec` for built-ins shipped with the engine.
 
-**What it deletes / supersedes.** The `<component>`-as-alias
-behaviour (silently overlapping with `<container>`) goes away
-regardless of which option wins; only the spelling of "where
-do I declare a component" shifts.
+**What it deletes / supersedes.** The `<component>` markup tag
+(silently aliased `<container>` today); the implicit "any
+unknown tag is anyone's guess" dispatch path; the historical
+mixed-case shell tag convention (`<shell.icon-button/>` →
+`<ShellIconButton/>` or namespaced).
 
-**Open questions.** Q1 (A/B/C fork); Q6 (multi-component
-files); Q7 (single `.luau` as both component and script).
+**Open questions.** Q1 (multi-component files — §8 reframed
+to be about the multi-file convention, not the tag question);
+Q6 (the PascalCase-normalisation rule for filenames with
+dots, numerics, leading-underscore — pick once, document); Q7
+(`.luau` as both component and script in one file).
 
 ---
 
@@ -712,30 +857,29 @@ degrade to boolean ladders.
 body, including discriminated unions:
 
 ```prui
-<component>
-  <property name=title,    type=string, required>
-  <property name=subtitle, type=string, default="">
-  <property name=padding,  type=int,    default=16>
-  <property name=onClick,  type=action>
+<!-- ./card.prui — registers <Card/> -->
+<property name=title,    type=string, required>
+<property name=subtitle, type=string, default="">
+<property name=padding,  type=int,    default=16>
+<property name=onClick,  type=action>
 
-  <!-- discriminated union — variant fields carried inline -->
-  <property name=tone, type=union<
-    info,
-    success { duration: int = 2000 },
-    error   { dismissable: bool = true, retry: action? }
-  >>
+<!-- discriminated union — variant fields carried inline -->
+<property name=tone, type=union<
+  info,
+  success { duration: int = 2000 },
+  error   { dismissable: bool = true, retry: action? }
+>>
 
-  <container padding={props.padding} on:click=$props.onClick()>
-    <heading level=3>{props.title}</heading>
-    <text if={props.subtitle != ""}>{props.subtitle}</text>
+<container padding={props.padding} on:click=$props.onClick()>
+  <heading level=3>{props.title}</heading>
+  <text if={props.subtitle != ""}>{props.subtitle}</text>
 
-    <match on=props.tone>
-      <case info>           …                                  </case>
-      <case success(d)>     <progress duration={d}/> …         </case>
-      <case error(dis, r)>  … <button if={r != nil}>Retry</button> </case>
-    </match>
-  </container>
-</component>
+  <match on=props.tone>
+    <case info>           …                                  </case>
+    <case success(d)>     <progress duration={d}/> …         </case>
+    <case error(dis, r)>  … <button if={r != nil}>Retry</button> </case>
+  </match>
+</container>
 ```
 
 **Type set (closed).** `string`, `int`, `number`, `bool`,
@@ -780,33 +924,31 @@ every component that wants the bundle.
 **Design.** Five layered composition primitives, each with a
 distinct cost / overridability tradeoff.
 
-#### Inheritance — `<component extends=Parent>`
+#### Inheritance — `<extends file="./parent.prui"/>` head decl
 
-Shallow, single-parent. The child's body is a *patch* of the
-parent's, allowed only to add `<property>` overrides,
-`<slot>` declarations, and a single optional `<style>` block.
-For structurally different bodies, *compose* with `<Parent>`
-as a child element instead.
+Shallow, single-parent. The child file's body is a *patch* of
+the parent's; head declarations allowed inside an `<extends>`-ing
+file are property overrides, additional slot declarations, and
+a single optional `<style>` block. For structurally different
+bodies, *compose* with `<Parent>` as a child element instead.
 
 ```prui
-<!-- ./base-button.prui -->
-<component>
-  <property name=label, type=string>
-  <property name=tone,  type=enum<default|primary|danger>, default=default>
-  <container tag=button class=[btn, tone:{props.tone}]>
-    <text>{props.label}</text>
-  </container>
-</component>
+<!-- ./base-button.prui — registers <BaseButton/> -->
+<property name=label, type=string>
+<property name=tone,  type=enum<default|primary|danger>, default=default>
 
-<!-- ./danger-button.prui -->
-<component extends="./base-button.prui">
-  <property name=tone, default=danger>
-</component>
+<container tag=button class=[btn, tone:{props.tone}]>
+  <text>{props.label}</text>
+</container>
+
+<!-- ./danger-button.prui — registers <DangerButton/> -->
+<extends file="./base-button.prui"/>
+<property name=tone, default=danger>
 ```
 
 No multi-inheritance, no diamond. Multi-axis variation goes
 through props (`tone`, `size`) or trait composition (below),
-never multiple `extends=`. Parse-time flattening.
+never multiple `<extends>`. Parse-time flattening.
 
 #### Contracts — declared shape, no body
 
@@ -815,15 +957,21 @@ state). Slots accept `accepts=ContractName`; components
 conform *structurally* (no `implements=` keyword).
 
 ```prui
+<!-- ./focusable.prui — registers a contract, not a component -->
 <contract name=Focusable>
   <property name=focused, type=bool>
   <callback name=focus>
   <callback name=blur>
 </contract>
+```
 
-<component>
-  <slot name=control, accepts=Focusable>
-</component>
+```prui
+<!-- ./form-field.prui — registers <FormField/>, uses the contract -->
+<slot name=control, accepts=Focusable>
+
+<container>
+  <slot name=control/>
+</container>
 ```
 
 A component conforms to `Focusable` if its declared
@@ -838,15 +986,21 @@ open attribute registry — a trait names a set of attributes
 the runtime knows how to dispatch.
 
 ```prui
+<!-- ./pointable.prui — registers a trait, not a component -->
 <trait name=Pointable>
   <method name=on-click,   signature=action>
   <method name=on-hover,   signature=action>
   <state  name=is-hovered, type=bool, default=false>
 </trait>
+```
 
-<component impls=[Pointable]>
+```prui
+<!-- ./button.prui — uses the trait -->
+<impls traits=[Pointable]/>
+
+<container>
   …body reads pointer.is-hovered freely…
-</component>
+</container>
 ```
 
 Once a component impls a trait, the trait's attributes appear
@@ -895,8 +1049,11 @@ prism.derive("Draggable", |decl| {
 ```
 
 ```prui
+<!-- ./card.prui — registers <Card/>, expands the Draggable derive -->
 <import script="./draggable.luau"/>
-<component derive=[Draggable]>…</component>
+<derive traits=[Draggable]/>
+
+<container>…</container>
 ```
 
 Same shape Rust `#[derive(Clone)]` uses.
@@ -905,11 +1062,11 @@ Same shape Rust `#[derive(Clone)]` uses.
 
 | Need | Use | Cost | Overridable downstream? |
 |---|---|---|---|
-| Variant of a parent with one override | `extends=Parent` | parse-time | no (single parent) |
+| Variant of a parent with one override | `<extends file="./parent.prui"/>` head | parse-time | no (single parent) |
 | Slot must accept components of a certain shape | `<contract>` + `accepts=` | parse-time | n/a |
-| Open vocabulary of attributes for a component | `<trait>` + `impls=` | runtime dispatch | n/a |
-| Composable behaviour bundle (state + hooks + styles) | `<mixin>` + `with=[…]` | runtime chain + indirect call per event | yes (super()) |
-| Behaviour bundle, no runtime chain needed | `<derive>` + `derive=[…]` | parse-time | no |
+| Open vocabulary of attributes for a component | `<trait>` + `<impls traits=[…]/>` head | runtime dispatch | n/a |
+| Composable behaviour bundle (state + hooks + styles) | `<mixin>` + `with=[…]` on use site | runtime chain + indirect call per event | yes (super()) |
+| Behaviour bundle, no runtime chain needed | `<derive>` + `<derive traits=[…]/>` head | parse-time | no |
 
 **Wave / Phase.** `extends`: Phase 6. Contracts: Phase 7.
 Traits: Phase 8 (the trait registry itself). Mixins: Phase 9.
@@ -1025,20 +1182,23 @@ history, not intent. Typed slot scopes (the React render-prop
   (the current default behaviour).
 
 ```prui
-<component>
-  <slot name=row,   signature=(item: Task, index: int) -> ui>
-  <slot name=empty, signature=() -> ui, optional>
-    <text>No tasks yet</text>
-  </slot>
+<!-- ./list.prui — registers <List/> -->
+<property name=items, type=array<Task>, required>
+<slot name=row,   signature=(item: Task, index: int) -> ui>
+<slot name=empty, signature=() -> ui, optional>
+  <text>No tasks yet</text>
+</slot>
 
-  <container if={#items > 0}>
-    <fragment for={t, i in props.items}>
-      <invoke slot=row, args={item=t, index=i}/>
-    </fragment>
-  </container>
-  <invoke slot=empty if={#items == 0}/>
-</component>
+<container if={#items > 0}>
+  <fragment for={t, i in props.items}>
+    <invoke slot=row, args={item=t, index=i}/>
+  </fragment>
+</container>
+<invoke slot=empty if={#items == 0}/>
+```
 
+```prui
+<!-- callsite -->
 <List items={tasks}>
   <slot name=row args={item, index}>
     <text>{index + 1}. {item.title}</text>
@@ -1197,10 +1357,70 @@ The pipeline form is parsed only when the value position is
 typed `Stateful<T>` or `Animated<T>`. Bare `|` in any other
 expression position parses as logical-or, same as today.
 
+#### Syntactic shape — CSS-Nesting vs YAML (Q12)
+
+PRSS today is TOML-ish: `[selector]` headers + `key = value`
+assignments + brace-expr computed values. The Wave L shapes
+above add CSS-Nesting-style `{…}` blocks with `&:state`
+selectors. The 2024 CSS Nesting spec is the proximate
+reference.
+
+An open alternative: **YAML-based PRSS**. The same content
+expressed as indented data:
+
+```yaml
+class.btn:
+  background: '{ accent }'
+  radius: 8
+  '&:hovered':
+    background: '{ lighten(0.1) }'
+    radius: 12
+  '&:pressed':
+    background: '{ darken(0.1) }'
+  '&:disabled':
+    background: '{ mute }'
+    opacity: 0.5
+```
+
+**Pros of YAML.** Universally recognised; less syntax noise;
+indentation maps cleanly to nesting; strong existing tooling;
+familiar to anyone who's touched Kubernetes / Ansible / GitHub
+Actions.
+
+**Cons of YAML.** Brace-expr values must be quoted strings
+(YAML's inline-dict syntax `{a: 1}` clashes with PRSS's
+`{ luau-expr }`); the pipeline form (`accent | :hovered →
+lighten(0.1)`) doesn't fit YAML; `@color` / `@variant`
+directives need a workaround for YAML's reserved `@`-handling
+in some parsers; `&:hovered` keys need quoting; significant
+whitespace breaks copy-paste from chat / docs / inspectors.
+
+**The deeper issue.** YAML is great for *pure data*. PRSS in
+Wave L is *data + expressions + pipelines + computed values +
+nested selectors*. The expression-heavy parts are exactly what
+YAML handles least gracefully. Adopting YAML would require
+either escaping every expression as a quoted string (which
+defeats the readability win) or building a YAML-superset
+dialect (which loses the "you already know this"
+portability).
+
+**Doc lean:** keep CSS-Nesting. PRSS is a Prism-specific DSL
+already; familiarity with CSS authors is a net positive that
+YAML doesn't replicate, and the expression syntax is
+first-class in CSS-Nesting-shape but quoted-string in YAML.
+
+**Q12 in §8.** Open for discussion. If we adopt YAML, Phase 14
+(state-variant nested records) is the natural landing point
+since it's where the new syntax wraps the old runtime.
+See §11.12 for the deeper "what if we did adopt YAML"
+exploration.
+
 **Wave / Phase.** Phase 14 (Shapes 1 + 2 + named-reference
 plumbing); Phase 15 (named state-responsive value declarations
 in the token table). Depends on the trait registry being live
-(Phase 8) for the parent-context helper resolution.
+(Phase 8) for the parent-context helper resolution. **Blocked
+on Q12** — Phase 14 cannot ship until the syntactic-shape
+choice is committed.
 
 **What it deletes / supersedes.** The four-line per-state
 restatement (retained as a fallback parse path during the
@@ -1352,12 +1572,11 @@ type; the host provides them at lower-time; missing required
 capabilities fail at parse, not at render.
 
 ```prui
-<component name=ShareButton>
-  <capability name=clipboard, type=Clipboard>
-  <capability name=network,   type=Network, optional>
+<!-- ./share-button.prui — registers <ShareButton/> -->
+<capability name=clipboard, type=Clipboard>
+<capability name=network,   type=Network, optional>
 
-  <button on:click=$clipboard.write(props.text)>Copy</button>
-</component>
+<button on:click=$clipboard.write(props.text)>Copy</button>
 ```
 
 Host provision:
@@ -1561,7 +1780,7 @@ in §7.
 | `<host-children/>` element | `interpret.rs:1909-1919` | `<slot/>` (default) with optional `name=` | 4 |
 | `Use` namespace (`use:`) | `ast.rs:115-121` | `derive=` + mixin attrs | 8 |
 | Tier 3 incomplete animation namespaces (`Transition` / `Animate` / `At`) | `ast.rs:108-149` | ship in Phase 1 or delete; same drift trap that left `widget=` dead | 3 |
-| `<component>`-as-`<container>` silent alias | `interpret.rs:1739` | one of: real declaration site (A), file head only (B), retired (C) | 5 (decision), 6 (impl) |
+| `<component>` markup tag (currently aliases `<container>`) | `interpret.rs:1739` | **retired entirely** — components are invoked by PascalCase tag (`<Card/>`), declared via file-as-component / Luau / Rust spec (§3, §6.1) | 6 |
 | Dead `widget=` import projection | `interpret.rs:1210` parses, `:1018` skips | renamed to `component=` and wired | 7 |
 | 17-namespace `AttributeNamespace` enum | `ast.rs:74-152` | open trait registry | 8 |
 | Wave J §4.5 PRSS `@mixin` (would have shipped in J Phase 4) | (would be) | absorbed by §6.8 macro engine | 10 |
@@ -1579,8 +1798,228 @@ The two with real production impact:
 
 - `<host-children/>` (9 files) — mechanical rewrite to
   `<slot/>` in one PR.
-- `<component>` aliasing `<container>` — only matters once
-  the fork (A/B/C) decides whether the tag survives at all.
+- `<component>` aliasing `<container>` — retires regardless;
+  the PascalCase invocation rule (§3, §6.1) makes the markup
+  tag unnecessary. Shell-side `<shell.icon-button/>` →
+  `<ShellIconButton/>` (or namespaced) is a mechanical rename
+  across 48 shell blocks + every callsite.
+
+---
+
+### 6.14 Schema-first cross-language unification
+
+**Problem.** Today the authoring surfaces (`.prui` / Luau /
+Rust `BlockSpec` / Rust struct + `prism-luau-derive`) each emit
+*their own* downstream artifacts. Wave I generates Luau type
+stubs from PRUI but not from Rust-derived components.
+`prism-luau-derive` generates a `Block` impl from a Rust struct
+but doesn't emit Luau type stubs (those come separately). PRUI
+components don't get auto-generated Rust handles; Rust
+components don't get auto-generated PRUI tag schemas. PRSS
+classes don't expose themselves to Luau or Rust callers in any
+typed way. The "declare once, use everywhere" promise is
+partial in every direction.
+
+**Design.** Treat the **schema** —
+`{props, slots, signals, state, hooks, capabilities,
+impls / derives, styles}` — as the universal currency. Every
+authoring surface emits a schema; the schema auto-flows to
+every consumer surface. Authoring surfaces are *input forms*;
+consumer surfaces are *generated outputs*.
+
+#### The five authoring surfaces, all produce a schema
+
+| Surface | Input form | Schema produced |
+|---|---|---|
+| `.prui` file | markup head + body | parsed schema record |
+| Luau `.luau` file | `return prism.component {…}` | table schema record |
+| Rust `BlockSpec` row | `const FOO_SPEC: BlockSpec = …` | constant schema record |
+| Rust struct + `prism-luau-derive` | `#[derive(PrismComponent)]` | derived schema record |
+| PRUI `<contract>` / `<trait>` / `<mixin>` / `<derive>` | shape declaration | partial schema record |
+
+All five compile to one canonical `ComponentSchema` struct (or
+`TraitSchema`, `MixinSchema`, … — one per `prism.<kind>` in
+§6.11). The `prism-luau-derive` crate, today a Rust→Block-impl
+shortcut, becomes the *Rust-side parser* for the schema —
+same role the `.prui` parser plays for the markup side.
+
+#### The four consumer surfaces, all auto-generated from the schema
+
+| Consumer | What auto-flows from a `ComponentSchema` | Today | End state |
+|---|---|---|---|
+| Luau type stubs | Typed call interface (`Button.new(props: {label: string, tone: enum<…>}) -> UI`) | partial (Wave I, PRUI only) | full coverage, all authoring surfaces |
+| Rust typed handles | `pub fn button(props: ButtonProps) -> ComponentRef` constructor + a `ButtonProps` struct | not wired | auto-generated via the schema codegen |
+| Inspector + property panel | Field rows, types, default editor, variant picker | partial (Rust schemas) | full coverage |
+| LSP completions + hover | Tag completion, attribute completion, hover docs | partial (Wave I) | full coverage |
+
+The principle: **schema once, surface many**. A component
+authored in Luau gets Rust handles for free; a component
+authored as a Rust derive gets Luau type stubs for free; a
+component authored in `.prui` gets both. Same for traits,
+mixins, derives, contracts, and (via §6.6) PRSS classes and
+named state-responsive values.
+
+#### `prism-luau-derive` — folded into the unification
+
+Today `prism-luau-derive` is a separate proc-macro crate doing
+two jobs:
+
+1. Parse a Rust struct's attributes into a Component shape.
+2. Emit a `Block` impl that satisfies the `Component` trait.
+
+In the end state, those two jobs split:
+
+1. **Parse:** the macro is the Rust-side input form for the
+   universal schema. Output is a `ComponentSchema` constant —
+   the same shape the `.prui` parser produces.
+2. **Emit:** the *generic schema codegen* (a new crate, or
+   part of `prism-builder`) walks any `ComponentSchema` and
+   emits:
+   - the `Block` / `Component` trait impl (Rust runtime)
+   - the Luau type stubs (`.d.luau` artifacts the analyzer reads)
+   - the Rust typed handle constructor + `…Props` struct
+   - the inspector field schema entry
+
+The macro's emit logic shrinks to "call schema-codegen with my
+parsed schema record." Every other input surface (`.prui`
+parser, Luau `prism.component{…}` evaluator, Rust `BlockSpec`)
+does the same thing.
+
+#### Concrete: a card defined in Luau, used from Rust
+
+```luau
+-- card.luau
+return prism.component {
+  name  = "Card",
+  props = {
+    title    = { type = "string", required = true },
+    tone     = { type = "enum<default|primary|danger>", default = "default" },
+    onClick  = { type = "action" },
+  },
+  slots = {
+    children = { signature = "() -> ui" },
+  },
+  render = |props| prui [[
+    <container with=[Pointable], style={…}, on:click=$props.onClick()>
+      <heading level=3>{props.title}</heading>
+      <slot/>
+    </container>
+  ]],
+}
+```
+
+Schema flow at build time:
+
+- **PRUI consumer:**
+  `<import component="./card.luau"/>` + `<Card title="Hi" tone=primary>…</Card>`
+  — already works (§6.11). The schema makes the markup typed at
+  parse: misspelled `tone=primery` or missing `title=` fails
+  there.
+- **Luau consumer:**
+  `local card = require("./card.luau"); prism.use(card, {title="Hi", tone="primary"})`
+  — the schema produces a typed Luau call signature the
+  analyzer narrows.
+- **Rust consumer (NEW, today not wired):**
+  ```rust
+  use card::{Card, CardProps, CardTone};
+
+  let node = Card::new(CardProps {
+      title: "Hi".into(),
+      tone:  CardTone::Primary,
+      on_click: Some(callback!(|| { … })),
+  });
+  ```
+  The `Card` constructor, `CardProps` struct, and `CardTone`
+  enum are auto-generated from the schema. The Rust side gets
+  full type safety against the component's declared props
+  without writing a single line of FFI.
+
+#### Bidirectional: PRSS / traits / mixins
+
+The same schema-first unification covers the §6.4 trait
+registry and the §6.6 PRSS surface:
+
+- A `<trait name=Pointable>` declared in PRUI auto-generates:
+  - A Luau interface (`type Pointable = {on_click: action,
+    is_hovered: bool, ...}`)
+  - A Rust trait or marker (`pub trait Pointable { … }`)
+  - LSP completions when an author types `pointer.<TAB>`
+- A `prism.trait{…}` declared in Luau auto-exposes to PRUI as
+  an `impls=Pointable` candidate, with the inspector and LSP
+  showing it identically to a PRUI-declared trait.
+- A `[class.card]` defined in PRSS auto-generates a Luau handle
+  (`tokens.class.card` returning the StyleProperties record)
+  so Luau code can dynamically apply the class without
+  restringing the name.
+- A `@color responsive-accent` in PRSS auto-generates a Luau
+  reference (`tokens.colors.responsive_accent`) — a typed
+  state-responsive value the consumer can pass to a
+  `style.background=`.
+
+The conceptual model: **every authored artifact in the
+PRUI/PRSS/Luau stack carries a schema; the schema is the lingua
+franca across the three surfaces**. Today's partial flows
+(Wave I PRUI→Luau, `prism-luau-derive` Rust→Block-impl) are
+two specific bridges. Wave L's end state is *all* bridges, all
+generated from one schema codegen path.
+
+#### What this unlocks
+
+- **Rust apps consume Prism components type-safely.** A native
+  shell consuming a builder-authored library calls into
+  components with typed handles, not stringly-typed props.
+- **Luau authors get IDE completion for Rust-defined
+  components.** No more "what props does `<shell.app-window>`
+  take?" friction.
+- **PRSS classes become callable.** A Luau script that wants
+  to dynamically pick a class gets typed enums, not magic
+  strings.
+- **`prism-luau-derive` becomes thinner**, not thicker — the
+  bidirectional codegen lives in one place, and the derive
+  delegates to it.
+
+#### Wave / Phase
+
+Phase 8 (trait registry) is the prerequisite — once the
+universal `ComponentSchema` / `TraitSchema` / etc. types exist
+in `prism-core`, the schema-codegen pipeline can start being
+wired into each surface. Concretely:
+
+- Phase 8 — define the canonical schema types in `prism-core`.
+- Phase 8.5 — make every input surface (`.prui` parser, Luau
+  evaluator, Rust `BlockSpec`, `prism-luau-derive`) produce
+  the canonical schema instead of its own ad-hoc shape.
+- Phase 9–12 — as mixins / derives / traits / unions land,
+  each gets its own schema kind in the same codegen pipeline.
+- Phase 16 — codegen for the Rust typed handles + the PRSS
+  Luau handles (the "new" consumer surfaces). Could ship
+  earlier if priority dictates.
+
+#### What it deletes / supersedes
+
+- The today-partial flows that each generate a slice of
+  what's needed (Wave I-only Luau stubs from PRUI;
+  derive-only Block impl from Rust struct).
+- Ad-hoc, hand-written FFI between Rust hosts and
+  Prism-defined components.
+- The implicit "Rust authors stay Rust-side, Luau authors
+  stay Luau-side, PRUI authors stay markup-side" silos.
+
+#### Open questions
+
+- Q13 (new — see §8): which `ComponentSchema` types are
+  *closed* (e.g., the `type` set in property declarations) vs
+  *open* (e.g., capability names, mixin names)? The closed
+  parts get proper Rust enums in codegen; the open parts get
+  typed strings + runtime registry lookup.
+- Whether the schema codegen runs at compile time (build.rs +
+  proc-macros) or at runtime (when the registry first loads).
+  Lean: compile time, so the typed handles ship as part of
+  the consumer's binary with no init cost. Runtime fallback
+  for hot-reloaded components.
+- Where `prism-luau-derive` lives after the split. Probably
+  becomes a thin shim in `prism-builder` (no separate crate)
+  once the universal codegen lives there.
 
 ---
 
@@ -1635,10 +2074,18 @@ expansion for the value the table in §10 returns.
 Numbered for cross-reference. **Q1 is the highest priority** —
 it blocks Phase 6.
 
-**Q1. The §6.1 A/B/C fork.** Where does the component
-declaration site live? (A) markup `<component name=…>` decls
-inside `.prui` files; (B) file-as-component; (C)
-Luau-as-decl. Doc lean: B. Decision phase: 5. Blocks Phase 6.
+**Q1. Multi-component `.prui` files.** §6.1 reframed the
+original "A/B/C declaration site" fork — with the PascalCase
+invocation rule (§3, §6.1 Part 1), the `<component>` tag is
+gone in every option, and file-as-component is the doc-lean
+default. The remaining question is whether a single `.prui`
+file may declare *multiple* top-level PascalCase components,
+or whether one-file-one-component is enforced. Proposed:
+discourage but allow, with namespaced import
+(`<import component="./forms.prui"/> as forms` →
+`<forms.TextField/>`, `<forms.DropdownField/>`). Open: do we
+ever want unnamespaced multi-export? Decision affects Phase 6
+scope.
 
 **Q2. Computed property defaults.** §6.2 disallows expression
 defaults to dodge recursion. Should there be a second tier
@@ -1662,10 +2109,17 @@ choice in `prss-reference.md`.
 itself (a `Composite` slot type)? Today no. If demand
 surfaces, gate behind an explicit `recursive` keyword.
 
-**Q6. Multi-component `.prui` files.** Proposed:
-single-component-per-file is the cultural rule; multiple
-top-level components require `as Ns` and bind under
-`<Ns.foo/>`. Open: do we ever want unnamespaced multi-export?
+**Q6. PascalCase-normalisation rules for filenames.** A
+`.prui` file's stem becomes its registered tag name (§6.1).
+`card.prui` → `<Card/>`. `app-window.prui` → `<AppWindow/>`
+(hyphen uppercases next letter). Edge cases needing a pick-once
+ruling: filenames with dots (`foo.bar.prui` → `<FooBar/>`?
+`<Foo.Bar/>`? error?), numerics (`h1.prui`,
+`2fa-prompt.prui`), leading underscore (`_private.prui`),
+all-caps (`CSS-helper.prui`), non-ASCII, and tags conflicting
+with reserved primitive names (`container.prui` →
+`<Container/>` shadows nothing, but `<container/>` lower wins
+on the call side anyway). Decision should land with Phase 6.
 
 **Q7. `.luau` component vs `.luau` script in the same file.**
 Can a `.luau` file return both a component table and helper
@@ -1690,6 +2144,22 @@ libraries register `Draggable` differently → use namespaced
 imports (`<import script="./libA.luau"/> as libA` →
 `with=libA.Draggable`). Bare `with=Draggable` is a parse
 error when two unprefixed imports collide.
+
+**Q12. PRSS syntactic shape — CSS-Nesting vs YAML.** §6.6
+covers the choice and recommends CSS-Nesting (`&:state` +
+brace-expr values + pipeline forms). YAML is an alternative
+that trades expression ergonomics for familiarity. Decision
+should land before Phase 14 ships. See also §11.13 for the
+deeper exploration.
+
+**Q13. Closed vs open schema fields in cross-language codegen.**
+§6.14 raises this. Which `ComponentSchema` fields are *closed*
+(get proper Rust enums in the auto-generated typed handles —
+e.g. the property `type` set, the state-suffix set) vs *open*
+(get typed strings + runtime registry lookup — e.g. capability
+names, mixin names, user-registered trait names)? The dividing
+line affects both compile-time safety and forward compatibility
+when new entries land in the open registries.
 
 ---
 
@@ -1754,7 +2224,7 @@ to the end state across all three waves.
 
 | Task today | LOC | End-state LOC |
 |---|---|---|
-| Button-but-louder-hover variant | new PRSS class + new component (~25 lines) | `<component extends=Button>` + 1 prop default (4 lines) |
+| Button-but-louder-hover variant | new PRSS class + new component (~25 lines) | new file with `<extends file="./button.prui"/>` head + 1 prop default (4 lines) |
 | Lighter / darker / transparent variant of a token colour | hand-tuned hex per call site | `accent/50`, `with(accent, l=+0.05)` (1 expr) |
 | Pressed-state visual feedback | script-toggled class + PRSS variant (~12 lines) | `style.background={accent \| :pressed → darken(0.1)}` (1 line) |
 | 3 props × 4 states on one component | 12 lines (cross-product) | 7 lines (nested record) |
@@ -1780,7 +2250,7 @@ to the end state across all three waves.
 | 2 spellings for "splice caller content" | 1 (`<slot/>`) |
 | PRUI `style:key=` vs PRSS `[selector] key =` (two syntaxes) | 1 nested-record syntax shared |
 | 4 sugar-only namespaces in the enum | 0 (deleted) |
-| `<component>` silently aliases `<container>` | Real declaration site (per fork option) |
+| `<component>` markup tag silently aliases `<container>`; call sites use mixed-case dotted (`<shell.icon-button/>`) | PascalCase invocation rule (React / Vue): `<Card/>` is a component, `<container/>` is a primitive. `<component>` tag retires entirely; declaration moves to file head / Luau builder / Rust spec. |
 | `widget=` import parsed but dropped | Either wired (as `component=`) or deleted |
 | Two closure spellings (`\|args\| expr` and `\fn(args)…end`) | One (`\|args\| expr`) |
 | Stale `prism-builder/CLAUDE.md` Facet catalogue | Accurate documentation |
@@ -1846,17 +2316,20 @@ declaratively. The next step is *effect handlers* in the Koka
 handler:
 
 ```prui
-<component name=Chat>
-  <effect name=user-message, type=string>
-  <button on:click=$yield user-message(input.value)>Send</button>
-</component>
+<!-- ./chat.prui — registers <Chat/> -->
+<effect name=user-message, type=string>
+<button on:click=$yield user-message(input.value)>Send</button>
+```
 
-<component name=ChatRoom>
-  <handle effect=user-message as msg>
-    {append-to-log(msg); broadcast(msg)}
-  </handle>
+```prui
+<!-- ./chat-room.prui — registers <ChatRoom/> -->
+<handle effect=user-message as msg>
+  {append-to-log(msg); broadcast(msg)}
+</handle>
+
+<container>
   <Chat/>
-</component>
+</container>
 ```
 
 This generalises today's signal dispatch into a typed,
@@ -1974,7 +2447,64 @@ phase arrives:
   (`a11y.role`, `data.role`). Lean: keep — they read better
   in markup than the generic form.
 
-### 11.12 Things we deliberately won't do
+### 11.12 PRSS as YAML — the deeper exploration
+
+§6.6 surfaces the YAML-vs-CSS-Nesting fork (Q12 in §8) and
+recommends keeping CSS-Nesting. The musing below is the "what
+if we did adopt YAML" thought experiment carried further.
+
+A YAML-based PRSS could lean into YAML's strengths and work
+around its weaknesses:
+
+- **Inline expressions stay parenthesised.** Borrow Jinja's
+  `{{ expr }}` shape so brace-expr values don't clash with
+  YAML's inline-dict:
+  ```yaml
+  class.btn:
+    background: {{ lighten(accent, 0.1) }}
+  ```
+- **Pipeline forms become a YAML sequence with a pipeline
+  marker:**
+  ```yaml
+  class.btn:
+    background:
+      - {{ accent }}
+      - { state: hovered,  apply: lighten(0.1) }
+      - { state: pressed,  apply: darken(0.1) }
+      - { state: disabled, value: mute }
+  ```
+  Verbose, but YAML-native. Less terse than `|` pipeline,
+  more navigable for tooling that walks YAML AST.
+- **@-directives become top-level YAML keys:**
+  ```yaml
+  '@color':
+    responsive-accent: …
+  '@variant':
+    compact: 'data-density="compact"'
+  ```
+
+This shape would lose terseness but gain:
+
+- **Cross-tool portability.** YAML AST consumers (linters,
+  formatters, schema validators) work without bespoke PRSS
+  tooling.
+- **Schema-first PRSS.** A JSON Schema (or YAML schema) for
+  the PRSS document could be checked by any YAML-aware tool,
+  not just the PRSS parser.
+- **Easier non-Prism consumers.** A relay-side analytics
+  pipeline that reads `.prss` for theming metadata doesn't
+  need to parse PRSS-shape; YAML libraries exist everywhere.
+
+The cost is real: every example in this doc grows by ~50% in
+line count, the pipeline form becomes ~3× more verbose, and
+PRSS stops looking like CSS (the closest analogue most authors
+know). Unless one of the YAML-portability benefits becomes
+load-bearing, the CSS-Nesting shape wins on authoring
+ergonomics. Listed here for the day the portability
+calculation changes (e.g., a major external tool consuming
+`.prss` files).
+
+### 11.13 Things we deliberately won't do
 
 A short list that should NOT happen, even if tempting:
 
