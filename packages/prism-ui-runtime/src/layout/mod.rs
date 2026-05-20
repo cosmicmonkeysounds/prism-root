@@ -30,6 +30,8 @@
 //! authoring of UI trees. See `feedback_clay_luau_authoring` in
 //! auto-memory for the full requirement.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use taffy::prelude::*;
 use taffy::{
@@ -540,17 +542,93 @@ pub fn compute(tree: &Node, viewport: Viewport) -> Vec<RenderCommand> {
 }
 
 /// Same as [`compute`] but with a hovered-node id. When a container
-/// declares `props.hover` and its id matches `hovered_id`, the
-/// overrides are folded in at the moment its `NodeContext` is built —
-/// layout itself doesn't shift (hover affects paint, not box model),
-/// so the only commands that change are the rectangle's colour /
-/// radius. Pass `None` for the resting state.
+/// declares `props.hover` and its id matches `hovered_id` *or any of
+/// its ancestors*, the overrides are folded in at the moment its
+/// `NodeContext` is built — layout itself doesn't shift (hover
+/// affects paint, not box model), so the only commands that change
+/// are the rectangle's colour / radius. Pass `None` for the resting
+/// state.
+///
+/// **Ancestor matching (the CSS `:hover` semantic).** The deepest
+/// hit-test result names a single leaf-ish node, but UI authors
+/// typically want both the leaf *and* its row / card / panel to react.
+/// We pre-compute the ancestor chain of `hovered_id` here and every
+/// container on the chain gets its hover overrides applied — same way
+/// CSS bubbles `:hover` up the DOM. Authors who want strictly-self
+/// hover put the override on the leaf only; authors who want a row
+/// to darken when the user mouses a single field put a hover override
+/// on the row's container and it fires for free.
 pub fn compute_with_hover(
     tree: &Node,
     viewport: Viewport,
     hovered_id: Option<&str>,
 ) -> Vec<RenderCommand> {
     compute_full(tree, &[], viewport, hovered_id)
+}
+
+/// Walk `tree` once to collect the ids of every node along the path
+/// from the root to the node whose id equals `target`. Returns `true`
+/// when found so callers nesting walks (overlay sweep) can stop. The
+/// `out` set receives every non-empty id from the target node up to
+/// (but not past) the root, so the [`build_taffy_subtree`] hover-fold
+/// can match an ancestor's id without re-walking.
+fn collect_hover_path(tree: &Node, target: &str, out: &mut HashSet<String>) -> bool {
+    if target.is_empty() {
+        return false;
+    }
+    match tree {
+        Node::Container { id, children, .. } => {
+            if id == target {
+                if !id.is_empty() {
+                    out.insert(id.clone());
+                }
+                return true;
+            }
+            for child in children {
+                if collect_hover_path(child, target, out) {
+                    if !id.is_empty() {
+                        out.insert(id.clone());
+                    }
+                    return true;
+                }
+            }
+            false
+        }
+        Node::TextInput { id, .. } => {
+            if id == target {
+                if !id.is_empty() {
+                    out.insert(id.clone());
+                }
+                true
+            } else {
+                false
+            }
+        }
+        Node::Text { .. } | Node::Spacer { .. } | Node::Image { .. } => false,
+    }
+}
+
+/// Build the set of ids on the hover path through `tree` plus
+/// `overlays`. Overlays are independent subtrees; the walker tries
+/// each separately. The result is empty when nothing is hovered or
+/// the id isn't reachable — equivalent to the legacy
+/// `Option<&str>::None` case.
+fn hover_path_for(tree: &Node, overlays: &[Overlay], hovered_id: Option<&str>) -> HashSet<String> {
+    let Some(target) = hovered_id else {
+        return HashSet::new();
+    };
+    let mut out = HashSet::new();
+    if collect_hover_path(tree, target, &mut out) {
+        return out;
+    }
+    for overlay in overlays {
+        out.clear();
+        if collect_hover_path(&overlay.node, target, &mut out) {
+            return out;
+        }
+    }
+    out.clear();
+    out
 }
 
 /// Hot-path entry point: compute the main tree, then each overlay in
@@ -569,10 +647,11 @@ pub fn compute_full(
     viewport: Viewport,
     hovered_id: Option<&str>,
 ) -> Vec<RenderCommand> {
+    let hover_path = hover_path_for(tree, overlays, hovered_id);
     let mut out = Vec::new();
-    compute_subtree_into(tree, viewport, hovered_id, 0.0, 0.0, &mut out);
+    compute_subtree_into(tree, viewport, &hover_path, 0.0, 0.0, &mut out);
     for overlay in overlays {
-        compute_overlay_into(overlay, viewport, hovered_id, &mut out);
+        compute_overlay_into(overlay, viewport, &hover_path, &mut out);
     }
     out
 }
@@ -587,19 +666,20 @@ pub fn compute_full_with_hits(
     viewport: Viewport,
     hovered_id: Option<&str>,
 ) -> (Vec<RenderCommand>, Vec<HitRect>) {
+    let hover_path = hover_path_for(tree, overlays, hovered_id);
     let mut commands = Vec::new();
     let mut hits = Vec::new();
     compute_subtree_into_with_hits(
         tree,
         viewport,
-        hovered_id,
+        &hover_path,
         0.0,
         0.0,
         &mut commands,
         &mut hits,
     );
     for overlay in overlays {
-        compute_overlay_into_with_hits(overlay, viewport, hovered_id, &mut commands, &mut hits);
+        compute_overlay_into_with_hits(overlay, viewport, &hover_path, &mut commands, &mut hits);
     }
     (commands, hits)
 }
@@ -607,13 +687,13 @@ pub fn compute_full_with_hits(
 fn compute_subtree_into(
     tree: &Node,
     viewport: Viewport,
-    hovered_id: Option<&str>,
+    hover_path: &HashSet<String>,
     origin_x: f32,
     origin_y: f32,
     out: &mut Vec<RenderCommand>,
 ) -> Option<Size<f32>> {
     let mut taffy: TaffyTree<NodeContext> = TaffyTree::new();
-    let root = build_taffy_subtree(&mut taffy, tree, None, hovered_id);
+    let root = build_taffy_subtree(&mut taffy, tree, None, hover_path);
     let available = Size {
         width: AvailableSpace::Definite(viewport.width),
         height: AvailableSpace::Definite(viewport.height),
@@ -632,14 +712,14 @@ fn compute_subtree_into(
 fn compute_subtree_into_with_hits(
     tree: &Node,
     viewport: Viewport,
-    hovered_id: Option<&str>,
+    hover_path: &HashSet<String>,
     origin_x: f32,
     origin_y: f32,
     commands: &mut Vec<RenderCommand>,
     hits: &mut Vec<HitRect>,
 ) -> Option<Size<f32>> {
     let mut taffy: TaffyTree<NodeContext> = TaffyTree::new();
-    let root = build_taffy_subtree(&mut taffy, tree, None, hovered_id);
+    let root = build_taffy_subtree(&mut taffy, tree, None, hover_path);
     let available = Size {
         width: AvailableSpace::Definite(viewport.width),
         height: AvailableSpace::Definite(viewport.height),
@@ -659,12 +739,12 @@ fn compute_subtree_into_with_hits(
 fn compute_overlay_into_with_hits(
     overlay: &Overlay,
     viewport: Viewport,
-    hovered_id: Option<&str>,
+    hover_path: &HashSet<String>,
     commands: &mut Vec<RenderCommand>,
     hits: &mut Vec<HitRect>,
 ) {
     let mut probe: TaffyTree<NodeContext> = TaffyTree::new();
-    let probe_root = build_taffy_subtree(&mut probe, &overlay.node, None, hovered_id);
+    let probe_root = build_taffy_subtree(&mut probe, &overlay.node, None, hover_path);
     let available = Size {
         width: AvailableSpace::Definite(viewport.width),
         height: AvailableSpace::Definite(viewport.height),
@@ -749,7 +829,7 @@ fn walk_for_hits(
 fn compute_overlay_into(
     overlay: &Overlay,
     viewport: Viewport,
-    hovered_id: Option<&str>,
+    hover_path: &HashSet<String>,
     out: &mut Vec<RenderCommand>,
 ) {
     // Two-pass: lay out at (0,0) to learn the overlay's resolved size,
@@ -760,7 +840,7 @@ fn compute_overlay_into(
     // `emit_commands`, which would couple the main-tree path to the
     // overlay path.
     let mut probe: TaffyTree<NodeContext> = TaffyTree::new();
-    let probe_root = build_taffy_subtree(&mut probe, &overlay.node, None, hovered_id);
+    let probe_root = build_taffy_subtree(&mut probe, &overlay.node, None, hover_path);
     let available = Size {
         width: AvailableSpace::Definite(viewport.width),
         height: AvailableSpace::Definite(viewport.height),
@@ -931,7 +1011,7 @@ fn build_taffy_subtree(
     taffy: &mut TaffyTree<NodeContext>,
     node: &Node,
     parent_direction: Option<Direction>,
-    hovered_id: Option<&str>,
+    hover_path: &HashSet<String>,
 ) -> NodeId {
     match node {
         Node::Container {
@@ -943,14 +1023,17 @@ fn build_taffy_subtree(
             let own_direction = Some(props.direction);
             let child_ids: Vec<NodeId> = children
                 .iter()
-                .map(|c| build_taffy_subtree(taffy, c, own_direction, hovered_id))
+                .map(|c| build_taffy_subtree(taffy, c, own_direction, hover_path))
                 .collect();
             // Fold hover overrides into the resting paint state when
-            // this container is the one being hovered. Layout-affecting
-            // hover changes would need to live on `style` instead;
-            // intentionally not supported — hover is paint-only.
-            let (background, radius) = match (props.hover.as_ref(), hovered_id) {
-                (Some(h), Some(hov)) if hov == id => (
+            // this container is on the hover path (the hovered node or
+            // any of its ancestors — see [`hover_path_for`]). Layout-
+            // affecting hover changes would need to live on `style`
+            // instead; intentionally not supported — hover is
+            // paint-only.
+            let on_path = !id.is_empty() && hover_path.contains(id);
+            let (background, radius) = match (props.hover.as_ref(), on_path) {
+                (Some(h), true) => (
                     h.background.or(props.background),
                     h.radius.unwrap_or(props.radius),
                 ),
@@ -1056,11 +1139,14 @@ fn build_taffy_subtree(
                 (value.clone(), false)
             };
             // Same hover-fold rule as the container arm above: if the
-            // input is the hovered node, swap its resting `background`
-            // for the override's. Layout-affecting hover changes
-            // aren't supported (hover is paint-only).
-            let resolved_background = match (hover.as_ref(), hovered_id) {
-                (Some(h), Some(hov)) if hov == id => h.background.or(*background),
+            // input is on the hover path (its own id, or — for the rare
+            // case an input wraps further interactive descendants — an
+            // ancestor of the hovered node), swap its resting
+            // `background` for the override's. Layout-affecting hover
+            // changes aren't supported (hover is paint-only).
+            let on_path = !id.is_empty() && hover_path.contains(id);
+            let resolved_background = match (hover.as_ref(), on_path) {
+                (Some(h), true) => h.background.or(*background),
                 _ => *background,
             };
             let ctx = NodeContext::TextInput {

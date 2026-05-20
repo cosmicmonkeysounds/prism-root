@@ -25,6 +25,7 @@
   becomes one expression cascade).
 -->
 <container
+    id="field::{target-id}::{key}"
     tag="div"
     direction="column"
     gap="4"
@@ -73,15 +74,26 @@
         style:background="#ffffff"/>
   </container>
 
-  <!-- ── select: pill with chevron + click-to-cycle ──────────── -->
+  <!-- ── select: pill with chevron + click-to-open dropdown ──── -->
+  <!-- The pill itself carries the field-edit attrs so a click on
+       the pill (the deepest hit-test match) dispatches through
+       `handle_field_edit_click`, which opens the anchored
+       dropdown overlay for the kind=select branch. Without these
+       attrs the click landed on the pill leaf with no data-role
+       and the row's outer field-edit handler never fired. -->
   <container
       else-if="{kind == 'select'}"
+      id="{target-id}::{key}::pill"
       tag="button"
       height="28"
       style:radius="4"
-      style:background="#08000000"
-      style:background:hovered="#14000000"
-      data:type="button">
+      data:type="button"
+      data:role="field-edit"
+      data:target-id="{target-id}"
+      data:key="{key}"
+      data:kind="select"
+      data:value="{data-value}"
+      data:options="{options-joined}">
     <container
         direction="row"
         gap="6"
@@ -106,8 +118,11 @@
       direction="row"
       gap="6"
       height="28">
+    <!-- Swatch keeps an explicit `style:background` because the
+         resting colour IS the field value — the runtime button-bg
+         default would mask it. -->
     <container
-        id="{id}::swatch"
+        id="{target-id}::{key}::swatch"
         tag="button"
         width="28"
         height="28"
@@ -123,16 +138,15 @@
          (color kind) — typing edits the hex string directly without
          having to open the picker overlay. `focused="…"` (bare) drives
          the runtime's caret + border-accent paint when this row owns
-         the active field-focus session. -->
+         the active field-focus session. Resting + hover backgrounds
+         come from the runtime's single-line input defaults. -->
     <input
-        id="{id}::hex"
+        id="{target-id}::{key}::hex"
         value="{data-value}"
         placeholder="#000000"
         width="grow"
         height="28"
         font-size="12"
-        style:background="#f5f5f7"
-        style:background:hovered="#e7e9ee"
         focused="{focused ? 'true' : 'false'}"
         data:role="field-edit"
         data:target-id="{target-id}"
@@ -149,14 +163,12 @@
       gap="6"
       height="28">
     <input
-        id="{id}::input"
+        id="{target-id}::{key}::input"
         value="{data-value}"
         placeholder=""
         width="grow"
         height="28"
         font-size="12"
-        style:background="#f5f5f7"
-        style:background:hovered="#e7e9ee"
         focused="{focused ? 'true' : 'false'}"
         data:role="field-edit"
         data:target-id="{target-id}"
@@ -165,7 +177,7 @@
         data:value="{data-value}"
         data:focused="{focused ? 'true' : ''}"/>
     <container
-        id="{id}::browse"
+        id="{target-id}::{key}::browse"
         tag="button"
         direction="row"
         height="28"
@@ -174,8 +186,6 @@
         padding-top="0"
         padding-bottom="0"
         style:radius="4"
-        style:background="#08000000"
-        style:background:hovered="#14000000"
         data:type="button"
         data:role="file-browse"
         data:target-id="{target-id}"
@@ -259,14 +269,12 @@
        fired, and typing never reached the bound prop. -->
   <input
       else
-      id="{id}::input"
+      id="{target-id}::{key}::input"
       value="{data-value}"
       placeholder=""
       width="grow"
       height="28"
       font-size="12"
-      style:background="#f5f5f7"
-      style:background:hovered="#e7e9ee"
       focused="{focused ? 'true' : 'false'}"
       data:role="field-edit"
       data:target-id="{target-id}"

@@ -3146,6 +3146,34 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
             spans = crate::syntax::highlight(&value, lang);
         }
     }
+    // Interaction defaults — single-line inputs are the canonical
+    // "property-row text box" surface, so resting + hover backgrounds
+    // come for free. `.prui` authors override with `style:background`
+    // / `style:background:hovered` when they want a different palette.
+    // Multi-line inputs (code editors, text-buffer primitives) keep
+    // the legacy white-on-nothing default so a 5000-line editor
+    // doesn't gain a stray hover tint.
+    if !multiline {
+        if background.is_none() {
+            background = Some(crate::command::Color {
+                r: 0xf5,
+                g: 0xf5,
+                b: 0xf7,
+                a: 0xff,
+            });
+        }
+        let needs_hover = hover.as_ref().is_none_or(|h| h.background.is_none());
+        if needs_hover {
+            hover
+                .get_or_insert_with(crate::layout::HoverOverrides::default)
+                .background = Some(crate::command::Color {
+                r: 0xe7,
+                g: 0xe9,
+                b: 0xee,
+                a: 0xff,
+            });
+        }
+    }
     Node::TextInput {
         id,
         value,
@@ -3576,6 +3604,41 @@ fn apply_container_attributes(
                 }
             }
             _ => {}
+        }
+    }
+    // Interaction defaults for button-like containers. Authors signal
+    // "this thing is clickable" via `tag="button"` (semantic HTML
+    // intent) or `data:type="button"` (legacy carrier from the Slint
+    // era). Either gets a resting + hover background for free — the
+    // .prui file no longer needs `style:background:hovered="…"` on
+    // every icon button / pill / tab to feel alive. Inline overrides
+    // still win (the helper short-circuits when either field is set).
+    let is_button_like = props.semantic.tag.as_deref() == Some("button")
+        || props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-type" && v == "button");
+    if is_button_like {
+        if props.background.is_none() {
+            props.background = Some(crate::command::Color {
+                r: 0x00,
+                g: 0x00,
+                b: 0x00,
+                a: 0x08,
+            });
+        }
+        let needs_hover = props.hover.as_ref().is_none_or(|h| h.background.is_none());
+        if needs_hover {
+            props
+                .hover
+                .get_or_insert_with(crate::layout::HoverOverrides::default)
+                .background = Some(crate::command::Color {
+                r: 0x00,
+                g: 0x00,
+                b: 0x00,
+                a: 0x14,
+            });
         }
     }
 }
