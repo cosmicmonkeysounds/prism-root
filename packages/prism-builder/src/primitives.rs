@@ -108,6 +108,8 @@ fn text_input_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -
             bl: 4.0,
         },
         semantic,
+        background: None,
+        hover: None,
         focused: false,
         multiline,
         caret_byte: None,
@@ -577,6 +579,8 @@ fn text_buffer_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) 
             bl: 4.0,
         },
         semantic,
+        background: None,
+        hover: None,
         focused: false,
         // `text-buffer` is the multi-line primitive — code editors,
         // note bodies, anywhere a `\n` should be a real line break

@@ -386,6 +386,91 @@ fn production_typing_into_text_field_mutates_bound_prop_end_to_end() {
     );
 }
 
+/// The hex / file / text input inside a field-edit row is the
+/// **deepest** hit-test match when the user clicks the input itself.
+/// Without `data-role="field-edit"` on the input, the click silently
+/// landed on a roleless TextInput and the focus session never opened
+/// — the "string / color fields aren't clickable" symptom. Verify
+/// every kind that renders an input surfaces the routing attrs so a
+/// direct click on the input opens focus.
+#[test]
+fn production_pointer_down_directly_on_text_input_opens_focus_session() {
+    use prism_ui_runtime::layout::Node as RtNode;
+    let shell = Shell::new().expect("boot");
+    // Walk the rendered tree for a TextInput leaf inside a field-edit
+    // row so we can click its actual coordinates (the parent's
+    // padding-area click works without the fix; the input-itself
+    // click is what was broken).
+    fn find_field_input(node: &RtNode) -> Option<(String, String, String)> {
+        match node {
+            RtNode::TextInput { id, semantic, .. } => {
+                let role = semantic
+                    .attrs
+                    .iter()
+                    .find(|(k, _)| k == "data-role")
+                    .map(|(_, v)| v.clone())?;
+                let target = semantic
+                    .attrs
+                    .iter()
+                    .find(|(k, _)| k == "data-target-id")
+                    .map(|(_, v)| v.clone())?;
+                let key = semantic
+                    .attrs
+                    .iter()
+                    .find(|(k, _)| k == "data-key")
+                    .map(|(_, v)| v.clone())?;
+                (role == "field-edit").then_some((id.clone(), target, key))
+            }
+            RtNode::Container { children, .. } => children.iter().find_map(find_field_input),
+            _ => None,
+        }
+    }
+    let nodes = shell.render();
+    let viewport = shell.inner.borrow().viewport;
+    let root = wrap_root(nodes);
+    let (_input_id, target, key) =
+        find_field_input(&root).expect("at least one field-edit text/color/file input present");
+    let mut surface = Surface::new(root, viewport);
+    let _ = surface.commands();
+    // Find the matching input HitRect by its `data-target-id`+`data-key`
+    // so we click its real bounds, not a synthetic padding sample.
+    let input_hit = surface
+        .hit_rects()
+        .iter()
+        .find(|h| {
+            h.attrs
+                .iter()
+                .any(|(k, v)| k == "data-target-id" && v == &target)
+                && h.attrs.iter().any(|(k, v)| k == "data-key" && v == &key)
+                && h.attrs
+                    .iter()
+                    .any(|(k, v)| k == "data-role" && v == "field-edit")
+        })
+        .cloned()
+        .expect("field-edit input present in hit cache");
+    // Sample the centre of the input bounds — the "user clicked the
+    // input itself" case.
+    let cx = input_hit.bounds.x + input_hit.bounds.width * 0.5;
+    let cy = input_hit.bounds.y + input_hit.bounds.height * 0.5;
+    let event = Event::PointerDown {
+        x: cx,
+        y: cy,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::default(),
+    };
+    let hit = surface.hit_test_at(cx, cy).cloned();
+    let dirty = dispatch_event(&shell.inner, &event, hit);
+    assert!(dirty, "direct input click must dirty the frame");
+    let guard = shell.inner.borrow();
+    let focus = guard
+        .state
+        .field_focus
+        .as_ref()
+        .expect("direct input click must open a focus session");
+    assert_eq!(focus.target_id, target);
+    assert_eq!(focus.key, key);
+}
+
 #[test]
 fn production_pointer_down_on_text_field_opens_focus_session() {
     // The properties panel's Body row is a text-kind field-edit. A

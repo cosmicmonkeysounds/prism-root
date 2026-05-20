@@ -2919,6 +2919,8 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
     let mut props = TextProps::default();
     let mut width = Sizing::default();
     let mut height = Sizing::default();
+    let mut background: Option<crate::command::Color> = None;
+    let mut hover: Option<crate::layout::HoverOverrides> = None;
     let mut focused = false;
     let mut multiline = false;
     let mut caret_byte: Option<usize> = None;
@@ -3070,6 +3072,28 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
                     props.color = c;
                 }
             }
+            // `style:background="#…"` / `style:background:hovered="#…"`
+            // give the input its own resting + hover fill. Without these
+            // the input falls back to the legacy white default at emit
+            // time. Inline rows (property fields) use this to put the
+            // hover affordance on the input itself rather than spilling
+            // it onto the parent row.
+            AttributeNamespace::Style => {
+                let (key, state) = split_state_suffix(local);
+                if key == "background" {
+                    if let Some(c) = raw.as_deref().and_then(parse_color) {
+                        match state {
+                            None => background = Some(c),
+                            Some("hovered") => {
+                                hover
+                                    .get_or_insert_with(crate::layout::HoverOverrides::default)
+                                    .background = Some(c);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
             // `bind:value="<node-id>.<key>"` lowers to a
             // `data-bind-value` semantic attr on the input. The shell
             // event router consumes it at pointer-down time to start
@@ -3131,6 +3155,8 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
         height,
         radius: CornerRadius::default(),
         semantic,
+        background,
+        hover,
         focused,
         multiline,
         caret_byte,

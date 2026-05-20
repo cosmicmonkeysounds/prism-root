@@ -132,10 +132,19 @@ mod tests {
         let UiNode::Container { children, .. } = n else {
             panic!("expected container");
         };
+        // `text_lower` wraps every Text leaf in a selectable container,
+        // so each facet child is now a Container holding the Text leaf.
         children
             .iter()
             .map(|c| match c {
                 UiNode::Text { content, .. } => content.clone(),
+                UiNode::Container {
+                    children: inner, ..
+                } => match inner.first() {
+                    Some(UiNode::Text { content, .. }) => content.clone(),
+                    Some(other) => format!("{other:?}"),
+                    None => String::new(),
+                },
                 other => format!("{other:?}"),
             })
             .collect()

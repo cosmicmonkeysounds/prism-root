@@ -102,15 +102,26 @@ fn text_lower(_ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> ui::
             .unwrap_or_default()
     };
     let default_size = level_font_size(p.level.as_str()) as f32;
-    let leaf = text_node(node.id.clone(), content, style, default_size);
+    // Inner leaf carries the level/anchor semantic + the derived id;
+    // the outer wrapping container takes `node.id` so the canvas-preview
+    // tagging walk (which only visits Container variants) attaches
+    // `data-canvas-node="<id>"` here. Without the wrap, clicking the
+    // rendered text bubbled up to the nearest ancestor container — the
+    // page root — and users could never select a Text component to
+    // edit its body / level.
+    let leaf = text_node(format!("{}-text", node.id), content, style, default_size);
     let level_tag = level_to_html_tag(p.level.as_str());
-    if !p.href.is_empty() {
+    let inner = if !p.href.is_empty() {
         let anchored = with_semantic(leaf, Semantic::tag("a").with_attr("href", p.href.clone()));
-        return bare_container(format!("{}-wrap", node.id), vec![anchored], |props| {
+        bare_container(format!("{}-anchor", node.id), vec![anchored], |props| {
             props.semantic = Semantic::tag(level_tag);
-        });
-    }
-    with_semantic(leaf, Semantic::tag(level_tag))
+        })
+    } else {
+        with_semantic(leaf, Semantic::tag(level_tag))
+    };
+    bare_container(node.id.clone(), vec![inner], |props| {
+        props.width = Sizing::Grow;
+    })
 }
 
 fn text_signals() -> Vec<SignalDef> {

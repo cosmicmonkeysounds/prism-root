@@ -139,13 +139,19 @@ mod tests {
             ..Default::default()
         };
         let tree = document_to_ui_tree(&doc, Some(&reg)).expect("root present");
-        match tree {
+        // `text_lower` now wraps the leaf in a container so the canvas
+        // hit-test can route clicks to a selectable node id — drill
+        // one level for the actual text leaf.
+        let UiNode::Container { children, .. } = tree else {
+            panic!("expected wrapping container");
+        };
+        match &children[0] {
             UiNode::Text { content, props, .. } => {
                 assert_eq!(content, "Hello");
                 // h2 default size = 26.0 (from level_font_size).
                 assert_eq!(props.font_size, 26.0);
             }
-            other => panic!("expected Text, got {other:?}"),
+            other => panic!("expected Text child, got {other:?}"),
         }
     }
 
@@ -163,8 +169,11 @@ mod tests {
             ..Default::default()
         };
         let tree = document_to_ui_tree(&doc, Some(&reg)).expect("root present");
-        let UiNode::Text { content, .. } = tree else {
-            panic!("expected Text");
+        let UiNode::Container { children, .. } = tree else {
+            panic!("expected wrapping container");
+        };
+        let UiNode::Text { content, .. } = &children[0] else {
+            panic!("expected Text child");
         };
         assert_eq!(content, "Old fixture");
     }
@@ -272,7 +281,15 @@ mod tests {
         let UiNode::Container { children, .. } = tree else {
             panic!("expected container root");
         };
-        let UiNode::Text { props, .. } = &children[0] else {
+        // text_lower wraps the leaf in a selectable container — the
+        // Text leaf is now one level deeper than it used to be.
+        let UiNode::Container {
+            children: inner, ..
+        } = &children[0]
+        else {
+            panic!("expected text wrapping container");
+        };
+        let UiNode::Text { props, .. } = &inner[0] else {
             panic!("expected Text child");
         };
         assert_eq!(props.color.r, 0x11);
@@ -926,7 +943,17 @@ mod tests {
         assert_eq!(props.gap, 16.0);
         assert!(props.background.is_some());
         assert_eq!(props.radius.tl, 8.0);
-        assert!(matches!(children[0], UiNode::Text { .. }));
+        // text_lower wraps the heading in a container so it's
+        // canvas-selectable; verify it's the wrapping container with
+        // a Text leaf inside instead of a bare Text leaf.
+        let UiNode::Container {
+            children: text_inner,
+            ..
+        } = &children[0]
+        else {
+            panic!("expected wrapping container for text");
+        };
+        assert!(matches!(text_inner[0], UiNode::Text { .. }));
         assert!(matches!(children[1], UiNode::Spacer { .. }));
     }
 }

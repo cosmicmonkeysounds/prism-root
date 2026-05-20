@@ -28,12 +28,12 @@
     tag="div"
     direction="column"
     gap="4"
-    padding-left="4"
-    padding-right="4"
+    padding-left="6"
+    padding-right="6"
     padding-top="6"
     padding-bottom="6"
     style:radius="4"
-    style:background:hovered="#0a000000"
+    style:background:hovered="#10000000"
     role="{kind == 'select' ? 'group' : kind == 'boolean' ? 'group' : 'group'}"
     data:role="field-edit"
     data:key="{key}"
@@ -118,13 +118,28 @@
         data:target-id="{target-id}"
         data:key="{key}"
         data:value="{data-value}"/>
+    <!-- Hex input carries the field-edit attrs so clicking it
+         dispatches through `handle_field_edit_click` → `begin_field_focus`
+         (color kind) — typing edits the hex string directly without
+         having to open the picker overlay. `focused="…"` (bare) drives
+         the runtime's caret + border-accent paint when this row owns
+         the active field-focus session. -->
     <input
         id="{id}::hex"
         value="{data-value}"
         placeholder="#000000"
         width="grow"
         height="28"
-        font-size="12"/>
+        font-size="12"
+        style:background="#f5f5f7"
+        style:background:hovered="#e7e9ee"
+        focused="{focused ? 'true' : 'false'}"
+        data:role="field-edit"
+        data:target-id="{target-id}"
+        data:key="{key}"
+        data:kind="color"
+        data:value="{data-value}"
+        data:focused="{focused ? 'true' : ''}"/>
   </container>
 
   <!-- ── file: text input + Browse button ────────────────────── -->
@@ -140,6 +155,14 @@
         width="grow"
         height="28"
         font-size="12"
+        style:background="#f5f5f7"
+        style:background:hovered="#e7e9ee"
+        focused="{focused ? 'true' : 'false'}"
+        data:role="field-edit"
+        data:target-id="{target-id}"
+        data:key="{key}"
+        data:kind="file"
+        data:value="{data-value}"
         data:focused="{focused ? 'true' : ''}"/>
     <container
         id="{id}::browse"
@@ -228,6 +251,12 @@
   </container>
 
   <!-- ── text / textarea / unknown kind: text input fallback ─── -->
+  <!-- The input carries the field-edit attrs so a click on the
+       input itself (the deepest hit-test match) dispatches through
+       `handle_field_edit_click` and opens a `begin_field_focus`
+       session. Without these attrs the click landed on the inner
+       leaf with no `data-role`, the outer container's role never
+       fired, and typing never reached the bound prop. -->
   <input
       else
       id="{id}::input"
@@ -236,5 +265,13 @@
       width="grow"
       height="28"
       font-size="12"
+      style:background="#f5f5f7"
+      style:background:hovered="#e7e9ee"
+      focused="{focused ? 'true' : 'false'}"
+      data:role="field-edit"
+      data:target-id="{target-id}"
+      data:key="{key}"
+      data:kind="{kind}"
+      data:value="{data-value}"
       data:focused="{focused ? 'true' : ''}"/>
 </container>

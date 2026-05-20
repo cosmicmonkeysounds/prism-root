@@ -14,7 +14,7 @@
 //!
 //! See `docs/dev/clay-migration-plan.md` §17.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use prism_ui_runtime::event::Event;
@@ -22,6 +22,15 @@ use prism_ui_runtime::layout::HitRect;
 
 use crate::services::EventOutcome;
 use crate::shell::ShellInner;
+
+thread_local! {
+    /// Viewport-space pointer-x at the most recent `PointerDown`.
+    /// Stashed before the routing fan-out so handlers that need the
+    /// exact click x (number-field drag-scrub) can read it without
+    /// changing every `PointerHandler` signature. Resets on every
+    /// `PointerDown`; pointer-move / pointer-up don't write to it.
+    static LAST_PRESS_X: Cell<f32> = const { Cell::new(0.0) };
+}
 
 /// Router entry. `hit` carries the runtime's hit-test result for a
 /// pointer event (the topmost container under the cursor). Callers
@@ -72,6 +81,10 @@ fn dispatch_event_inner(
             button,
             modifiers: pointer_modifiers,
         } => {
+            // Number-field drag-scrub needs the actual click x so the
+            // delta is measured from where the user pressed, not the
+            // hit rect's center. Stash it here before any routing runs.
+            LAST_PRESS_X.with(|c| c.set(*x));
             // B4: a pointer-down that *isn't* on a text-input field
             // commits any active field-focus session before any other
             // routing runs. Clicking a chrome button, a second field
@@ -919,7 +932,10 @@ fn handle_field_edit_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bo
             .unwrap_or(0.0);
         let min = attr_value(hit, "data-min").and_then(|s| s.parse::<f64>().ok());
         let max = attr_value(hit, "data-max").and_then(|s| s.parse::<f64>().ok());
-        let start_x = hit.bounds.x + hit.bounds.width * 0.5;
+        // Anchor the drag at the actual pointer-down x. Using the
+        // hit-rect center instead made the first move jump the value
+        // by however far the click landed from center — felt random.
+        let start_x = LAST_PRESS_X.with(|c| c.get());
         let mut guard = inner.borrow_mut();
         guard.state.begin_number_drag(crate::state::NumberDragInit {
             target_id: target,

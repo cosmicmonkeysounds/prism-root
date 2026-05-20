@@ -148,6 +148,19 @@ pub enum Node {
         radius: CornerRadius,
         #[serde(default, skip_serializing_if = "Semantic::is_empty")]
         semantic: Semantic,
+        /// Resting background. `None` keeps the hardcoded white default
+        /// the runtime has always painted; setting `style:background`
+        /// from the DSL overrides it (e.g. property-row inputs paint a
+        /// faint tint so the row pops against the panel).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        background: Option<Color>,
+        /// Declarative hover overrides — same shape and resolution rule
+        /// as `ContainerProps::hover`. Sparse: only fields the input
+        /// actually wants to swap on hover land here. Resolved at
+        /// command-emit time when the input's `id` matches the
+        /// surface's hovered id.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hover: Option<HoverOverrides>,
         /// When `true`, the paint pass draws a 1-px vertical caret bar
         /// after the rendered text + bumps the border colour to the
         /// accent so the user can see where their keystrokes will land.
@@ -892,6 +905,11 @@ enum NodeContext {
         is_placeholder: bool,
         props: TextProps,
         radius: CornerRadius,
+        /// Resolved background colour the paint pass should fill the
+        /// input rectangle with — already hover-folded by
+        /// `build_taffy_subtree`. `None` falls back to the legacy white
+        /// fill so existing untouched inputs render identically.
+        background: Option<Color>,
         focused: bool,
         multiline: bool,
         /// Caret byte offset into `text`. `None` falls back to the
@@ -986,12 +1004,15 @@ fn build_taffy_subtree(
                 .expect("taffy: spacer insert")
         }
         Node::TextInput {
+            id,
             value,
             placeholder,
             props,
             width,
             height,
             radius,
+            background,
+            hover,
             focused,
             multiline,
             caret_byte,
@@ -1034,11 +1055,20 @@ fn build_taffy_subtree(
             } else {
                 (value.clone(), false)
             };
+            // Same hover-fold rule as the container arm above: if the
+            // input is the hovered node, swap its resting `background`
+            // for the override's. Layout-affecting hover changes
+            // aren't supported (hover is paint-only).
+            let resolved_background = match (hover.as_ref(), hovered_id) {
+                (Some(h), Some(hov)) if hov == id => h.background.or(*background),
+                _ => *background,
+            };
             let ctx = NodeContext::TextInput {
                 text,
                 is_placeholder,
                 props: props.clone(),
                 radius: *radius,
+                background: resolved_background,
                 focused: *focused,
                 multiline: *multiline,
                 caret_byte: *caret_byte,
@@ -1337,6 +1367,7 @@ fn emit_commands_with_opacity(
             is_placeholder,
             props,
             radius,
+            background,
             focused,
             multiline,
             caret_byte,
@@ -1348,17 +1379,19 @@ fn emit_commands_with_opacity(
             bracket_match,
             highlight_current_line,
         }) => {
+            // Resting white fill kept as the default so every existing
+            // string-property input renders byte-identically; the DSL's
+            // `style:background` overrides it (and `:hovered` is already
+            // folded in by `build_taffy_subtree`).
+            let fill = background.unwrap_or(Color {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            });
             out.push(RenderCommand::Rectangle {
                 bounds,
-                color: scale_color_alpha(
-                    Color {
-                        r: 255,
-                        g: 255,
-                        b: 255,
-                        a: 255,
-                    },
-                    parent_opacity,
-                ),
+                color: scale_color_alpha(fill, parent_opacity),
                 radius: *radius,
             });
             // Border colour bumps to the accent when the input is the
