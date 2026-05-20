@@ -70,11 +70,12 @@ impl FsImportResolver {
     /// Map an import `kind` to the file extension it is allowed to
     /// resolve. Defence-in-depth: a `script` import can never pull a
     /// `.prss`, a `stylesheet` can never pull a `.luau`, etc.
+    /// The `widget=` projection was Phase-0-removed; component imports
+    /// land in Phase 7 under `component=`.
     fn allowed_ext(kind: &str) -> &'static [&'static str] {
         match kind {
             "script" | "dialect" => &["luau", "lua"],
             "stylesheet" => &["prss"],
-            "widget" => &["prui"],
             _ => &[],
         }
     }

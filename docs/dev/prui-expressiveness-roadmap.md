@@ -131,10 +131,14 @@ the proposal not the principle.
   resolve at parse; inheritance flattens at parse; macros
   expand at parse; pseudo-state flags fire at hit-test. The
   render walk stays bounded.
-- **One closure form.** `|args| expr` (Lua arrow). The fusion
-  doc originally allowed a long form (`\fn(args) … end`) as an
-  alternative; that's rejected — single form across the
-  expressiveness stack (see §9).
+- **One closure form, two body shapes.** `|args| expr` for a
+  single expression, `|args| do … end` for a multi-statement
+  block (last expression is the value; `return` allowed for
+  early exit). Same parameter syntax across both modes — the
+  only difference is body shape. The fusion-doc-rejected
+  long-form `\fn(args) … end` stays rejected; the `do…end`
+  block covers every multi-line case it would have (see §12.5
+  for the design and §9 for the rejected-form rationale).
 - **Pay for what you use.** A `.prui` author writing a static
   page never sees the trait registry, the macro engine, the
   capability system, or the algebraic-prop matcher. Those
@@ -155,8 +159,8 @@ in its UI; this doc keeps that convention.
 
 | You write | You call it | Tag at the call site |
 |---|---|---|
-| A `.prui` file with one or more `<component Name …>` wrappers | a component (markup decl) | `<Name/>` — file-stem-PascalCased if single-component, or `<ns.Name/>` if imported `as ns` for multi-component files |
-| `prism.component{name="Name", …}` in a `.luau` file (single or via a returned table) | a component (Luau decl) | `<Name/>` (with optional `as` namespace) |
+| A `.prui` file with one or more `<component Name …>` wrappers | a component (markup decl) | `<Name/>` if the file is bare, `<Ns.Name/>` if the file declares `<namespace=Ns/>` at its top (§6.1 Part 3); `as=` on the importer overrides |
+| `prism.component{name="Name", …}` in a `.luau` file (single or via a returned table) | a component (Luau decl) | `<Name/>` if bare, `<Ns.Name/>` if the `prism.module{namespace="Ns", …}` builder names it; `as=` overrides |
 | `BlockSpec::new("Name", …)` row in Rust | a component (Rust decl) | the spec id: `<Name/>` (PascalCase) or `<button/>` (lowercase, when overriding a primitive name) |
 
 All three produce the *same noun*. The `ComponentRegistry`
@@ -302,8 +306,8 @@ case; multi-component files bundle a related set (a form-field
 family, a chart system) into one file:
 
 ```prui
-<!-- ./forms.prui — registers <forms.TextField/> and <forms.DropdownField/>
-     (when imported as `as forms`; see §6.11 for namespace rules) -->
+<!-- ./forms.prui — declares the Forms namespace -->
+<namespace=Forms/>
 
 <component TextField
   label: string required,
@@ -333,11 +337,14 @@ family, a chart system) into one file:
 </component>
 ```
 
-When the file holds only one component, the file stem
-PascalCase-normalises to the tag (`card.prui` → `<Card/>`).
-When it holds multiple, the `<import component=…/> as Ns`
-namespace prefixes them (`<forms.TextField/>`,
-`<forms.DropdownField/>`). See §6.11 for resolution rules.
+When a file declares `<namespace=Ns/>` at its top, every
+top-level declaration in it binds under that namespace
+(`<Forms.TextField/>`, `<Forms.DropdownField/>`). Files
+without a `<namespace=…/>` directive bind their declarations
+bare (`<TextField/>`). `as=` on `<import>` overrides whatever
+the file declared. The earlier "file-stem-PascalCased = tag"
+rule is gone (too many edge cases — see Q6 in §8). See §6.11
+for full resolution rules.
 
 ### Names in the codebase that aren't the same thing
 
@@ -364,12 +371,18 @@ namespace prefixes them (`<forms.TextField/>`,
 
 Each row is a real `file:line` lookup, not a doc claim.
 
+**Path note.** The bare `interpret.rs:NNNN` citations below live
+at `packages/prism-ui-runtime/src/interpret.rs` (the 10,882-line
+lowering pass — Phase 0 splits this file). `ast.rs` and
+`grammar.rs` live at `packages/prism-core/src/language/prism_ui/`;
+`stylesheet.rs` at `packages/prism-core/src/language/prss/`.
+
 ### PRUI runtime
 
 | Area | Current state | Cite |
 |---|---|---|
 | Parser entry | `parse(source) -> (Document, Vec<ParseError>)` | `prism-core/src/language/prism_ui/grammar.rs:46` |
-| Element table | `container`, `text`, `heading`, `spacer`, `image`, `input`, `slot`, `host-children`, `component`, `fragment`, `let`, `facet`, `teleport`, `script`, `style`, `import`, `match`, `case`, `suspense`, `fallback`, `language`, `dispatch` | `interpret.rs:1738-1948` |
+| Element table | `container`, `text`, `heading`, `spacer`, `image`, `input`, `slot`, `host-children`, `component`, `fragment`, `let`, `facet`, `teleport`, `script`, `style`, `import`, `match`, `case`, `suspense`, `fallback`, `language`, `dispatch` | `prism-ui-runtime/src/interpret.rs:1738-1948` |
 | `<component>` semantics | **alias for `<container>`** — one match arm: `"container" \| "component" => { … }`; no declaration semantics today. **Retires entirely in Phase 6** (§6.13); components are invoked by PascalCase tag (§3, §6.1). | `interpret.rs:1739` |
 | Tag dispatch — PascalCase rule | Not enforced today; unknown tags fall through to a `TagResolver` regardless of case. Mixed-case shell tags (`<shell.icon-button/>`) use dot-namespacing. | `interpret.rs:1929-1948` |
 | `<facet>` runtime | Repeats children once per item in resolved `from=` source — sugar for `<container for="x in items">` | `interpret.rs:1894-1908` |
@@ -405,8 +418,8 @@ Each row is a real `file:line` lookup, not a doc claim.
 
 | Path | Source | Cite |
 |---|---|---|
-| `BUILTINS` table | 17 declarative `BlockSpec` rows | `prism-builder/src/starter.rs` |
-| `register_core_widgets` | 45+ engine `WidgetContribution` wrapped in `CoreWidgetBlock` | `prism-builder/src/core_widget.rs` |
+| `BUILTINS` table | 16 declarative `BlockSpec` rows + 1 one-off `FacetComponent`; sibling table `primitives.rs` adds 14 `prism.*` shell-primitive specs (same shape, registered separately) | `prism-builder/src/starter.rs:823` + `prism-builder/src/primitives.rs` |
+| `register_core_widgets` | Domain `WidgetContribution`s from `prism-core` (calendar, timekeeping, ledger, spreadsheet, comments, dashboard, habits, goals, fitness, reminders, crm, projects, focus_planner + views) wrapped in `CoreWidgetBlock` | `prism-builder/src/core_widget.rs` |
 | `PrefabComponent` | User `PrefabDef` template + slots | `prism-builder/src/prefab.rs` |
 | `LuauComponent` (`luau` feat) | `#[derive(PrismBlock)]` macro | `prism-builder/src/luau_component.rs` |
 | `<import widget="…">` | Parsed but dead | `interpret.rs:1018, 1210` |
@@ -986,32 +999,59 @@ Rust-side types stay as source-level clarity but are
 *invisible* at the authoring layer (§3, §6.14 schema
 unification).
 
-#### Multi-component files
+#### Multi-component files + file-declared namespaces (Q6 / Q11)
 
 A `.prui` file may contain **any number of top-level
 `<component>` wrappers** (also `<trait>` / `<mixin>` /
 `<macro>`). The user is no longer constrained to one
-component per file:
+component per file.
+
+**File-declared namespaces (the C# rule).** A file may
+declare its own namespace via a `<namespace=Ns/>` directive
+at the top — every top-level declaration in the file binds
+under that namespace. Files without a namespace declaration
+bind their declarations bare. This replaces the earlier
+file-stem-PascalCased rule, which had too many edge cases
+(dots, numerics, leading underscores, all-caps, non-ASCII,
+primitive collisions — see Q6 in §8 for the catalogue).
 
 ```prui
-<!-- ./forms.prui — three components in one file -->
+<!-- ./forms.prui — declares the Forms namespace -->
+<namespace=Forms/>
+
 <component TextField …>…</component>
 <component DropdownField …>…</component>
 <component DateField …>…</component>
 
-<!-- and supporting traits / mixins, also in the same file -->
+<!-- supporting traits / mixins, also bound under Forms -->
 <trait FieldLike, label: string, value: any/>
 <mixin FieldValidation>…</mixin>
 ```
 
-Import + namespace rules (§6.11):
+```prui
+<!-- ./card.prui — no namespace declaration: bare bind -->
+<component Card …>…</component>
+```
 
-- `<import component="./card.prui"/>` — single component,
-  registers under file stem PascalCased (`<Card/>`).
-- `<import component="./forms.prui"/> as forms` — multi-component,
-  namespaced (`<forms.TextField/>`, `<forms.DropdownField/>`).
-- `<import component="./forms.prui"/>` (no `as=`) — bare
-  imports each component into scope; collision = parse error.
+**Import + namespace rules (§6.11):**
+
+- `<import "./card.prui"/>` — the file has no `<namespace=…/>`,
+  so `Card` binds bare → `<Card/>` is the tag.
+- `<import "./forms.prui"/>` — the file declares
+  `<namespace=Forms/>`, so the file's declarations bind under
+  it → `<Forms.TextField/>`, `<Forms.DropdownField/>`, etc.
+  The consumer doesn't need to spell `as=Forms` because the
+  file already says so.
+- `<import "./forms.prui"/> as fields` — `as=` **overrides**
+  the file-declared namespace → `<fields.TextField/>`.
+- Two bare-bound declarations colliding in the importing
+  document = parse error (Q1).
+
+**Luau side.** A `.luau` file's namespace is set via the
+`prism.module{namespace="Ns", entries={…}}` builder (or by
+returning a table with a `namespace` key). The same Q11
+override rule applies — `<import script="./helpers.luau"/>
+as h` overrides whatever namespace the file declared.
 
 #### Component invocation — passing props, hooks, slots
 
@@ -1064,10 +1104,10 @@ proposals (collapsed into header attributes). The
 rename). The `name=` attribute on every declaration kind
 (replaced by PascalCase first-positional token).
 
-**Open questions.** Q1 (collision handling for bare
-multi-component imports); Q6 (PascalCase-normalisation edge
-cases for filenames); Q7 (`.luau` returning mixed
-components + helpers + macros — handled, §6.11).
+**Open questions.** All resolved as of 2026-05-20 — Q1
+(parse error on first collision), Q6 (file-declared
+`<namespace=Ns/>` directive replaces filename mangling), Q7
+(mixed-kind `.luau` returns via a table). See §8.
 
 ---
 
@@ -1085,7 +1125,7 @@ wrapper header (§6.1), using the typed-attribute syntax
 `name: type [= default | required]`. This section covers the
 **type set** and the **discriminated-union** case in detail.
 
-#### The type set (closed)
+#### The type set (default-shipping, but the registry is open)
 
 | Type | Example | Notes |
 |---|---|---|
@@ -1103,19 +1143,43 @@ wrapper header (§6.1), using the typed-attribute syntax
 | `slot` / `slot<sig>` | `children: slot`, `row: slot<(item: Task) -> ui>` | slot prop (§6.5) |
 | `<TraitName>` | `field: Focusable` | structural match against a trait |
 
-The set is closed so the parser-side type-check stays static.
+These are the **default-shipping** entries the trait registry
+ships with. Q13 (§8) resolved against a hard-closed type set —
+user-registered types (e.g., `measurement: Length<m | px | pt>`
+or `nominal: Tagged<UserId, string>`) extend the registry from
+Luau or Rust without grammar edits, and flow into auto-generated
+typed handles via the §6.14 schema codegen.
 
 #### Defaults and `required`
 
 - `key: type = literal` — default value. Must be a **literal**
   (string / number / bool / token / enum case / `nil`), not a
-  `{…}` expression. Avoids the recursive-default class of bugs
-  from Vue's `withDefaults`. Derived defaults compute in the
-  body: `padding={props.padding ?? row.depth * 4}`.
+  `{…}` expression. Keeps the parser-side resolution trivial.
+- `key: type <= {expr}` — **computed default** (Q2 — §8).
+  Topologically resolved across the property graph at call
+  time, cycle-detected by the same logic the PRSS extends-chain
+  validator uses. The expression may reference *other declared
+  properties on the same component* (no nested computeds in
+  the first cut — keeps the topology trivial). Example:
+  ```prui
+  <component TreeRow
+    depth:   int = 0,
+    padding: int <= {depth * 4 + 8}>          <!-- computed from depth -->
+  ```
+  The `<=` arrow distinguishes computed from literal default;
+  `=` is "pin this value" and `<=` is "derive this value." Sites
+  that need the host to override pass the explicit value;
+  otherwise the computed default fires.
 - `key: type required` — required, no default. Missing at call
   site raises a contribution error at lower-time.
 - `key: type` — optional, default is the type's zero
   (`""`, `0`, `false`, `nil`).
+
+The Vue-`withDefaults`-style recursion footguns are avoided
+because (1) computed expressions may only reference other
+*declared* (not computed) properties in the first cut, and (2)
+the topology check runs at parse time, failing loudly before
+runtime.
 
 #### Discriminated unions — props that carry variant fields
 
@@ -1154,14 +1218,18 @@ The "boolean prop ladder" anti-pattern (`is-success` +
 literal defaults: Phase 6 (with the §6.1 unified syntax).
 Discriminated unions + `<case Variant(fields)>` destructure:
 Phase 12 (depends on the trait registry being live for the
-inspector + Luau-narrowing integration).
+inspector + Luau-narrowing integration). Computed defaults
+(`<= {expr}`): Phase 17 (depends on Phase 6 declarations and
+shares the PRSS extends-chain topology checker).
 
 **What it deletes / supersedes.** The `<property name=…>`
 sub-tag idea (collapsed into header attributes, §6.1); the
 boolean-prop-ladder anti-pattern; the "host knows the schema"
-implicit coupling.
+implicit coupling; the "computed defaults are too risky to
+ship" earlier doc lean (Q2 resolved against deferral).
 
-**Open questions.** Q2 (computed defaults — deferred to §11.2).
+**Open questions.** None — Q2 (computed defaults) resolved
+to ship, lands Phase 17.
 
 ---
 
@@ -1257,6 +1325,31 @@ Coherence is Rust-style: two traits with the same method name
 on the same component is a parse-time error unless the author
 disambiguates with `<trait-alias from=A.on-click, as=primary-click>`.
 
+**Self-reference — the `recursive` flag (Q5).** A trait that
+needs to reference itself (a `Composite` slot type, a
+tree-of-`Focusable` contract, a tagged-list trait) declares
+itself `recursive` in the header. Mutually-recursive trait
+clusters declare every participant `recursive`:
+
+```prui
+<trait Composite, recursive,
+  children: slot<() -> Composite> = nil/>      <!-- self-reference allowed -->
+
+<trait TreeNode, recursive,
+  parent: TreeNode?,
+  children: array<TreeNode> = []/>
+
+<!-- Mutual recursion -->
+<trait Folder, recursive, items: array<FileLike>/>
+<trait File,   recursive, parent: Folder/>
+```
+
+Without `recursive`, a self-reference inside the trait header
+fails at parse with a clear "this trait isn't marked
+`recursive`" error. The flag is intentionally explicit so
+authors *opt into* the cycle — accidentally recursive traits
+get caught early.
+
 #### Mixins — composable behaviour (state + hooks + styles)
 
 A mixin is a **trait that supplies implementation**.
@@ -1349,9 +1442,9 @@ attr). Wave J §4.5 PRSS `@mixin` (subsumed by §6.8 macros + a
 `<mixin>`'s embedded `<style>`). Wave J §4.8 variant prefixes
 (`hover:elevated` becomes `with=[Hoverable, Elevated]`).
 
-**Open questions.** Q5 (trait self-reference); Q9 (variant
-precedence with chained prefixes — same answer as mixin
-linearisation: latest wins).
+**Open questions.** All resolved — Q5 (trait self-reference
+via the `recursive` flag, sketched above); Q9 (variant
+precedence: latest wins, mixin linearisation rule). See §8.
 
 ---
 
@@ -1408,9 +1501,9 @@ caring about namespaces.
 | `Route` (`route:`) | **0** | **deleted** (sugar for `data.<k>`; explicitly equivalent per `ast.rs:96-106`) |
 | `Facet` (`fct:`) | **0** | **deleted** (see §6.13) |
 | `Probe` (`probe:`) | 0 in .prui (Luau side wired) | becomes `probe.<name>` trait — load-bearing, runtime subscribes |
-| `Transition` (`transition:`) | 0; install deferred | **ship or delete** in Phase 3 |
-| `Animate` (`animate:`) | 0; install deferred | **ship or delete** in Phase 3 |
-| `At` (`at:`) | 0; deferred | **ship or delete** in Phase 3 |
+| `Transition` (`transition:`) | 0 in `.prui`; install deferred | **subsumed by unified `Animator` trait** in Phase 1 (§6.15); namespace label retires in Phase 3 |
+| `Animate` (`animate:`) | **5 files** (toast, color / connection / modifier / select pickers) use `animate:opacity` / `animate:out-opacity` for overlay fade-ins; lowers to `data-animate-in-*` but the full animator install is deferred | **subsumed by `Animator`** in Phase 1 (§6.15); the 5 live files migrate to `style.opacity={ … \| :entry → from 0 over 200ms }` shape; namespace label retires in Phase 3 |
+| `At` (`at:`) | 0; deferred | **subsumed by `Animator`** in Phase 1 (§6.15); keyframes become `animator.keyframes={…}`; namespace label retires in Phase 3 |
 | `Use` (`use:`) | 0 | **delete** — subsumed by `derive=` + mixin attrs |
 
 Net: 17 → ~12 namespaces as *labels*, but the *registry*
@@ -1425,9 +1518,11 @@ carry the deletions (`route`, `facet`, Tier 3 audit).
 enum itself, the per-namespace dispatch in `interpret.rs`,
 the four sugar-only namespaces.
 
-**Open questions.** Q3 (Tier 3 audit decision); Q8 (pipeline
-`|` vs logical-or — see §6.6); Q11 (cross-library trait
-coherence).
+**Open questions.** All resolved — Q3 (Tier 3 ships via the
+§6.15 unified `Animator` in Phase 1); Q8 (pipeline `|`
+type-position disambiguation, §6.6); Q11 (cross-library trait
+coherence via namespaced imports + file-declared namespaces,
+§6.11). See §8.
 
 ---
 
@@ -1675,77 +1770,30 @@ The pipeline form is parsed only when the value position is
 typed `Stateful<T>` or `Animated<T>`. Bare `|` in any other
 expression position parses as logical-or, same as today.
 
-#### Syntactic shape — CSS-Nesting vs YAML (Q12)
+#### Syntactic shape — CSS-Nesting (Q12 resolved)
 
 PRSS today is TOML-ish: `[selector]` headers + `key = value`
 assignments + brace-expr computed values. The Wave L shapes
 above add CSS-Nesting-style `{…}` blocks with `&:state`
 selectors. The 2024 CSS Nesting spec is the proximate
-reference.
-
-An open alternative: **YAML-based PRSS**. The same content
-expressed as indented data:
-
-```yaml
-class.btn:
-  background: '{ accent }'
-  radius: 8
-  '&:hovered':
-    background: '{ lighten(0.1) }'
-    radius: 12
-  '&:pressed':
-    background: '{ darken(0.1) }'
-  '&:disabled':
-    background: '{ mute }'
-    opacity: 0.5
-```
-
-**Pros of YAML.** Universally recognised; less syntax noise;
-indentation maps cleanly to nesting; strong existing tooling;
-familiar to anyone who's touched Kubernetes / Ansible / GitHub
-Actions.
-
-**Cons of YAML.** Brace-expr values must be quoted strings
-(YAML's inline-dict syntax `{a: 1}` clashes with PRSS's
-`{ luau-expr }`); the pipeline form (`accent | :hovered →
-lighten(0.1)`) doesn't fit YAML; `@color` / `@variant`
-directives need a workaround for YAML's reserved `@`-handling
-in some parsers; `&:hovered` keys need quoting; significant
-whitespace breaks copy-paste from chat / docs / inspectors.
-
-**The deeper issue.** YAML is great for *pure data*. PRSS in
-Wave L is *data + expressions + pipelines + computed values +
-nested selectors*. The expression-heavy parts are exactly what
-YAML handles least gracefully. Adopting YAML would require
-either escaping every expression as a quoted string (which
-defeats the readability win) or building a YAML-superset
-dialect (which loses the "you already know this"
-portability).
-
-**Doc lean:** keep CSS-Nesting. PRSS is a Prism-specific DSL
-already; familiarity with CSS authors is a net positive that
-YAML doesn't replicate, and the expression syntax is
-first-class in CSS-Nesting-shape but quoted-string in YAML.
-
-**Q12 in §8.** Open for discussion. If we adopt YAML, Phase 14
-(state-variant nested records) is the natural landing point
-since it's where the new syntax wraps the old runtime.
-See §11.12 for the deeper "what if we did adopt YAML"
-exploration.
+reference, and Q12 (§8) is resolved: **CSS-Nesting wins**.
+YAML was considered and rejected — expression-heavy content
+reads poorly in YAML, the pipeline shape doesn't fit, and
+`&:hovered` keys need quoting. The portability benefit
+doesn't outweigh the authoring-ergonomics loss. §11.12
+(earlier "what if we did adopt YAML" musing) retires.
 
 **Wave / Phase.** Phase 14 (Shapes 1 + 2 + named-reference
 plumbing); Phase 15 (named state-responsive value declarations
 in the token table). Depends on the trait registry being live
-(Phase 8) for the parent-context helper resolution. **Blocked
-on Q12** — Phase 14 cannot ship until the syntactic-shape
-choice is committed.
+(Phase 8) for the parent-context helper resolution.
 
 **What it deletes / supersedes.** The four-line per-state
 restatement (retained as a fallback parse path during the
 transition).
 
-**Open questions.** Q8 (pipeline `|` syntax — resolved via
-type-position disambiguation).
+**Open questions.** None — Q8 (pipeline `|` syntax) and Q12
+(CSS-Nesting over YAML) both resolved.
 
 ---
 
@@ -1762,10 +1810,12 @@ swap at runtime.
 
 1. **`STATE_SUFFIXES` grows** to `["hovered", "pressed",
    "focused", "focus-within", "selected", "disabled", "empty",
-   "checked"]`.
+   "checked", "entry", "exit"]`. (`:entry` / `:exit` are
+   transition-lifecycle states owned by the §6.15 `Animator`
+   trait — same Phase 1 slice.)
 2. **Property whitelist expands** beyond `background` /
    `radius` to `color`, `padding`, `gap`, `width`, `height`,
-   `tint`.
+   `tint`, `opacity`, `transform`.
 3. **State-flag wiring** in the shell event router writes
    per-node bool flags (`is_pressed`, `is_disabled`,
    `is_focused`) into the existing `Surface::hovered_id` state
@@ -1776,18 +1826,27 @@ swap at runtime.
    wins in the declared order `hovered < focused < pressed <
    selected < disabled`. Disabled always wins so a greyed-out
    button doesn't visually press.
+5. **`:disabled` suppresses `on:click` at the dispatcher**
+   (Q10 — §8). Not only style: a disabled button does not
+   fire its callback. The dispatcher checks `is_disabled` on
+   the deepest hit-test node and short-circuits before
+   delivering the pointer event. Audit of any code relying on
+   the old style-only semantics is part of this phase's
+   migration sweep.
 
-**Wave / Phase.** Phase 1 — ships first, alongside the colour
-helpers (§6.12). Zero grammar changes; entirely
-`prism-ui-runtime` + a couple of state-tracker rows in
-`prism-shell`. The authoring surface for these states
-(verbose today, collapsed in §6.6) is independent of the
-runtime work.
+**Wave / Phase.** Phase 1 — ships first, alongside colour
+helpers (§6.12) and the unified `Animator` trait (§6.15). Zero
+grammar changes; entirely `prism-ui-runtime` + a couple of
+state-tracker rows in `prism-shell`. The authoring surface for
+these states (verbose today, collapsed in §6.6) is independent
+of the runtime work.
 
-**What it deletes / supersedes.** Nothing — additive only.
+**What it deletes / supersedes.** Nothing — additive only,
+except the implicit "disabled is purely visual" assumption
+(Q10).
 
-**Open questions.** Q10 (does `:disabled` suppress `on:click`
-at the dispatcher, or only style?).
+**Open questions.** None — Q10 resolved against dispatcher
+suppression.
 
 ---
 
@@ -2030,76 +2089,99 @@ The resolved tag(s) go through one `TagResolver` — a
 `.prui`-defined card and a `.luau`-defined card are
 indistinguishable at the call site.
 
-#### Multi-component files — namespace rules
+#### Multi-component files + file-declared namespaces (Q6 / Q11)
 
 Both `.prui` files (with multiple top-level `<component>` /
 `<trait>` / `<mixin>` / `<macro>` wrappers) and `.luau` files
 (returning a table of `prism.<kind>{…}` entries plus bare
-helpers) may carry **more than one declaration**. The
-`<import>` `as` attribute controls how they bind:
+helpers) may carry **more than one declaration**.
+
+**The C# rule.** The file decides its own namespace via a
+`<namespace=Ns/>` directive at the top (`.prui`) or a
+`namespace="Ns"` field in the Luau-side `prism.module{…}`
+builder. Every top-level declaration in the file binds under
+that namespace. Files without a namespace declaration bind
+their declarations bare. `as=` on `<import>` overrides the
+file's declared namespace. Filename → tag mangling retires
+entirely.
 
 ```prui
-<!-- single-component file: file stem becomes the tag -->
-<import component="./card.prui"/>
-<!-- registers <Card/> -->
-
-<!-- multi-component file with `as=` namespace: each name prefixed -->
-<import component="./forms.prui"/> as forms
-<!-- registers <forms.TextField/>, <forms.DropdownField/>, etc. -->
-
-<!-- multi-component file without `as=`: each name bare-imported -->
-<import component="./forms.prui"/>
-<!-- registers <TextField/>, <DropdownField/> directly; collision = parse error -->
-
-<!-- Luau-defined components, same rules: -->
-<import component="./card-system.luau"/> as cards
-<!-- registers <cards.Card/>, <cards.Field/>, etc. from the returned table -->
+<!-- single-component file, no namespace: bare bind -->
+<!-- ./card.prui -->
+<component Card …>…</component>
 ```
 
-#### Luau side — multi-export including non-component artifacts
+```prui
+<!-- multi-component file, file-declared namespace -->
+<!-- ./forms.prui -->
+<namespace=Forms/>
+<component TextField …>…</component>
+<component DropdownField …>…</component>
+```
+
+```prui
+<!-- consumer side -->
+<import "./card.prui"/>           <!-- registers <Card/> -->
+<import "./forms.prui"/>           <!-- registers <Forms.TextField/>, <Forms.DropdownField/> -->
+<import "./forms.prui"/> as f      <!-- override → <f.TextField/> -->
+```
+
+Bare-bound declarations collide → parse error (Q1).
+
+#### Luau side — file-declared namespaces + multi-export
 
 A `.luau` file's `return` value is one of:
 
-1. A single `prism.<kind>{…}` table → registers as that one
-   thing (component / trait / mixin / macro / dialect).
-2. A **table of named entries** → each entry registers under
+1. A `prism.module{namespace="Ns", entries={…}}` table → all
+   entries bind under `Ns` automatically.
+2. A single `prism.<kind>{…}` table → registers as that one
+   thing (component / trait / mixin / macro / dialect), bare.
+3. A **table of named entries** → each entry registers under
    its key. Entries can mix kinds, and can include bare Lua
-   functions / values for helpers.
+   functions / values for helpers. Bare by default; `as=` on
+   `<import>` lifts them under a namespace.
 
 ```luau
 -- card-system.luau
-return {
-  -- Components — registered as tags
-  Card     = prism.component { name = "Card",  props = …, render = … },
-  Avatar   = prism.component { name = "Avatar", props = …, render = … },
+return prism.module {
+  namespace = "Cards",                        -- C#-style file namespace
+  entries   = {
+    -- Components — registered as tags
+    Card     = prism.component { props = …, render = … },
+    Avatar   = prism.component { props = …, render = … },
 
-  -- Other extension kinds — registered with the appropriate registry
-  Pointable = prism.trait { name = "Pointable", attrs = … },
-  Hoverable = prism.mixin { name = "Hoverable", … },
-  Field     = prism.macro { name = "Field", pattern = …, expand = … },
+    -- Other extension kinds — registered with the appropriate registry
+    Pointable = prism.trait { attrs = … },
+    Hoverable = prism.mixin { … },
+    Field     = prism.macro { pattern = …, expand = … },
 
-  -- Bare helpers — available as expression values under the import's namespace
-  helpers = {
-    format-date = |t| os.date("%Y-%m-%d", t),
-    accent-for  = |tone| if tone == "danger" then "#ef4444" else "#3b82f6" end,
+    -- Bare helpers — available as expression values under the namespace
+    helpers = {
+      format-date = |t| os.date("%Y-%m-%d", t),
+      accent-for  = |tone| if tone == "danger" then "#ef4444" else "#3b82f6" end,
+    },
   },
 }
 ```
 
-Imported as `<import script="./card-system.luau"/> as cs`:
+Imported as `<import script="./card-system.luau"/>` (no `as=`,
+file's own namespace wins):
 
-- `<cs.Card title="Hi"/>` — component invocation (PascalCase)
-- `<container with=[cs.Hoverable]>` — mixin reference
-- `<component MyForm impls=[cs.Pointable]>` — trait reference
-- `<cs.Field label="Title"/>` — macro expansion
-- `{cs.helpers.format-date(now)}` — bare helper called in
+- `<Cards.Card title="Hi"/>` — component invocation
+- `<container with=[Cards.Hoverable]>` — mixin reference
+- `<component MyForm impls=[Cards.Pointable]>` — trait reference
+- `<Cards.Field label="Title"/>` — macro expansion
+- `{Cards.helpers.format-date(now)}` — bare helper called in
   expression context
 
-**Same `<import>` element, same resolver, same `as`
-namespacing.** The user picks the *lens* via the projection:
-`component` imports the components only; `script` imports
-everything in the returned table (components, traits, mixins,
-macros, dialects, AND helpers).
+Or imported as `<import script="./card-system.luau"/> as cs`
+to override — `<cs.Card/>`, `<cs.helpers.format-date(now)>`, etc.
+
+**Same `<import>` element, same resolver, same override rule.**
+The user picks the *lens* via the projection: `component`
+imports the components only; `script` imports everything in
+the returned table (components, traits, mixins, macros,
+dialects, AND helpers).
 
 #### Projection vs returned shape
 
@@ -2120,20 +2202,23 @@ Resolved absolute path is the key — N call sites importing the
 same file parse / evaluate it once.
 
 **Wave / Phase.** `widget` → `component` rename + wiring +
-multi-component file support: Phase 7. The full
-`prism.<kind>{…}` Luau-builder family lands incrementally as
-each kind ships (mixins Phase 9, macros Phase 10, etc.).
+multi-component file support + `<namespace=…/>` directive:
+Phase 7. The full `prism.<kind>{…}` Luau-builder family lands
+incrementally as each kind ships (mixins Phase 9, macros
+Phase 10, etc.).
 
 **What it deletes / supersedes.** The `widget` projection
 keyword; the dead `interpret.rs:1018` handler skip; the
 doc-only `prism.widget{…}` builder; the standalone `contract`
 projection (collapsed — contracts are body-less `<trait>`s
-imported as components or scripts).
+imported as components or scripts); the earlier filename →
+PascalCase tag mangling rule (replaced by file-declared
+namespaces — see Q6).
 
-**Open questions.** Q1 (bare multi-component import collision
-handling — error vs first-wins vs warn); Q6 (PascalCase-
-normalisation edge cases for file stems); Q7 (already
-resolved — `.luau` can return mixed kinds via a table).
+**Open questions.** All resolved as of 2026-05-20. Q1 (parse
+error on first collision), Q6 (file-declared namespaces, not
+filename mangling), Q7 (mixed-kind `.luau` returns), Q11
+(namespaced imports + file-declared namespaces). See §8.
 
 ---
 
@@ -2171,8 +2256,10 @@ runtime. Zero grammar changes; contained rewrite. Reuses the
 in place); the implicit "transparent value via separate alpha
 function" idiom.
 
-**Open questions.** Q4 (OKLCH gamut clipping — chroma
-reduction over hue rotation, documented choice).
+**Open questions.** None — Q4 resolved in favour of chroma
+reduction (preserves hue; sacrifices saturation when out of
+gamut). Documented in `prss-reference.md` with the Phase 1
+landing.
 
 **Rejected.** A zoo of named functions (`shade`, `tint`,
 `tone`, `complement`). One `with` + one `mix` cover every
@@ -2196,7 +2283,7 @@ in §7.
 | `Route` namespace (`route:`) | `ast.rs:97-106` | `data:` (explicitly equivalent per existing doc comment) | 2 |
 | `<host-children/>` element | `interpret.rs:1909-1919` | `<slot/>` (default) with optional `name=` | 4 |
 | `Use` namespace (`use:`) | `ast.rs:115-121` | `derive=` + mixin attrs | 8 |
-| Tier 3 incomplete animation namespaces (`Transition` / `Animate` / `At`) | `ast.rs:108-149` | ship in Phase 1  | 3 |
+| Three deferred animation namespaces (`Transition` / `Animate` / `At`) | `ast.rs:108-149` | unified `Animator` trait (§6.15) — pipeline-shape value over time + entry/exit transitions + keyframe records. Phase 1 lands the trait + runtime; Phase 3 retires the now-deprecated namespace labels once the 5 live `animate:` callers have migrated to the pipeline syntax. | 1 (trait + runtime), 3 (label cleanup) |
 | `<component>` markup tag (currently aliases `<container>`) | `interpret.rs:1739` | **retired entirely** — components are invoked by PascalCase tag (`<Card/>`), declared via file-as-component / Luau / Rust spec (§3, §6.1) | 6 |
 | Dead `widget=` import projection | `interpret.rs:1210` parses, `:1018` skips | renamed to `component=` and wired | 7 |
 | 17-namespace `AttributeNamespace` enum | `ast.rs:74-152` | open trait registry | 8 |
@@ -2214,8 +2301,10 @@ in §7.
 **Why so many deletions.** Most of these are not breaking
 changes for the live codebase — the production `.prui` corpus
 uses zero `<facet>`, zero `route:`, zero `fct:`, zero `use:`,
-zero `transition:`, zero `animate:`, zero `at:`, zero
-`widget=`. The cleanup is overwhelmingly about not shipping
+zero `transition:`, zero `at:`, zero `widget=`. The single
+partial exception is `animate:` (5 files, overlay fade-ins) —
+that namespace gets *finished*, not deleted (§6.4 fate row).
+Otherwise the cleanup is overwhelmingly about not shipping
 mechanisms that promise behaviours and deliver nothing.
 
 The two with real production impact:
@@ -2429,13 +2518,43 @@ wired into each surface. Concretely:
 - The implicit "Rust authors stay Rust-side, Luau authors
   stay Luau-side, PRUI authors stay markup-side" silos.
 
-#### Open questions
+#### Q13 resolution — open schema fields by default
 
-- Q13 (new — see §8): which `ComponentSchema` types are
-  *closed* (e.g., the `type` set in property declarations) vs
-  *open* (e.g., capability names, mixin names)? The closed
-  parts get proper Rust enums in codegen; the open parts get
-  typed strings + runtime registry lookup.
+Every `ComponentSchema` field gets a **typed string + runtime
+registry lookup** in the generated artifacts, *including* the
+fields that look closed today: the property `type` set, the
+state-suffix set, the event-kind set, the capability names,
+the mixin / trait / macro names. The few hard-coded primitives
+(`string` / `int` / `bool` / `color` / `length` / `action` /
+`enum` / `union` / `array` / `object` / `slot` — the §6.2 type
+set) ship as registered entries in the default registry, not
+as hand-rolled Rust enums in codegen.
+
+```rust
+// Auto-generated from a card schema — props carry typed
+// strings backed by the registry, not hand-rolled enums.
+pub struct CardProps {
+    pub title: String,                  // primitive: registry["string"]
+    pub tone:  EnumValue<"CardTone">,   // registry-resolved enum
+    pub on_click: Option<Callback>,     // primitive: registry["action"]
+}
+```
+
+**Why open by default.** Wave L's whole thesis is that the
+attribute / trait / mixin / macro surfaces *open* to user
+extension. Forcing parts of the schema to be closed in codegen
+would split the codegen story across "generates Rust enums"
+vs "generates registry lookups" — two flavours of consumer
+code for the same artifact. Forward compatibility is also
+preserved unconditionally: a Luau library that registers a
+new property type (`measurement: Length<m | px | pt>`) shows
+up in the typed handle without a Prism release. Compile-time
+safety is paid for with one extra `.unwrap()` per registry
+lookup at construction time — acceptable in exchange for the
+"add a type, ship a Luau file" property.
+
+#### Other open questions
+
 - Whether the schema codegen runs at compile time (build.rs +
   proc-macros) or at runtime (when the registry first loads).
   Lean: compile time, so the typed handles ship as part of
@@ -2447,21 +2566,120 @@ wired into each surface. Concretely:
 
 ---
 
+### 6.15 Animations and transitions — unified `Animator` trait
+
+**Problem.** Three deferred namespaces (`transition:`,
+`animate:`, `at:`) each promise to do a slightly different
+thing: `transition:opacity="200ms"` interpolates a mid-life
+value change; `animate:opacity="0 200ms"` interpolates an
+entry transition from a "from" value; `at:50%` declares a
+keyframe stop in a multi-stop timeline. Today only `animate:`
+has a partial lowering to `data-animate-in-*` (5 production
+files use it for overlay fade-ins — see §4 and §6.13);
+`transition:` and `at:` parse but have no runtime. The three
+are conceptually one thing — *time + value interpolation* —
+split across three namespaces with no shared design. Q3 (§8)
+resolves to: ship now, unified.
+
+**Design.** Merge the three into one `Animator` trait, in the
+same shape the trait registry uses (§6.4). Three call surfaces
+cover the three use cases, sharing one engine:
+
+- **Mid-life value change** — pipeline-shape over time on the
+  value side, mirroring the §6.6 state pipeline:
+  ```prui
+  <container style.opacity={
+    1
+    | :hover → 0.6 over 200ms                <!-- mid-life smoothing -->
+  }>
+  ```
+- **Entry / exit transitions** — declared as `:entry` / `:exit`
+  pseudo-states with time + from/to:
+  ```prui
+  <container style.opacity={
+    1
+    | :entry → from 0 over 200ms             <!-- fade-in on observe -->
+    | :exit  → to   0 over 150ms             <!-- fade-out on un-observe -->
+  }>
+  ```
+- **Keyframe stops** — nested record on the `animator` trait
+  for multi-stop timelines:
+  ```prui
+  <container animator.keyframes={
+    duration = 800ms,
+    0%       = { opacity = 0 },
+    50%      = { opacity = 1, transform = scale(1.05) },
+    100%     = { opacity = 0.5 },
+  }>
+  ```
+
+**Three namespaces → one trait.** Same value-pipeline shape
+covers mid-life smoothing, entry/exit transitions, and
+keyframe timelines. Authors stop reaching for three different
+prefixes to express "this value changes over time."
+
+```prui
+<!-- Wave J state (today) -->
+<container
+  transition:opacity="200ms"               <!-- mid-life value change -->
+  animate:opacity="0 200ms"                <!-- entry transition -->
+  at:50%="{ opacity: 1 }"/>                <!-- keyframe stop -->
+
+<!-- Phase 1 end state — one trait, three idiomatic shapes -->
+<container style.opacity={
+  1
+  | :hover → 0.6 over 200ms
+  | :entry → from 0 over 200ms
+}>
+```
+
+**Runtime.** The `Surface` retained-mode renderer already has
+hooks for per-frame ticking. The `Animator` trait dispatches
+into those hooks; `:entry` / `:exit` fire on observe /
+un-observe; keyframes interpolate along the trait-specified
+curve (default: cubic-bezier ease, OKLCH lerp for colours so
+fades pass through the perceptual gamut, not sRGB grey).
+
+**Wave / Phase.** Phase 1 — ships alongside pseudo-state
+runtime (§6.7) and colour v2 (§6.12). All three are
+`prism-ui-runtime`-internal; no grammar surgery beyond
+recognising `animator.<method>=` in the existing attribute
+resolver, which Phase 0 makes easier by splitting
+`interpret.rs`.
+
+**What it deletes / supersedes.** The `transition:`,
+`animate:`, `at:` attribute namespaces (subsumed into the
+`animator` trait — the namespace labels themselves retire in
+Phase 3 once callers have migrated). The deferred-runtime
+story for animations. The "ship or delete in Phase 3"
+framing — Q3 (§8) resolved against deletion.
+
+**Open questions.** None blocking. Exact pipeline syntax for
+keyframes (nested `animator.keyframes={…}` vs an inline
+`| :keyframe(50%) → …` shape) lands with Phase 1
+implementation; both are sketches above.
+
+---
+
 ## 7. Phased rollout
 
 One unified plan across Waves J + K + L, ordered by readiness.
 Each phase is independently shippable: tests pass, no other
-phase depends on the next-in-line. Decision-only phases (Phase
-5) carry no code but block downstream work.
+phase depends on the next-in-line. **Phase 0** is a pre-feature
+code-cleanup pass (file splits + stale-doc fixes + dead-path
+audit) that every later phase benefits from. Phase 5 is
+retained as a skipped row for traceability — its blocking
+decisions (Q1 + the §6.1 fork) all resolved on 2026-05-20.
 
 | # | Phase | Wave tag | Scope (§ refs) | Prereqs | Reversibility | LOC delta |
 |---|---|---|---|---|---|---|
-| 1 | Colour v2 + pseudo-state runtime | J Phase 1 | §6.12 + §6.7 | none | reversible | +300, 0 deleted |
+| 0 | Code cleanup — file splits + stale-doc + dead-path audit | (cleanup) | §7.0 below | none | reversible (pure refactor) | ~0 net (code moves, doesn't go away); +200–400 from `ui_lower` test additions |
+| 1 | Colour v2 + pseudo-state runtime + unified `Animator` trait | J Phase 1 | §6.12 + §6.7 + §6.15 | Phase 0 (recommended) | reversible | +600, ~0 deleted (Animator subsumes three deferred namespaces, runtime shipping) |
 | 2 | Facet trinity + Route deletion | K.1 + K.2 | §6.13 rows 1–5 | none | reversible (git revert) | −170 |
-| 3 | Tier 3 namespace audit | K.3 | §6.13 row 8 (decision + impl) | none | semi-reversible | −30 to −100 per namespace dropped |
+| 3 | Retire deprecated namespace labels (`transition:` / `animate:` / `at:`) + `Use` namespace audit | K.3 | §6.13 row 7 + row 8 (now post-migration cleanup) | Phase 1 (Animator wired) + Phase 9 (`derive=` lands) | reversible | −80 to −120 |
 | 4 | Slot / host-children unification | K.4 | §6.5 (no-signature variant) | none | reversible during deprecation | −80, 9 files edited |
-| 5 | Component A/B/C fork decision | K.5 | §6.1, Q1 | none (decision) | one-way once Phase 6 ships | n/a |
-| 6 | Component declarations + properties + `extends` | J Phase 2 | §6.1, §6.2, §6.3 (extends only) | Phase 5 | reversible until widely adopted | +400 |
+| 5 | ~~Component A/B/C fork decision~~ — **skipped** (Q1 + §6.1 fork resolved 2026-05-20; row retained for traceability) | K.5 | §6.1, Q1 | n/a | n/a | n/a |
+| 6 | Component declarations + properties + `extends` | J Phase 2 | §6.1, §6.2, §6.3 (extends only) | Phase 0 (recommended) | reversible until widely adopted | +400 |
 | 7 | Contracts + `component`/`contract` projection wiring | J Phase 3 | §6.3 (contracts), §6.11 | Phase 6 | reversible | +300 |
 | 8 | Trait registry + four built-in traits + attribute surface | L.1 + L.2 | §6.4, §6.6 (parent-context helper) | Phase 4 | one-way; the big one | +600, −200 |
 | 9 | Mixins + derives + `with=` / `derive=` | L.3 + L.4 | §6.3 (mixins, derives), §6.13 row 11 | Phase 8 | reversible until widely adopted | +400 |
@@ -2472,120 +2690,233 @@ phase depends on the next-in-line. Decision-only phases (Phase
 | 14 | State-variant nested records + pipeline form | L.9 | §6.6 (Shape 1, Shape 2) | Phases 8, 9 | reversible until widely adopted | +200, −30 |
 | 15 | Named state-responsive `@color` / `@spacing` / `@radius` | L.10 | §6.6 (Shape 3) | Phase 14 | reversible | +100 |
 | 16 | Polish — migration sweep + docs + `prism-cli` lint | J Phase 5 | all | Phase 15 | n/a | mostly doc / lint |
+| 17 | Computed property defaults (`<= {expr}` second tier) | (Q2) | §6.2 ("Defaults and `required`") | Phase 6 (declarations) + PRSS extends-chain topology checker (already shipped) | reversible | +150 |
+
+### Phase 0 detail — code cleanup before the feature waves
+
+A pre-feature pass that splits oversized files, adds the
+missing tests on the riskiest module, and fixes stale internal
+docs. No language features ship here; all of it removes
+obstacles to landing Phases 1–16 cleanly.
+
+**File splits.** Six files account for most of the friction
+every later phase will hit:
+
+| File | Lines | Split plan | Driving phase(s) |
+|---|---|---|---|
+| `prism-ui-runtime/src/interpret.rs` | 10,882 | The single biggest impediment. Split along the existing `// ───` section dividers into `document.rs` (top-level walk + imports), `elements.rs` (`lower_element` + body), `control_flow.rs` (`expand_match` / `expand_suspense` / `expand_language` / `expand_control_flow`), `expression.rs` (binding lookup + interpolation), `style.rs` (`STATE_SUFFIXES`, hover overrides, colour helpers). The 225 `#[test]` blocks travel with their parent functions. | 1, 6, 8 — every phase touches this file |
+| `prism-shell/src/events.rs` | 5,185 | Extract `EventModifiers` state machine into a sibling module; keep `dispatch_event` as the router facade. | 1 — `:pressed` / `:disabled` / `:focused` / `:focus-within` wiring writes here |
+| `prism-ui-runtime/src/layout/mod.rs` | 2,709 | Split grid / flex compute from the node → node transform propagation pass. | 14 — state-variant overrides thread through layout |
+| `prism-core/src/language/prism_ui/grammar.rs` | 1,566 | Audit whether the lexer is cleanly separable from the recursive-descent parser; extract if so. | 6, 8 — declaration syntax + attribute surface both rewrite the grammar |
+| `prism-builder/src/{starter,primitives}.rs` | 1,001 + 1,363 | Both are declarative `BlockSpec` tables (16 + 1 facet, and 14 shell-primitive specs). Consolidate into one module, or formalise the split via a shared manifest. | 6 — the §6.1 PascalCase rule folds these tables under one component-tag dispatch |
+| `prism-builder/src/ui_lower/mod.rs` | 1,319 | Split style resolution from node factory. (Coverage gap closed during the Phase 0 audit: 19 unit tests now exist for `lower_as` / `BlockInvalidator` / `hover_bg` / `prop_*` helpers / `modifier_fold`, so the split lands behind a real safety net.) | 6, 8 — modify this module |
+
+**Stale-doc + dead-path fixes.**
+
+- `prism-builder/CLAUDE.md:190-195` — strike the stale `FacetDef`
+  / `FacetKind` / `FacetDataSource` / `FacetTemplate` /
+  `FacetOutput` / `FacetBinding` / `FacetLayout` / `AggregateOp`
+  / `ScriptLanguage` / `FacetVariantRule` / `ResolvedFacetData`
+  / `FacetSchema` / `SchemaField` / `SchemaFieldKind` /
+  `FacetRecord` / `ValidationError` / `FACET_KIND_TAGS` /
+  `AGGREGATE_OP_TAGS` catalogue (none compile — see §4 and
+  `prism-builder/src/facet/mod.rs:8`). Replace with an accurate
+  one-paragraph note of what `facet/` actually holds today
+  (`FacetComponent` + `resolve_template_expressions`, ~25 lines).
+- Dead `widget=` import projection (`interpret.rs:1018, 1210`) —
+  decide: rename + wire as `component=` now (subsumes Phase 7's
+  rename), or rip out the parse path and re-add in Phase 7.
+  Vestigial grammar attracts drift; the same shape applies to the
+  `Use` namespace (`ast.rs:115-121`, lowers to `data-use-*`, no
+  live consumer; Phase 9's `derive=` supersedes).
+- §4 inaccuracies surfaced during the audit, fixed in this phase:
+  (1) bare `interpret.rs:NNN` cites live in `prism-ui-runtime`,
+  not `prism-core` (cite column annotated above);
+  (2) `BUILTINS` is 16 `BlockSpec` rows + 1 facet `Component`,
+  not "17 `BlockSpec` rows" (cite column updated);
+  (3) `animate:` has 5 production files / 10 instances of use
+  with partial `data-animate-in-*` lowering, not zero (§6.4 and
+  §6.13 rows updated).
+
+**Why before Phase 1?** Every §6 feature beyond Phase 1
+modifies `interpret.rs`, `grammar.rs`, and / or `events.rs`.
+Touching 10k- and 5k-line files is the largest reviewer-friction
+surface in the codebase. The grammar / runtime surgery in
+Phases 6 + 8 is dramatically more reviewable on focused
+1,500-line modules than on slices of a 10,000-line file. The
+stale `prism-builder/CLAUDE.md` catalogue is a trap for any
+author who reads docs to orient — fixing it makes Phase 2's
+facet-trinity deletion mechanical instead of archaeological.
+
+**Reversibility, LOC, ordering.** Pure-refactor PRs, no
+behaviour change — every split is `git mv` plus pub re-exports
+from a thin `mod.rs`. ~0 net LOC for the splits (code moves,
+doesn't go away); +200 to +400 LOC for the `ui_lower` test gap.
+Order within the phase: doc fixes first (cheapest, lowest
+risk), then `ui_lower` tests, then file splits smallest-first
+(grammar.rs → events.rs → layout/mod.rs → interpret.rs).
+`interpret.rs` lands last so other phases' diff with HEAD stays
+small for as long as possible.
+
+**Out of scope.** Public-API renames (those land in their
+feature phase, not here). Algorithm changes — Phase 0 is
+structural rearrangement only. New tests beyond the `ui_lower`
+gap; existing test surfaces travel with their parent functions
+during splits.
 
 ### Pacing
 
-Phases 1–4 are safe near-term wins (a week or two each).
-Phase 5 is a decision; once made, Phase 6 follows promptly.
-Phases 6–8 form the structural middle — Phase 8 is the
-largest single slice and unlocks Phases 9–15. Phase 16 is
-ongoing.
+Phase 0 ships in ~2–3 weeks of pure-refactor PRs (no behaviour
+change). Phases 1–4 are safe near-term wins (a week or two
+each). Phase 5 is a skipped row — once Q1 and the §6.1 fork
+resolved, no decision-only phase blocks Phase 6. Phases 6–8
+form the structural middle — Phase 8 is the largest single
+slice and unlocks Phases 9–15. Phase 16 is ongoing. Phase 17
+(computed defaults — Q2) can ship any time after Phase 6 but
+is sequenced last to keep the type-set additions out of the
+larger structural rewrites.
 
-The big risk is that Phase 6 ships before Phase 5 closes,
-locking in option (A) by accident. Mitigation: Phase 5 is on
-the critical path and explicitly blocking.
-
-Total LOC delta across all 16 phases: approximately +3000
-added, −600 deleted (counting only surfaces in this doc;
-test code is excluded). The net is +2400 across roughly a
-year of part-time work — a significant but not unreasonable
-expansion for the value the table in §10 returns.
+Total LOC delta across all 18 phases (Phase 0 cleanup +
+Phases 1–17 features): approximately +3500 added, −700
+deleted (counting only surfaces in this doc; test code is
+excluded; Phase 0's pure-refactor moves don't count toward the
+net). The net is +2800 across roughly a year of part-time
+work — a significant but not unreasonable expansion for the
+value the table in §10 returns.
 
 ---
 
 ## 8. Open questions
 
-Numbered for cross-reference. **Q1 is the highest priority** —
-it blocks Phase 6.
+Numbered for cross-reference. All thirteen are **resolved** as
+of 2026-05-20 — each row records the question, the decision,
+and where the resolution lands in the design.
 
 **Q1. Bare (unnamespaced) multi-component import — collision
-handling.** Resolved that multi-component `.prui` / `.luau`
-files are first-class (§6.1, §6.11). When imported with
-`as Ns`, components bind under that namespace
-(`<Ns.TextField/>`). When imported without `as`, components
-bind into the bare scope. Three options for collision:
-(a) parse error on first collision (strictest, easiest to
-reason about — doc lean); (b) first-import-wins with a
-diagnostic; (c) last-import-wins (CSS-like). Decision affects
-Phase 7 scope.
+handling.** ✅ **Resolved: (a) parse error on first
+collision** — strictest, easiest to reason about, and matches
+the namespace-aware design from Q6 / Q11. Two files declaring
+the same namespace + same component name → parse error. Two
+files without a namespace declaring the same bare component
+name → parse error. CSS-like last-wins and first-wins were
+both rejected for being implicit. Lands with Phase 7.
 
-**Q2. Computed property defaults.** §6.2 disallows expression
-defaults to dodge recursion. Should there be a second tier
-(`<property … computed={…}>`) for derived props, topologically
-resolved? Leaning yes, in a later wave; first cut keeps it
-simple. See §11.2.
+**Q2. Computed property defaults.** ✅ **Resolved: yes —
+second tier ships.** A `padding: int <= {row.depth * 4}`
+extension to the inline typed-prop syntax (or
+`computed-default={…}` as a header attribute) is committed.
+Topologically resolved across the property graph with the same
+cycle-detection logic the PRSS extends-chain validator uses.
+First cut requires the computed expression to reference only
+*declared* properties on the same component (no nested
+computeds) — keeps the topology trivial. See §6.2's
+"Computed defaults" subsection; lands in Phase 17.
 
-**Q3. Tier 3 namespace audit (Phase 3).** Does Prism ship the
-deferred animation primitives (`transition:`, `animate:`,
-`at:`) in Phase 1, or move them to a later wave? If "later
-wave", the namespaces should be ripped now and re-added on
-the day they ship — vestigial grammar attracts drift (same
-shape as the dead `widget=`).
+**Q3. Tier 3 namespace audit (Phase 3).** ✅ **Resolved:
+ship Animations + Transitions in Phase 1 under a unified
+`Animator` trait.** They're important enough to deserve real
+design + implementation love now, not "later wave" deferral.
+The unified design (§6.15) merges `transition:` (mid-life
+value-change interpolation), `animate:` (entry / exit
+transitions), and `at:` (keyframe stops) into one trait
+carrying transition curves, keyframe sets, and entry/exit
+animations as trait methods — three namespaces become one
+trait. Phase 1's scope grows accordingly; Phase 3 shrinks to
+the `Use` namespace decision only.
 
-**Q4. OKLCH gamut clipping.** Out-of-gamut OKLCH values must
-project back to sRGB. The `palette` crate gives chroma
-reduction; we pick that over hue rotation. Document the
-choice in `prss-reference.md`.
+**Q4. OKLCH gamut clipping.** ✅ **Resolved: chroma
+reduction.** Out-of-gamut OKLCH values project back to sRGB
+via the `palette` crate's chroma-reduction path (preserves
+hue, sacrifices saturation). Hue rotation was rejected — it
+shifts the *perceived* colour, which is exactly the property
+designers preserve by reaching for OKLCH in the first place.
+Documented in `prss-reference.md` when Phase 1 lands.
 
-**Q5. Trait self-reference.** Can a `<trait>` (body-less,
-serving as contract) reference itself (a `Composite` slot
-type)? Today no. If demand surfaces, gate behind an explicit
-`recursive` keyword.
+**Q5. Trait self-reference.** ✅ **Resolved: yes —
+`recursive` keyword enables it.** A body-less or full
+`<trait>` may reference itself when its declaration carries
+the `recursive` flag (`<trait Composite, recursive, …/>`).
+Without `recursive`, self-references at type-check time fail
+with a clear "this trait isn't marked `recursive`" error. The
+keyword also extends to mutually-recursive trait clusters
+(declare both with `recursive`). Lands with Phase 8 (trait
+registry).
 
-**Q6. PascalCase-normalisation rules for filenames.** A
-`.prui` file's stem becomes its registered tag name (§6.1).
-`card.prui` → `<Card/>`. `app-window.prui` → `<AppWindow/>`
-(hyphen uppercases next letter). Edge cases needing a pick-once
-ruling: filenames with dots (`foo.bar.prui` → `<FooBar/>`?
-`<Foo.Bar/>`? error?), numerics (`h1.prui`,
-`2fa-prompt.prui`), leading underscore (`_private.prui`),
-all-caps (`CSS-helper.prui`), non-ASCII, and tags conflicting
-with reserved primitive names (`container.prui` →
-`<Container/>` shadows nothing, but `<container/>` lower wins
-on the call side anyway). Decision should land with Phase 6.
+**Q6. Tag-name registration — how does a component bind to a
+tag?** ✅ **Resolved: file-declared namespaces (C#-style),
+not filename mangling.** The original "PascalCase-normalised
+filename = tag name" rule had too many edge cases (dots,
+numerics, leading underscores, all-caps, non-ASCII, primitive
+collisions). Replaced by an explicit `<namespace=Ns/>`
+directive at the top of a `.prui` file (and `namespace=` on
+the Luau-side `prism.module{…}` builder), which binds every
+top-level declaration under that namespace. Files without a
+namespace declaration bind their declarations bare; `as=` on
+an `<import>` overrides the file's namespace. Filename → tag
+mangling retires entirely. See §6.1 (Part 3) and §6.11 for
+the full design; lands with Phase 6.
 
 **Q7. `.luau` component vs `.luau` script in the same file.**
-Resolved (§6.1, §6.11): a `.luau` file returns a *table* of
-named entries that can mix `prism.<kind>{…}` records of any
-type plus bare helpers. The `<import>` projection acts as the
-*lens*: `component` binds only the components; `script` binds
-every entry (components + traits + mixins + macros + dialects
-+ helpers). Same file viewed through different projections
-exposes different subsets.
+✅ **Resolved (§6.1, §6.11):** a `.luau` file returns a
+*table* of named entries that can mix `prism.<kind>{…}`
+records of any type plus bare helpers. The `<import>`
+projection acts as the *lens*: `component` binds only the
+components; `script` binds every entry (components + traits +
+mixins + macros + dialects + helpers). Same file viewed
+through different projections exposes different subsets.
 
-**Q8. Pipeline `|` vs logical-or.** Resolved: the pipeline
-form is parsed only in value positions typed `Stateful<T>` or
-`Animated<T>`; bare `|` elsewhere is logical-or.
+**Q8. Pipeline `|` vs logical-or.** ✅ **Resolved:** the
+pipeline form is parsed only in value positions typed
+`Stateful<T>` or `Animated<T>`; bare `|` elsewhere is
+logical-or.
 
-**Q9. Variant precedence with chained prefixes.** Resolved:
-latest wins, same as Tailwind. Mixin linearisation (§6.3) is
-the same rule applied at the trait registry layer.
+**Q9. Variant precedence with chained prefixes.** ✅
+**Resolved:** latest wins, same as Tailwind. Mixin
+linearisation (§6.3) is the same rule applied at the trait
+registry layer.
 
-**Q10. Disabled-state pointer behaviour.** Should `:disabled`
-suppress `on:click` at the dispatcher, or only style? Lean
-suppress, but it changes existing semantics — audit first.
+**Q10. Disabled-state pointer behaviour.** ✅ **Resolved:
+`:disabled` suppresses `on:click` at the dispatcher**, not
+only at the style layer. Greyed-out buttons that still fire
+their callback are a footgun the language shouldn't ship.
+Audit + migration of any code relying on the old "style-only"
+semantics is part of Phase 1. See §6.7.
 
-**Q11. Trait coherence in cross-library use.** Two unrelated
-libraries register `Draggable` differently → use namespaced
-imports (`<import script="./libA.luau"/> as libA` →
-`with=libA.Draggable`). Bare `with=Draggable` is a parse
-error when two unprefixed imports collide.
+**Q11. Trait coherence in cross-library use.** ✅
+**Resolved: namespaced imports OR file-declared namespaces.**
+Two unrelated libraries can both declare `Draggable` — the
+consumer disambiguates either by importing with `as ns`
+(`<import script="./libA.luau"/> as libA` →
+`with=[libA.Draggable]`) or by relying on each library's own
+`<namespace=…/>` declaration (Q6). Bare `with=[Draggable]` is
+a parse error when two unprefixed `Draggable`s are in scope.
+Same mechanism applies to traits, mixins, macros — anything
+the trait registry holds.
 
-**Q12. PRSS syntactic shape — CSS-Nesting vs YAML.** §6.6
-covers the choice and recommends CSS-Nesting (`&:state` +
-brace-expr values + pipeline forms). YAML is an alternative
-that trades expression ergonomics for familiarity. Decision
-should land before Phase 14 ships. See also §11.13 for the
-deeper exploration.
+**Q12. PRSS syntactic shape — CSS-Nesting vs YAML.** ✅
+**Resolved: CSS-Nesting.** `&:state` selectors + brace-expr
+values + pipeline forms (§6.6). YAML is rejected outright —
+expression-heavy content reads poorly in YAML, the pipeline
+shape doesn't map cleanly, and the `&:hovered` keys need
+quoting. The portability benefits don't outweigh the
+authoring-ergonomics loss. §11.12 ("PRSS as YAML — the deeper
+exploration") retires.
 
-**Q13. Closed vs open schema fields in cross-language codegen.**
-§6.14 raises this. Which `ComponentSchema` fields are *closed*
-(get proper Rust enums in the auto-generated typed handles —
-e.g. the property `type` set, the state-suffix set) vs *open*
-(get typed strings + runtime registry lookup — e.g. capability
-names, mixin names, user-registered trait names)? The dividing
-line affects both compile-time safety and forward compatibility
-when new entries land in the open registries.
+**Q13. Closed vs open schema fields in cross-language
+codegen.** ✅ **Resolved: open by default.** Every
+`ComponentSchema` / `TraitSchema` / etc. field gets a typed
+string + runtime registry lookup, *including* the entries
+that look "closed" today (the property `type` set, the
+state-suffix set, the event-kind set). The few cases that
+remain closed (primitive types like `int` / `string` / `bool`
+in property declarations) ship as registered entries in the
+default registry, not as hand-rolled Rust enums. Mechanically
+this means the codegen surface in §6.14 generates typed
+strings everywhere; the trait registry holds the canonical
+allow-lists; new entries land via Luau or Rust registration
+calls, not via grammar edits. Forward compatibility is
+preserved unconditionally. Lands with the §6.14 schema
+codegen pipeline (Phase 8.5 + Phase 16).
 
 ---
 
@@ -2596,12 +2927,16 @@ so future debates can find the prior reasoning instead of
 relitigating.
 
 - **The long-form closure `\fn(args) … end`** (originally an
-  alternative to `|args| expr` in fusion §7.2). Single closure
-  form going forward: `|args| expr`. Rationale: two spellings
-  for one concept is a Wave K-style violation of the
-  "keep the surface narrow" principle (§2). The short form
-  covers every case the long form did. Already enforced in
-  this doc — every code example uses `|args| expr` only.
+  alternative to `|args| expr` in fusion §7.2). Single
+  parameter syntax going forward: `|args|` for both the
+  single-expression form (`|args| expr`) and the multi-line
+  block form (`|args| do … end`, §12.5). Rationale: two
+  *parameter* spellings for one concept is a Wave K-style
+  violation of the "keep the surface narrow" principle (§2);
+  one parameter form with two body shapes (expression or
+  block) covers every case the long form did with less
+  surface. The block form is the multi-line escape hatch
+  authors wanted from `\fn`; the parameter form stays uniform.
 - **A new `<import component=…>` projection alongside
   `widget=`.** The fix is to rename `widget=`, not duplicate
   it (§6.11).
@@ -2724,18 +3059,15 @@ inspector hint, not a parser error for every author. Listed
 for the day someone wants to ship "Prism's grammar is provably
 correct."
 
-### 11.2 Computed property defaults (Q2)
+### 11.2 Computed property defaults — *resolved, promoted to §6.2 / Phase 17*
 
-A `padding: int <= {row.depth * 4}` extension to the inline
-typed-prop syntax — `<=` signals "computed default from the
-following expression," distinct from the `=` literal-default
-form. Topologically resolved across the property graph; cycle
-detection identical to the PRSS extends-chain validator.
-Mostly deferred because the recursive-default class of bugs
-(Vue's `withDefaults`) makes it easy to get wrong. The
-minimal version would require the computed expression to
-reference only *declared* properties (no nested computeds),
-keeping the topology trivial.
+Q2 (§8) committed to shipping the second tier. The `<= {expr}`
+arrow on a property declaration signals a computed default;
+topology resolved at parse time via the PRSS extends-chain
+cycle detector. First cut requires the expression to reference
+only *declared* properties (no nested computeds). See §6.2's
+"Defaults and `required`" subsection for the design; Phase 17
+in §7 for the rollout slot.
 
 ### 11.3 Algebraic effect handlers — beyond capabilities
 
@@ -2775,15 +3107,20 @@ extend.
 
 ### 11.4 First-class modules — OCaml-style
 
-`prism.component{…}` is a table; the module system could be
-too. A `.luau` file returning a `prism.module{…}` could expose
-re-exportable, namespace-scoped, parametrically polymorphic
-unions of traits / mixins / components. Strongest use case:
-library distribution — "import this card system and get the
-trait, the mixin, three components, the colour palette, and
-the inspector entries in one line." Today's
-`<import script>` plus a returned table covers ~70% of this;
-first-class modules cover the remaining ergonomics.
+The basic `prism.module{namespace="Ns", entries={…}}` builder
+ships with Phase 7 (§6.11, post Q6/Q11 resolution) — that
+covers ~70% of the OCaml-style module ergonomics by giving
+files an explicit namespace + a multi-export table. The
+remaining tier-2 ambition is **parametrically polymorphic
+modules**: a `prism.module{…}` that takes type / trait
+parameters and yields a fresh namespace-scoped bundle on
+instantiation (`local IconSet = make-icon-set("filled")`).
+Strongest use case: library distribution where the same
+component family wants to specialise on a style axis without
+the consumer re-declaring every prop. Deferred until the
+schema codegen (§6.14) stabilises and we know whether
+runtime-time module instantiation breaks the typed-handle
+story.
 
 ### 11.5 Container queries / responsive at the trait layer
 
@@ -2843,23 +3180,14 @@ appear N+ times. The trait registry opens richer rules:
 
 Each is a 50-line lint rule once Phase 16 (polish) is past.
 
-### 11.10 Tier 3 namespaces — finish or delete
+### 11.10 Tier 3 namespaces — *resolved, promoted to §6.15*
 
-The `Transition` / `Animate` / `At` / `Use` namespaces are
-parsed today but their runtime is deferred. Phase 3 forces a
-ship-or-cut decision. If "ship eventually," the design these
-namespaces *would* expose:
-
-- A unified `Animator` trait carrying transition curves,
-  keyframe sets, and entry/exit animations as trait methods.
-- Pipeline-shape over time on the value side (`opacity = 0 →
-  1 over 200ms`), mirroring the §6.6 state pipeline.
-- `at:50%` / `at:200ms` keyframes as nested records inside
-  the `Animator` trait, not as a separate namespace.
-
-If "delete," these get re-added on the day they ship —
-vestigial grammar attracts drift (same shape as the dead
-`widget=`).
+The `Transition` / `Animate` / `At` namespaces lifted out of
+"future musings" once Q3 (§8) committed to shipping in Phase 1.
+See §6.15 for the unified `Animator` trait design (pipeline
+value + time, entry/exit transitions, keyframe records). The
+`Use` namespace is replaced by Phase 9's `derive=` attribute
+(§6.3); the namespace label retires in Phase 3.
 
 ### 11.11 Mid-decision forks not yet locked in
 
@@ -2867,11 +3195,13 @@ These are explicit branches the doc currently presents both
 options for. They become hard decisions once their gating
 phase arrives:
 
-- The §6.1 A/B/C fork (file-as-component vs markup-decl vs
-  Luau-as-decl). Q1 in §8.
 - Whether the `component` projection (§6.11) survives once the
-  universal Luau-builder family is in place (it might reduce
-  to ergonomic sugar for `script` with a file-stem alias).
+  universal Luau-builder family is in place. With Q6 resolved
+  (file-declared `<namespace=…/>` replaces filename mangling),
+  `component` is closer to "filter the script-table return for
+  `prism.component{…}` entries only" than to a true alternative
+  projection. Possibly retires in favour of `script` plus
+  per-component filtering at the call site.
 - Whether `Block` and `Component` (Rust traits) collapse into
   one. Today `Block` is "single-trait sugar" over
   `Component`; if the registry's surface narrows to one trait,
@@ -2881,62 +3211,17 @@ phase arrives:
   (`a11y.role`, `data.role`). Lean: keep — they read better
   in markup than the generic form.
 
-### 11.12 PRSS as YAML — the deeper exploration
+### 11.12 PRSS as YAML — *rejected*
 
-§6.6 surfaces the YAML-vs-CSS-Nesting fork (Q12 in §8) and
-recommends keeping CSS-Nesting. The musing below is the "what
-if we did adopt YAML" thought experiment carried further.
-
-A YAML-based PRSS could lean into YAML's strengths and work
-around its weaknesses:
-
-- **Inline expressions stay parenthesised.** Borrow Jinja's
-  `{{ expr }}` shape so brace-expr values don't clash with
-  YAML's inline-dict:
-  ```yaml
-  class.btn:
-    background: {{ lighten(accent, 0.1) }}
-  ```
-- **Pipeline forms become a YAML sequence with a pipeline
-  marker:**
-  ```yaml
-  class.btn:
-    background:
-      - {{ accent }}
-      - { state: hovered,  apply: lighten(0.1) }
-      - { state: pressed,  apply: darken(0.1) }
-      - { state: disabled, value: mute }
-  ```
-  Verbose, but YAML-native. Less terse than `|` pipeline,
-  more navigable for tooling that walks YAML AST.
-- **@-directives become top-level YAML keys:**
-  ```yaml
-  '@color':
-    responsive-accent: …
-  '@variant':
-    compact: 'data-density="compact"'
-  ```
-
-This shape would lose terseness but gain:
-
-- **Cross-tool portability.** YAML AST consumers (linters,
-  formatters, schema validators) work without bespoke PRSS
-  tooling.
-- **Schema-first PRSS.** A JSON Schema (or YAML schema) for
-  the PRSS document could be checked by any YAML-aware tool,
-  not just the PRSS parser.
-- **Easier non-Prism consumers.** A relay-side analytics
-  pipeline that reads `.prss` for theming metadata doesn't
-  need to parse PRSS-shape; YAML libraries exist everywhere.
-
-The cost is real: every example in this doc grows by ~50% in
-line count, the pipeline form becomes ~3× more verbose, and
-PRSS stops looking like CSS (the closest analogue most authors
-know). Unless one of the YAML-portability benefits becomes
-load-bearing, the CSS-Nesting shape wins on authoring
-ergonomics. Listed here for the day the portability
-calculation changes (e.g., a major external tool consuming
-`.prss` files).
+Q12 (§8) is resolved against YAML and in favour of
+CSS-Nesting. Expression-heavy content reads poorly in YAML,
+the pipeline shape doesn't fit, `&:hovered` keys need quoting,
+and significant whitespace breaks copy-paste from
+chat / docs / inspectors. The portability benefits don't
+outweigh the authoring-ergonomics loss. Retained as a slot
+here so future debates can find the prior reasoning instead
+of relitigating; the original sketch lived in the git history
+of this file (commit before 2026-05-20).
 
 ### 11.13 Things we deliberately won't do
 
@@ -2956,13 +3241,1135 @@ A short list that should NOT happen, even if tempting:
   level.** Hygiene + macro depth limits + readable expansion
   are non-negotiable; a macro that rewires the lexer breaks
   all three.
-- **A second closure form** (alongside `|args| expr`).
-  Single-form rule (§2, §9). The fusion doc's `\fn(args) … end`
-  alternative is rejected.
+- **A second closure *parameter* form** (alongside `|args|`).
+  The Polyglot redesign (§12.4) extends the closure with a
+  multi-line **body** shape (`|args| do … end`) — same `|args|`
+  parameter syntax, just an expression body OR a block body.
+  What's still rejected is a *second parameter syntax*: the
+  fusion doc's `\fn(args) … end` alternative would have given
+  the same concept two spellings. One parameter form, two body
+  shapes is the single-form rule (§2, §9).
 
 ---
 
-## 12. Closing thought
+## 12. Polyglot PRUI — the syntax redesign
+
+Every example so far in this doc has used the XML-shaped
+declaration syntax inherited from Waves A–H. After designing
+the feature set, the syntax itself becomes the lid on the
+language's expressiveness: `<component>` wrappers, attribute
+lists crammed into opening tags, and angle brackets everywhere
+optimise for one shape (HTML-like trees) at the cost of
+another (function-like declarations, imperative logic,
+multi-line lambdas, embedded sub-languages).
+
+This section proposes a creative redesign — call it
+**Polyglot PRUI** — that keeps the parts of XML that earn
+their keep (the render tree) and replaces the parts that
+don't (declaration headers, body sub-tags, the single-line
+closure ceiling). The §6 feature set is unchanged. Every
+discriminated union still discriminates; every mixin still
+mixes in; every capability still gets injected at lower-time.
+**The features stay; the surface changes.**
+
+### 12.1 Philosophy — three modes, one file
+
+A `.prui` file has **three syntactic modes**, switched by
+position, not by escape sequence:
+
+| Mode | Where | Reads like |
+|---|---|---|
+| **Declaration** | Top-level + clause sections | Function signatures + plain-English clauses |
+| **Body** (markup) | Component bodies, slot providers, `match`/`case` arms | Tagged blocks — HTML-shaped tree |
+| **Expression** | `{…}` braces, lambda bodies, `=` right-hand sides | Luau-flavoured expressions + pattern matching |
+
+The three modes share one lexer and one expression grammar.
+The parser switches between them by context — a `let` at the
+top of a file declares a module constant; a `let` inside a
+`do … end` is a Luau local binding; a `<container>` outside
+expression-mode braces is a body element, inside them it's
+an inline markup expression.
+
+Six design principles drive the choice of shape in each mode
+(supplementing §2):
+
+1. **Tagged blocks earn the tree.** Render trees keep their
+   `<container>…</container>` shape; the visual hierarchy is
+   exactly what XML gets right.
+2. **Function signatures earn the header.** `component
+   Card(title: string, …)` reads as a function — props are
+   parameters, types follow `:`, defaults follow `=`. Devs
+   from Rust / Swift / Kotlin / TypeScript / Python recognise
+   it instantly.
+3. **English clauses earn composition.** `extends`, `impls`,
+   `derives`, `uses` are clause keywords on their own lines,
+   not header attributes. Each reads as a statement a
+   non-programmer can parse out loud.
+4. **`do … end` blocks earn multi-line logic.** Same `|args|`
+   parameter form as the single-expression closure; the body
+   is either an expression or a `do … end` block. One
+   parameter syntax, two body shapes.
+5. **Embedded languages earn explicit boundaries.** Inline
+   `class { … }` for PRSS, inline `let`/`fn` for Luau,
+   `prui [[ … ]]` for markup-as-string. No magic globals; no
+   pseudo-attributes that escape the host language.
+6. **Schema-first, surface-many.** The same declaration —
+   regardless of which surface — produces the same
+   `ComponentSchema` (§6.14). Polyglot is just the most
+   ergonomic *input form*; the schema codegen still flows to
+   Rust handles, Luau stubs, inspector rows, LSP completions.
+
+### 12.2 Top-level declarations — the function-shape
+
+The general shape:
+
+```prui
+component Name(prop1: T1, prop2: T2 = default, …)
+  extends Parent
+  impls   Trait1, Trait2
+  derives Mixin1, Mixin2
+  uses    cap1: Cap1, cap2: Cap2 optional
+
+  <!-- render tree starts here -->
+end
+```
+
+The head is a function signature. Each clause is a fresh line
+with a keyword + value (no commas, no `=`). The render tree
+follows the last clause; `end` closes the declaration.
+
+Side-by-side with the XML form:
+
+```prui
+<!-- XML form (today's design): -->
+<component Card
+  title:    string  required,
+  subtitle: string  = "",
+  tone:     Tone    = default,
+  padding:  int     = 16,
+  on-click: action,
+  children: slot,
+  extends      = BaseCard,
+  impls        = [Pointable, Focusable],
+  derives      = [Draggable],
+  capabilities = [clipboard: Clipboard]>
+
+  <container with=[Hoverable], padding={padding}, on:click=$on-click()>
+    <heading level=3>{title}</heading>
+    <text if={subtitle != ""}>{subtitle}</text>
+    <slot/>
+  </container>
+</component>
+```
+
+```prui
+-- Polyglot form (new):
+component Card(
+  title:    string required,
+  subtitle: string = "",
+  tone:     Tone   = default,
+  padding:  int    = 16,
+  on-click: action,
+  children: slot,
+)
+  extends BaseCard
+  impls   Pointable, Focusable
+  derives Draggable
+  uses    clipboard: Clipboard
+
+  <container with=[Hoverable] padding={padding} @click=on-click>
+    <heading 3>{title}</heading>
+    <text if={subtitle != ""}>{subtitle}</text>
+    <slot/>
+  </container>
+end
+```
+
+What changed:
+
+- `<component …>…</component>` wrapper → `component Name(…) … end`
+  declaration.
+- Props move into a parenthesised parameter list (function-
+  signature shape) — `prop: type [= default | required]`.
+- Header attributes (`extends=`, `impls=`, `derives=`,
+  `capabilities=`) become **clause keywords**, one per line,
+  no `=`, no brackets, no commas between clauses.
+- Slot props (`children: slot`) are just typed parameters.
+- The render body sits inside the declaration, no extra
+  `view:` marker needed — anything after the last clause and
+  before `end` is the body.
+
+Bodyless / clauseless declarations stay terse:
+
+```prui
+component Avatar(src: string, size: px = 32)
+  <image src={src} width={size} height={size} class=avatar/>
+end
+```
+
+### 12.3 The six declaration heads
+
+The end-state declaration surface — six lowercase keywords at
+file top-level, plus three module-scoped directives:
+
+| Head | Role | Body | Example |
+|---|---|---|---|
+| `component Name(…)` | UI component | render tree + optional state/on/computed/style blocks | `component Card(title: string) … end` |
+| `trait Name` | typed shape (also serves as contract) | typed members | `trait Pointable … end` |
+| `mixin Name` | composable behaviour | state + on + computed + style blocks | `mixin Hoverable … end` |
+| `macro Name(…)` | parse-time markup expansion | `match` + `expand` sections | `macro Field(lbl, val) … end` |
+| `type Name = …` | type alias / union declaration | inline | `type Tone = union { … }` |
+| `class Name { … }` | inline PRSS class scoped to the file | PRSS-Nesting body | `class card { background = surface }` |
+
+Plus three file-level directives:
+
+| Directive | Role | Example |
+|---|---|---|
+| `namespace Name` | declare the file's namespace (top of file, once) | `namespace Forms` |
+| `use <projection> "path" [as alias]` | import another file | `use script "./helpers.luau" as h` |
+| `let name = expr` / `fn name(…) → ret do … end` | module-level binding / helper | `let MAX = 100` |
+
+Every declaration ends with `end` (matching `do/end` and
+`if/then/end` from Lua). Single-line forms (`let pi = 3.14`,
+`type X = Y`) need no terminator — they end at the newline.
+
+### 12.4 The closure — one parameter syntax, two body shapes
+
+The single biggest practical win of the redesign: closures
+break free of the one-expression limit.
+
+| Form | Body | Read as |
+|---|---|---|
+| `\|args\| expr` | single expression — the value is `expr` | "given args, the value is expr" |
+| `\|args\| do … end` | multi-statement block — last expression is the value; `return` allowed for early exit | "given args, do these things; the value is the last one" |
+
+The parameter syntax `|args|` is identical across both. The
+body shape switches: expression on one side of the bar, or a
+`do … end` block. Same scoping rules; same closure capture.
+
+**Single-line closure** (today's form):
+
+```prui
+on-change=|v| update(v)
+let double = |x| x * 2
+let format = |amt, cur| (if cur == "USD" then "$" else "€" end) .. tostring(amt)
+```
+
+**Multi-line closure** (new):
+
+```prui
+on-click=|e| do
+  log("clicked", e.x, e.y)
+  let target = e.target
+  open-modal(target.id)
+end
+
+let process = |items, ctx| do
+  let filtered = items:filter(|i| i.active)
+  for i, it in pairs(filtered) do
+    log("item", i, it.name)
+  end
+  filtered                  -- last expression = return value
+end
+```
+
+**Multi-line closure inside a brace-expr on an attribute:**
+
+```prui
+<button @click={|e| do
+  log("click", e.x, e.y)
+  open-modal(e.target.id)
+end}>Click me</button>
+```
+
+The `{…}` opens the brace-expr; inside, `|e|` starts the
+closure; `do` opens its body block; statements; `end` closes
+the block; `}` closes the brace-expr. No ambiguity — `do` and
+`end` form a matching pair.
+
+### 12.4.1 Function declarations as named closures
+
+Module-level functions get the `fn` keyword — clearer than
+spelling out `let name = |args| do … end`:
+
+```prui
+fn format-date(t: int) → string do
+  os.date("%Y-%m-%d", t)
+end
+
+fn tone-color(tone: Tone) → color do
+  match tone:
+    case info        → tokens.muted
+    case primary     → tokens.accent
+    case danger      → tokens.error
+    case custom(c)   → c
+  end
+end
+
+fn compose<A, B, C>(f: fn(B) → C, g: fn(A) → B) → fn(A) → C do
+  |x| f(g(x))               -- returns a single-expr closure
+end
+```
+
+`fn` declarations carry typed signatures (parameters + return
+type via `→`). The body is always `do … end`. They desugar to
+`let name = |args| do … end` with an explicit type signature;
+the duplication earns its keep by giving readers the type
+information up front and giving the LSP something concrete to
+bind hover docs to.
+
+### 12.4.2 Function types in type position
+
+Function types use `fn(…) → ret` in type position, mirroring
+declarations:
+
+```prui
+component List(
+  items: array<Task>,
+  row:   slot<fn(item: Task, index: int) → ui>,
+  empty: slot<fn() → ui> = { <text>No tasks yet.</text> },
+  on-pick: fn(t: Task) → bool,
+)
+  …
+end
+```
+
+Type position: `fn(args) → ret`. Value position: `|args| expr`
+or `|args| do … end`. Same shape Rust uses; clear separation
+by context.
+
+### 12.5 State, hooks, computed values — declarative body blocks
+
+Component and mixin bodies admit declarative blocks before
+the render tree. Four block shapes:
+
+| Block | Shape | Reads as |
+|---|---|---|
+| `state name [: type] = initial` | reactive cell, one line per cell | "remember a name, starting at initial" |
+| `computed name [: type] = expr` | derived value, re-runs on dep changes | "name is always expr" |
+| `on event [if cond] \|args\| … end` | event handler; chains via `super()` in mixins | "when event fires, do this" |
+| `style { … PRSS … }` | scoped style block (inline PRSS, §12.7) | "this component looks like this" |
+
+```prui
+component Counter(initial: int = 0)
+  state count = initial
+
+  on click |e|
+    count = count + 1
+    log("clicked", count)
+  end
+
+  computed double = count * 2
+  computed parity = if count % 2 == 0 then "even" else "odd" end
+
+  style {
+    padding = 8
+    &:hovered { background = lighten(0.05) }
+  }
+
+  <container>
+    <button @click=$click(_)>{count}</button>
+    <text>Doubled: {double} ({parity})</text>
+  </container>
+end
+```
+
+The same blocks work in `mixin` bodies — that's how mixins
+contribute state, hooks, and styles to the host:
+
+```prui
+mixin Draggable
+  state is-dragging  = false
+  state drag-offset  = (0, 0)
+
+  on pointerdown |e|
+    is-dragging = true
+    drag-offset = (e.x - self.x, e.y - self.y)
+  end
+
+  on pointermove if is-dragging |e|
+    self.x = e.x - drag-offset.x
+    self.y = e.y - drag-offset.y
+  end
+
+  on pointerup |e|
+    is-dragging = false
+  end
+end
+```
+
+The XML form's body sub-tags (`<state>`, `<on>`, `<style>`)
+retire; the keyword block forms above are canonical. Reads as
+a series of declarations, each speaking the same simple
+shape.
+
+### 12.6 Pattern matching — markup and expression forms
+
+Two shapes, picked by what the arms produce:
+
+**Markup match** — when arms produce markup, keep the tree
+visible with `<match>` / `<case>` tags:
+
+```prui
+<match on={tone}>
+  <case info>          <icon name=info/>                                </case>
+  <case success(d)>    <progress duration={d}/>                         </case>
+  <case error(_, r)>   <button if={r != nil} @click=r>Retry</button>    </case>
+</match>
+```
+
+**Expression match** — when arms produce values, use the
+expression form:
+
+```prui
+let label = match tone:
+  case info        → "Info"
+  case success(_)  → "Success"
+  case error(_, _) → "Error"
+end
+
+computed icon-name = match priority:
+  case low    → "minus"
+  case medium → "circle"
+  case high   → "exclamation"
+end
+
+fn tone-symbol(t: Tone) → string do
+  match t:
+    case info      → "ℹ"
+    case success   → "✓"
+    case error     → "✗"
+  end
+end
+```
+
+`match X:` opens the block; each arm is `case Pattern → value`;
+`end` closes. Same destructuring works in both shapes.
+`case _` matches anything; `case Variant(_, r)` destructures a
+variant's positional fields.
+
+### 12.7 Algebraic types and discriminated unions
+
+`type` declarations introduce reusable type names. Unions use
+a `union { … }` block; each case is either a bare name or a
+name with a parenthesised field list (using the same typed-
+param shape as components):
+
+```prui
+type Tone = union {
+  info
+  primary
+  danger
+  custom(color: color)
+}
+
+type Result<T, E> = union {
+  ok(value: T)
+  err(error: E)
+}
+
+type Task = {
+  id:       string,
+  title:    string,
+  priority: union { low, medium, high },
+  due:      timestamp?,
+}
+```
+
+Compose them into component signatures:
+
+```prui
+component Toast(tone: Tone required)
+  <match on={tone}>
+    <case info>          <icon name=info/>                                </case>
+    <case primary>       <icon name=star/>                                </case>
+    <case danger>        <icon name=warn/>                                </case>
+    <case custom(c)>     <icon style.color={c} name=dot/>                 </case>
+  </match>
+end
+
+<Toast tone={custom(color=#3b82f6)}/>
+<Toast tone={info}/>
+```
+
+The `union<…>` form from §6.10 maps directly; the new shape
+uses `{ … }` braces with comma-or-newline-separated cases.
+Type aliases can also be declared inline in a component
+signature when they're one-off, but extracting them to a
+named `type` is preferred for anything reused.
+
+### 12.8 Embedded PRSS — inline classes, scoped style blocks
+
+A `class Name { … }` at file top-level declares a PRSS class
+scoped to the file (or to the file's namespace if one is
+declared):
+
+```prui
+namespace Cards
+
+class card-base {
+  background = surface
+  padding    = 16
+  radius     = 12
+  &:hovered  { background = lighten(0.05) }
+  &:pressed  { background = darken(0.05) }
+}
+
+component Card(title: string)
+  <container class=card-base>
+    <heading 3>{title}</heading>
+  </container>
+end
+```
+
+Inside a component or mixin body, a `style { … }` block
+applies a scoped style to the host element:
+
+```prui
+component Card(title: string)
+  style {
+    padding = 16
+    radius  = 12
+    &:hovered { background = lighten(0.05) }
+  }
+
+  <container>
+    <heading 3>{title}</heading>
+  </container>
+end
+```
+
+Both `class { … }` and `style { … }` bodies use the §6.6
+PRSS-Nesting syntax — brace-expr values, `&:state` selectors,
+the pipeline shape:
+
+```prui
+class btn {
+  background = accent
+    | :hovered  → lighten(0.1)
+    | :pressed  → darken(0.1)
+    | :disabled → mute
+
+  radius = 8
+  padding = (8, 16)
+}
+```
+
+For larger style sheets, `use stylesheet "./theme.prss"`
+imports the file as today. Inline `class` blocks are for the
+case where the styles travel with the component file; the
+same surface, different file boundary.
+
+### 12.9 Embedded Luau — module helpers and inline bindings
+
+At file top level, Luau-equivalent declarations use `let`
+(values) and `fn` (functions):
+
+```prui
+namespace Cards
+
+use script "./palette.luau" as palette
+
+let DEFAULT_PADDING = 16
+
+fn tone-color(tone: Tone) → color do
+  match tone:
+    case primary → palette.accent
+    case danger  → palette.error
+    case info    → palette.muted
+    case default → palette.surface
+  end
+end
+```
+
+Inside a body (component / mixin / macro), `let` introduces
+a binding scoped to that body:
+
+```prui
+component TaskList(tasks: array<Task>, filter: string = "")
+  let visible = tasks:filter(|t| t.title:lower():contains(filter:lower()))
+  let count   = #visible
+
+  <container direction=column>
+    <text if={count == 0}>No matching tasks.</text>
+    <text>Showing {count} task{count == 1 ? "" : "s"}.</text>
+    <fragment for={t in visible}>
+      <task-row task={t}/>
+    </fragment>
+  </container>
+end
+```
+
+Inside `do … end` blocks (lambda bodies, event handlers,
+match arms), `let` is the standard Luau local binding.
+
+For embedding markup as a value (returning a `ui` fragment
+from a Luau helper), `prui [[ … ]]` is a string literal whose
+contents are parsed as PRUI body markup:
+
+```prui
+fn priority-tag(p: Priority) → ui do
+  match p:
+    case high   → prui [[ <tag class=urgent>!</tag> ]]
+    case medium → prui [[ <tag class=normal>·</tag> ]]
+    case low    → prui [[ <tag class=quiet> </tag> ]]
+  end
+end
+
+component TaskRow(task: Task)
+  <container>
+    {priority-tag(task.priority)}
+    <text>{task.title}</text>
+  </container>
+end
+```
+
+`prui [[ … ]]` mirrors Luau's long-bracket string literal and
+is the only point where markup appears as a value (rather
+than as a syntactic position). The brace-expr interpolation
+inside the markup works the same as in any body.
+
+### 12.10 Imports — the `use` keyword
+
+`use` replaces `<import>` as the file-level import keyword.
+Same projection set as §6.11, plus the same `as alias`
+override rule:
+
+```prui
+use stylesheet "./theme.prss"
+use script     "./helpers.luau" as h
+use component  "./card.prui"
+use component  "./forms.prui" as forms        -- multi-component file
+use component  "./icon-system.luau" as icons  -- Luau-defined components
+use dialect    "./markdown.luau"
+```
+
+Shape: `use <projection> "<path>" [as alias]`. Reads as
+English: "use the stylesheet at ./theme.prss." Without an
+alias, the file's own `namespace` declaration wins; with
+`as alias`, the alias overrides.
+
+The `<import>` XML tag continues to parse for compatibility;
+the canonical form is the keyword.
+
+### 12.11 Conditionals and loops in markup
+
+Element-level `if=` and `for=` survive as attributes — they
+read more cleanly than wrapping every conditional in a
+tag-wrapper:
+
+```prui
+<container if={items.length > 0}>
+  <fragment for={t, i in items}>
+    <text>{i + 1}. {t.title}</text>
+  </fragment>
+</container>
+
+<text if={loading}>Loading…</text>
+<error-banner if={error != nil} message={error}/>
+```
+
+Inside expression mode (brace-exprs, lambda bodies, `do…end`
+blocks), use standard Luau control flow — `if … then … else …
+end`, `for … in … do … end`, `while … do … end`. No special
+syntax is needed in expression mode.
+
+For logic that produces markup conditionally, prefer
+`<match>` / `<case>` tags (when the branching is
+many-armed) or write a small `fn` that returns a `ui`
+fragment via `prui [[ … ]]` (when the branching is one-off).
+
+### 12.12 Macros — pattern → expansion
+
+Macros declare a match pattern and an expansion. Captures
+use the same typed-param shape as component props:
+
+```prui
+macro Field(lbl: string, val: string)
+  match
+    <Field label={lbl} value={val}/>
+  expand
+    <container direction=column gap=4>
+      <text class=field-label>{lbl}</text>
+      <input :value={val}/>
+    </container>
+  end
+end
+
+<Field label="Title" value={state.title}/>
+```
+
+The `match` and `expand` keywords introduce body sections,
+mirroring `state` and `on` blocks in mixins. Captured names
+(`lbl`, `val`) are typed parameters available in the
+expansion.
+
+**Attribute macros** declare via an `attribute` modifier on
+the macro head — the expansion emits attribute key/value
+pairs that merge into the host element:
+
+```prui
+macro Elevation attribute(level: int)
+  expand-attrs
+    style.radius     = 8
+    style.background = tokens.surface
+    style.shadow     = elevations[level]
+  end
+end
+
+<container elevation=2>…</container>
+```
+
+`expand-attrs` is the attribute-context variant of `expand`;
+the body is a comma-or-newline-separated attribute list.
+
+### 12.13 Capabilities — the `uses` clause
+
+Capabilities ride the same shape as parameters but declared
+as a clause keyword. The clause supports comma-separated
+entries on one line, or multiple `uses` lines:
+
+```prui
+component ShareButton(text: string required)
+  uses clipboard: Clipboard, network: Network optional
+
+  <button @click={|| clipboard.write(text)}>Copy</button>
+end
+
+component AdminPanel(user: User required)
+  uses fs:       FileSystem
+  uses network:  Network
+  uses keyring:  Keyring optional
+
+  …
+end
+```
+
+`optional` is the trailing modifier marking a capability that
+the host may omit; the body must guard against `nil`. Without
+`optional`, missing the capability at lower-time is a
+contribution error (the host refuses to render the tree).
+
+### 12.14 Inheritance and composition — clause keywords
+
+Each composition primitive from §6.3 maps to a clause keyword
+(declaration time) or a use-site attribute (instance time):
+
+| Concept | Where | Shape | Cost |
+|---|---|---|---|
+| Single-parent extension | declaration clause | `extends Parent` | parse-time |
+| Trait conformance | declaration clause | `impls Trait1, Trait2` | runtime dispatch |
+| Mixin baked into component | declaration clause | `derives Mixin1, Mixin2` | parse-time (inlined) |
+| Mixin applied at runtime | use-site attribute | `with=[Mixin1, Mixin2]` | runtime chain |
+| Capabilities | declaration clause | `uses cap: Cap` | host-injected |
+
+```prui
+component DangerButton(label: string)
+  extends BaseButton
+  derives Hoverable, Focusable
+
+  style { background = tokens.error }
+
+  <container with=[Pulsing]>
+    <text>{label}</text>
+  </container>
+end
+```
+
+`extends`, `impls`, `derives`, `uses` are clause keywords —
+they describe the component's identity. `with` stays a
+use-site attribute — it describes a specific instance, not the
+declaration.
+
+### 12.15 Traits — typed shape + optional state
+
+```prui
+trait Pointable
+  on-click   : action
+  on-hover   : action
+  is-hovered : bool = false
+end
+
+trait Focusable
+  focused : bool
+  focus   : action
+  blur    : action
+end
+
+trait Composite recursive
+  children : slot<fn() → Composite> = nil
+end
+
+trait Folder recursive
+  items : array<FileLike>
+end
+
+trait File recursive
+  parent : Folder
+end
+```
+
+`recursive` is a head modifier (after the trait name, before
+the body); without it, self-referential members fail at parse
+with a clear error (Q5 in §8). Mutual recursion: every
+participating trait declares `recursive`.
+
+A bodyless trait `trait Marker end` serves the contract role
+(slot-type matching). A trait with state members tracks per-
+impl state on every component that `impls` it.
+
+### 12.16 Slots — typed props, default bodies, providers
+
+Slot props are typed parameters; defaults can be markup
+literals via `{ … }`:
+
+```prui
+component List(
+  items:  array<Task> required,
+  row:    slot<fn(item: Task, index: int) → ui>,
+  header: slot,
+  empty:  slot<fn() → ui> = { <text>No tasks yet.</text> },
+)
+  <container direction=column>
+    <slot header/>
+
+    <fragment for={t, i in items} if={#items > 0}>
+      <slot row item={t} index={i}/>
+    </fragment>
+
+    <slot empty if={#items == 0}/>
+  </container>
+end
+```
+
+Slot invocation is the existing `<slot name args/>` tag.
+Caller-provided slot bodies use the existing
+`<slot name args={…}>…</slot>` provider syntax. The slot
+unification from §6.5 is unchanged on the call side — only
+the declaration moves into the parameter list.
+
+### 12.17 The comprehensive example
+
+One file demonstrating every Polyglot feature at once:
+
+```prui
+-- ./cards.prui — multi-component file with helpers, styles, and a mixin
+namespace Cards
+
+use stylesheet "./theme.prss"
+use script     "./palette.luau" as palette
+use script     "./traits.luau"  as traits
+
+-- Inline type alias with a discriminated union
+type Tone = union {
+  info
+  primary
+  danger
+  custom(color: color)
+}
+
+-- Inline PRSS class with pipeline-shape state response
+class card-base {
+  background = surface
+  padding    = 16
+  radius     = 12
+  shadow     = elevations[1]
+    | :hovered  → elevations[2]
+    | :pressed  → elevations[3]
+  &:hovered  { background = lighten(0.05) }
+  &:pressed  { background = darken(0.05) }
+}
+
+-- Inline Luau helper using expression-form match
+fn tone-color(tone: Tone) → color do
+  match tone:
+    case info      → palette.muted
+    case primary   → palette.accent
+    case danger    → palette.error
+    case custom(c) → c
+  end
+end
+
+-- Inline mixin with state, hooks, and scoped style
+mixin Elevated
+  state level: int = 1
+
+  on pointerenter |e|
+    level = math.min(level + 1, 3)
+  end
+
+  on pointerleave |e|
+    level = math.max(level - 1, 1)
+  end
+
+  style {
+    shadow = elevations[level]
+  }
+end
+
+-- Main component — every clause + every body block + multi-line lambda
+component Card(
+  title:    string required,
+  subtitle: string = "",
+  tone:     Tone   = info,
+  padding:  int    = 16,
+  on-click: action,
+  on-share: action,
+  children: slot,
+  footer:   slot = { <text class=muted>— end —</text> },
+)
+  extends BaseCard
+  impls   traits.Pointable, traits.Focusable
+  derives Elevated
+  uses    clipboard: Clipboard, network: Network optional
+
+  state   expanded = false
+  state   shared   = false
+
+  on click |e|
+    expanded = not expanded
+    if on-click != nil then on-click(e) end
+  end
+
+  on share-click |e| do
+    let payload = title .. "\n" .. subtitle
+    clipboard.write(payload)
+    shared = true
+    if on-share != nil then on-share(e) end
+    if network != nil then
+      network:post("/share", { title, subtitle })
+    end
+  end
+
+  computed bg-color  = tone-color(tone)
+  computed share-lbl = if shared then "Copied!" else "Share" end
+
+  style {
+    background = bg-color
+    padding    = padding
+  }
+
+  <container class=card-base @click=$click(_)>
+    <heading 3>{title}</heading>
+    <text if={subtitle != ""} class=subtitle>{subtitle}</text>
+
+    <container if={expanded}>
+      <slot/>
+
+      <button @click=$share-click(_)>{share-lbl}</button>
+    </container>
+
+    <slot footer/>
+  </container>
+end
+
+-- Sibling component with no clauses
+component Avatar(src: string, size: px = 32)
+  <image src={src} width={size} height={size} class=avatar/>
+end
+
+-- Sibling component using expression-form match for a render fragment
+component PriorityTag(level: Priority)
+  let symbol = match level:
+    case low    → " "
+    case medium → "·"
+    case high   → "!"
+  end
+
+  <tag class={"priority-" .. tostring(level)}>{symbol}</tag>
+end
+```
+
+One file. Multiple components. Inline PRSS. Inline Luau.
+Inline mixin. Inline type alias. State + computed + multi-
+line event handlers + multi-line lambdas. Every §6 feature
+represented; not one closing tag for a declaration.
+
+### 12.18 Translation cheatsheet — XML → Polyglot
+
+Authors migrating existing files use this mapping. Most
+translations are mechanical:
+
+| XML form (today) | Polyglot form (new) |
+|---|---|
+| `<component Name attrs>body</component>` | `component Name(props) clauses … body … end` |
+| `<trait Name attrs/>` | `trait Name … end` |
+| `<mixin Name>body</mixin>` | `mixin Name … end` |
+| `<macro Name>match/expand</macro>` | `macro Name(captures) … end` |
+| `<state name=initial>` | `state name = initial` |
+| `<on event>{handler}</on>` | `on event \|e\| handler end` |
+| `<style>…</style>` | `style { … }` |
+| `<import stylesheet="x"/>` | `use stylesheet "x"` |
+| `<namespace=Foo/>` | `namespace Foo` |
+| `extends=Parent` (header attr) | `extends Parent` (clause line) |
+| `impls=[A, B]` (header attr) | `impls A, B` (clause line) |
+| `derives=[M]` (header attr) | `derives M` (clause line) |
+| `capabilities=[c: C]` (header attr) | `uses c: C` (clause line) |
+| `prop: type = default` (header attr) | `prop: type = default` (param list) |
+| `prop: type required` (header attr) | `prop: type required` (param list) |
+| `tone: union<info, success{d: int}, …>` (header attr) | `tone: union { info, success(d: int), … }` (param list) — and lift to `type Tone = …` when reused |
+| `\|args\| expr` (closure) | `\|args\| expr` (unchanged) |
+| (no multi-line lambda surface today) | `\|args\| do … end` (new) |
+| `\fn(args) … end` (rejected long form) | (still rejected; `\|args\| do … end` covers it) |
+| `<match>...<case Pattern>arm</case>...</match>` | `<match>` tag for markup arms; `match X: case Pattern → value end` for value arms |
+
+Every §6 feature maps across. A `prism-cli` migration command
+(`prism rewrite-polyglot`) automates 90%+ of the translation.
+
+### 12.19 What stays XML — the render tree wins as tags
+
+Tagged blocks remain the canonical syntax for **tree
+structure**:
+
+- Render trees in component bodies (`<container>`, `<text>`,
+  `<heading>`, `<image>`, `<input>`, `<slot>`, etc.)
+- Component invocation (`<Card title="Hi"/>`,
+  `<Forms.TextField/>`)
+- Control-flow elements (`<match>` / `<case>`,
+  `<fragment for=…>`, element `if=` attributes)
+- Slot providers at call sites
+  (`<slot name args>…content…</slot>`)
+- Primitive elements + HTML pass-through
+
+The XML shape wins for trees because the tree shape IS the
+visual structure. Polyglot picks XML up there and lets the
+rest of the language — declarations, types, logic, embedded
+sub-languages — breathe in their natural shapes.
+
+### 12.20 Reads as English (for non-programmers)
+
+The clause + signature shape was chosen so the surface reads
+out loud as plain English. Walk through a Polyglot
+declaration:
+
+> ```prui
+> component Card(title: string, on-click: action)
+>   extends BaseCard
+>   impls Pointable
+>   derives Hoverable
+>   uses clipboard: Clipboard
+>   state expanded = false
+>
+>   on click |e|
+>     expanded = not expanded
+>     on-click(e)
+>   end
+>
+>   <container @click=$click(_)>
+>     <heading 3>{title}</heading>
+>   </container>
+> end
+> ```
+
+> *"A `Card` component takes a `title` string and an
+> `on-click` action. It extends `BaseCard`, implements
+> `Pointable`, derives from `Hoverable`, and uses the
+> clipboard. It has a state called `expanded` that starts at
+> false. When clicked, it flips `expanded` and calls
+> `on-click` with the event. Its body is a container that
+> handles clicks, containing a level-3 heading showing the
+> title."*
+
+Every line maps to a sentence. A non-programmer reading the
+code can follow it without knowing what a closure is or what
+`impls` "really" means — the keywords carry their plain-
+English connotation.
+
+### 12.21 Reads as code (for devs)
+
+The same surface rewards depth. Devs get:
+
+- **Function-signature props** — typed parameter lists with
+  defaults, requireds, slots, and discriminated unions all in
+  the same syntactic position.
+- **Multi-line lambdas** — `|args| do … end` covers every
+  case the rejected `\fn` long-form did, with one parameter
+  syntax.
+- **Expression-form pattern matching** — `match X: case P → V
+  end` threads through let-bindings, computed values, and
+  function bodies as a value-returning expression.
+- **Pipeline-shape state values** — `accent | :hovered →
+  lighten(0.1)` collapses N×M state restatement into N+M
+  (§6.6).
+- **Algebraic types** — discriminated unions with
+  destructuring patterns in both markup `<case>` and
+  expression `case` arms.
+- **Schema-first cross-language flow** — the same Polyglot
+  declaration produces Luau type stubs, Rust typed handles,
+  inspector rows, LSP completions (§6.14).
+- **Mixins with super-chains** — `derives` for parse-time
+  inlining, `with=` for runtime chains, `super()` for
+  override-chain traversal.
+- **Capabilities as DI** — typed host services, parse-time
+  validation, test-injection-friendly.
+
+The depth lives in the type system and the composition
+primitives, not in cryptic syntax. Every advanced feature
+reuses syntax forms the simple cases already taught.
+
+### 12.22 Phasing — Polyglot lives alongside XML
+
+The Polyglot surface lands as a **second parser** alongside
+the existing XML-shape declaration parser. Body-mode (the
+render tree) is unchanged in both — only the declaration
+shape switches.
+
+| Phase | Scope | Reversibility |
+|---|---|---|
+| **P1** — Polyglot grammar lands as second parser | Both XML and Polyglot declarations parse to the same `ComponentSchema`. New files can use either; the parser picks based on first non-whitespace token of a declaration (`<` → XML, lowercase keyword → Polyglot). | reversible — XML parser stays in place |
+| **P2** — Migration tool ships | `prism rewrite-polyglot path/...` walks a tree and rewrites XML-shape declarations to Polyglot mechanically. Ambiguous cases (header attrs the migrator can't classify) get a `TODO` comment for hand review. | reversible — git revert |
+| **P3** — XML-shape declarations deprecated | Parser emits a deprecation warning when it sees an XML-shape declaration. Polyglot is canonical in docs and examples. After one release, XML-shape declaration parsing removed; tagged-block bodies stay (they were the same in both). | reversible during the deprecation window |
+| **P4** — Doc rewrite | All §5 and §6 examples in this doc rewritten in Polyglot shape. Receipts (§10) recomputed against the new LOC. | one-way (a doc commit) |
+
+LOC estimate for the Polyglot work itself:
+- Polyglot parser: ~1000 LOC (recursive-descent over the same
+  schema the XML parser produces; no new AST types)
+- Migration tool: ~600 LOC
+- XML-shape declaration parser deletion (P4): −400 LOC
+- Net: ~+1200 LOC added, ~−400 LOC removed.
+
+Phase P1 can land any time after §7 Phase 6 (the unified
+declaration syntax) — Phases 1–5 are runtime/grammar work
+that doesn't depend on declaration shape. Suggested slot:
+P1 ships between §7 Phase 6 and §7 Phase 8 so that early
+adopters of the unified declaration syntax can pick Polyglot
+from day one.
+
+### 12.23 What stays open
+
+A short list of decisions deferred to the P1 implementation:
+
+- **Trailing-comma rules** in parameter lists — Polyglot
+  accepts trailing commas (Rust / Python / JS style); the
+  parser silently consumes them. Confirmed; no controversy.
+- **Indentation sensitivity** — clauses + body blocks are
+  whitespace-tolerant; indentation is a style convention, not
+  a grammar requirement. The lexer doesn't track indent
+  levels. (Considered Python-style significant indentation
+  and rejected — copy-paste from chat / docs / inspectors
+  breaks too easily, mirroring Q12's CSS-Nesting-over-YAML
+  resolution.)
+- **`do … end` vs `{…}` for multi-line lambda bodies** — `do
+  … end` is the choice. `{…}` was considered (Rust / Swift
+  style) and rejected because `{…}` is already the brace-expr
+  for record literals and PRSS class bodies; using it again
+  for closure blocks would force the parser into three-way
+  disambiguation by context. `do…end` is unambiguous
+  (Lua-derived, matches the workspace's underlying language).
+- **Arrow glyph** — `→` (Unicode) is canonical in pipeline
+  shapes and `match` arms; `->` (ASCII) is accepted as an
+  alias for keyboard friendliness. Both are normalised to the
+  Unicode form by `prism fmt`.
+- **`fn` return-type arrow** — `→` matches `match` arms. `:`
+  (Swift-style) was considered but reads worse next to the
+  `:` used for typed params.
+
+None block landing P1; all are style/quality-of-life
+decisions confirmable during implementation review.
+
+---
+
+## 13. Closing thought
 
 Waves A–H made PRUI *runnable* — script, macro, dialect,
 lifecycle, suspense, animation, multi-projection. **Wave J**
@@ -2989,13 +4396,28 @@ receipts.
 The end state is a surface that's more expressive, smaller,
 and more open than today's. The 17-namespace enum is gone.
 The five registration paths are one. The three facet
-implementations are one. The two slot spellings are one. The
-two closure forms are one. The four-line state-variant
-repetition is one. **Every grammatical concept the language
-exposes is justified by user-facing semantics — there are no
-mechanism-residues left over from earlier eras.** That's the
-destination Wave J + K + L points at. §7 phases the trip in
-16 slices; the first three ship in weeks, the last few in
-months, and every one is independently shippable. §11 is the
-list of things we *could* do after, kept honest so they
-don't accrete into the load-bearing design.
+implementations are gone. The two slot spellings are one. The
+two closure forms are one (one parameter syntax, two body
+shapes). The four-line state-variant repetition is one.
+**Every grammatical concept the language exposes is justified
+by user-facing semantics — there are no mechanism-residues
+left over from earlier eras.** That's the destination Wave J
++ K + L points at. §7 phases the trip in 18 slices (Phase 0
+cleanup + Phases 1–17 features); the first three feature
+phases ship in weeks, the last few in months, and every one
+is independently shippable. §11 is the list of things we
+*could* do after, kept honest so they don't accrete into the
+load-bearing design.
+
+**§12 is the syntax that carries it.** Wave J + K + L
+designed the feature set; Polyglot designs the *shape* the
+features wear. Function-signature declarations make props
+look like parameters; clause keywords make composition read
+as English; multi-line `|args| do … end` lambdas free
+handlers from one-expression purgatory; embedded `class { … }`
+and `let` / `fn` keep PRSS and Luau inside `.prui` files
+without escape-hatch syntax; the tagged render tree stays
+where it earns its keep. **Tagged blocks for structure;
+function shape for declarations; imperative + functional for
+logic; English for composition. Four shapes; one file; every
+audience reads the part it cares about.**

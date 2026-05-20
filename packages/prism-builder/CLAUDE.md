@@ -187,18 +187,13 @@ Modules in `src/` (excluding `lib.rs`):
   fans out across every domain/interaction module that exposes
   `widget_contributions()`. `register_core_widgets` plugs them in.
 - `document.rs` — `BuilderDocument` + `Node` + `NodeId`.
-- `facet/` — `FacetDef`, `FacetKind`, `FacetDataSource`,
-  `FacetTemplate`, `FacetOutput`, `FacetBinding`, `FacetLayout`,
-  `AggregateOp`, `ScriptLanguage`, `FacetVariantRule`,
-  `FacetComponent`, `ResolvedFacetData`, `FacetSchema`,
-  `SchemaField`, `SchemaFieldKind`, `FacetRecord`,
-  `ValidationError`, `FACET_KIND_TAGS`, `AGGREGATE_OP_TAGS`.
-  `apply_scalar_bindings`, `evaluate_calculations`,
-  `promote_inline_to_component`, `parse_filter_expr`,
-  `resolve_template_expressions`, `apply_aggregate`. Full template
-  + binding resolution; the only `Component` impl in here is
-  `FacetComponent`, which lowers via `lower_ui` like every other
-  block.
+- `facet/` — `FacetComponent` (the data-repeat block) +
+  `resolve_template_expressions` (the `{{field}}` interpolator).
+  A `facet` node lowers its child subtree once per item in its data
+  source, reading the source from `Node.props` so the whole thing
+  travels through the standard `Component::lower_ui` contract — no
+  `BuilderDocument` side-table. Replaced the prior `FacetDef`
+  data-model subsystem; see `docs/dev/wysiwyg-builder-roadmap.md` §4.
 - `html.rs` — `Html` buffer + escape helpers (chrome composition).
 - `layout.rs` — Taffy layout (ADR-003). `PageLayout`, `LayoutMode`
   variants, `compute_layout`.
