@@ -120,6 +120,98 @@ concept for the bigger ones.
 
 ---
 
+## Terminology — what is a *component*?
+
+This doc uses **component** (lowercase, no backticks) as the
+*noun* for any reusable UI definition — what a `.prui` file
+holds, what `prism.component{…}` returns from Luau, what a
+`BlockSpec` row declares in Rust, what `<component name=…>`
+declares inside a parent `.prui` file. **Same artifact, different
+authoring surfaces.** Prism Studio already calls them components
+in its UI; this doc keeps that convention and applies it
+consistently from here forward.
+
+### Authoring surfaces — five spellings, one noun
+
+| You write | You call it | Where it lives at runtime |
+|---|---|---|
+| A `.prui` file whose outer element *is* the body | a component (file-as-component) | one `ComponentRegistry` entry; tag name = file stem (or `as` alias) |
+| `<component name=Foo>…</component>` inside a `.prui` file | a component (markup decl) | one `ComponentRegistry` entry; tag name = `Foo` |
+| `prism.component{props=…, render=…}` in `.luau` | a component (Luau decl) | one `ComponentRegistry` entry; tag name = `as` alias |
+| A `BlockSpec` row in `starter.rs` / `prism-shell/.../registry.rs` | a component (Rust decl) | one `ComponentRegistry` entry; tag name = spec id |
+| A `WidgetContribution` wrapped by `CoreWidgetBlock` + `register_core_widgets` | a component (engine-provided) | one `ComponentRegistry` entry; the "core widget" label is the source, not the kind |
+| A user `PrefabDef` wrapped by `PrefabComponent` | a component (user compound) | one `ComponentRegistry` entry; the "prefab" label is the source, not the kind |
+
+All six rows produce the *same noun*. The `ComponentRegistry`
+sees a `Component` (the trait); the resolver looks up a tag and
+invokes `Component::lower_ui`. The differences are *where the
+author types* and *what shape the source has*, not what the
+runtime registers.
+
+### Names in the codebase that are not separate concepts
+
+| Codebase name | What it actually is |
+|---|---|
+| `Block` (`prism-builder/src/block.rs`) | single-trait sugar over the `Component` trait — every `Block` blanket-impls `Component`. Ergonomics, not semantics. |
+| `Widget` (`WidgetContribution`, `CoreWidgetBlock`, `register_core_widgets`) | the engine-supplied subset — components shipped by a domain module (Flux, Fitness, CRM) rather than the builder default set. Source label, not a separate kind. |
+| `Prefab` (`prism-builder/src/prefab.rs`) | the user-authored compound subset — a component whose body is a node-tree template with `ExposedSlot` pins. Source label, not a separate kind. |
+| `BlockSpec` + `SpecBlock` | the declarative-record way to register a component in Rust without writing a trait impl. One row per component. |
+
+Wave K §9.1 ("the Prefab thesis") is the formal recognition that
+**these are not distinct categories at the language level — they
+are the same concept at different authoring surfaces**. Wave L
+§10.11 makes that explicit on the Luau side: every extension
+goes through one `prism.<kind>{…}` builder family
+(`prism.component{…}`, `prism.mixin{…}`, `prism.macro{…}`,
+`prism.derive{…}`, `prism.trait{…}`, `prism.dialect{…}`), with
+`prism.component{…}` for the component case.
+
+### The `<component>` PRUI tag is a *separate* construct (and overloaded)
+
+This doc keeps a careful distinction:
+
+- **component** (lowercase, no backticks) — the *noun*. Always
+  means "a reusable UI definition." Used throughout this doc.
+- **`<component>`** (backticks + angle brackets) — the specific
+  PRUI markup tag. Today it is a silent alias for `<container>`
+  (`interpret.rs:1739` — one match arm covers both). Wave J
+  §4.1/§4.3 would give it real declaration semantics
+  (`<component name=…, extends=…>`). Wave K §9.3 questions
+  whether the tag should survive at all (Options A / B / C —
+  markup-decl, file-as-component, or Luau-as-decl).
+- **`Component` trait** (`prism-builder/src/component.rs`) — the
+  Rust trait every registered component impls. The `Component::lower_ui`
+  method is the render contract. Long-standing; not under
+  discussion.
+- **`ComponentRegistry`** (`prism-builder/src/registry.rs`) — the
+  Rust struct that holds registered components and dispatches
+  tag lookups through a `TagResolver`.
+
+**Resolving Wave K §9.3 is the structural fork that decides
+whether the `<component>` tag survives at all.** If Option B
+(file-as-component) or Option C (Luau-as-decl) wins, the tag
+retires; if Option A wins, the tag becomes the markup
+declaration site. Either way the *noun* "component" stays;
+only the *spelling* shifts.
+
+### Reading rule for the rest of this doc
+
+- Lowercase "component" without backticks → the noun.
+- `<component>` in backticks → the PRUI markup tag.
+- `Component` capitalised, no backticks → the Rust trait.
+- "components" (plural) in narrative → the noun, plural.
+
+Pre-Wave-K drafts of this doc occasionally used "Component"
+(capitalised) as a generic noun. Wave K §9.1, Wave L §10, and
+every section authored after 2026-05-20 follow the rule above.
+Older sections (§4.1, §4.2, §4.3, §4.9) use "`<component>`" for
+the markup tag and "component" for the noun in mostly the right
+places; where they don't, treat any `<component>` reference as
+the *markup tag* (subject to the §9.3 fork) and any unmarked
+"component" as the *noun*.
+
+---
+
 ## 1. Why this, why now
 
 The fusion doc closed the *runtime* gap: scripting, macros,
@@ -914,10 +1006,12 @@ aggregating / composing components" — is the through-line.
 ### 9.1 The Prefab thesis
 
 At the authoring layer, every named UI artifact is a
-**Component** — the trait that exposes `lower_ui` to the render
-walk and registers a tag with a `TagResolver`. The codebase
-currently registers Components through **five** distinct entry
-points; the user sees one concept, the runtime exposes five:
+**component** (the noun — see the Terminology section above).
+Every component, regardless of where it was authored, impls the
+`Component` trait (Rust) and registers a tag with a `TagResolver`
+via the `ComponentRegistry`. The codebase currently exposes
+**five distinct authoring surfaces** for what is conceptually one
+noun:
 
 | Path | Source of truth | Cite |
 |---|---|---|
@@ -927,24 +1021,32 @@ points; the user sees one concept, the runtime exposes five:
 | `LuauComponent` (`luau` feat) | `#[derive(PrismBlock)]` proc-macro that walks a `template()` function through `lower_template` | `prism-builder/src/luau_component.rs` |
 | `<import widget="…">` | parsed by `collect_imports` (`interpret.rs:1210`) — **dead**, the only handler (`:1018`) matches `"script" \| "dialect"` and skips `widget` | `prism-ui-runtime/src/interpret.rs:1018,1210` |
 
-Three live paths exist because each authoring surface
-(declarative spec, IR-from-engine, document-tree-with-slots,
-Luau-from-derive) has structural needs the others don't. But from
-the **user's** side they are all "a thing I write once, register
-under a name, and invoke with a tag." That's one concept dressed
-in five costumes; one of the five is purely vestigial.
+Three live surfaces exist because each one (declarative spec,
+IR-from-engine, document-tree-with-slots, Luau-from-derive) has
+structural needs the others don't. But from the **user's** side
+they are all "a thing I write once, register under a name, and
+invoke with a tag." That's one noun dressed in five costumes;
+one of the five (`<import widget>`) is purely vestigial.
 
-**Wave K's claim:** *Prefab*, *Widget*, *Component*, and *Block*
-are not distinct categories — they are the same concept at
-different authoring surfaces. The `Component` trait survives. The
-five registration paths collapse into one logical authoring
-*concept* (a registered tag with a body + props + slots + signals)
-expressed through three *authoring surfaces* (Rust spec, `.prui`
-file, Luau function). The internal "Block trait", "BlockSpec",
-"CoreWidgetBlock", "PrefabComponent", "LuauComponent" become
-implementation details of one path each. The user only writes
-`prism.component{…}` (Luau) or a `<component>` tag (`.prui`) or a
-`BlockSpec` (Rust); the registry only sees a `Component`.
+**Wave K's claim:** *Prefab*, *Widget*, *Block*, and (most
+confusingly) *Component-the-codebase-name* are not distinct
+categories at the language level — they are the same noun (a
+component) at different authoring surfaces. The `Component` trait
+survives unchanged. The five surfaces collapse to **three
+authoring surfaces** for the one noun:
+
+1. A `.prui` file (or a `<component name=…>` declaration inside
+   one — depending on the §9.3 fork).
+2. A `prism.component{…}` table in Luau.
+3. A `BlockSpec` row in Rust.
+
+All three convert to the same `Component` trait implementation
+that the `ComponentRegistry` holds. The internal `Block` /
+`BlockSpec` / `CoreWidgetBlock` / `PrefabComponent` /
+`LuauComponent` types become *implementation details of one
+surface each* — naming kept for source-level clarity in Rust,
+but invisible at the language layer. A `.prui` author never types
+"Block" or "Prefab" or "Widget"; they write a component.
 
 This is the moment the `widget` projection rename in Wave J §4.9
 becomes load-bearing: it isn't just a name cleanup, it is the
@@ -2010,9 +2112,14 @@ After Wave J + K + L lands, the language has:
 - **One trait registry** — open, document-scoped,
   Luau-extensible; carries everything today's 17 namespaces
   carried plus user extensions.
-- **One component registration concept** — `prism.component{…}`
-  (Luau), `<component>` declaration in `.prui`, or `BlockSpec`
-  (Rust). Three skins, one `Component` trait in the registry.
+- **One noun for the reusable UI definition — "component" —
+  with three authoring surfaces**: `prism.component{…}` (Luau),
+  a `.prui` file or `<component name=…>` declaration (markup),
+  or `BlockSpec` (Rust). Three surfaces, one `Component` trait
+  in the registry, one `ComponentRegistry` for lookup. The
+  codebase names `Block`, `Widget`, and `Prefab` are kept as
+  internal source-level labels but do not appear at the
+  authoring layer.
 - **One mixin/derive system** — composable behaviour with
   deterministic linearisation.
 - **One macro engine** — parse-time markup expansion, shared by
