@@ -38,11 +38,13 @@ not on the immediate path.
 | Three ways to repeat children (`<facet>` / `FacetComponent` / `<container for=>`) | One way (`<container for=>`) |
 | Two ways to splice caller content (`<slot/>` / `<host-children/>`) | One way (`<slot/>` with optional `name=` + fallback) |
 | State variants restate property × selector at each cell (N × M lines) | Nested records + pipelines + named values (N + M lines) |
-| Inheritance only via PRSS `extends=`; no markup-level composition | `<extends file="./parent.prui"/>` head decl + mixins (`with=[…]`) + derives (`derive=[…]`) |
+| Inheritance only via PRSS `extends=`; no markup-level composition | Inline header attrs on the `<component>` wrapper: `extends=Parent`, `impls=[…]`, `derive=[…]`, plus runtime `with=[…]` on use sites |
 | Style-modifying behaviours wired by editing the runtime | User-defined attribute macros (`prism.macro{…}`) and traits (`prism.trait{…}`) |
-| Host services (clipboard / network / fs) reached via magic globals | Typed `<capability>` declarations the host provides at lower-time |
+| Host services (clipboard / network / fs) reached via magic globals | Typed `capabilities=[name: Type, …]` inline attr the host provides at lower-time |
 | `darken`/`lighten`/`mix` lerp in sRGB → desaturated colours | OKLCH-backed (callers unchanged) + `with(c, l=±, a=…)` channel adjust + slash-alpha (`accent/50`) |
-| Component props: anything goes, host decides | Declared `<property>` with types, defaults, `required`, discriminated unions |
+| Component props: anything goes, host decides | Inline typed declarations on the `<component>` wrapper: `name: type [= default \| required]`, including discriminated `union<…>` |
+| Six separate declaration tags (`<property>` / `<slot>` / `<extends>` / `<impls>` / `<derive>` / `<capability>` / `<contract>`) for component schema | **Four** declaration wrappers total: `<component>` / `<trait>` / `<mixin>` / `<macro>`. All inline-typed header attrs, no sub-tags, no `name=`. PascalCase first-positional token = the declaration name. |
+| One component per `.prui` file (file-as-component flat) | Multi-component files first-class — any number of top-level `<component>` / `<trait>` / `<mixin>` / `<macro>` wrappers per file; `.luau` files multi-export via returned table mixing components, traits, mixins, macros, helpers |
 | Two closure forms (`\|args\| expr` and `\fn(args)…end`) | One: `\|args\| expr` only (see §2, §9) |
 | Each authoring surface (`.prui` / Luau / Rust / `prism-luau-derive`) emits *its own* downstream artifacts — Luau stubs only auto-flow from PRUI (Wave I), Rust typed handles never auto-flow at all, PRSS isn't callable from Luau or Rust typed-ly | **Schema-first unification** — one canonical `ComponentSchema` / `TraitSchema` per artifact, all surfaces auto-generated from it. Declare in PRUI → Rust gets typed handles + Luau gets stubs for free; declare in Luau → Rust + PRUI get them; declare in Rust via `prism-luau-derive` → Luau + PRUI get them. (§6.14) |
 | Component invocation: `<component>` markup wrapper (alias for `<container>`); shell tags `<shell.icon-button/>` are mixed-case dotted; "is this a primitive or a user component" requires looking at the docs | **PascalCase rule (React / Vue convention)** — `<Card/>` / `<CustomForm/>` / `<AppWindow/>` are components by their PascalCase name; `<container/>` / `<text/>` / `<slot/>` are primitives by their lowercase name. The `<component>` markup tag retires entirely. (§3, §6.1 Part 1) |
@@ -153,9 +155,9 @@ in its UI; this doc keeps that convention.
 
 | You write | You call it | Tag at the call site |
 |---|---|---|
-| A `.prui` file (head declarations + body) | a component (file-as-component) | PascalCase of the file stem: `card.prui` → `<Card/>`; `app-window.prui` → `<AppWindow/>` |
-| `prism.component{name="Card", …}` in a `.luau` file | a component (Luau decl) | the `name` field: `<Card/>` |
-| `BlockSpec::new("Card", …)` row in Rust | a component (Rust decl) | the spec id: `<Card/>` (PascalCase) or `<button/>` (lowercase, when overriding a primitive name) |
+| A `.prui` file with one or more `<component Name …>` wrappers | a component (markup decl) | `<Name/>` — file-stem-PascalCased if single-component, or `<ns.Name/>` if imported `as ns` for multi-component files |
+| `prism.component{name="Name", …}` in a `.luau` file (single or via a returned table) | a component (Luau decl) | `<Name/>` (with optional `as` namespace) |
+| `BlockSpec::new("Name", …)` row in Rust | a component (Rust decl) | the spec id: `<Name/>` (PascalCase) or `<button/>` (lowercase, when overriding a primitive name) |
 
 All three produce the *same noun*. The `ComponentRegistry`
 sees a `Component` (the trait); the resolver looks up the
@@ -210,30 +212,132 @@ Today's `<component name=Foo>` markup wrapper retires entirely
 authoring surfaces in §6.1; all three register `Foo` so that
 `<Foo/>` works as the call.
 
-### How declarations look — head + body in a `.prui` file
+### The unified declaration syntax — four wrappers, no `name=`
 
-A `.prui` file is one component. Top-of-file declarations
-(`<property>`, `<slot>`, `<contract>`, `<impls>`, `<extends>`)
-form the head; the file's outer body element is the render
-target.
+Every reusable artifact in the language is declared with one of
+**four lowercase wrapper tags**. The wrapper's first positional
+token is the PascalCase name. The attribute list carries
+typed props, slots, capabilities, extends, impls, derive — all
+inline, no `<property>` / `<slot>` / `<extends>` / etc.
+sub-tags needed:
 
 ```prui
-<!-- ./card.prui — registers <Card/> -->
-<property name=title, type=string, required>
-<property name=tone,  type=enum<default|primary|danger>, default=default>
-<slot     name=children, signature=() -> ui, optional>
+<component Card                              <!-- declaration wrapper -->
+  title:    string  required,                <!-- inline typed prop -->
+  tone:     Tone    = default,               <!-- prop with default -->
+  on-click: action,
+  children: slot,                            <!-- slot is a typed prop -->
+  
+  extends      = BaseCard,                   <!-- single-parent inheritance -->
+  impls        = [Pointable, Focusable],     <!-- trait conformance -->
+  derive       = [Draggable],                <!-- parse-time mixin expansion -->
+  capabilities = [clipboard: Clipboard,      <!-- typed host services -->
+                  network: Network optional]>
 
-<container with=[Pointable], style={…}>
-  <heading level=3>{props.title}</heading>
-  <slot name=children/>
-</container>
+  <container with=[Hoverable], on:click=$on-click()>
+    <heading level=3>{title}</heading>
+    <slot/>                                  <!-- default slot invocation -->
+  </container>
+</component>
 ```
 
-The file stem (`card.prui`) PascalCase-normalises to the tag
-(`<Card/>`). Hyphens uppercase the next letter
-(`app-window.prui` → `<AppWindow/>`). The §6.1 A/B/C fork
-discusses how this generalises to multi-component files,
-Luau-defined components, and Rust-side `BlockSpec`.
+The four wrappers and their roles:
+
+| Wrapper | Role | Body | First positional |
+|---|---|---|---|
+| `<component Name attrs>…body…</component>` | UI component | render template | PascalCase component name |
+| `<trait Name attrs/>` (or with state body) | typed shape (also serves as contract for slot matching) | optional state/method list | PascalCase trait name |
+| `<mixin Name>…body…</mixin>` | composable behaviour (state + hooks + styles) | `<state>` / `<on>` / `<style>` decls | PascalCase mixin name |
+| `<macro Name>…body…</macro>` | parse-time markup expansion | `<match>` / `<expand>` pair | PascalCase macro name |
+
+That's the entire declaration surface. **No `name=`
+attribute** appears in any declaration — the PascalCase first
+token IS the name, mirroring the call-site rule above. No
+separate `<property>`, `<extends>`, `<impls>`, `<derive>`,
+`<capability>`, `<contract>` tags exist — those concepts are
+*inline attribute syntax*, not nested elements.
+
+### Inline attribute syntax — props, slots, capabilities
+
+The header of a declaration wrapper uses **typed attribute
+syntax**: `key: type` for declarations (with optional default
+or `required` marker), and `key = value` for plain attributes
+(extends, impls, derive). The two forms read distinctly:
+
+```prui
+<component Toast
+  title:    string  required,        <!-- typed prop, required -->
+  duration: int     = 2000,          <!-- typed prop, with default -->
+  on-dismiss: action,                <!-- typed callback prop -->
+  
+  tone: union<                       <!-- discriminated-union prop -->
+    info,
+    success { count: int = 1 },
+    error   { retry: action? }
+  >,
+  
+  header: slot,                                                   <!-- untyped slot prop -->
+  body:   slot<(item: Task, index: int) -> ui>,                   <!-- typed slot prop -->
+  
+  extends      = BaseToast,                                        <!-- plain attr -->
+  impls        = [Dismissable, Animated],
+  derive       = [AutoTimeout],
+  capabilities = [clock: Clock, sound: Sound optional]>
+  …body…
+</component>
+```
+
+The rule: `key: type [= default | required]` declares a typed
+prop (or slot or capability — distinguished by the type
+position); `key = value` is a plain attribute the wrapper
+interprets specially. This is the same shape Rust's struct
+field syntax uses, and the same shape function-parameter lists
+take in most languages.
+
+### How declarations look in a `.prui` file
+
+A `.prui` file may contain **one or more** top-level
+declaration wrappers. Single-component files are the common
+case; multi-component files bundle a related set (a form-field
+family, a chart system) into one file:
+
+```prui
+<!-- ./forms.prui — registers <forms.TextField/> and <forms.DropdownField/>
+     (when imported as `as forms`; see §6.11 for namespace rules) -->
+
+<component TextField
+  label: string required,
+  value: string = "",
+  on-change: action<string>>
+
+  <container direction=column gap=4>
+    <text class=label>{label}</text>
+    <input value={value} on:change=$on-change(_)/>
+  </container>
+</component>
+
+<component DropdownField
+  label:    string         required,
+  options:  array<string>  required,
+  selected: string         = "",
+  on-select: action<string>>
+
+  <container direction=column gap=4>
+    <text class=label>{label}</text>
+    <select value={selected} on:change=$on-select(_)>
+      <fragment for={opt in options}>
+        <option value={opt}>{opt}</option>
+      </fragment>
+    </select>
+  </container>
+</component>
+```
+
+When the file holds only one component, the file stem
+PascalCase-normalises to the tag (`card.prui` → `<Card/>`).
+When it holds multiple, the `<import component=…/> as Ns`
+namespace prefixes them (`<forms.TextField/>`,
+`<forms.DropdownField/>`). See §6.11 for resolution rules.
 
 ### Names in the codebase that aren't the same thing
 
@@ -352,31 +456,42 @@ rationale and §7 for the order.
 
 ### 5.1 Authoring and invoking a component
 
-Three authoring surfaces (file / Luau / Rust). One call site
-convention: **PascalCase tag = component invocation; lowercase
-tag = primitive** (React / Vue rule).
+Three authoring surfaces (`.prui` / Luau / Rust). One
+call-site convention: **PascalCase tag = component invocation;
+lowercase tag = primitive** (React / Vue rule). One unified
+declaration shape across all surfaces.
 
 ```prui
-<!-- ./button.prui — a file IS a component; registers <Button/> -->
-<property name=label, type=string, required>
-<property name=tone,  type=union<default, primary, danger>, default=default>
+<!-- ./button.prui — registers <Button/> -->
+<component Button
+  label: string  required,
+  tone:  union<default, primary, danger> = default,
+  on-click: action,
+  impls = [Pointable, Focusable]>
 
-<container with=[Pointable, Focusable], style={…}>
-  <text>{props.label}</text>
-</container>
+  <container with=[Pointable, Focusable] on:click=$on-click()>
+    <text>{label}</text>
+  </container>
+</component>
 ```
 
 ```luau
--- ./icon.luau — Luau-authored component; registers <Icon/>
-return prism.component {
-  name = "Icon",
-  props = {
-    glyph = { type = "string", required = true },
-    size  = { type = "int",    default  = 16 },
+-- ./icon-system.luau — multi-export: components, traits, helpers
+return {
+  Icon = prism.component {
+    name = "Icon",
+    props = {
+      glyph = { type = "string", required = true },
+      size  = { type = "int",    default  = 16 },
+    },
+    render = |props| prui [[
+      <image src={"icon:" .. props.glyph} width={props.size}/>
+    ]],
   },
-  render = |props| prui [[
-    <image src={"icon:" .. props.glyph} width={props.size}/>
-  ]],
+  Avatar = prism.component { name = "Avatar", … },
+  helpers = {
+    icon-url = |glyph| "https://cdn.icons/" .. glyph .. ".svg",
+  },
 }
 ```
 
@@ -391,18 +506,22 @@ Use sites — same call shape, regardless of which surface
 authored the component:
 
 ```prui
+<import component="./icon-system.luau"/> as icons
+
 <container direction=column gap=8>
-  <Button label="Save" tone=primary/>
-  <Icon glyph="check" size=24/>
+  <Button label="Save" tone=primary on-click=$save()/>
+  <icons.Icon glyph="check" size=24/>
+  <text>{icons.helpers.icon-url("check")}</text>
 </container>
 ```
 
-There is no `<component>` markup tag anywhere — declaration
-lives in the file head (or the Luau builder, or the Rust
-spec). Invocation is always the PascalCase name. All three
-surfaces register into the same `ComponentRegistry` and resolve
-through one `TagResolver` — `<Button/>` reads identically
-regardless of which surface authored its body.
+There is no `<component>` markup wrapper at the call site —
+declaration lives in the file head (via `<component Name …>`),
+Luau builder, or Rust spec. Invocation is always the PascalCase
+name. All three surfaces register into the same
+`ComponentRegistry` and resolve through one `TagResolver` —
+`<Button/>` reads identically regardless of which surface
+authored its body.
 
 **See §6.1** for declaration syntax + the multi-component-file
 question. **§6.2** for property declarations. **§6.3** for
@@ -519,25 +638,25 @@ with optional `name=`, optional fallback, optional typed
 signature.
 
 ```prui
-<!-- ./list.prui — registers <List/> -->
-<property name=items, type=array<Task>, required>
-<slot name=row,   signature=(item: Task, index: int) -> ui>
-<slot name=empty, signature=() -> ui, optional>
-  <text>No tasks yet</text>
-</slot>
+<!-- ./list.prui — declares <List/> -->
+<component List
+  items:  array<Task> required,
+  row:    slot<(item: Task, index: int) -> ui>,
+  empty:  slot<() -> ui> = { <text>No tasks yet</text> }>
 
-<container if={#items > 0}>
-  <fragment for={t, i in props.items}>
-    <invoke slot=row, args={item=t, index=i}/>
-  </fragment>
-</container>
-<invoke slot=empty if={#items == 0}/>
+  <container if={#items > 0}>
+    <fragment for={t, i in items}>
+      <slot row item={t} index={i}/>
+    </fragment>
+  </container>
+  <slot empty if={#items == 0}/>
+</component>
 ```
 
 ```prui
 <!-- caller -->
 <List items={tasks}>
-  <slot name=row args={item, index}>
+  <slot row args={item, index}>
     <text>{index + 1}. {item.title}</text>
   </slot>
 </List>
@@ -552,67 +671,67 @@ caller-provided scope a typed function.
 
 ### 5.5 Imports & extension — one mechanism, many kinds
 
-The fusion `<import>` family stays; a single Luau projection
-covers six extension kinds.
+The fusion `<import>` family stays; multi-component files and
+mixed-kind Luau tables make one projection cover many
+extension kinds.
 
 ```prui
 <import stylesheet="./theme.prss"/>
 <import script="./helpers.luau"/> as h
-<import component="./card.prui"/>              <!-- file is a component -->
-<import component="./icon.luau"/>              <!-- Luau prism.component{…} -->
-<import contract="./focusable.prui"/> as Focusable
-<import script="./traits.luau"/> as t          <!-- Luau-registered traits -->
+<import component="./card.prui"/>              <!-- single component file -->
+<import component="./forms.prui"/> as forms    <!-- multi-component .prui — namespaced -->
+<import component="./icon-system.luau"/> as i  <!-- Luau returning a table of components + helpers -->
+<import script="./traits.luau"/> as t          <!-- Luau returning traits / mixins / macros etc. -->
 ```
 
 Same `<import>` element, same `ImportResolver`, same
 `as`-namespacing, same module cache. The Luau side has one
-builder family covering six extension types:
+builder family covering five extension kinds — return a single
+value or a table mixing any of:
 
 ```luau
-prism.trait     {…}   -- attribute trait
+prism.trait     {…}   -- typed shape (also serves as contract)
 prism.mixin     {…}   -- composable behaviour (state + hooks)
 prism.macro     {…}   -- parse-time markup expansion
-prism.derive    {…}   -- parse-time decl expansion
 prism.component {…}   -- a component definition
 prism.dialect   {…}   -- embedded sub-language (Wave E)
+-- plus bare functions / values as helpers — anything Lua-side
 ```
 
-**See §6.11** for the import-family design; **§6.4** for trait
-registration; **§6.8** for macros.
+**See §6.11** for the full import-family design (multi-component
+files, projection-as-lens, multi-export tables); **§6.4** for
+trait registration; **§6.8** for macros.
 
-### 5.6 Mixins, derives, macros — three flavours of composition
+### 5.6 Mixins, macros, derive — two declaration tags, two use modes
 
-Authoring a behaviour that attaches to many components, in
-order of runtime cost:
+Two declaration wrappers cover behaviour composition + grammar
+extension:
 
-- **Mixin** — runtime composition with linearisation (Scala
-  MRO). Mixin state lives separately; hooks chain via
-  `super()`. Overridable downstream.
-- **Derive** — parse-time expansion. The mixin's state + hooks
-  are inlined into the component declaration as if hand-written.
-  No runtime chain. Not overridable downstream; cheaper at
-  runtime.
-- **Macro** — parse-time markup expansion. Pattern-match on
-  tags or attributes; expand to other tags/attributes. The most
-  general; closest to user-extending the grammar.
+- **`<mixin>`** — composable behaviour (state + hooks + styles).
+  Applied at one of two call sites: `with=[…]` at any element
+  (runtime composition, linearised chain, `super()`-overridable)
+  or `derive=[…]` on a `<component>` header (parse-time
+  expansion, inlined, cheaper at runtime).
+- **`<macro>`** — parse-time markup expansion. Pattern-match
+  tags or attributes; expand to other tags/attributes.
 
 ```prui
-<mixin name=Hoverable>
-  <state name=is-hovered, type=bool, default=false>
-  <on event=pointerenter>{ is-hovered = true }</on>
-  <on event=pointerleave>{ is-hovered = false }</on>
+<mixin Hoverable>
+  <state is-hovered = false>
+  <on pointerenter>{ is-hovered = true }</on>
+  <on pointerleave>{ is-hovered = false }</on>
 </mixin>
 
-<derive name=Draggable>
-  <state name=is-dragging, type=bool, default=false>
-  <state name=drag-offset, type=point,  default=(0,0)>
-  <on event=pointerdown>{ is-dragging = true; … }</on>
-  <on event=pointermove if=is-dragging>{ … }</on>
-  <on event=pointerup>{ is-dragging = false }</on>
-</derive>
+<mixin Draggable>
+  <state is-dragging = false>
+  <state drag-offset = (0, 0)>
+  <on pointerdown>{ is-dragging = true; drag-offset = (e.x - self.x, e.y - self.y) }</on>
+  <on pointermove if=is-dragging>{ self.x = e.x - drag-offset.x; self.y = e.y - drag-offset.y }</on>
+  <on pointerup>{ is-dragging = false }</on>
+</mixin>
 
-<macro name=field>
-  <match><field label={lbl} value={val}/></match>
+<macro Field>
+  <match><Field label={lbl} value={val}/></match>
   <expand>
     <container direction=column gap=4>
       <text class=field-label>{lbl}</text>
@@ -621,17 +740,21 @@ order of runtime cost:
   </expand>
 </macro>
 
-<container with=[Hoverable]>…</container>
+<!-- Runtime composition on a use site -->
+<container with=[Hoverable, Draggable]>…</container>
 
-<!-- ./card.prui — registers <Card/> -->
-<derive traits=[Draggable]/>
-<container>…</container>
+<!-- Parse-time expansion in a component declaration -->
+<component Card derive=[Draggable], title: string>
+  <container>
+    <heading>{title}</heading>
+  </container>
+</component>
 
-<!-- elsewhere -->
-<field label="Title" value={state.title}/>
+<!-- Macro expansion at the call site -->
+<Field label="Title" value={state.title}/>
 ```
 
-**See §6.3** for mixins/derives; **§6.8** for macros.
+**See §6.3** for mixin / derive semantics; **§6.8** for macros.
 
 ### 5.7 Capabilities — typed host services
 
@@ -640,11 +763,16 @@ provides them at lower-time; missing capabilities fail at
 parse, not at runtime. No magic globals.
 
 ```prui
-<!-- ./share-button.prui — registers <ShareButton/> -->
-<capability name=clipboard, type=Clipboard>
-<capability name=network,   type=Network, optional>
+<!-- ./share-button.prui — declares <ShareButton/> -->
+<component ShareButton
+  text: string required,
+  capabilities = [
+    clipboard: Clipboard,
+    network:   Network optional,
+  ]>
 
-<button on:click=$clipboard.write(props.text)>Copy</button>
+  <button on:click=$clipboard.write(text)>Copy</button>
+</component>
 ```
 
 The relay refuses to provide `FileSystem` to a public-facing
@@ -660,18 +788,20 @@ Props that are "one of these shapes" carry their variant
 fields declaratively; the body pattern-matches.
 
 ```prui
-<!-- ./toast.prui — registers <Toast/> -->
-<property name=tone, type=union<
-  info,
-  success { duration: int = 2000 },
-  error   { dismissable: bool = true, retry: action? }
->>
+<!-- ./toast.prui — declares <Toast/> -->
+<component Toast
+  tone: union<
+    info,
+    success { duration: int = 2000 },
+    error   { dismissable: bool = true, retry: action? }
+  > required>
 
-<match on=props.tone>
-  <case info>           …                                            </case>
-  <case success(d)>     <progress duration={d}/> …                   </case>
-  <case error(dis, r)>  … <button if={r != nil} on:click={r}>Retry</button> </case>
-</match>
+  <match on={tone}>
+    <case info>           …                                            </case>
+    <case success(d)>     <progress duration={d}/> …                   </case>
+    <case error(dis, r)>  … <button if={r != nil} on:click={r}>Retry</button> </case>
+  </match>
+</component>
 ```
 
 ```prui
@@ -705,7 +835,7 @@ Each subsection follows the same shape: Problem → Design →
 Rationale → Wave / Phase → What it deletes → Open questions.
 Forward references to §7 phasing and §8 open questions.
 
-### 6.1 Components — declaration, invocation, the three authoring surfaces
+### 6.1 Components — the unified declaration syntax
 
 **Problem.** Five distinct registration paths for what is
 conceptually one noun (see §3 Terminology, §4 snapshot). The
@@ -713,13 +843,17 @@ PRUI `<component>` markup tag is a silent alias for
 `<container>` today and has no declaration semantics
 (`interpret.rs:1739`). Authors don't know which surface to
 write to, and the call-site syntax (`<shell.icon-button/>`,
-`<facet/>`, mixed-case ad-hoc) has no consistent rule.
+`<facet/>`, mixed-case ad-hoc) has no consistent rule. The
+earlier `<property name=…>` / `<extends>` / `<impls>` /
+`<derive>` / `<capability>` / `<contract>` sub-tag scheme
+ballooned six declaration tags where one declaration *header*
+would do.
 
-**Design — two parts.**
+**Design — three parts.**
 
-#### Part 1: Invocation — the PascalCase rule
+#### Part 1: Call-site invocation — the PascalCase rule
 
-**Components are invoked by their name.** The first character
+**Components are invoked by their name.** First character
 disambiguates:
 
 - **PascalCase** (`<Card/>`, `<AppWindow/>`,
@@ -728,123 +862,216 @@ disambiguates:
 - **lowercase** (`<container/>`, `<text/>`, `<slot/>`,
   `<input/>`) → built-in primitive or HTML pass-through.
 
-Same convention as React, Vue, Svelte, SolidJS. The
-`<component>` markup tag retires entirely (§6.13). Existing
-shell-side tags rename from `<shell.icon-button/>` to
-`<ShellIconButton/>` or `<IconButton/>` under a namespace; the
-migration is mechanical (the dot-namespacing in
-`shell.icon-button` already maps cleanly to PascalCase).
+Same convention as React / Vue / Svelte / SolidJS. The
+`<component>`-as-`<container>`-alias retires. Existing shell
+tags rename from `<shell.icon-button/>` to `<ShellIconButton/>`
+or `<IconButton/>` under a namespace; mechanical migration.
 
-#### Part 2: Declaration — three authoring surfaces
+#### Part 2: Declaration — the four-wrapper syntax with inline attributes
 
-Three surfaces produce a component registration:
+A declaration is a **lowercase wrapper tag** (`<component>`,
+`<trait>`, `<mixin>`, `<macro>`) whose **first positional
+token is the PascalCase name** and whose **attribute list
+inlines props / slots / capabilities / extends / impls /
+derive** using typed syntax. No `name=` attribute. No
+`<property>` / `<slot>` / `<extends>` / `<impls>` /
+`<derive>` / `<capability>` / `<contract>` sub-tags.
 
-1. **File-as-component (`.prui`).** Every `.prui` file *is* a
-   component. Top-of-file declarations (`<property>`,
-   `<slot>`, `<extends>`, `<impls>`, `<contract>`) form the
-   head; the file's outer body element is the render target.
-   The file stem PascalCase-normalises to the tag name
-   (`card.prui` → `<Card/>`; `app-window.prui` →
-   `<AppWindow/>`).
+```prui
+<!-- ./card.prui — registers <Card/> -->
+<component Card
+  title:    string  required,
+  subtitle: string  = "",
+  tone:     union<default, primary, danger> = default,
+  padding:  int     = 16,
+  on-click: action,
+  children: slot,
 
-   ```prui
-   <!-- ./card.prui — registers <Card/> -->
-   <property name=title, type=string, required>
-   <property name=tone,  type=enum<default|primary|danger>, default=default>
-   <slot     name=children, signature=() -> ui, optional>
+  extends      = BaseCard,
+  impls        = [Pointable, Focusable],
+  derive       = [Draggable],
+  capabilities = [clipboard: Clipboard]>
 
-   <container with=[Pointable]>
-     <heading level=3>{props.title}</heading>
-     <slot name=children/>
-   </container>
-   ```
-2. **Luau (`prism.component{…}`).** Returned from a `.luau`
-   file imported as `component` or `script`. Registered tag
-   name comes from the `name = "Card"` field (or the
-   `as` alias at the import site).
+  <container with=[Hoverable], padding={padding}, on:click=$on-click()>
+    <heading level=3>{title}</heading>
+    <text if={subtitle != ""}>{subtitle}</text>
+    <slot/>
+  </container>
+</component>
+```
 
-   ```luau
-   return prism.component {
-     name  = "Card",
-     props = { title = { type = "string", required = true } },
-     render = |props| prui [[ <container>…</container> ]],
-   }
-   ```
-3. **Rust `BlockSpec`.** A const spec row registers the tag.
-   The spec id is the canonical tag (`BlockSpec::new("Card", …)`
-   → `<Card/>`); lowercase ids stay lowercase
-   (`BlockSpec::new("button", …)` → `<button/>` as a primitive
-   override, used for the 17 starter built-ins).
+The header reads as a **typed function signature** — what the
+component takes, what it conforms to, what behaviour it
+composes. The body is the render template.
 
-   ```rust
-   const CARD_SPEC: BlockSpec = BlockSpec::new("Card", card_schema)
-       .lower(card_lower)
-       .help("builder.components.card", "Card", "…");
-   ```
+**Attribute syntax — two forms, distinct at a glance:**
+
+- **`key: type`** (or `key: type = default`, `key: type required`)
+  → declares a typed prop / slot / capability. The type
+  position disambiguates which kind: `string` / `int` / etc.
+  is a value prop; `slot` or `slot<sig>` is a slot prop; a
+  capability type (`Clipboard`, `Network`) inside the
+  `capabilities=[…]` list is a capability.
+- **`key = value`** → plain attribute the wrapper interprets
+  specially (`extends=`, `impls=`, `derive=`, `capabilities=`).
+
+The same rule applies to all four declaration wrappers
+(§6.3 covers `<trait>` / `<mixin>` / `<macro>`).
+
+#### Part 3: Authoring surface — file / Luau / Rust
+
+Three surfaces produce the declaration. The wrapper above is
+the **`.prui` form**; the other two mirror it 1:1.
+
+**`.prui` file (`<component>` wrapper):** As above. One or
+more wrappers per file (multi-component files first-class —
+§6.11 for namespace rules).
+
+**Luau (`prism.component{…}`):** Returned from a `.luau` file
+imported as `component` or `script`. The Luau table mirrors
+the PRUI header structure:
+
+```luau
+return prism.component {
+  name = "Card",
+  props = {
+    title    = { type = "string",  required = true },
+    subtitle = { type = "string",  default  = "" },
+    tone     = { type = "union<default, primary, danger>", default = "default" },
+    padding  = { type = "int",     default  = 16 },
+    on-click = { type = "action" },
+    children = { type = "slot" },
+  },
+  extends      = "BaseCard",
+  impls        = { "Pointable", "Focusable" },
+  derive       = { "Draggable" },
+  capabilities = { clipboard = "Clipboard" },
+  render       = |props| prui [[
+    <container with=[Hoverable], padding={props.padding}, on:click=$props.on-click()>
+      <heading level=3>{props.title}</heading>
+      <slot/>
+    </container>
+  ]],
+}
+```
+
+Multi-export from a `.luau` file = return a table of named
+entries (§6.11):
+
+```luau
+return {
+  Card  = prism.component { name = "Card",  … },
+  Field = prism.macro     { name = "Field", … },
+  Pointable = prism.trait { name = "Pointable", … },
+  helpers   = {                            -- bare functions are fine too
+    format-date = |t| os.date("%Y-%m-%d", t),
+  },
+}
+```
+
+**Rust `BlockSpec`:** A const spec row registers the tag.
+PascalCase id = component tag; lowercase id = primitive
+override (used for the 17 starter built-ins).
+
+```rust
+const CARD_SPEC: BlockSpec = BlockSpec::new("Card", card_schema)
+    .lower(card_lower)
+    .help("builder.components.card", "Card", "…");
+```
 
 All three flow into one `Component` trait impl in the
 `ComponentRegistry`. The `Block` / `BlockSpec` /
 `CoreWidgetBlock` / `PrefabComponent` / `LuauComponent`
 Rust-side types stay as source-level clarity but are
-*invisible* at the authoring layer (§3 Terminology, §6.14
-schema unification).
+*invisible* at the authoring layer (§3, §6.14 schema
+unification).
 
-#### Multi-component `.prui` files
+#### Multi-component files
 
-A `.prui` file is conventionally one component (file =
-component). The Q6 question (multi-component files in §8)
-asks whether to support multiple top-level PascalCase decls
-in one file. Doc lean: discourage in favour of one file per
-component; the file system + import family (§6.11) makes
-splitting cheap.
-
-If multi-component files do land, the syntax is multiple
-top-level PascalCase blocks with their own head + body:
+A `.prui` file may contain **any number of top-level
+`<component>` wrappers** (also `<trait>` / `<mixin>` /
+`<macro>`). The user is no longer constrained to one
+component per file:
 
 ```prui
-<!-- ./forms.prui — registers <forms.TextField/> + <forms.DropdownField/> -->
-<TextField>
-  <property name=label, type=string>
-  <container>…</container>
-</TextField>
+<!-- ./forms.prui — three components in one file -->
+<component TextField …>…</component>
+<component DropdownField …>…</component>
+<component DateField …>…</component>
 
-<DropdownField>
-  <property name=options, type=array<string>>
-  <container>…</container>
-</DropdownField>
+<!-- and supporting traits / mixins, also in the same file -->
+<trait FieldLike, label: string, value: any/>
+<mixin FieldValidation>…</mixin>
 ```
 
-Imported as `<import component="./forms.prui"/> as forms`, the
-tags are `<forms.TextField/>` and `<forms.DropdownField/>`.
-The outer PascalCase element with `<property>` / `<slot>`
-children at top level IS the decl; nested PascalCase is
-invocation, same rule.
+Import + namespace rules (§6.11):
 
-**Wave / Phase.** Phase 6 (component declarations + properties
-+ extends). The earlier "A/B/C fork" framing (now Q1 in §8)
-collapses: with PascalCase invocation, the choice is no longer
-"does the `<component>` tag survive?" but "where does the
-declaration text live?" — and the three authoring surfaces
-above each answer it differently for their use case. Default
-recommendation: file-as-component for `.prui`-first authors;
-Luau builder for cross-cutting library distribution; Rust
-`BlockSpec` for built-ins shipped with the engine.
+- `<import component="./card.prui"/>` — single component,
+  registers under file stem PascalCased (`<Card/>`).
+- `<import component="./forms.prui"/> as forms` — multi-component,
+  namespaced (`<forms.TextField/>`, `<forms.DropdownField/>`).
+- `<import component="./forms.prui"/>` (no `as=`) — bare
+  imports each component into scope; collision = parse error.
 
-**What it deletes / supersedes.** The `<component>` markup tag
-(silently aliased `<container>` today); the implicit "any
-unknown tag is anyone's guess" dispatch path; the historical
-mixed-case shell tag convention (`<shell.icon-button/>` →
-`<ShellIconButton/>` or namespaced).
+#### Component invocation — passing props, hooks, slots
 
-**Open questions.** Q1 (multi-component files — §8 reframed
-to be about the multi-file convention, not the tag question);
-Q6 (the PascalCase-normalisation rule for filenames with
-dots, numerics, leading-underscore — pick once, document); Q7
-(`.luau` as both component and script in one file).
+The call site uses **plain attribute syntax** (no `:` types
+— types belong to the declaration). Slots are passed inline
+as nested `<slot>` providers; default-slot children stream into
+the unnamed slot:
+
+```prui
+<Card
+  title="Welcome"
+  subtitle="Read the intro below"
+  tone=primary
+  padding=24
+  on-click=$open-intro()>
+
+  <!-- streams into the default `children: slot` -->
+  <text>Some body content here.</text>
+
+  <!-- if Card declared additional named slots, e.g. `footer: slot`: -->
+  <slot footer>
+    <text>— signed, the team</text>
+  </slot>
+</Card>
+```
+
+Slot providers can destructure args from typed slots:
+
+```prui
+<List items={tasks}>
+  <slot row args={item, index}>
+    <text>{index + 1}. {item.title}</text>
+  </slot>
+  <slot empty>
+    <text>No tasks yet.</text>
+  </slot>
+</List>
+```
+
+§6.5 covers the slot rules in detail.
+
+**Wave / Phase.** Phase 6 (the unified declaration syntax +
+inline prop / extends / impls / derive / capabilities).
+
+**What it deletes / supersedes.** The `<component>`-as-`<container>`
+alias (silently overlapping). The `<property>`, `<extends>`,
+`<impls>`, `<derive>`, `<capability>`, `<contract>` sub-tag
+proposals (collapsed into header attributes). The
+`<shell.icon-button/>` dot-namespacing convention (PascalCase
+rename). The `name=` attribute on every declaration kind
+(replaced by PascalCase first-positional token).
+
+**Open questions.** Q1 (collision handling for bare
+multi-component imports); Q6 (PascalCase-normalisation edge
+cases for filenames); Q7 (`.luau` returning mixed
+components + helpers + macros — handled, §6.11).
 
 ---
 
-### 6.2 Properties — declarations, defaults, required, discriminated unions
+### 6.2 Properties — the type set, defaults, discriminated unions
 
 **Problem.** Today's component prop story is "anything goes;
 the host binding decides." Defaults live in the host;
@@ -853,65 +1080,92 @@ the host binding decides." Defaults live in the host;
 Variant-rich props (`tone = {info | success | error}`)
 degrade to boolean ladders.
 
-**Design.** First-class declarations inside the component
-body, including discriminated unions:
+**Design.** Properties are declared inline in the `<component>`
+wrapper header (§6.1), using the typed-attribute syntax
+`name: type [= default | required]`. This section covers the
+**type set** and the **discriminated-union** case in detail.
+
+#### The type set (closed)
+
+| Type | Example | Notes |
+|---|---|---|
+| `string` | `label: string required` | Lua-side typed `string` |
+| `int` / `number` | `padding: int = 16` | typed integer / float |
+| `bool` | `disabled: bool = false` | |
+| `color` | `tint: color` | hex / token / OKLCH-helper value |
+| `length` | `radius: length = 8` | px / em / token unit |
+| `action` | `on-click: action` | callback type, `$expr` at call site |
+| `action<T>` | `on-change: action<string>` | callback with typed arg |
+| `enum<a\|b\|c>` | `tone: enum<default\|primary\|danger>` | flat enum |
+| `union<…>` | (see below) | discriminated union with variant fields |
+| `array<T>` | `items: array<Task>` | typed array |
+| `object<{…}>` | `style: object<{bg: color}>` | typed object |
+| `slot` / `slot<sig>` | `children: slot`, `row: slot<(item: Task) -> ui>` | slot prop (§6.5) |
+| `<TraitName>` | `field: Focusable` | structural match against a trait |
+
+The set is closed so the parser-side type-check stays static.
+
+#### Defaults and `required`
+
+- `key: type = literal` — default value. Must be a **literal**
+  (string / number / bool / token / enum case / `nil`), not a
+  `{…}` expression. Avoids the recursive-default class of bugs
+  from Vue's `withDefaults`. Derived defaults compute in the
+  body: `padding={props.padding ?? row.depth * 4}`.
+- `key: type required` — required, no default. Missing at call
+  site raises a contribution error at lower-time.
+- `key: type` — optional, default is the type's zero
+  (`""`, `0`, `false`, `nil`).
+
+#### Discriminated unions — props that carry variant fields
+
+The `union<…>` type names a set of variants, each optionally
+carrying fields. The body pattern-matches via the existing
+`<match>` primitive extended with destructure-binding:
 
 ```prui
-<!-- ./card.prui — registers <Card/> -->
-<property name=title,    type=string, required>
-<property name=subtitle, type=string, default="">
-<property name=padding,  type=int,    default=16>
-<property name=onClick,  type=action>
+<component Toast
+  tone: union<
+    info,
+    success { duration: int = 2000 },
+    error   { dismissable: bool = true, retry: action? }
+  > required>
 
-<!-- discriminated union — variant fields carried inline -->
-<property name=tone, type=union<
-  info,
-  success { duration: int = 2000 },
-  error   { dismissable: bool = true, retry: action? }
->>
-
-<container padding={props.padding} on:click=$props.onClick()>
-  <heading level=3>{props.title}</heading>
-  <text if={props.subtitle != ""}>{props.subtitle}</text>
-
-  <match on=props.tone>
-    <case info>           …                                  </case>
-    <case success(d)>     <progress duration={d}/> …         </case>
-    <case error(dis, r)>  … <button if={r != nil}>Retry</button> </case>
+  <match on={tone}>
+    <case info>           …                                              </case>
+    <case success(d)>     <progress duration={d}/> …                     </case>
+    <case error(dis, r)>  … <button if={r != nil} on:click={r}>Retry</button> </case>
   </match>
-</container>
+</component>
+
+<!-- caller -->
+<Toast tone={error(dismissable=true, retry=$retry-upload)}/>
+<Toast tone={info}/>
+<Toast tone={success}/>            <!-- duration uses the variant default -->
 ```
 
-**Type set (closed).** `string`, `int`, `number`, `bool`,
-`color`, `length`, `action`, `enum<a|b|c>`, `union<…>`,
-`array<T>`, `object<{…}>`, or a `<contract>` / trait name. The
-closed set keeps the parser-side type-check static.
+The property panel auto-generates a variant picker + per-variant
+sub-form. The Luau type-stub generator emits a tagged union the
+analyzer narrows inside `if props.tone.kind == "error" then …`.
+The "boolean prop ladder" anti-pattern (`is-success` +
+`is-error` + `is-info`) becomes impossible to express.
 
-**Default is a literal**, not a `{…}` expression — avoids the
-recursive-default class of bugs from Vue's `withDefaults`.
-Derived defaults compute in the body:
-`padding={props.padding ?? row.depth * 4}`.
+**Wave / Phase.** Inline prop declarations + `required` +
+literal defaults: Phase 6 (with the §6.1 unified syntax).
+Discriminated unions + `<case Variant(fields)>` destructure:
+Phase 12 (depends on the trait registry being live for the
+inspector + Luau-narrowing integration).
 
-**`required` is a boolean presence flag** (no `=`). Missing
-required props raise a contribution error at lower-time.
+**What it deletes / supersedes.** The `<property name=…>`
+sub-tag idea (collapsed into header attributes, §6.1); the
+boolean-prop-ladder anti-pattern; the "host knows the schema"
+implicit coupling.
 
-**Optional == default-bearing.** No separate `optional`
-keyword.
-
-**Wave / Phase.** Property declarations + `required` + literal
-defaults: Phase 6. Discriminated unions + `<case Variant(fields)>`
-destructure: Phase 12 (depends on the trait registry being
-live for the inspector + Luau-narrowing integration).
-
-**What it deletes / supersedes.** The "host knows the schema"
-implicit-coupling that pollutes binding code today.
-
-**Open questions.** Q2 (computed defaults via
-`<property … computed={…}>`; deferred to §11).
+**Open questions.** Q2 (computed defaults — deferred to §11.2).
 
 ---
 
-### 6.3 Composition — inheritance, contracts, traits, mixins, derives
+### 6.3 Composition — extends, traits, mixins (three primitives, two declaration tags)
 
 **Problem.** "Two components identical except for one
 override" has no markup-level expression today; the only
@@ -921,163 +1175,181 @@ behaviours (drag + hover + select + tooltip-host) onto a
 container requires hand-rolling state + handlers + styles in
 every component that wants the bundle.
 
-**Design.** Five layered composition primitives, each with a
-distinct cost / overridability tradeoff.
+**Design.** Three composition primitives over **two
+declaration tags** (`<trait>` and `<mixin>`) plus one
+component-header attribute (`extends=`). The earlier separate
+`<contract>` and `<derive>` declaration kinds collapse — a
+contract is a trait with no implementation, and a derive is a
+mixin applied at parse time via the `derive=[…]` attribute
+instead of `with=[…]` at runtime.
 
-#### Inheritance — `<extends file="./parent.prui"/>` head decl
+#### Inheritance — `extends=Parent` attribute
 
-Shallow, single-parent. The child file's body is a *patch* of
-the parent's; head declarations allowed inside an `<extends>`-ing
-file are property overrides, additional slot declarations, and
-a single optional `<style>` block. For structurally different
-bodies, *compose* with `<Parent>` as a child element instead.
+Shallow, single-parent. The child component's body is a
+*patch* of the parent's; the child header may add or override
+typed props, slots, and add an optional inline `<style>` block.
+For structurally different bodies, *compose* with `<Parent>` as
+a child element instead.
 
 ```prui
-<!-- ./base-button.prui — registers <BaseButton/> -->
-<property name=label, type=string>
-<property name=tone,  type=enum<default|primary|danger>, default=default>
+<!-- ./base-button.prui -->
+<component BaseButton
+  label: string,
+  tone:  enum<default|primary|danger> = default>
 
-<container tag=button class=[btn, tone:{props.tone}]>
-  <text>{props.label}</text>
-</container>
+  <container tag=button class=[btn, tone:{tone}]>
+    <text>{label}</text>
+  </container>
+</component>
 
-<!-- ./danger-button.prui — registers <DangerButton/> -->
-<extends file="./base-button.prui"/>
-<property name=tone, default=danger>
+<!-- ./danger-button.prui -->
+<component DangerButton
+  extends = BaseButton,
+  tone:     enum<default|primary|danger> = danger>
+</component>
 ```
 
 No multi-inheritance, no diamond. Multi-axis variation goes
-through props (`tone`, `size`) or trait composition (below),
-never multiple `<extends>`. Parse-time flattening.
+through props (`tone`, `size`), mixins, or derives (below) —
+never multiple `extends=`. Parse-time flattening.
 
-#### Contracts — declared shape, no body
+#### Traits — typed shape (also serves as contract)
 
-A contract is a named property + callback shape (no body, no
-state). Slots accept `accepts=ContractName`; components
-conform *structurally* (no `implements=` keyword).
-
-```prui
-<!-- ./focusable.prui — registers a contract, not a component -->
-<contract name=Focusable>
-  <property name=focused, type=bool>
-  <callback name=focus>
-  <callback name=blur>
-</contract>
-```
+A trait is a **typed shape**: a name + a set of typed methods
++ optional typed state. With **no body**, it serves the
+"contract" role (slot matching, structural conformance). With
+a body holding `<state>` declarations, it also tracks per-impl
+state — and that state appears in the inspector and LSP
+completions when a component `impls` the trait.
 
 ```prui
-<!-- ./form-field.prui — registers <FormField/>, uses the contract -->
-<slot name=control, accepts=Focusable>
+<trait Pointable
+  on-click:   action,
+  on-hover:   action,
+  is-hovered: bool = false/>           <!-- self-closing — pure shape -->
 
-<container>
-  <slot name=control/>
-</container>
+<trait Focusable
+  focused: bool,
+  focus:   action,
+  blur:    action/>                    <!-- contract-like -->
 ```
 
-A component conforms to `Focusable` if its declared
-`<property>`s and `<callback>`s are a superset of the
-contract's. Mismatched callers fail at lower-time.
-
-#### Traits — declared shape PLUS attribute / inspector wiring
-
-A trait is a contract that *also* carries (state, attribute
-methods, hooks, optional styles). It is the unit of the §6.4
-open attribute registry — a trait names a set of attributes
-the runtime knows how to dispatch.
+Use as **contract** (slot accepts a shape):
 
 ```prui
-<!-- ./pointable.prui — registers a trait, not a component -->
-<trait name=Pointable>
-  <method name=on-click,   signature=action>
-  <method name=on-hover,   signature=action>
-  <state  name=is-hovered, type=bool, default=false>
-</trait>
+<component FormField
+  control: slot<() -> Focusable>>      <!-- slot prop's return type IS the contract -->
+  <slot control/>
+</component>
 ```
+
+Use as **attribute vocabulary** (component impls the trait):
 
 ```prui
-<!-- ./button.prui — uses the trait -->
-<impls traits=[Pointable]/>
-
-<container>
-  …body reads pointer.is-hovered freely…
-</container>
+<component Button impls = [Pointable, Focusable]>
+  <container>
+    …body reads pointer.is-hovered, focusable.focused freely…
+  </container>
+</component>
 ```
 
-Once a component impls a trait, the trait's attributes appear
-in inspector + LSP completions + lowering. Coherence is
-Rust-style: two traits with the same method name on the same
-component is a parse-time error unless the author
+Coherence is Rust-style: two traits with the same method name
+on the same component is a parse-time error unless the author
 disambiguates with `<trait-alias from=A.on-click, as=primary-click>`.
 
-#### Mixins — trait + implementation, runtime composition with linearisation
+#### Mixins — composable behaviour (state + hooks + styles)
 
-A mixin is a trait that supplies *implementation* alongside
-shape. Stacking mixins composes state + hooks. When mixins
-collide on the same hook, Scala's linearisation gives a
-deterministic order; chains call `super()` for the next hook.
+A mixin is a **trait that supplies implementation**.
+Declaration body uses `<state>`, `<on>`, and `<style>`
+primitives (lowercase body tags):
 
 ```prui
-<mixin name=Hoverable>
-  <state name=is-hovered, type=bool, default=false>
-  <on event=pointerenter>{ is-hovered = true }</on>
-  <on event=pointerleave>{ is-hovered = false }</on>
+<mixin Hoverable>
+  <state is-hovered = false>
+  <on pointerenter>{ is-hovered = true }</on>
+  <on pointerleave>{ is-hovered = false }</on>
   <style>&:hovered { background = lighten(currentBg, 0.05) }</style>
 </mixin>
 
-<container with=[Hoverable, Draggable]>…</container>
+<mixin Draggable>
+  <state is-dragging = false>
+  <state drag-offset = (0, 0)>
+  <on pointerdown>{ is-dragging = true; drag-offset = (e.x - self.x, e.y - self.y) }</on>
+  <on pointermove if=is-dragging>{ self.x = e.x - drag-offset.x; self.y = e.y - drag-offset.y }</on>
+  <on pointerup>{ is-dragging = false }</on>
+</mixin>
 ```
 
-Linearisation is right-to-left "next" chain. `super()` calls
-the next-in-chain handler. Render-time cost: one indirect call
-per mixin per event.
+A mixin is applied at one of **two call sites** — the
+distinction is *when*, not *what*:
 
-#### Derives — trait expansion at parse time
+| Call site | Attribute | When applied | Overridable downstream? | Cost |
+|---|---|---|---|---|
+| Use site (any element) | `with = [Mixin, …]` | runtime — composed as a chain | yes, via `super()` | one indirect call per mixin per event |
+| Component header | `derive = [Mixin, …]` | parse-time — inlined into the declaration | no — flattened away | zero (state and hooks become part of the host component) |
 
-A derive is a trait whose state + hooks are *inlined* into the
-component declaration at parse time, as if hand-written. No
-runtime dispatch chain; not overridable downstream; cheaper at
-runtime than a mixin. Authored from Luau:
-
-```luau
-prism.derive("Draggable", |decl| {
-  decl:state("is-dragging", false)
-  decl:state("drag-offset", point(0, 0))
-  decl:on("pointerdown",                              |e| { is-dragging = true; … })
-  decl:on("pointermove", { if = "is-dragging" },      |e| { … })
-  decl:on("pointerup",                                |e| { is-dragging = false })
-})
-```
+Same `<mixin>` declaration, two activation modes. There is no
+separate `<derive>` declaration tag. The use site picks.
 
 ```prui
-<!-- ./card.prui — registers <Card/>, expands the Draggable derive -->
-<import script="./draggable.luau"/>
-<derive traits=[Draggable]/>
+<!-- Runtime composition: chain Hoverable + Draggable on this container -->
+<container with=[Hoverable, Draggable]>
+  <text>I float and glow.</text>
+</container>
 
-<container>…</container>
+<!-- Parse-time expansion: bake Draggable into Card's declaration -->
+<component Card derive=[Draggable], title: string>
+  <container>
+    <heading>{title}</heading>
+  </container>
+</component>
 ```
 
-Same shape Rust `#[derive(Clone)]` uses.
+`super()` in a runtime-mixin chain calls the next-in-
+linearisation handler (Scala-style MRO).
 
-#### Choosing among the five
+#### Body-tag primitives used by mixin / component declarations
+
+Three lowercase tags are valid only inside declaration bodies:
+
+| Tag | Where | Shape |
+|---|---|---|
+| `<state name [: type] = default>` | inside `<mixin>` and `<component>` | declares per-impl reactive state |
+| `<on event [if=cond]>{handler}</on>` | inside `<mixin>` and `<component>` | event hook; chains via `super()` in mixin context |
+| `<style>{ … PRSS … }</style>` | inside `<mixin>` and `<component>` | scoped PRSS that applies only to this impl |
+
+These three are the *only* sub-tags needed for composition —
+everything else lives in header attributes (§6.1).
+
+#### Choosing among the three primitives
 
 | Need | Use | Cost | Overridable downstream? |
 |---|---|---|---|
-| Variant of a parent with one override | `<extends file="./parent.prui"/>` head | parse-time | no (single parent) |
-| Slot must accept components of a certain shape | `<contract>` + `accepts=` | parse-time | n/a |
-| Open vocabulary of attributes for a component | `<trait>` + `<impls traits=[…]/>` head | runtime dispatch | n/a |
-| Composable behaviour bundle (state + hooks + styles) | `<mixin>` + `with=[…]` on use site | runtime chain + indirect call per event | yes (super()) |
-| Behaviour bundle, no runtime chain needed | `<derive>` + `<derive traits=[…]/>` head | parse-time | no |
+| Variant of a parent with one override | `extends=Parent` header attr | parse-time | no (single parent) |
+| Slot must accept components of a certain shape | `<trait>` (no body) + `slot<() -> TraitName>` | parse-time | n/a |
+| Open vocabulary of attributes on a component | `<trait>` + `impls=[Trait, …]` header attr | runtime dispatch | n/a |
+| Composable behaviour, stackable across components | `<mixin>` + `with=[Mixin, …]` on use site | runtime chain + indirect call per event | yes (super()) |
+| Composable behaviour, no runtime chain needed | `<mixin>` + `derive=[Mixin, …]` on component header | parse-time | no |
 
-**Wave / Phase.** `extends`: Phase 6. Contracts: Phase 7.
-Traits: Phase 8 (the trait registry itself). Mixins: Phase 9.
-Derives: Phase 9.
+Two declaration tags (`<trait>`, `<mixin>`) cover five
+composition needs.
 
-**What it deletes / supersedes.** Wave J §4.5 PRSS `@mixin`
-(subsumed by §6.8 macros + traits with styles). Wave J §4.8
-variant prefixes (`hover:elevated` becomes
-`with=[Hoverable, Elevated]`).
+**Wave / Phase.** `extends`: Phase 6 (lands with the unified
+syntax). Traits + mixins (declaration + `impls=` + `with=` +
+`derive=` attributes): Phase 8 / Phase 9 (depend on the trait
+registry being live).
 
-**Open questions.** Q5 (contract self-reference); Q9 (variant
+**What it deletes / supersedes.** The earlier separate
+`<contract>` declaration tag (collapses into empty-body
+`<trait>`). The earlier separate `<derive>` declaration tag
+(collapses into `<mixin>` + use-site `derive=` attribute). The
+`<extends file=…/>` head sub-tag (becomes `extends=` attr).
+The `<impls traits=[…]/>` head sub-tag (becomes `impls=`
+attr). Wave J §4.5 PRSS `@mixin` (subsumed by §6.8 macros + a
+`<mixin>`'s embedded `<style>`). Wave J §4.8 variant prefixes
+(`hover:elevated` becomes `with=[Hoverable, Elevated]`).
+
+**Open questions.** Q5 (trait self-reference); Q9 (variant
 precedence with chained prefixes — same answer as mixin
 linearisation: latest wins).
 
@@ -1159,71 +1431,117 @@ coherence).
 
 ---
 
-### 6.5 Slots — one unified primitive with optional typed signature
+### 6.5 Slots — declared as typed props, invoked in body, provided by caller
 
 **Problem.** Two spellings for "splice caller content here":
 `<slot/>` (`interpret.rs:1848`) and `<host-children/>`
 (`:1909`). Comment at `:1865-1867` admits the equivalence. The
-1 / 9 production split (slot / host-children) reflects
-history, not intent. Typed slot scopes (the React render-prop
-/ Svelte 5 snippet pattern) have no language surface today.
+1 / 9 production split (slot / host-children) reflects history,
+not intent. Typed slot scopes (the React render-prop / Svelte 5
+snippet pattern) have no language surface today.
 
-**Design.** One element: `<slot>`. Four orthogonal axes:
+**Design.** Slots are **typed props** — declared in the
+`<component>` header as `name: slot` or `name: slot<sig>`
+(§6.1, §6.2). The `<slot>` body primitive plays three roles,
+disambiguated by position:
 
-- **Named or default.** `<slot/>` is the default slot;
-  `<slot name="X"/>` is named.
-- **With or without fallback.** `<slot>…children render if no
-  override…</slot>`.
-- **With or without typed signature.**
-  `<slot signature=(item: T, index: int) -> ui>` declares the
-  slot is invoked with a typed scope.
-- **Invoked or sliced.** A typed slot is *invoked* with
-  `<invoke slot=row args={…}/>`; an untyped slot is sliced
-  (the current default behaviour).
+| Position | Role | Shape |
+|---|---|---|
+| Inside a component body, no name | invoke the default slot (caller's unnamed children) | `<slot/>` |
+| Inside a component body, named, no args | invoke a named slot | `<slot name/>` |
+| Inside a component body, named, with args | invoke a typed slot with caller-provided scope | `<slot name arg1={…} arg2={…}/>` |
+| Inside a component invocation (caller) | provide content for a named slot | `<slot name args={a, b}>…content…</slot>` |
+
+One tag, position disambiguates role — no extra keyword
+needed. There is no `<invoke>` tag; slot invocation is just
+`<slot name args/>`.
+
+#### End-to-end example
 
 ```prui
-<!-- ./list.prui — registers <List/> -->
-<property name=items, type=array<Task>, required>
-<slot name=row,   signature=(item: Task, index: int) -> ui>
-<slot name=empty, signature=() -> ui, optional>
-  <text>No tasks yet</text>
-</slot>
+<!-- ./list.prui — declares <List/> with three slot props -->
+<component List
+  items:  array<Task> required,
+  row:    slot<(item: Task, index: int) -> ui>,
+  header: slot,                                            <!-- untyped, no args -->
+  empty:  slot<() -> ui> = { <text>No tasks yet.</text> }> <!-- with default body -->
 
-<container if={#items > 0}>
-  <fragment for={t, i in props.items}>
-    <invoke slot=row, args={item=t, index=i}/>
-  </fragment>
-</container>
-<invoke slot=empty if={#items == 0}/>
+  <container direction=column>
+    <slot header/>                                         <!-- invoke header -->
+
+    <fragment for={t, i in items} if={#items > 0}>
+      <slot row item={t} index={i}/>                       <!-- invoke row with args -->
+    </fragment>
+
+    <slot empty if={#items == 0}/>                         <!-- invoke empty (uses default if omitted) -->
+  </container>
+</component>
 ```
 
+Caller:
+
 ```prui
-<!-- callsite -->
 <List items={tasks}>
-  <slot name=row args={item, index}>
+  <slot header>
+    <heading level=2>Today's tasks</heading>
+  </slot>
+  <slot row args={item, index}>
     <text>{index + 1}. {item.title}</text>
   </slot>
+  <!-- empty slot omitted — List's default body fires when items is empty -->
 </List>
 ```
 
-The default slot (no `name=`) splices the caller's unnamed
-children — exactly what `<host-children/>` does today. Named
-slots with no fallback fall through to nothing. Typed slot
-signatures fail at parse if the caller provides a mismatched
-scope.
+#### Default slot — the caller's unnamed children
 
-**`<host-children/>` retires.** Mechanical rewrite of 9
-production files (one PR). Deprecation diagnostic for one
-release; deletion after.
+A component that wants to splice the caller's *unnamed* child
+nodes declares `children: slot` and invokes `<slot/>` (no
+name):
+
+```prui
+<component Card, title: string, children: slot>
+  <container>
+    <heading>{title}</heading>
+    <slot/>                              <!-- caller's <Card>…here…</Card> children -->
+  </container>
+</component>
+
+<Card title="Hello">
+  <text>Streamed into the default slot.</text>
+</Card>
+```
+
+This subsumes today's `<host-children/>` — `<slot/>` (no name)
+IS what `<host-children/>` did, just spelled as part of the
+unified `<slot>` primitive.
+
+#### Slot defaults — body in the declaration
+
+A slot prop carries a default body via the `= { …markup… }`
+notation, mirroring scalar defaults (§6.2):
+
+```prui
+empty: slot<() -> ui> = { <text>No items</text> }
+```
+
+If the caller omits the slot, the default body runs at the
+invocation site. Same shape as scalar defaults — `= literal`
+for scalars, `= { …markup… }` for slots.
+
+#### `<host-children/>` retires
+
+Mechanical rewrite of 9 production files (one PR). Deprecation
+diagnostic for one release; deletion after.
 
 **Wave / Phase.** Phase 4 (unify `<slot>` / `<host-children/>`,
-no-signature variant). Phase 13 (typed signatures + `<invoke>`,
-depends on trait registry being live).
+default-slot variant). Phase 13 (typed signatures + slot
+default bodies; depends on the trait registry being live).
 
 **What it deletes / supersedes.** `<host-children/>` element;
 `LowerScope::host_children_for_slot` / `host_children_ui`
-surface; Wave J §4.4's `takes={…}` (generalised to
-`signature=`).
+surface; Wave J §4.4's `takes={…}` and `<invoke>` (generalised
+to typed `slot<sig>` props + plain `<slot name args/>`
+invocation).
 
 **Open questions.** None blocking.
 
@@ -1484,13 +1802,12 @@ Wave J §4.5's PRSS `@mixin` solved one specific case
 it.
 
 **Design.** Pattern-match on markup, expand to markup, before
-lowering. `macro_rules!` for the DSL.
+lowering. `macro_rules!` for the DSL. Declared with the
+`<macro>` wrapper (PascalCase first-positional name, §3, §6.1):
 
 ```prui
-<macro name=field>
-  <match>
-    <field label={lbl} value={val}/>
-  </match>
+<macro Field>
+  <match><Field label={lbl} value={val}/></match>
   <expand>
     <container direction=column, gap=4>
       <text class=field-label>{lbl}</text>
@@ -1499,10 +1816,10 @@ lowering. `macro_rules!` for the DSL.
   </expand>
 </macro>
 
-<field label="Title" value={state.title}/>
+<Field label="Title" value={state.title}/>
 ```
 
-At parse time `<field>` is matched and replaced with the
+At parse time `<Field/>` is matched and replaced with the
 expansion; `{lbl}` and `{val}` are substituted. Expansions can
 recurse (a macro expanding to another macro), bounded by a
 configurable depth limit.
@@ -1512,32 +1829,33 @@ the expansion) are renamed to fresh names so they can't
 shadow the call-site bindings. Same shape Rust 2018+ macros
 use.
 
-**Attribute macros** ride the same primitive:
+**Attribute macros** ride the same primitive — the `<macro>`
+wrapper takes an `attribute` flag (boolean attr) plus typed
+params using the same inline-typed-prop syntax (§6.2):
 
 ```prui
-<attribute-macro name=elevation, params=[level: int]>
+<macro Elevation, attribute, level: int>
   <expand to-attrs>
-    style.radius=8,
-    style.background={tokens.surface},
-    style.shadow={elevations[level]}
+    style.radius      = 8,
+    style.background  = {tokens.surface},
+    style.shadow      = {elevations[level]}
   </expand>
-</attribute-macro>
+</macro>
 
 <container elevation=2>…</container>
 ```
 
 **Wave J §4.5 PRSS `@mixin` is absorbed.** `@mixin
-elevation(level) { … }` becomes one specific case of
-attribute-macro — the macro engine generalises across both
-PRUI and PRSS surfaces, one engine instead of two parser
-dialects.
+elevation(level) { … }` becomes one specific case of attribute
+macro — the macro engine generalises across both PRUI and PRSS
+surfaces, one engine instead of two parser dialects.
 
 **Authored from Luau too:**
 
 ```luau
 prism.macro {
-  name    = "field",
-  pattern = prui_pattern [[ <field label={lbl} value={val}/> ]],
+  name    = "Field",
+  pattern = prui_pattern [[ <Field label={lbl} value={val}/> ]],
   expand  = |args| prui [[
     <container direction=column, gap=4>
       <text class=field-label>{args.lbl}</text>
@@ -1572,11 +1890,31 @@ type; the host provides them at lower-time; missing required
 capabilities fail at parse, not at render.
 
 ```prui
-<!-- ./share-button.prui — registers <ShareButton/> -->
-<capability name=clipboard, type=Clipboard>
-<capability name=network,   type=Network, optional>
+<!-- ./share-button.prui — declares <ShareButton/> -->
+<component ShareButton
+  text: string required,
+  capabilities = [
+    clipboard: Clipboard,
+    network:   Network optional,
+  ]>
 
-<button on:click=$clipboard.write(props.text)>Copy</button>
+  <button on:click=$clipboard.write(text)>Copy</button>
+</component>
+```
+
+No `<capability>` sub-tag — the inline list is the whole
+surface. Same shape from Luau:
+
+```luau
+prism.component {
+  name = "ShareButton",
+  props = { text = { type = "string", required = true } },
+  capabilities = {
+    clipboard = "Clipboard",
+    network   = { type = "Network", optional = true },
+  },
+  render = |props| prui [[ <button on:click=$clipboard.write(props.text)>Copy</button> ]],
+}
 ```
 
 Host provision:
@@ -1604,7 +1942,9 @@ parse; the IDE completes `$clipboard.<TAB>`.
 for the host-provision machinery, but no Luau-side
 prerequisite.
 
-**What it deletes / supersedes.** Module-global host
+**What it deletes / supersedes.** The earlier `<capability
+name=…, type=…>` sub-tag idea (collapsed into the
+`capabilities=[…]` header attribute). Module-global host
 accessors; ad-hoc prop threading.
 
 **Open questions.** None blocking. Host-capability
@@ -1626,17 +1966,19 @@ from a runtime check.
 `<match>` primitive.
 
 ```prui
-<property name=tone, type=union<
-  info,
-  success { duration: int = 2000 },
-  error   { dismissable: bool = true, retry: action? }
->>
+<component Toast
+  tone: union<
+    info,
+    success { duration: int = 2000 },
+    error   { dismissable: bool = true, retry: action? }
+  > required>
 
-<match on=props.tone>
-  <case info>           …                              </case>
-  <case success(d)>     <progress duration={d}/> …     </case>
-  <case error(dis, r)>  … <button if={r != nil}>Retry</button> </case>
-</match>
+  <match on={tone}>
+    <case info>           …                              </case>
+    <case success(d)>     <progress duration={d}/> …     </case>
+    <case error(dis, r)>  … <button if={r != nil}>Retry</button> </case>
+  </match>
+</component>
 
 <Toast tone={error(dismissable=true, retry=$retry-upload)}/>
 ```
@@ -1665,58 +2007,133 @@ Three are wired; `widget` is parsed but the runtime drops it
 name `widget` overloads with the codebase term and reads
 wrong against the §3 "component is the noun" rule.
 
-**Design.** Five projections in the end state:
+**Design.** Four projections in the end state (the earlier
+`contract` projection collapses — contracts are
+empty-body `<trait>`s declared inside a `.prui` or `.luau`
+file and imported through `component` or `script`):
 
 | Projection | Role | Files | Alias |
 |---|---|---|---|
 | `stylesheet` | apply styles | `.prss` (or `.luau` returning a stylesheet table) | `as ns` |
-| `script` | reuse helpers / register extensions | `.luau` | `as ns` (named module) / bare (flat-merge) |
-| `component` | register a component tag | `.prui` *or* `.luau` (calling `prism.component{…}`) | `as Tag` |
-| `contract` | parse-time shape check | `.prui` (`<contract>` decl), `.luau` (`prism.contract{…}`) | `as Name` |
-| `dialect` | extend the language | `.luau` (calling `prism.dialect{…}`) | (no alias) |
+| `script` | reuse helpers / register any extension kind | `.luau` | `as ns` (namespaced) / bare (flat-merge) |
+| `component` | register one-or-more component tags | `.prui` *or* `.luau` returning `prism.component{…}` or a table of them | `as Ns` (namespaced) / bare (each component into scope) |
+| `dialect` | extend the language | `.luau` calling `prism.dialect{…}` | (no alias) |
 
-The fifth (`dialect`) lands with fusion Wave E. `component`
-replaces `widget` (renamed). `contract` is new.
+`component` replaces `widget` (renamed + wired).
 
-**File-extension dispatch.**
+#### File-extension dispatch
+
 `<import component="./button.prui"/>` parses + lowers the
 `.prui` body; `<import component="./icon.luau"/>` evaluates
-the file's `return prism.component{…}` expression. The
-resolved tag goes through one `TagResolver` — a `.prui`-
-defined card and a `.luau`-defined card are
+the file's `return prism.component{…}` (or a table of them).
+The resolved tag(s) go through one `TagResolver` — a
+`.prui`-defined card and a `.luau`-defined card are
 indistinguishable at the call site.
 
-**One Luau projection covers six extension kinds.** A `.luau`
-file imported as `script` can return any of:
+#### Multi-component files — namespace rules
 
-```luau
-prism.trait     {…}   -- §6.4 attribute trait
-prism.mixin     {…}   -- §6.3 composable behaviour
-prism.macro     {…}   -- §6.8 markup expansion
-prism.derive    {…}   -- §6.3 parse-time decl expansion
-prism.component {…}   -- §6.1 component definition
-prism.dialect   {…}   -- Wave E embedded language
+Both `.prui` files (with multiple top-level `<component>` /
+`<trait>` / `<mixin>` / `<macro>` wrappers) and `.luau` files
+(returning a table of `prism.<kind>{…}` entries plus bare
+helpers) may carry **more than one declaration**. The
+`<import>` `as` attribute controls how they bind:
+
+```prui
+<!-- single-component file: file stem becomes the tag -->
+<import component="./card.prui"/>
+<!-- registers <Card/> -->
+
+<!-- multi-component file with `as=` namespace: each name prefixed -->
+<import component="./forms.prui"/> as forms
+<!-- registers <forms.TextField/>, <forms.DropdownField/>, etc. -->
+
+<!-- multi-component file without `as=`: each name bare-imported -->
+<import component="./forms.prui"/>
+<!-- registers <TextField/>, <DropdownField/> directly; collision = parse error -->
+
+<!-- Luau-defined components, same rules: -->
+<import component="./card-system.luau"/> as cards
+<!-- registers <cards.Card/>, <cards.Field/>, etc. from the returned table -->
 ```
 
-The file's `return` value (or a table of them) is bound under
-the import's `as` namespace. Same `<import>` element, same
-`ImportResolver`, same `as`-namespacing, same module cache.
+#### Luau side — multi-export including non-component artifacts
 
-**Module identity.** Resolved absolute path is the key — N
-call sites importing the same file parse it once.
+A `.luau` file's `return` value is one of:
 
-**Wave / Phase.** `widget` → `component` rename + wiring:
-Phase 7. New `contract` projection: Phase 7. The full
+1. A single `prism.<kind>{…}` table → registers as that one
+   thing (component / trait / mixin / macro / dialect).
+2. A **table of named entries** → each entry registers under
+   its key. Entries can mix kinds, and can include bare Lua
+   functions / values for helpers.
+
+```luau
+-- card-system.luau
+return {
+  -- Components — registered as tags
+  Card     = prism.component { name = "Card",  props = …, render = … },
+  Avatar   = prism.component { name = "Avatar", props = …, render = … },
+
+  -- Other extension kinds — registered with the appropriate registry
+  Pointable = prism.trait { name = "Pointable", attrs = … },
+  Hoverable = prism.mixin { name = "Hoverable", … },
+  Field     = prism.macro { name = "Field", pattern = …, expand = … },
+
+  -- Bare helpers — available as expression values under the import's namespace
+  helpers = {
+    format-date = |t| os.date("%Y-%m-%d", t),
+    accent-for  = |tone| if tone == "danger" then "#ef4444" else "#3b82f6" end,
+  },
+}
+```
+
+Imported as `<import script="./card-system.luau"/> as cs`:
+
+- `<cs.Card title="Hi"/>` — component invocation (PascalCase)
+- `<container with=[cs.Hoverable]>` — mixin reference
+- `<component MyForm impls=[cs.Pointable]>` — trait reference
+- `<cs.Field label="Title"/>` — macro expansion
+- `{cs.helpers.format-date(now)}` — bare helper called in
+  expression context
+
+**Same `<import>` element, same resolver, same `as`
+namespacing.** The user picks the *lens* via the projection:
+`component` imports the components only; `script` imports
+everything in the returned table (components, traits, mixins,
+macros, dialects, AND helpers).
+
+#### Projection vs returned shape
+
+| Projection | What it binds from the `.luau` return |
+|---|---|
+| `component` | only the `prism.component{…}` entries (filtered) |
+| `script` | every entry — components, traits, mixins, macros, dialects, plain functions / values |
+| `stylesheet` | only the `prism.stylesheet{…}` entries (or a raw stylesheet table) |
+| `dialect` | only the `prism.dialect{…}` entries |
+
+This is the "projection is the lens" rule from the fusion
+doc: the same `.luau` file viewed through different `<import>`
+projections exposes different subsets of its return table.
+
+#### Module identity
+
+Resolved absolute path is the key — N call sites importing the
+same file parse / evaluate it once.
+
+**Wave / Phase.** `widget` → `component` rename + wiring +
+multi-component file support: Phase 7. The full
 `prism.<kind>{…}` Luau-builder family lands incrementally as
-each kind ships (mixins/derives Phase 9, macros Phase 10,
-etc.).
+each kind ships (mixins Phase 9, macros Phase 10, etc.).
 
 **What it deletes / supersedes.** The `widget` projection
 keyword; the dead `interpret.rs:1018` handler skip; the
-doc-only `prism.widget{…}` builder.
+doc-only `prism.widget{…}` builder; the standalone `contract`
+projection (collapsed — contracts are body-less `<trait>`s
+imported as components or scripts).
 
-**Open questions.** Q6 (multi-component `.prui` files); Q7
-(`.luau` as both component and script in one file).
+**Open questions.** Q1 (bare multi-component import collision
+handling — error vs first-wins vs warn); Q6 (PascalCase-
+normalisation edge cases for file stems); Q7 (already
+resolved — `.luau` can return mixed kinds via a table).
 
 ---
 
@@ -1779,13 +2196,20 @@ in §7.
 | `Route` namespace (`route:`) | `ast.rs:97-106` | `data:` (explicitly equivalent per existing doc comment) | 2 |
 | `<host-children/>` element | `interpret.rs:1909-1919` | `<slot/>` (default) with optional `name=` | 4 |
 | `Use` namespace (`use:`) | `ast.rs:115-121` | `derive=` + mixin attrs | 8 |
-| Tier 3 incomplete animation namespaces (`Transition` / `Animate` / `At`) | `ast.rs:108-149` | ship in Phase 1 or delete; same drift trap that left `widget=` dead | 3 |
+| Tier 3 incomplete animation namespaces (`Transition` / `Animate` / `At`) | `ast.rs:108-149` | ship in Phase 1  | 3 |
 | `<component>` markup tag (currently aliases `<container>`) | `interpret.rs:1739` | **retired entirely** — components are invoked by PascalCase tag (`<Card/>`), declared via file-as-component / Luau / Rust spec (§3, §6.1) | 6 |
 | Dead `widget=` import projection | `interpret.rs:1210` parses, `:1018` skips | renamed to `component=` and wired | 7 |
 | 17-namespace `AttributeNamespace` enum | `ast.rs:74-152` | open trait registry | 8 |
 | Wave J §4.5 PRSS `@mixin` (would have shipped in J Phase 4) | (would be) | absorbed by §6.8 macro engine | 10 |
 | Wave J §4.8 variant prefixes (would have shipped in J Phase 4) | (would be) | `with=[Mixin, …]` (§6.3) | 9 |
 | Long-form closure `\fn(args) … end` (fusion §7.2 alt) | fusion-doc grammar | `\|args\| expr` only | n/a (already removed from this doc's surface) |
+| `<property>` sub-tag (Wave J §4.3 draft) | (would be) | inline header attr `name: type [= default \| required]` on `<component>` (§6.1, §6.2) | 6 |
+| `<extends>` / `<impls>` / `<derive>` / `<capability>` sub-tags (earlier drafts of this doc) | (would be) | inline header attrs `extends=`, `impls=[…]`, `derive=[…]`, `capabilities=[name: Type, …]` (§6.1, §6.3, §6.9) | 6–11 |
+| `<contract>` declaration tag (earlier drafts) | (would be) | body-less `<trait Name attrs/>` (§6.3 — contract = trait with no implementation) | 8 |
+| `<derive>` declaration tag (earlier drafts) | (would be) | use-site `derive=[Mixin, …]` attribute on `<component>` (the same `<mixin>` declaration; parse-time vs runtime is a use-site choice — §6.3) | 9 |
+| `<invoke>` tag (earlier drafts of §6.5) | (would be) | plain `<slot name args/>` invocation primitive (§6.5) | 13 |
+| `name=` attribute on any declaration tag | (every kind, earlier drafts) | PascalCase first-positional token (§3, §6.1) | 6 |
+| One-component-per-file constraint (earlier file-as-component lean) | (was a doc lean only) | multi-component `.prui` files first-class; `.luau` files multi-export via returned table (§6.1, §6.11) | 7 |
 
 **Why so many deletions.** Most of these are not breaking
 changes for the live codebase — the production `.prui` corpus
@@ -1831,11 +2255,11 @@ consumer surfaces are *generated outputs*.
 
 | Surface | Input form | Schema produced |
 |---|---|---|
-| `.prui` file | markup head + body | parsed schema record |
-| Luau `.luau` file | `return prism.component {…}` | table schema record |
-| Rust `BlockSpec` row | `const FOO_SPEC: BlockSpec = …` | constant schema record |
-| Rust struct + `prism-luau-derive` | `#[derive(PrismComponent)]` | derived schema record |
-| PRUI `<contract>` / `<trait>` / `<mixin>` / `<derive>` | shape declaration | partial schema record |
+| `.prui` file, `<component>` wrapper | inline-typed header + body | parsed `ComponentSchema` |
+| `.prui` file, `<trait>` / `<mixin>` / `<macro>` wrapper | inline-typed header + body | parsed `TraitSchema` / `MixinSchema` / `MacroSchema` |
+| Luau `.luau` file | `return prism.component {…}` (or table mixing `prism.<kind>{…}` entries plus helpers) | table-shaped schema record(s) |
+| Rust `BlockSpec` row | `const FOO_SPEC: BlockSpec = …` | constant `ComponentSchema` |
+| Rust struct + `prism-luau-derive` | `#[derive(PrismComponent)]` | derived `ComponentSchema` |
 
 All five compile to one canonical `ComponentSchema` struct (or
 `TraitSchema`, `MixinSchema`, … — one per `prism.<kind>` in
@@ -1939,7 +2363,7 @@ Schema flow at build time:
 The same schema-first unification covers the §6.4 trait
 registry and the §6.6 PRSS surface:
 
-- A `<trait name=Pointable>` declared in PRUI auto-generates:
+- A `<trait Pointable …/>` declared in PRUI auto-generates:
   - A Luau interface (`type Pointable = {on_click: action,
     is_hovered: bool, ...}`)
   - A Rust trait or marker (`pub trait Pointable { … }`)
@@ -2074,18 +2498,16 @@ expansion for the value the table in §10 returns.
 Numbered for cross-reference. **Q1 is the highest priority** —
 it blocks Phase 6.
 
-**Q1. Multi-component `.prui` files.** §6.1 reframed the
-original "A/B/C declaration site" fork — with the PascalCase
-invocation rule (§3, §6.1 Part 1), the `<component>` tag is
-gone in every option, and file-as-component is the doc-lean
-default. The remaining question is whether a single `.prui`
-file may declare *multiple* top-level PascalCase components,
-or whether one-file-one-component is enforced. Proposed:
-discourage but allow, with namespaced import
-(`<import component="./forms.prui"/> as forms` →
-`<forms.TextField/>`, `<forms.DropdownField/>`). Open: do we
-ever want unnamespaced multi-export? Decision affects Phase 6
-scope.
+**Q1. Bare (unnamespaced) multi-component import — collision
+handling.** Resolved that multi-component `.prui` / `.luau`
+files are first-class (§6.1, §6.11). When imported with
+`as Ns`, components bind under that namespace
+(`<Ns.TextField/>`). When imported without `as`, components
+bind into the bare scope. Three options for collision:
+(a) parse error on first collision (strictest, easiest to
+reason about — doc lean); (b) first-import-wins with a
+diagnostic; (c) last-import-wins (CSS-like). Decision affects
+Phase 7 scope.
 
 **Q2. Computed property defaults.** §6.2 disallows expression
 defaults to dodge recursion. Should there be a second tier
@@ -2105,9 +2527,10 @@ project back to sRGB. The `palette` crate gives chroma
 reduction; we pick that over hue rotation. Document the
 choice in `prss-reference.md`.
 
-**Q5. Contract self-reference.** Can a `<contract>` reference
-itself (a `Composite` slot type)? Today no. If demand
-surfaces, gate behind an explicit `recursive` keyword.
+**Q5. Trait self-reference.** Can a `<trait>` (body-less,
+serving as contract) reference itself (a `Composite` slot
+type)? Today no. If demand surfaces, gate behind an explicit
+`recursive` keyword.
 
 **Q6. PascalCase-normalisation rules for filenames.** A
 `.prui` file's stem becomes its registered tag name (§6.1).
@@ -2122,10 +2545,13 @@ with reserved primitive names (`container.prui` →
 on the call side anyway). Decision should land with Phase 6.
 
 **Q7. `.luau` component vs `.luau` script in the same file.**
-Can a `.luau` file return both a component table and helper
-exports? Proposed: yes, via `{ component = …, helpers = … }`
-shape; consumer picks the lens via `<import component=…>` vs
-`<import script=…>`. Needs prototype.
+Resolved (§6.1, §6.11): a `.luau` file returns a *table* of
+named entries that can mix `prism.<kind>{…}` records of any
+type plus bare helpers. The `<import>` projection acts as the
+*lens*: `component` binds only the components; `script` binds
+every entry (components + traits + mixins + macros + dialects
++ helpers). Same file viewed through different projections
+exposes different subsets.
 
 **Q8. Pipeline `|` vs logical-or.** Resolved: the pipeline
 form is parsed only in value positions typed `Stateful<T>` or
@@ -2224,7 +2650,7 @@ to the end state across all three waves.
 
 | Task today | LOC | End-state LOC |
 |---|---|---|
-| Button-but-louder-hover variant | new PRSS class + new component (~25 lines) | new file with `<extends file="./button.prui"/>` head + 1 prop default (4 lines) |
+| Button-but-louder-hover variant | new PRSS class + new component (~25 lines) | new file with `<component LoudButton extends=Button …>` + 1 prop default (~5 lines) |
 | Lighter / darker / transparent variant of a token colour | hand-tuned hex per call site | `accent/50`, `with(accent, l=+0.05)` (1 expr) |
 | Pressed-state visual feedback | script-toggled class + PRSS variant (~12 lines) | `style.background={accent \| :pressed → darken(0.1)}` (1 line) |
 | 3 props × 4 states on one component | 12 lines (cross-product) | 7 lines (nested record) |
@@ -2232,13 +2658,15 @@ to the end state across all three waves.
 | Reusable elevation system across the workspace | 6 near-identical classes copy-pasted | 1 attribute macro |
 | Dark-mode override on one element | duplicate class with `dark-` prefix | `with=[Card, dark ? Muted : nil]` |
 | Form field that requires a focusable control | manual prop binding + runtime assertion | `<slot accepts=Focusable>` (1 attr) |
-| Required prop with a sensible default | host binding + nullable check in body | `<property name=label, type=string, default="">` |
+| Required prop with a sensible default | host binding + nullable check in body | `label: string = ""` inline in the `<component>` header |
 | Import a `.prui` component from a sibling directory | impossible (no runtime wiring) | `<import component="../widgets/card.prui"/> as card` |
 | Author a component imperatively from Luau | impossible (`prism.widget{…}` never written) | `return prism.component{…}` in a `.luau` file |
 | Stack draggable + hoverable + selectable on a container | hand-roll state + handlers + styles (~40 lines) | `with=[Draggable, Hoverable, Selectable]` (1 attr) |
-| Define a new attribute kind (e.g. `elevation=2`) | impossible without engine release | `<attribute-macro name=elevation>` or `prism.trait{…}` |
-| Component needs clipboard access | thread global through props | `<capability name=clipboard, type=Clipboard>` (1 line) |
-| Toast with three variants carrying different fields | boolean prop ladder | `<property name=tone, type=union<…>>` + `<match>` |
+| Define a new attribute kind (e.g. `elevation=2`) | impossible without engine release | `<macro Elevation, attribute, level: int>…</macro>` or `prism.trait{…}` |
+| Component needs clipboard access | thread global through props | `capabilities=[clipboard: Clipboard]` inline in the `<component>` header |
+| Toast with three variants carrying different fields | boolean prop ladder | `tone: union<…>` inline declaration + `<match>` body |
+| Multi-component file (form-field family, chart system, …) | one component per file → many files, many imports | multiple `<component>` wrappers in one `.prui` file; `<import component="./forms.prui"/> as forms` namespaces all of them |
+| Luau library exporting components AND helpers AND traits in one file | impossible — `.luau` returns one value | return a table of mixed entries; `<import component=…>` filters to components, `<import script=…>` binds everything |
 
 ### Structural wins
 
@@ -2280,10 +2708,10 @@ committed, and several entries conflict with each other.
 today. Typestate would encode the legality:
 
 ```prui
-<trait name=Flex, impls=Container>
-  <require Container.display=flex|grid>
-  <method name=gap, signature=int>
-</trait>
+<trait Flex
+  impls = Container,
+  requires = { Container.display = flex|grid },
+  gap: int/>
 ```
 
 `<container display=flex gap=8>` legal; `<container
@@ -2298,8 +2726,10 @@ correct."
 
 ### 11.2 Computed property defaults (Q2)
 
-`<property name=padding, type=int, computed={row.depth * 4}>`.
-Topologically resolved across the property graph; cycle
+A `padding: int <= {row.depth * 4}` extension to the inline
+typed-prop syntax — `<=` signals "computed default from the
+following expression," distinct from the `=` literal-default
+form. Topologically resolved across the property graph; cycle
 detection identical to the PRSS extends-chain validator.
 Mostly deferred because the recursive-default class of bugs
 (Vue's `withDefaults`) makes it easy to get wrong. The
@@ -2316,20 +2746,24 @@ declaratively. The next step is *effect handlers* in the Koka
 handler:
 
 ```prui
-<!-- ./chat.prui — registers <Chat/> -->
-<effect name=user-message, type=string>
-<button on:click=$yield user-message(input.value)>Send</button>
+<!-- ./chat.prui -->
+<component Chat
+  effects = [user-message: string]>           <!-- declared as inline header attr, like capabilities -->
+  <button on:click=$yield user-message(input.value)>Send</button>
+</component>
 ```
 
 ```prui
-<!-- ./chat-room.prui — registers <ChatRoom/> -->
-<handle effect=user-message as msg>
-  {append-to-log(msg); broadcast(msg)}
-</handle>
+<!-- ./chat-room.prui -->
+<component ChatRoom>
+  <handle user-message as msg>
+    {append-to-log(msg); broadcast(msg)}
+  </handle>
 
-<container>
-  <Chat/>
-</container>
+  <container>
+    <Chat/>
+  </container>
+</component>
 ```
 
 This generalises today's signal dispatch into a typed,
@@ -2355,7 +2789,7 @@ first-class modules cover the remaining ergonomics.
 
 CSS container queries (`@container (width > 600px)`) ship in
 every browser. PRSS today only has token-table breakpoints.
-A trait-based take: `<trait name=Responsive>` could carry
+A trait-based take: `<trait Responsive …/>` could carry
 breakpoint-aware methods
 (`responsive.gap@desktop=24`, `responsive.gap@mobile=8`).
 The pipeline form (§6.6) extends naturally:
