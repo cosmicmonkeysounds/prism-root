@@ -71,6 +71,26 @@ Phasing (§5) lands Wave J in five tight slices.
 > (§9.3 on the `<component>` element is the active fork). Read
 > §9 before committing to Wave J Phase 2.
 
+> **Companion Wave L (§10 below, added 2026-05-20).** Wave J keeps
+> the HTML-shaped grammar and adds inheritance to it. Wave K
+> deletes mechanisms that overlap inside that same grammar. **Wave
+> L is the rethink** — what if the HTML-namespace shape itself is
+> the constraint? §10 sketches a redesign of the attribute system
+> around an **open trait registry** (Rust impl), **mixin
+> linearization** (Scala MRO), **parse-time markup macros** (Rust
+> `macro_rules!` + Lean `notation`), **algebraic property types**
+> (Rust enums + pattern-match), **typed effect/capability handles**
+> (Koka, Eff, SwiftUI `@Environment`), and **derive expansions**
+> (`#[derive(Draggable)]`). The 17-namespace enum collapses to a
+> registry of named traits; mixins replace ad-hoc class lists;
+> `<container with=[Card, Hoverable]>` replaces six dotted
+> attributes. Section §10.10 is the concrete before/after for the
+> attribute system. Wave L is the structural fork that Wave J's
+> incremental additions would otherwise lock out — read it
+> *before* approving Wave J Phase 4 (PRSS mixins + variant
+> prefixes), which §10.4 subsumes into one macro engine across
+> both surfaces.
+
 > **One-way-to-do-it principle (Python).** Every file-level
 > composition feature below rides the four existing `<import>`
 > projections from fusion §5.4. New projections are added only
@@ -476,7 +496,7 @@ on `background`/`radius` only. `:pressed`, `:disabled`,
    wins in the declared order: `hovered < focused < pressed <
    selected < disabled`. (Disabled always wins so a greyed-out
    button doesn't visually press.)
-5. **Surface API.**
+5. **Surface API (interim — see §10.10 for the collapsed form).**
    ```prui
    <container
      style:background=accent,
@@ -491,6 +511,14 @@ on `background`/`radius` only. `:pressed`, `:disabled`,
    [class.btn:pressed] background = { darken(accent, 0.1) }
    [class.btn:disabled] background = mute
    ```
+   **Caveat.** This form repeats the property name (`background`)
+   and the selector head (`[class.btn`) four times each — pure
+   ceremony around what is conceptually one declaration with three
+   per-state deltas. Wave L §10.10 "State variants as nested
+   records" collapses both surfaces to one nested form per
+   element / per class. Keep this Wave J spelling as the
+   *runtime semantics* baseline; do not ship it as the
+   *authoring surface* without first deciding §10.10.
 
 ---
 
@@ -1225,7 +1253,797 @@ Wave K performs the *deletions* that prove it.
 
 ---
 
-## 10. Closing thought
+## 10. Wave L — Beyond namespaces: traits, mixins, macros, capabilities
+
+**Status:** sketch, added 2026-05-20 alongside §9. Wave J keeps
+the HTML-namespace shape and adds inheritance to it. Wave K
+deletes overlaps *inside* that shape. **Wave L is the rethink** —
+what if the HTML-namespace shape is itself the constraint? Most
+of what languages we admire (Rust traits + macros, Scala mixins +
+linearization, Lean `notation`, Koka effects, SwiftUI
+`@Environment`, OCaml first-class modules) do not have a
+"namespace prefix" enum. They have an *open registry* the user
+can extend without grammar surgery. Wave L is that move for PRUI.
+
+The reframe is **not** "drop XML for Lisp." The reframe is *under*
+the markup: replace the **fixed 17-namespace enum** (§9.5) with
+an **open trait registry**, replace the **flat class list** with
+**mixin linearization**, replace the **hard-coded element table**
+with **macro-expanded markup**, and add **typed capabilities** so
+components declare what they need from the host instead of
+threading globals.
+
+This section is denser than §9 because the moves it proposes are
+structural. Each subsection answers one question:
+
+- §10.1 — What is an attribute, really?
+- §10.2 — How do components advertise capability?
+- §10.3 — How does behaviour compose without inheritance pain?
+- §10.4 — How do users extend the grammar without engine edits?
+- §10.5 — How do components ask for host services safely?
+- §10.6 — How do props express "one of these shapes"?
+- §10.7 — Encoded invariants (deferred — listed for completeness)
+- §10.8 — How does a single attribute add a behaviour bundle?
+- §10.9 — How are slots typed?
+- §10.10 — **The redesigned attribute surface, before/after.** *The user's headline ask.*
+- §10.11 — Luau-side authoring surface.
+- §10.12 — Failure modes and how each is mitigated.
+- §10.13 — Phasing.
+- §10.14 — End-state shape.
+
+### 10.1 The thesis — attributes are trait applications
+
+Today's attribute system has 17 hard-coded namespaces (§9.5).
+Each behaves differently. The runtime dispatches on the
+`AttributeNamespace` enum variant. Adding a new attribute *kind*
+requires editing `AttributeNamespace`, the parser, and the
+lowering pass — three sites and a release.
+
+**Reframe.** Every attribute is a **trait method call**. A trait
+is a named bundle of `(state, attrs, hooks, styles)` that an
+element "impls" (Rust shape) or "uses" (Scala shape). The runtime
+walks a document-scoped trait registry to resolve each attribute.
+New traits are user-installable from Luau or Rust without
+touching the grammar.
+
+```prui
+<container
+  layout.direction=column          <!-- Layout trait    -->
+  layout.gap=12                    <!-- Layout trait    -->
+  style.background={accent}        <!-- Style trait     -->
+  pointer.on-click=$save()         <!-- Pointer trait   -->
+  drag.handle=".header"            <!-- Drag mixin      -->
+  a11y.role=navigation>            <!-- A11y trait      -->
+```
+
+— same readability budget as today, but every attribute uses one
+shape (`Trait.method=value`) instead of six (`bare`, `kind:method`,
+`@event`, `:bind`, `use:modifier`, `class:toggle`). The grammar
+shrinks; the *language* opens. A new author learning the form
+learns one rule, not seventeen.
+
+The classify pass at `ast.rs:214-253` collapses from a
+seventeen-arm match to two cases: bare attribute or trait method
+(split at the first `.`). The trait *resolution* moves to a
+document-scoped registry the lowering pipeline carries on
+`LowerScope`. No grammar edit per new attribute kind.
+
+### 10.2 Traits + structural impl (Rust-style)
+
+Components declare which traits they implement. Conformance is
+**structural** (the `impl` is the proof; no `implements=`
+keyword), matching Rust's `impl Trait` shape and Wave J §4.2's
+contract decision. The two ideas merge.
+
+```prui
+<trait name=Pointable>
+  <method name=on-click,  signature=action>
+  <method name=on-hover,  signature=action>
+  <state  name=is-hovered, type=bool, default=false>
+</trait>
+
+<trait name=Focusable>
+  <method name=on-focus, signature=action>
+  <method name=on-blur,  signature=action>
+  <state  name=is-focused, type=bool, default=false>
+  <method name=focus,    signature=action, imperative>
+  <method name=blur,     signature=action, imperative>
+</trait>
+
+<component name=Button, impls=[Pointable, Focusable]>
+  …body reads pointer.is-hovered / focusable.is-focused freely…
+</component>
+```
+
+Once a component impls a trait, that trait's attributes appear
+in the inspector, the LSP completion list (`Button.<TAB>` →
+`pointer.on-click`, `focusable.on-focus`, …), and the lowering
+pipeline. The component body can read trait state
+(`pointer.is-hovered`) without restating it locally.
+
+**Coherence (Rust-style orphan rule).** Two traits with the same
+method name on the same component is a parse-time error unless
+the author disambiguates with `<trait-alias from=A.on-click,
+as=primary-click>`. The Rust-style "fully qualified syntax" is
+the escape hatch when collision is intentional.
+
+### 10.3 Mixins with linearization (Scala-style)
+
+A **mixin** is a trait that supplies *implementation* alongside
+shape. Stacking mixins on a component composes their state +
+hooks. When mixins collide on the same hook, **linearization**
+(Scala's MRO) gives a deterministic order — the same algorithm,
+borrowed wholesale, because it has 20 years of battle-tested
+diamond-resolution semantics.
+
+```prui
+<mixin name=Hoverable>
+  <state name=is-hovered, type=bool, default=false>
+  <on event=pointerenter>{ is-hovered = true }</on>
+  <on event=pointerleave>{ is-hovered = false }</on>
+  <style>
+    &:hovered { background = lighten(currentBg, 0.05) }
+  </style>
+</mixin>
+
+<mixin name=Draggable>
+  <state name=is-dragging, type=bool, default=false>
+  <state name=drag-offset, type=point, default=(0,0)>
+  <on event=pointerdown>{ is-dragging = true; … }</on>
+  <on event=pointermove if=is-dragging>{ … }</on>
+  <on event=pointerup>{ is-dragging = false }</on>
+</mixin>
+
+<container with=[Hoverable, Draggable]>
+  <text>I float and glow.</text>
+</container>
+```
+
+**Linearization order** mirrors Scala: right-to-left "next" chain.
+`with=[Hoverable, Draggable]` resolves Hoverable's `pointerdown`
+*before* Draggable's. The runtime composes them as a function
+chain a mixin can `super()` into:
+
+```prui
+<mixin name=DragAndDrop>
+  <use=Draggable>
+  <on event=pointerup>{ super(); commit-drop() }</on>
+</mixin>
+```
+
+`super()` calls the next-in-linearization handler. The chain is
+generated at parse time; render-time cost is one indirect call
+per mixin per event — same shape Scala uses, with the same
+performance budget.
+
+This replaces Wave J §4.8's "variant prefixes" (`hover:elevated`,
+`dark:muted`) — a class with a prefix is just a mixin
+conditionally applied. `<container with=[Card, dark ? Muted :
+nil]>` is the Wave L spelling of `class=[card, dark:muted]`.
+
+### 10.4 Macros over markup (`macro_rules!` + Lean `notation`)
+
+Today's PRUI has dialects (Wave E) — embedded sub-languages for
+whole subtrees. **Macros go finer**: pattern-match on markup, expand
+to markup, *before* lowering. This is `macro_rules!` for the DSL.
+
+```prui
+<macro name=field>
+  <match>
+    <field label={lbl} value={val}/>
+  </match>
+  <expand>
+    <container direction=column, gap=4>
+      <text class=field-label>{lbl}</text>
+      <input value={val}/>
+    </container>
+  </expand>
+</macro>
+
+<!-- callsite -->
+<field label="Title" value={state.title}/>
+```
+
+At parse time `<field>` is matched and replaced with the expansion,
+`{lbl}` and `{val}` substituted. Expansions can recurse (a macro
+expanding to another macro), bounded by a depth limit
+configurable in `prism-cli` lint.
+
+**Hygiene.** Macro-introduced identifiers (e.g., a `let` inside
+the expansion) are renamed to fresh names so they can't shadow
+the call site's bindings. Same shape Rust 2018+ macros use; same
+shape Lean's `macro` system enforces.
+
+**Macro-defined attributes** ride the same primitive:
+
+```prui
+<attribute-macro name=elevation, params=[level: int]>
+  <expand to-attrs>
+    style.radius=8,
+    style.background={tokens.surface},
+    style.shadow={elevations[level]}
+  </expand>
+</attribute-macro>
+
+<container elevation=2>…</container>
+```
+
+A user-defined attribute is a parse-time expansion to a set of
+existing attributes. **No grammar edit. No new namespace.** Wave
+J §4.5 (PRSS `@mixin`) is one specific case of this primitive —
+the macro engine generalises mixins to cover both PRUI and PRSS
+surfaces with one engine.
+
+### 10.5 Capabilities (effect-handler-shaped)
+
+A component can declare it needs a *capability* — a typed handle
+provided by the host. Inspired by algebraic effects (Koka, Eff),
+Rust's "context pattern", and SwiftUI's `@Environment`.
+
+```prui
+<component name=ShareButton>
+  <capability name=clipboard, type=Clipboard>
+  <capability name=network,   type=Network, optional>
+
+  <button on:click=$clipboard.write(props.text)>Copy</button>
+</component>
+```
+
+The component's body uses `$clipboard.write(...)` without
+threading the clipboard through props or relying on a magic
+global. The host (the `Shell`, the SSR relay, a mobile shell)
+provides the capability at lower-time:
+
+```rust
+ctx.with_capability(Clipboard::system())
+   .with_capability(Network::reqwest_client())
+   .render(component);
+```
+
+A missing required capability fails the lower-time contribution
+check — same shape Wave J §4.2 uses for contract conformance,
+extended to host-provided handles. Three wins:
+
+- **DI without globals.** Components don't import
+  `prism.clipboard` from a magic root.
+- **SSR sandboxing.** The relay refuses to provide `FileSystem`
+  to a public-facing component; the component fails parse, the
+  relay never renders an exploit.
+- **Test injection.** Tests provide `MockClipboard`, no
+  monkeypatch / module-level state.
+
+Capabilities have **types**, not strings, so the IDE completes
+`$clipboard.<TAB>` and misspellings fail at parse, not at render.
+
+### 10.6 Algebraic property types (Rust enums + pattern match)
+
+Today `<property type=enum<a|b|c>>` (Wave J §4.3) gives flat enum
+props. Real systems benefit from **discriminated unions** — each
+variant carries different fields:
+
+```prui
+<component name=Toast>
+  <property name=tone, type=union<
+    info,
+    success { duration: int = 2000 },
+    error   { dismissable: bool = true, retry: action? }
+  >>
+
+  <match on=props.tone>
+    <case info>           …                                                </case>
+    <case success(d)>     <progress duration={d}/> …                       </case>
+    <case error(dis, r)>  … <button if={r != nil} on:click={r}>Retry</button> </case>
+  </match>
+</component>
+
+<!-- caller -->
+<Toast tone={error(dismissable=true, retry=$retry-upload)}/>
+```
+
+— Rust enums, applied to props. Variant matching uses the existing
+Wave D `<match>` primitive (fusion §7.5), extended with
+destructure-binding (`success(d)`, `error(dis, r)`).
+
+The property panel auto-generates a variant picker plus a
+per-variant sub-form. The Luau type stub generator emits a tagged
+union the analyzer narrows inside `if props.tone.kind == "error"
+then …`. The "boolean prop ladder" anti-pattern (`is-success` +
+`is-error` + `is-info`) becomes impossible to express.
+
+### 10.7 Typestate (deferred, mentioned for completeness)
+
+`<container display=block gap=8>` silently ignores `gap` today.
+Typestate would encode the legality:
+
+```prui
+<trait name=Flex, impls=Container>
+  <require Container.display=flex|grid>
+  <method name=gap, signature=int>
+</trait>
+```
+
+`<container display=flex gap=8>` legal; `<container display=block
+gap=8>` is a parse-time error pointing at `gap`. The trait
+machinery enables this cheaply once §10.1-§10.3 land, but the
+right surface is probably the inspector hint, not a parser
+error for every author. **Deferred** — listed because the
+underpinnings are free.
+
+### 10.8 Procedural derives — `derive=[…]`
+
+A Luau-defined trait can carry not just shape but **codegen**.
+`<component derive=[…]>` runs each derive's expansion at parse
+time, mutating the component declaration to add state, hooks,
+properties, and slots.
+
+```luau
+-- draggable.luau
+prism.derive("Draggable", function(decl)
+  decl:state("is-dragging", false)
+  decl:state("drag-offset", point(0, 0))
+  decl:on("pointerdown", [[
+    is-dragging = true
+    drag-offset = (e.x - self.x, e.y - self.y)
+  ]])
+  decl:on("pointermove", { if = "is-dragging" }, [[
+    self.x = e.x - drag-offset.x
+    self.y = e.y - drag-offset.y
+  ]])
+  decl:on("pointerup", [[ is-dragging = false ]])
+end)
+```
+
+```prui
+<import script="./draggable.luau"/>
+
+<component name=Card, derive=[Draggable]>…</component>
+```
+
+Same shape Rust `#[derive(Clone, Debug)]` uses. **Difference from
+a mixin (§10.3):** a derive is *expansion* (no runtime dispatch
+chain — the state and hooks are inlined into the component as if
+the author had written them), a mixin is *composition* (linearised
+chain at runtime, overridable by sub-components). Both have a
+place; the choice depends on whether the behaviour needs to be
+overridable downstream.
+
+### 10.9 Slots as typed continuations
+
+Today's slots (§9.4) carry pre-lowered children or fallback
+content. Wave J §4.4 adds `takes={item:T, index:int}` for the
+parameterised case. The reframe: slots are **typed functions**
+from a scope to UI.
+
+```prui
+<component name=List>
+  <property name=items, type=array<T>, required>
+  <slot name=row,   signature=(item: T, index: int) -> ui>
+  <slot name=empty, signature=() -> ui, optional>
+
+  <container if={#items > 0}>
+    <fragment for={item, i in props.items}>
+      <invoke slot=row, args={item, index=i}/>
+    </fragment>
+  </container>
+  <invoke slot=empty, if={#items == 0}/>
+</component>
+```
+
+The `<invoke slot=…, args={…}/>` form mirrors a function call;
+the slot's *type* is its signature; type-mismatched callers fail
+at parse. This is the **React render-prop / Svelte 5 snippet**
+pattern, formalised at the language level — closing the
+React/Svelte expressiveness gap without their TypeScript
+ceremony.
+
+### 10.10 The redesigned attribute system — concrete shape
+
+This is the section the user's headline ask points at. Pulling
+§10.1–§10.9 together: replace the **17-namespace flat enum**
+with a **trait registry + macro expander + record-shaped values**.
+The grammar keeps `name=value` shape; the *resolution* is open.
+
+#### Surface — five forms, one rule each
+
+- **`bare-attr=value`** — bare name resolves against the
+  element's type-derived prop schema (§10.6 algebraic types).
+- **`trait.method=value`** — `trait` resolves against the trait
+  registry; `method` is one of the trait's declared methods.
+- **`with=[Mixin, …]`** — apply mixin linearisation (§10.3).
+- **`derive=[Trait, …]`** — at-parse-time expansion (§10.8).
+- **`@event=$action` / `:prop={expr}`** — kept as sugar for the
+  two most-used trait calls (`pointer.on-event`, `bind.prop`).
+
+#### What goes away
+
+| Today | Replacement |
+|---|---|
+| 17-variant `AttributeNamespace` enum | open trait registry |
+| `Facet`, `Route` namespaces | already deleted in Wave K.1/K.2 |
+| `Use` namespace | subsumed by `derive=` + mixin attrs |
+| `Transition`, `Animate`, `At` namespaces | `Animator` trait + mixins, or deleted (Wave K.3) |
+| `class:foo={cond}` (Wave J §4.6 reactive class) | `with={cond ? Mixin : nil}` or `style.class.foo=cond` |
+| Wave J §4.5 PRSS `@mixin` | absorbed by §10.4 macro engine |
+| Wave J §4.8 variant prefixes (`hover:elevated`) | `with=[Hoverable, Elevated]` or §10.10.2 nested records |
+
+#### Before/after, end-to-end
+
+Today:
+```prui
+<container
+  direction="column"
+  gap="12"
+  padding="16"
+  style:background="{accent}"
+  style:radius="12"
+  class="card"
+  class:elevated="{is-active}"
+  on:click="$save()"
+  use:drag="{handle: '.header'}"
+  data:role="palette-item"
+  aria:label="Save">
+```
+
+Wave L:
+```prui
+<container
+  layout={direction=column, gap=12, padding=16}
+  style={background={accent}, radius=12}
+  with=[Card, Hoverable, is-active ? Elevated : nil]
+  drag={handle=".header"}
+  data.role=palette-item
+  a11y.label=Save
+  @click=$save()>
+```
+
+Same line count, but every group is **one cohesive concept**
+instead of six dotted attributes. The record-value form
+(`layout={…}`) reads as a typed config block; the mixin list
+reads as a sentence ("with Card and Hoverable, and Elevated if
+active"). The two short forms (`@click`, `:value`) keep common
+cases terse.
+
+#### §10.10.2 State variants as nested records — collapsing today's repetition
+
+This subsection addresses the duplication the user flagged in
+Wave J §4.6. The current spelling (interim, ships as runtime
+semantics in J Phase 1) is:
+
+```prui
+<container
+  style:background=accent,
+  style:background:hovered={lighten(accent, 0.1)},
+  style:background:pressed={darken(accent, 0.1)},
+  style:background:disabled=mute>
+```
+
+```prss
+[class.btn] background = { accent }
+[class.btn:hovered] background = { lighten(accent, 0.1) }
+[class.btn:pressed] background = { darken(accent, 0.1) }
+[class.btn:disabled] background = mute
+```
+
+Both forms repeat the *property* (`background`) four times. The
+PRSS form *also* repeats the selector head (`[class.btn`) four
+times. The cross-product (N properties × M states) explodes
+linearly in author keystrokes for content that conceptually scales
+with N + M.
+
+**Wave L collapse — state is an axis of a value, not of a key.**
+Three layered moves, each cleaner than the last:
+
+**Move 1 — nested state records.** A `style={…}` record (or PRSS
+class body) accepts state keys as nested records that override
+declared properties:
+
+```prui
+<container style={
+  background = accent,
+  radius     = 8,
+  :hovered   = { background = lighten(0.1), radius = 12 },
+  :pressed   = { background = darken(0.1) },
+  :disabled  = { background = mute, opacity = 0.5 },
+}>
+```
+
+```prss
+[class.btn] {
+  background = accent
+  radius     = 8
+  &:hovered  { background = lighten(0.1), radius = 12 }
+  &:pressed  { background = darken(0.1) }
+  &:disabled { background = mute, opacity = 0.5 }
+}
+```
+
+PRSS uses standard CSS-nesting (`&` for parent context — the
+2024 CSS Nesting spec). PRUI uses the same nested-record shape
+its `style={…}` form already opens. Both surfaces share **one
+nesting pattern** instead of two repeat-the-selector patterns.
+Property names appear once per state, not once per (state ×
+property) cell.
+
+**Move 2 — implicit base context for state-helpers.** Inside a
+state record, color helpers (`lighten`, `darken`, the OKLCH
+adjustments of Wave J §4.7) **default their first argument to
+the base value of the same property in the parent record.** That
+collapses the example further:
+
+```prui
+<container style={
+  background = accent,
+  radius     = 8,
+  :hovered   = { background = lighten(0.1), radius = 12 },
+  :pressed   = { background = darken(0.1) },
+  :disabled  = { background = mute },
+}>
+```
+
+`lighten(0.1)` inside `:hovered.background` is sugar for
+`lighten(parent.background, 0.1)` — the helper picks up its base
+from the enclosing state record's property of the same name.
+This is the same "implicit `self`" rule SwiftUI's modifier chain
+and CSS's `currentColor` use, applied to the helper-argument
+position. The author writes the *delta* once; the base flows from
+context.
+
+**Move 3 — single-line state pipeline (terser, opt-in).** For
+the most common case — one property, several state deltas — a
+pipeline form takes the base and runs per-state transforms left
+to right:
+
+```prui
+<container
+  style.background={
+    accent
+    | :hovered  → lighten(0.1)
+    | :pressed  → darken(0.1)
+    | :disabled → mute
+  }>
+```
+
+```prss
+[class.btn] background = accent
+  | :hovered  → lighten(0.1)
+  | :pressed  → darken(0.1)
+  | :disabled → mute
+```
+
+The `|` separates pipeline stages; `:state → transform` is
+"apply transform when in state". The base value (`accent`) is
+declared once. The transform is the *only* thing per state. The
+syntax reads as a sentence: "background is accent — when
+hovered, lighten by 0.1; when pressed, darken by 0.1; when
+disabled, mute." This is Wave L's *terse* shape for the case
+the user flagged; the nested-record form (Move 1) is the
+*structured* shape for many properties at once. Authors pick.
+
+**Move 4 — state-responsive functions as first-class values.** The
+deepest move: define a colour that *is* state-aware, once, and
+reuse it:
+
+```prss
+@color responsive-accent = accent | :hovered lighten(0.1) | :pressed darken(0.1) | :disabled mute
+
+[class.btn]    background = responsive-accent
+[class.alt-btn] background = responsive-accent             /* free reuse */
+[class.danger-btn] background = danger
+                              | :hovered lighten(0.1)
+                              | :pressed darken(0.1)
+                              | :disabled mute
+```
+
+Named state-responsive colours go in the token table; every
+button on the workspace inherits the same hover/press/disabled
+curve from one declaration. This is the *full* collapse the user
+asked about — the four-line per-button repetition becomes one
+attribute that references a one-line `@color` declaration.
+
+#### Compared to today's example
+
+| Property × state slots | Today | Wave L Move 1 | Wave L Move 3 | Wave L Move 4 |
+|---|---|---|---|---|
+| 1 prop × 4 states | 4 lines | 5 lines (nested, slightly longer for one prop) | **4 lines** (pipeline) | **1 line** (named ref) |
+| 3 props × 4 states | 12 lines | **7 lines** (nested wins as N grows) | 12 lines (one pipeline per prop) | 3 lines (named ref per prop) |
+| 5 buttons × 1 prop × 4 states | 20 lines | 25 lines | 20 lines | **6 lines** total (1 `@color` + 5 refs) |
+
+The right shape depends on the shape of the duplication. **All
+three Wave L moves stack** — an author writes Move 3 for the
+inner pipeline and references it from N call sites the Move 4
+way. Today's PRSS has only one shape (per-selector restatement)
+and the author repeats N × M every time.
+
+#### Symmetry between PRUI and PRSS
+
+A key Wave L principle: **the `style={…}` PRUI attribute IS a
+PRSS class body literal**. The nested form, the pipeline form,
+and the named-colour reference all read the same on both sides.
+A snippet copy/pasted from PRSS to PRUI's `style={…}` works.
+This is the duplication the user named: today PRUI's
+`style:key=` form and PRSS's `[selector] key =` form are two
+different syntaxes for one concept. Wave L collapses them to one
+nested-record syntax shared by both surfaces.
+
+### 10.11 The Luau side — one mechanism, many extension kinds
+
+The trait registry is open. A `.luau` file can register any of
+six extension kinds through one `prism.<kind>{…}` builder
+family:
+
+```luau
+prism.trait     { name, methods, state, hooks, styles }   -- §10.2
+prism.mixin     { name, …, super_chain }                   -- §10.3
+prism.macro     { name, pattern, expand }                  -- §10.4
+prism.derive    { name, expand_decl }                      -- §10.8
+prism.component { name, props, render }                    -- Wave J §4.9
+prism.dialect   { name, parse, type_stubs }                -- fusion Wave E
+```
+
+One `<import script="./x.luau"/>` projection covers all six. The
+file's `return prism.<kind>{…}` (or several, returning a table)
+binds whatever it registered into the importing scope. The
+`component` projection alias (Wave J §4.9) becomes one example
+of the general pattern.
+
+Concrete:
+
+```luau
+-- card-system.luau
+return {
+  Card = prism.trait {
+    name  = "Card",
+    state = { is_hovered = false, elevation = 0 },
+    attrs = {
+      elevation = { type = "int",   default = 0 },
+      tone      = { type = "color", default = nil },
+    },
+    hooks = {
+      on_pointer_enter = function(self) self.is_hovered = true  end,
+      on_pointer_leave = function(self) self.is_hovered = false end,
+    },
+    styles = prss [[
+      &           { background = tokens.surface, radius = 12 }
+      &:hovered   { background = lighten(0.05) }
+    ]],
+  },
+  field = prism.macro {
+    name    = "field",
+    pattern = prui_pattern [[ <field label={lbl} value={val}/> ]],
+    expand  = function(args)
+      return prui [[
+        <container direction=column, gap=4>
+          <text class=field-label>{args.lbl}</text>
+          <input value={args.val}/>
+        </container>
+      ]]
+    end,
+  },
+}
+```
+
+PRUI usage:
+```prui
+<import script="./card-system.luau"/> as cards
+
+<container with=cards.Card, cards.Card.elevation=2>
+  <field label="Title" value={state.title}/>
+</container>
+```
+
+The runtime sees both extensions as if they were built-in. **No
+grammar surgery to add `Card` or `<field>` to the vocabulary.**
+Every extension is reachable from the same projection (`script`)
+plus optional `as` namespacing. This is what Wave J §4.9's
+projection rename was *for*; Wave L is what gives it teeth.
+
+### 10.12 Failure modes and mitigations
+
+Trait systems have well-known failure modes. Each is mitigated
+by an explicit Wave L constraint:
+
+1. **Diamond inheritance / fragile-base-class** → linearisation
+   (§10.3); no implicit "parent" pointer; chain order is
+   deterministic.
+2. **Trait coherence breakage** (two libs register `Draggable`
+   differently) → namespaced imports: `<import script="./libA.luau"/> as libA`
+   makes `with=libA.Draggable` unambiguous; the bare name
+   `with=Draggable` is a parse error when two unprefixed imports
+   collide.
+3. **Attribute soup** → record-value form (`layout={…}`) +
+   mixin list collapse N attributes per concept to 1; the
+   before/after in §10.10 keeps line counts level even as
+   semantic content grows.
+4. **Hidden state** → every mixin / derive declares its state in
+   the registration, so the inspector shows "this Card has
+   `is_hovered: bool, elevation: int` from the Card trait." Same
+   transparency as Svelte's compiled component inspector.
+5. **Macro abuse / expansion explosion** → `macro_rules!`-style
+   depth + size limit, configurable via `prism-cli` lint;
+   macros that consistently expand to >N nodes get an inspector
+   warning suggesting promotion to a component.
+6. **Capability proliferation** → host enforces a closed
+   allow-list per host environment (Shell, SSR, mobile, web). A
+   component requiring `FileSystem` fails parse on the relay,
+   never at render. Capabilities are *types*, not strings;
+   misspellings fail at parse.
+7. **Authoring surface too rich** → every primitive above is
+   opt-in. A `.prui` author writing a static page uses none of
+   it; the trait registry is empty and `kind:method=value`
+   sugars resolve to the built-in traits the runtime ships.
+   **No-one is forced to learn the trait machinery to write a
+   static page.** Same "pay for what you use" discipline as Rust.
+8. **Pipeline `|` syntax collision with logical-OR** (§10.10
+   Move 3) → the pipeline form is only valid inside a value
+   position whose type is known to be `Animated<T>` /
+   `Stateful<T>`; bare `|` in any other expression position
+   parses as logical-or, same as today.
+
+### 10.13 Phasing — Wave L slices
+
+Wave L is structural — slices are bigger and need design review
+before code:
+
+| Slice | Scope | Prereqs |
+|---|---|---|
+| L.1 | Trait registry (Rust) + four built-in traits (`Layout`, `Style`, `Pointer`, `A11y`) covering today's `bare`/`style:`/`on:`/`aria:` surface | Wave K.4 (slot unification — fewer special tags to migrate) |
+| L.2 | Surface syntax for `trait.method=` attributes and `group={k=v}` record-value attributes; parser changes + grammar tests | L.1 |
+| L.3 | Mixin declarations + `with=[…]` resolution + linearisation rules | L.1, L.2 |
+| L.4 | `derive=[…]` parse-time expansion + Luau `prism.derive{…}` builder | L.3, Wave J §4.9 |
+| L.5 | Capability declarations + host-injection pipeline | L.1 |
+| L.6 | Algebraic property types + `<case Variant(fields)>` destructure | L.1, Wave J §4.3 |
+| L.7 | Macros over markup (`prism.macro{…}`) + hygiene rules + depth limit | L.4 |
+| L.8 | Typed slots-as-continuations + `<invoke slot=…/>` | Wave J §4.4 |
+| L.9 | **State-variant nested records + pipeline form (§10.10.2)** — both PRUI `style={…}` and PRSS class body sides | L.1, L.2 |
+| L.10 | Named state-responsive values (`@color`, `@spacing`, `@radius`) in token table (§10.10.2 Move 4) | L.9 |
+
+The early slices (L.1-L.3 + L.9) are the "overhaul the
+attributes" piece the user asked for. The later slices (L.4-L.8 +
+L.10) are the surface that opens once the trait registry exists.
+
+### 10.14 The end-state shape
+
+After Wave J + K + L lands, the language has:
+
+- **One markup grammar** — XML-shaped tags, attribute =
+  `name=value`.
+- **One trait registry** — open, document-scoped,
+  Luau-extensible; carries everything today's 17 namespaces
+  carried plus user extensions.
+- **One component registration concept** — `prism.component{…}`
+  (Luau), `<component>` declaration in `.prui`, or `BlockSpec`
+  (Rust). Three skins, one `Component` trait in the registry.
+- **One mixin/derive system** — composable behaviour with
+  deterministic linearisation.
+- **One macro engine** — parse-time markup expansion, shared by
+  PRUI and PRSS, with hygiene.
+- **One capability/effect system** — typed handles provided by
+  the host; sandboxes refuse what they don't carry.
+- **One slot model** — `<slot name=…, signature=(…) -> ui>` with
+  invocation as `<invoke slot=… args={…}/>`.
+- **One state-variant syntax** — nested records / pipelines,
+  shared by PRUI's `style={…}` and PRSS class bodies; the cross
+  product N × M collapses to N + M.
+- **One named-extension surface** — `@color`, `@spacing`,
+  `@radius` for token-level state-responsive values.
+
+The 17-namespace enum is gone. The five registration paths are
+one. The three facet implementations are one. The two slot
+spellings are one. The four-line state-variant repetition is
+one. The dead `widget` projection is alive (as `component`) or
+deleted. **Every grammatical concept the language exposes is
+justified by user-facing semantics — there are no
+mechanism-residues left over from earlier eras.**
+
+Each Wave L slice is large enough to need its own RFC; this
+section is the index of those RFCs and the through-line that
+ties them together. Wave J + K + L together is the destination;
+each wave is one third of the trip, and any one wave in
+isolation leaves the language uglier than today.
+
+---
+
+## 11. Closing thought
 
 Waves A–H made PRUI *runnable* — script, macro, dialect, lifecycle,
 suspense, animation, multi-projection. Wave J makes it *reusable*:
@@ -1236,11 +2054,16 @@ v4 + Sass + CSS Color 5 combined — all while staying in one file
 format with one type story. Wave K (§9) makes it *coherent*: the
 audit found five paths to register a component, three ways to
 repeat children, two spellings for slot injection, and four
-attribute namespaces that earn nothing. Each duplication is a
-small papercut on its own; together they're the reason the DSL
-feels larger than it is. The fusion doc's ratchet — every new
-feature must collapse N lines to 1 — applies in both directions:
-**§8 is the additive receipts (Wave J), §9.8 is the subtractive
-receipts (Wave K).** The end state is a surface that's more
-expressive *and* smaller than today's, which is the only kind of
-language change that ages well.
+attribute namespaces that earn nothing. Wave L (§10) makes it
+*principled*: traits replace the namespace enum, mixins replace
+ad-hoc class lists, macros replace per-attribute parser edits,
+capabilities replace magic globals, and nested state records
+replace the N × M property-state cross product. Each duplication
+is a small papercut on its own; together they're the reason the
+DSL feels larger than it is. The fusion doc's ratchet — every new
+feature must collapse N lines to 1 — applies in all three
+directions: **§8 is the additive receipts (Wave J), §9.8 is the
+subtractive receipts (Wave K), §10.10 + §10.14 are the
+structural receipts (Wave L).** The end state is a surface that's
+more expressive, smaller, and more open than today's — the only
+kind of language change that ages well.
