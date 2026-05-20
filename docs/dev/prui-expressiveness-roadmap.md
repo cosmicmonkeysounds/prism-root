@@ -38,16 +38,18 @@ not on the immediate path.
 | Three ways to repeat children (`<facet>` / `FacetComponent` / `<container for=>`) | One way (`<container for=>`) |
 | Two ways to splice caller content (`<slot/>` / `<host-children/>`) | One way (`<slot/>` with optional `name=` + fallback) |
 | State variants restate property × selector at each cell (N × M lines) | Nested records + pipelines + named values (N + M lines) |
-| Inheritance only via PRSS `extends=`; no markup-level composition | Function-shape declarations with English clauses: `extends Parent`, `impls T1, T2`, `derives M`, `uses cap: Cap`, plus runtime `with=[…]` on use sites (§12.5, §12.14) |
+| Inheritance only via PRSS `extends=`; no markup-level composition | `use Parent` inside a body, OR `Comp2 = Parent with { overrides }` as record-update on a component value (§12.5) |
 | Style-modifying behaviours wired by editing the runtime | User-defined attribute macros (`prism.macro{…}`) and traits (`prism.trait{…}`) |
-| Host services (clipboard / network / fs) reached via magic globals | Typed `uses cap: Cap` clause (parse-time validated) plus `?.` optional-chain on the body side (§12.13, §12.17) |
+| Host services (clipboard / network / fs) reached via magic globals | `requires cap: Cap` as a body statement (parse-time validated) plus `?.` optional-chain on the body side (§12.13) |
 | `darken`/`lighten`/`mix` lerp in sRGB → desaturated colours | OKLCH-backed (callers unchanged) + `with(c, l=±, a=…)` channel adjust + slash-alpha (`accent/50`) |
-| Component props: anything goes, host decides | Function-signature parameter list: `name: type [= default \| required]`, including discriminated unions `type Tone = a \| b(…) \| c` (§12.5, §12.9) |
-| Six separate declaration tags (`<property>` / `<slot>` / `<extends>` / `<impls>` / `<derive>` / `<capability>` / `<contract>`) for component schema | **Six declaration heads** (`component` / `trait` / `mixin` / `macro` / `type` / `class`) plus three file-level directives (`namespace` / `import` / `let` / `fn`). All function-shape headers + `{…}` bodies. No sub-tags, no `name=`. PascalCase first-positional token = the declaration name. (§12.4) |
+| Component props: anything goes, host decides | Function-signature parameter list: `name: type [= default \| required]`, including discriminated unions `type Tone = a \| b(…) \| c` (§12.11) |
+| Six separate declaration tags (`<property>` / `<slot>` / `<extends>` / `<impls>` / `<derive>` / `<capability>` / `<contract>`) for component schema | **One gesture, six heads** — every declaration is `Name [params] = expression` (or `Name [params] { body expression }`). Heads: `component` / `trait` / `mixin` / `macro` / `type` / `class` (§12.2) |
 | One component per `.prui` file (file-as-component flat) | Multi-component files first-class — any number of top-level declarations per file; `.luau` files multi-export via returned table mixing components, traits, mixins, macros, helpers |
-| Two closure forms (`\|args\| expr` and `\fn(args)…end`) | One parameter syntax, two body shapes: `\|args\| expr` for single expression, `\|args\| { … }` for blocks. The `\fn` long-form stays rejected (§2, §9, §12.6). |
-| `<import …/>` XML wrapper with explicit projection attribute | `import "path" [projection] [as alias]` bare directive — projection inferred from file extension (`.prss` → stylesheet, `.prui` → component, `.luau` → script), trailing keyword for the override (§12.3) |
-| XML declaration wrappers: `<component Name attrs>body</component>`, `<state name=…>`, `<on event>…</on>`, `<style>…</style>` | Function-shape + brace bodies: `component Name(params) clauses { body }`, `state name = init`, `on event(e) { … }`, `style { … }`. The render *tree* stays tagged; everything else gets its natural shape (§12) |
+| State is a tag (`<state name=…>`) or a host-attached binding | State is a **value**: `let count = state(0)` creates a reactive cell; `count <- v` writes; bare `count` reads-and-tracks (§12.4) |
+| Slots have their own ceremony (`<slot/>` declaration, `<slot name args>…</slot>` provider) | Slots are **typed function parameters** carrying `ui` (a tree) or `\|args\| → ui` (a render-prop). No `<slot>` machinery; passed and called like any other value (§12.6) |
+| Two closure forms (`\|args\| expr` and `\fn(args)…end`) | One parameter syntax, two body shapes: `\|args\| expr` for single expression, `\|args\| { … }` for blocks. The `\fn` long-form stays rejected (§2, §9, §12.16). |
+| `<import …/>` XML wrapper with explicit projection attribute | `import "path" [projection] [as alias]` bare directive — projection inferred from file extension (`.prss` → stylesheet, `.prui` → component, `.luau` → script), trailing keyword for the override (§12.17) |
+| XML declaration wrappers + body sub-tags (`<component>`, `<state>`, `<on>`, `<style>`, `<import>`) | Function-shape + body statements: `component Name(params) { let cell = state(…); on event(e) { … }; style { … }; <tree/> }`. The render *tree* stays tagged; everything else is one block of statements (§12) |
 | Each authoring surface (`.prui` / Luau / Rust / `prism-luau-derive`) emits *its own* downstream artifacts — Luau stubs only auto-flow from PRUI (Wave I), Rust typed handles never auto-flow at all, PRSS isn't callable from Luau or Rust typed-ly | **Schema-first unification** — one canonical `ComponentSchema` / `TraitSchema` per artifact, all surfaces auto-generated from it. Declare in PRUI → Rust gets typed handles + Luau gets stubs for free; declare in Luau → Rust + PRUI get them; declare in Rust via `prism-luau-derive` → Luau + PRUI get them. (§6.14) |
 | Component invocation: `<component>` markup wrapper (alias for `<container>`); shell tags `<shell.icon-button/>` are mixed-case dotted; "is this a primitive or a user component" requires looking at the docs | **PascalCase rule (React / Vue convention)** — `<Card/>` / `<CustomForm/>` / `<AppWindow/>` are components by their PascalCase name; `<container/>` / `<text/>` / `<slot/>` are primitives by their lowercase name. The `<component>` markup tag retires entirely. (§3, §6.1 Part 1) |
 
@@ -57,20 +59,23 @@ The trajectory in three sentences:
    shape with seventeen ad-hoc behaviours bolted on, five
    incomparable ways to register a component, and N × M
    restatement for state-aware styles.
-2. **The end state** is the *canonical surface* of §12 —
-   function-shape declarations with English clause keywords,
-   `{ … }` blocks for every body, bare `import` directives,
-   tagged tree for the render body — backed by an open trait
-   registry, mixins + macros + capabilities doing the work
-   seventeen namespaces tried to, one noun for components
-   with three authoring surfaces, and nested records
-   collapsing the N × M state grid to N + M.
+2. **The end state** is the *canonical surface* of §12 — one
+   gesture, **`Name [params] = expression`**, applied to
+   every declaration kind. Components are typed functions
+   from props to trees; state is `state(initial)` + `<-`;
+   composition is `use Mixin` inside the body or `with`
+   record-update outside; slots are typed function
+   parameters; capabilities are `requires`-statements; types
+   are algebraic; trees stay tagged. All of it backed by an
+   open trait registry, mixins + macros + capabilities doing
+   the work seventeen namespaces tried to, and nested
+   records collapsing the N × M state grid to N + M.
 3. **Wave J** adds the features the current grammar needs
    (additive). **Wave K** deletes the mechanisms the rethink
    obsoletes (subtractive, safe). **Wave L** performs the
-   rethink. **§12** designs the slick surface that carries
-   it. Phasing in §7 orders the J/K/L features so every step
-   ships independently; §12.24 phases the canonical surface
+   rethink. **§12** is the surface that carries it. Phasing
+   in §7 orders the J/K/L features so every step ships
+   independently; §12.21 phases the canonical surface
    alongside.
 
 ---
@@ -493,10 +498,10 @@ component Button(
   label:    string required,
   tone:     default | primary | danger = default,
   on-click: action,
-)
-  impls Pointable, Focusable
-{
-  <container with=[Pointable, Focusable] @click=$on-click()>
+) {
+  use Pointable, Focusable                            -- trait conformance
+
+  <container with=[Pointable, Focusable] @click=$on-click>
     <text>{label}</text>
   </container>
 }
@@ -658,44 +663,43 @@ to the parent record's same-named property.
 **See §6.6** for the full design and the N × M / N + M
 comparison.
 
-### 5.4 Slots — one unified primitive
+### 5.4 Slots — typed function parameters, period
 
-Today's `<slot>` and `<host-children/>` collapse to one
-element with optional `name=`, optional fallback, optional
-typed signature.
+Today's `<slot>` and `<host-children/>` dissolve. Slots
+become *typed parameters carrying either a `ui` tree or a
+`|args| → ui` render-function*. No special slot syntax,
+no `<slot>` declaration tags.
 
 ```prui
 -- ./list.prui — declares <List/>
 component List(
   items: array<Task> required,
-  row:   slot<|item: Task, index: int| → ui>,
-  empty: slot<|| → ui> = { <text>No tasks yet</text> },
+  row:   |Task, int| → ui,
+  empty: ui = <text>No tasks yet.</text>,
 ) {
-  <container if={#items > 0}>
-    <fragment for={t, i in items}>
-      <slot row item={t} index={i}/>
-    </fragment>
+  <container>
+    {if items.length == 0 then empty
+     else <fragment for={t, i in items}>{row(t, i)}</fragment>}
   </container>
-  <slot empty if={#items == 0}/>
 }
 ```
 
 ```prui
--- caller
-<List items={tasks}>
-  <slot row args={item, index}>
-    <text>{index + 1}. {item.title}</text>
-  </slot>
-</List>
+-- caller — slot props pass like any other prop
+<List
+  items={tasks}
+  row={|item, i| <text>{i + 1}. {item.title}</text>}/>
 ```
 
-The default slot (no `name=`) splices the caller's unnamed
-children — that's what today's `<host-children/>` does. Named
-slots can carry fallbacks. Slot signatures use the same
-`|args| → ret` shape as closure types, making the caller-
-provided scope a typed function.
+A magic-named `children: ui` parameter receives the
+caller's unnamed JSX-style children automatically — that's
+what today's `<host-children/>` does. Named slots are just
+named parameters with `ui` or `|args| → ui` types. Defaults
+are tree literals (`= <text>…</text>`) or lambdas. No new
+mechanism; just function calls.
 
-**See §6.5** for the unification + typed signatures.
+**See §6.5** for the unification design and **§12.6** for
+the typed-parameter shape.
 
 ### 5.5 Imports & extension — one mechanism, many kinds
 
@@ -733,45 +737,44 @@ prism.dialect   {…}   -- embedded sub-language (Wave E)
 tables); **§6.4** for trait registration; **§6.8** for
 macros; **§12.3** for the bare-keyword import shape.
 
-### 5.6 Mixins, macros, derive — two declaration heads, two use modes
+### 5.6 Mixins, macros, derive — `use` inside the body
 
 Two declaration heads cover behaviour composition + grammar
-extension:
+extension. Both compose into a component via the `use`
+statement inside its body (parse-time) or as a function call
+at the use site (runtime).
 
-- **`mixin`** — composable behaviour (state + hooks + styles).
-  Applied at one of two call sites: `with=[…]` at any element
-  (runtime composition, linearised chain, `super()`-
-  overridable) or `derives` on a component clause (parse-time
-  expansion, inlined, cheaper at runtime).
-- **`macro`** — parse-time markup expansion. Pattern-match
-  tags or attributes; expand to other tags/attributes.
+- **`mixin Name { … }`** — a body of `let` / `on` / `style`
+  statements that splice into whatever component `use`s
+  them.
+- **`macro Name(…) { … }`** — parse-time markup expansion.
+  Pattern-match tags or attributes; expand to other
+  tags/attributes.
 
 ```prui
 mixin Hoverable {
-  state is-hovered = false
-  on pointerenter(e) { is-hovered = true }
-  on pointerleave(e) { is-hovered = false }
+  let hovered = state(false)
+  on pointerenter { hovered <- true }
+  on pointerleave { hovered <- false }
 }
 
 mixin Draggable {
-  state is-dragging = false
-  state drag-offset = (0, 0)
+  let dragging = state(false)
+  let offset   = state((0, 0))
 
   on pointerdown(e) {
-    is-dragging = true
-    drag-offset = (e.x - self.x, e.y - self.y)
+    dragging <- true
+    offset   <- (e.x - self.x, e.y - self.y)
   }
-  on pointermove(e) if is-dragging {
-    self.x = e.x - drag-offset.x
-    self.y = e.y - drag-offset.y
+  on pointermove(e) if dragging {
+    self.x <- e.x - offset.x
+    self.y <- e.y - offset.y
   }
-  on pointerup(e) { is-dragging = false }
+  on pointerup { dragging <- false }
 }
 
 macro Field(lbl: string, val: string) {
-  match {
-    <Field label={lbl} value={val}/>
-  }
+  match  { <Field label={lbl} value={val}/> }
   expand {
     <container direction=column gap=4>
       <text class=field-label>{lbl}</text>
@@ -780,21 +783,24 @@ macro Field(lbl: string, val: string) {
   }
 }
 
--- Runtime composition on a use site:
-<container with=[Hoverable, Draggable]>…</container>
-
--- Parse-time expansion on a component declaration:
-component Card(title: string) derives Draggable {
-  <container>
+-- Parse-time: `use Mixin` inside the body, mixin's bindings come into scope
+component Card(title: string) {
+  use Hoverable, Draggable
+  <container class={if hovered then "card hover" else "card"}>
     <heading>{title}</heading>
   </container>
 }
+
+-- Runtime: function-style composition OR use-site attribute
+<container with=[Hoverable, Draggable]>…</container>
+{Hoverable(Draggable(<container>…</container>))}
 
 -- Macro expansion at the call site:
 <Field label="Title" value={state.title}/>
 ```
 
-**See §6.3** for mixin / derive semantics; **§6.8** for macros.
+**See §6.3** for mixin / derive semantics; **§6.8** for macros;
+**§12.5 / §12.14** for the `use`-statement composition.
 
 ### 5.7 Capabilities — typed host services
 
@@ -804,20 +810,30 @@ parse, not at runtime. No magic globals.
 
 ```prui
 -- ./share-button.prui — declares <ShareButton/>
-component ShareButton(text: string required)
-  uses clipboard: Clipboard,
-       network:   Network optional
-{
-  <button @click={|| clipboard.write(text)}>Copy</button>
+component ShareButton(text: string required) {
+  requires clipboard: Clipboard
+  requires network:   Network?
+
+  on click {
+    clipboard.write(text)
+    network?.post("/share", { text })       -- optional capability call
+  }
+
+  <button @click=$click>Copy & post</button>
 }
 ```
 
-The relay refuses to provide `FileSystem` to a public-facing
-component → the component fails parse, the relay never renders
-an exploit. Tests inject `MockClipboard`. The IDE completes
-`clipboard.<TAB>`.
+`requires` is a body statement, not a header attribute —
+the requested capability appears as a local binding for the
+rest of the body, and the IDE completes `clipboard.<TAB>`
+after the `requires` line. The relay refuses to provide
+`FileSystem` to a public-facing component → the component
+fails parse, the relay never renders an exploit. Tests
+inject `MockClipboard`. Optional capabilities (`Network?`)
+must be guarded with `?.` or an `if cap != nil` check.
 
-**See §6.9** for the capability declaration + provision design.
+**See §6.9** for the capability declaration + provision
+design; **§12.13** for the body-statement shape.
 
 ### 5.8 Algebraic property types — discriminated unions
 
@@ -827,7 +843,7 @@ fields declaratively; the body pattern-matches.
 ```prui
 -- ./toast.prui — declares <Toast/>
 type Tone =
-  | info
+    info
   | success(duration: int = 2000)
   | error(dismissable: bool = true, retry: action?)
 
@@ -3013,25 +3029,27 @@ to the end state across all three waves.
 
 | Task today | LOC | End-state LOC |
 |---|---|---|
-| Button-but-louder-hover variant | new PRSS class + new component (~25 lines) | `component LoudButton(...) extends Button { … }` + 1 prop default (~5 lines) |
+| Button-but-louder-hover variant | new PRSS class + new component (~25 lines) | `component LoudButton = Button with { tone = loud }` (1 line) |
 | Lighter / darker / transparent variant of a token colour | hand-tuned hex per call site | `accent/50`, `with(accent, l=+0.05)` (1 expr) |
 | Pressed-state visual feedback | script-toggled class + PRSS variant (~12 lines) | `style.background={accent \| :pressed → darken(0.1)}` (1 line) |
 | 3 props × 4 states on one component | 12 lines (cross-product) | 7 lines (nested record) |
 | 5 buttons sharing one hover/press/disabled curve | 20 lines | 6 lines (`@color` + 5 refs) |
 | Reusable elevation system across the workspace | 6 near-identical classes copy-pasted | 1 attribute macro (`macro Elevation attribute(level: int) { … }`) |
 | Dark-mode override on one element | duplicate class with `dark-` prefix | `with=[Card, dark ? Muted : nil]` |
-| Form field that requires a focusable control | manual prop binding + runtime assertion | `control: slot<\|\| → Focusable>` (1 param) |
+| Form field that requires a focusable control | manual prop binding + runtime assertion | `control: \|\| → Focusable` (1 typed param) |
 | Required prop with a sensible default | host binding + nullable check in body | `label: string = ""` in the parameter list |
 | Import a `.prui` component from a sibling directory | impossible (no runtime wiring) | `import "../widgets/card.prui" as card` |
 | Author a component imperatively from Luau | impossible (`prism.widget{…}` never written) | `return prism.component{…}` in a `.luau` file |
-| Stack draggable + hoverable + selectable on a container | hand-roll state + handlers + styles (~40 lines) | `with=[Draggable, Hoverable, Selectable]` (1 attr) |
+| Stack draggable + hoverable + selectable on a container | hand-roll state + handlers + styles (~40 lines) | `use Draggable, Hoverable, Selectable` inside the body (1 statement) |
 | Define a new attribute kind (e.g. `elevation=2`) | impossible without engine release | `macro Elevation attribute(level: int) { … }` or `prism.trait{…}` |
-| Component needs clipboard access | thread global through props | `uses clipboard: Clipboard` (clause) plus `clipboard.write(…)` in body |
+| Component needs clipboard access | thread global through props | `requires clipboard: Clipboard` (body statement) plus `clipboard.write(…)` |
 | Toast with three variants carrying different fields | boolean prop ladder | `type Tone = info \| success(d: int) \| error(…)` + `<match>` body |
 | Multi-component file (form-field family, chart system, …) | one component per file → many files, many imports | multiple `component` declarations in one `.prui` file; `import "./forms.prui" as forms` namespaces all of them |
 | Luau library exporting components AND helpers AND traits in one file | impossible — `.luau` returns one value | return a table of mixed entries; `import "x.luau" as ns` exposes the whole table under `ns` |
 | Multi-line event handler | concat-strings into `<script>` block | `on click(e) { stmt; stmt; … }` (in-line block) |
 | Optional capability or action prop | nested nil-checks | `on-click?(e)`, `network?.post(…)`, `state.title ?? "Untitled"` |
+| Stateful counter in 4 lines | not possible without a custom block | `component Counter(initial: int = 0) { let n = state(initial); on click { n <- n + 1 }; <button @click=$click>{n}</button> }` |
+| Pure tree-returning helper | not first-class | `fn priority-tag(p: Priority) → ui = match p { high → <fire/>, _ → <leaf/> }` |
 
 ### Structural wins
 
@@ -3283,775 +3301,815 @@ A short list that should NOT happen, even if tempting:
 
 ---
 
-## 12. The canonical surface — slick declarations, tagged tree
+## 12. The canonical surface — programs as expressions
 
-Every example so far in this doc has used the XML-shaped
-declaration syntax inherited from Waves A–H. After designing
-the feature set, the syntax itself becomes the lid on the
-language's expressiveness: `<component>` wrappers, attribute
-lists crammed into opening tags, and `</tag>` closers
-everywhere optimise for one shape (HTML-like trees) at the
-cost of another (function-like declarations, imperative
-logic, multi-line lambdas, embedded sub-languages). The
-fix isn't to invent a second markup language — it's to stop
-spelling everything as markup. **Declarations get
-function-shape; trees stay tagged; logic stays
-brace-delimited; imports lose their angle brackets.**
+The XML form spells everything as markup: declarations,
+clauses, body sub-tags, even imports. The previous draft of
+this section moved declarations to function-shape headers
+but kept the same skeleton — clauses between the params and
+the body, body sub-blocks (`state`, `on`, `style`) in a
+fixed order, mixin/trait/capability composition wired
+through declaration-time attributes. **That's still XML in
+brace clothing.**
 
-This section is the destination shape — the surface every
-later `.prui` file actually wears. Earlier sections (§5–§6)
-sketch the XML-form as the stepping stone so the feature
-rationale is unambiguous; §12 is what the file looks like
-once the feature lands. **The §6 feature set is unchanged.**
-Every discriminated union still discriminates; every mixin
-still mixes in; every capability still gets injected at
-lower-time. **The features stay; the surface changes.**
+The real move is one gesture: **every declaration is `name
+= expression` (or `name(params) { body-expression }`).** A
+component is a typed function whose value is a tree. A type
+is an algebraic expression. A trait is a structural shape.
+A mixin is a behaviour bundle you call into a scope. Style,
+state, handlers, capabilities — all become **statements
+inside the body**, not clauses around it. The result is a
+surface where:
 
-### 12.1 Three modes, one file
+- The favourite line — `component Avatar(src: string, size:
+  px = 32) { <image src={src} width={size} height={size}/> }`
+  — is the *common* case, not an edge case. Anything more
+  complex adds *statements inside the body*, never clauses
+  outside it.
+- `trait Marker {}` is a real declaration. `type Result<T,
+  E> = ok(value: T) | err(error: E)` is a real
+  declaration. The same `Name = expression` gesture covers
+  trivial and rich cases.
+- Tags and code blend bidirectionally: trees are expression
+  values, expressions are tree children. Author picks the
+  shape that reads cleanest at each spot.
 
-A `.prui` file flips between **three syntactic modes** by
-position, not by escape sequence:
+**The §6 feature set is unchanged.** Every discriminated
+union still discriminates; every mixin still mixes in;
+every capability still gets injected at lower-time. The
+features stay; the surface collapses to one gesture.
 
-| Mode | Where | Reads like |
-|---|---|---|
-| **Declaration** | Top level + clauses between the head and body | Function signatures + plain-English clauses |
-| **Tree** | Component bodies, slot providers, `<match>` arms | Tagged blocks — HTML-shaped tree |
-| **Expression** | `{…}` braces, lambda bodies, RHS of `=` | Luau-flavoured expressions + pattern matching |
+### 12.1 The full surface in one file
 
-The three share one lexer and one expression grammar; the
-parser switches between them by context. A `let` at file
-top-level declares a module constant; a `let` inside a `{ … }`
-block is a local binding; a `<container>` outside expression
-mode is a tree element, inside it is an inline markup
-expression.
-
-Seven principles drive the choice of shape in each mode
-(supplementing §2):
-
-1. **Tagged blocks earn the tree.** Render trees keep their
-   `<container>…</container>` shape; the visual hierarchy is
-   exactly what XML gets right. `<heading 3>` is two tokens
-   and reads as "level-3 heading" — angle brackets are doing
-   real work.
-2. **Function signatures earn the header.** `component
-   Card(title: string, …)` reads as a function — props are
-   parameters, types follow `:`, defaults follow `=`. Devs
-   from Rust / Swift / Kotlin / TypeScript / Python /
-   ReScript recognise it instantly.
-3. **English clauses earn composition.** `extends Parent`,
-   `impls Pointable, Focusable`, `derives Hoverable`,
-   `uses clipboard: Clipboard` — each clause is a statement
-   a non-programmer can read aloud as plain English. No `=`,
-   no `[ ]`, no `,` between clauses — comma only inside the
-   list a clause carries.
-4. **One brace shape for every block.** `{ … }` opens a
-   declaration body, a function body, an event handler, a
-   scoped `style`, or a record literal. Every C-family
-   language uses this brace; PRUI doesn't reinvent it. The
-   parser tells block from record literal by *content*
-   (record = first non-ws is `key =` or `key:`; otherwise
-   block) and by *position* (after a declaration head or
-   `|args|` is always a block).
-5. **Imports drop the angle brackets.** `import "./path"
-   [as alias]` reads as a bare directive. The projection is
-   inferred from the file extension (`.prss` → stylesheet,
-   `.prui` → component, `.luau` → script) with a trailing
-   keyword override for the ambiguous cases.
-6. **Embedded sub-languages earn explicit boundaries.**
-   Inline `class { … }` for PRSS, inline `let` / `fn` for
-   Luau-flavoured code, `prui [[ … ]]` for markup-as-string.
-   No magic globals; no pseudo-attributes that escape the
-   host language.
-7. **One closure parameter form, two body shapes.** `|args|
-   expr` for a single expression, `|args| { … }` for a block.
-   Same parameter syntax across both; the body switches by
-   shape. The §9 ban on `\fn(args) … end` stands.
-
-### 12.2 The full surface in one example
-
-Before walking through the parts, here is a multi-component
-file showing the full canonical surface at once. Every §6
-feature appears in it.
+Before any feature breakdown, here is a realistic
+`apps/tasks/shell.prui` showing the whole language under
+load. Reading top-to-bottom: imports → types → traits →
+helpers → styles → mixins → presentational components →
+the stateful main component → a derived variant → a macro.
+Every §6 feature appears; reading this is the language's
+real shape under typical work, not a happy-path snippet.
 
 ```prui
--- ./cards.prui — multi-component file with helpers, styles, types
-namespace Cards
+-- ./apps/tasks/shell.prui — task tracker, full feature exercise
+namespace TasksApp
 
 import "./theme.prss"
-import "./palette.luau" as palette
-import "./traits.luau"  as traits
+import "./db.luau"    as db
+import "./icons.luau" as icons
 
--- Type alias with discriminated union — `|` separates variants
-type Tone = info | primary | danger | custom(color: color)
+-- ───── TYPES ────────────────────────────────────────────────
 
--- Inline PRSS class with pipeline-shape state response
-class card-base {
-  background = surface
-  padding    = 16
-  radius     = 12
-  shadow     = elevations[1]
-    | :hovered → elevations[2]
-    | :pressed → elevations[3]
-  &:hovered { background = lighten(0.05) }
-  &:pressed { background = darken(0.05) }
-}
-
--- Pure functional helper — expression-form match
-fn tone-color(tone: Tone) → color {
-  match tone {
-    info      → palette.muted
-    primary   → palette.accent
-    danger    → palette.error
-    custom(c) → c
-  }
-}
-
--- Mixin: composable behaviour with state, hooks, and scoped style
-mixin Elevated {
-  state level: int = 1
-
-  on pointerenter(e) { level = math.min(level + 1, 3) }
-  on pointerleave(e) { level = math.max(level - 1, 1) }
-
-  style { shadow = elevations[level] }
-}
-
--- Main component — every clause + every body block + multi-line lambda
-component Card(
-  title:    string required,
-  subtitle: string = "",
-  tone:     Tone   = info,
-  padding:  int    = 16,
-  on-click: action,
-  on-share: action,
-  children: slot,
-  footer:   slot   = { <text class=muted>— end —</text> },
-)
-  extends BaseCard
-  impls   traits.Pointable, traits.Focusable
-  derives Elevated
-  uses    clipboard: Clipboard,
-          network:   Network optional
-{
-  state expanded = false
-  state shared   = false
-
-  computed bg-color  = tone-color(tone)
-  computed share-lbl = if shared then "Copied!" else "Share"
-
-  on click(e) {
-    expanded = !expanded
-    on-click?(e)                       -- optional-call: no-op if nil
-  }
-
-  on share-click(e) {
-    let payload = title .. "\n" .. subtitle
-    clipboard.write(payload)
-    shared = true
-    on-share?(e)
-    network?.post("/share", { title, subtitle })   -- optional capability
-  }
-
-  style {
-    background = bg-color
-    padding    = padding
-  }
-
-  <container class=card-base @click=$click(_)>
-    <heading 3>{title}</heading>
-    <text if={subtitle != ""} class=subtitle>{subtitle}</text>
-
-    <container if={expanded}>
-      <slot/>
-      <button @click=$share-click(_)>{share-lbl}</button>
-    </container>
-
-    <slot footer/>
-  </container>
-}
-
--- Sibling component, no clauses, body is just the tree
-component Avatar(src: string, size: px = 32) {
-  <image src={src} width={size} height={size} class=avatar/>
-}
-
--- Sibling component using expression-form match for a render fragment
-component PriorityTag(level: Priority) {
-  let symbol = match level {
-    low    → " "
-    medium → "·"
-    high   → "!"
-  }
-
-  <tag class={"priority-" .. tostring(level)}>{symbol}</tag>
-}
-```
-
-One file. Four components. Inline PRSS. Inline functional
-helper. Inline mixin. Discriminated-union type alias. State
-+ computed + multi-line event handlers + multi-line lambdas
-+ optional-chain calls. Every §6 feature represented; not
-one closing tag for a declaration.
-
-### 12.3 Imports — bare keyword, projection inferred
-
-`import` replaces `<import>`. The path is a string literal;
-the projection is inferred from the file extension; `as`
-overrides the file's own `namespace` declaration:
-
-```prui
-import "./theme.prss"               -- → stylesheet (extension)
-import "./helpers.luau" as h        -- → script (default for .luau)
-import "./card.prui"                -- → component(s)
-import "./forms.prui" as forms      -- → namespaced override
-import "./icons.luau" as icons      -- → script, exposing icons.* table
-```
-
-When the extension is ambiguous (a `.luau` that returns a
-dialect, or a `.luau` returning a stylesheet table), a
-trailing projection keyword disambiguates:
-
-```prui
-import "./markdown.luau" dialect    -- explicit projection
-import "./palette.luau"  stylesheet -- explicit projection
-```
-
-Shape: `import "<path>" [<projection>] [as <alias>]`. Reads
-as English: "import ./theme.prss" or "import ./markdown.luau
-as a dialect." The four-projection set (`stylesheet`,
-`script`, `component`, `dialect`) from §6.11 is unchanged;
-the surface is just terser.
-
-The XML `<import …/>` tag remains parsed for one deprecation
-window; the keyword form is canonical.
-
-### 12.4 The six declaration heads + three directives
-
-The end-state declaration surface — six lowercase keywords
-at file top-level, plus three module-scoped directives:
-
-| Head | Role | Body | Example |
-|---|---|---|---|
-| `component Name(…)` | UI component | state + computed + on + style + render tree | `component Card(title: string) { … }` |
-| `trait Name` | typed shape (also serves as contract) | typed members | `trait Pointable { … }` |
-| `mixin Name` | composable behaviour | state + computed + on + style | `mixin Hoverable { … }` |
-| `macro Name(…)` | parse-time markup expansion | `match` + `expand` sections | `macro Field(lbl, val) { … }` |
-| `type Name = …` | type alias / union | inline (single-line) | `type Tone = info \| primary \| danger` |
-| `class Name { … }` | inline PRSS class scoped to the file | PRSS-Nesting body | `class card { background = surface }` |
-
-| Directive | Role | Example |
-|---|---|---|
-| `namespace Name` | declare the file's namespace (first line, once) | `namespace Forms` |
-| `import "path" [proj] [as alias]` | import another file | `import "./helpers.luau" as h` |
-| `let name = expr`, `fn name(…) → ret { … }` | module-level binding / helper | `let MAX = 100` |
-
-Every block-bodied declaration closes with `}` — no `end`,
-no closing tag, no trailing semicolon. Single-line forms
-(`let pi = 3.14`, `type X = Y`) end at the newline.
-
-### 12.5 Declarations — function-shape + clause keywords
-
-The general shape:
-
-```
-<keyword> Name(<params>)
-  <clause1>
-  <clause2>
-  …
-{
-  <body>
-}
-```
-
-- `<keyword>` is one of the six in §12.4
-- `Name` is PascalCase (kebab-case for `class`)
-- `<params>` is a parenthesised parameter list — empty `()`
-  allowed; trailing comma allowed
-- `<clauses>` is zero or more clause keywords on their own
-  lines (`extends`, `impls`, `derives`, `uses`)
-- `<body>` is in `{ … }`
-
-Side-by-side with the XML form:
-
-```prui
-<!-- XML form (the stepping-stone shape §6 uses): -->
-<component Card
-  title:    string  required,
-  subtitle: string  = "",
-  tone:     Tone    = default,
-  on-click: action,
-  children: slot,
-  extends      = BaseCard,
-  impls        = [Pointable, Focusable],
-  derives      = [Draggable],
-  capabilities = [clipboard: Clipboard]>
-
-  <container with=[Hoverable], padding={padding}, on:click=$on-click()>
-    <heading level=3>{title}</heading>
-    <slot/>
-  </container>
-</component>
-```
-
-```prui
--- Canonical form (this section):
-component Card(
-  title:    string required,
-  subtitle: string = "",
-  tone:     Tone   = default,
-  on-click: action,
-  children: slot,
-)
-  extends BaseCard
-  impls   Pointable, Focusable
-  derives Draggable
-  uses    clipboard: Clipboard
-{
-  <container with=[Hoverable] padding={padding} @click=$on-click()>
-    <heading 3>{title}</heading>
-    <slot/>
-  </container>
-}
-```
-
-What changed:
-
-- `<component …>…</component>` → `component Name(…) … { … }`.
-- Props move into a parenthesised parameter list. Same shape
-  as a function signature — `prop: type [= default | required]`.
-- Header attributes (`extends=`, `impls=`, `derives=`,
-  `capabilities=`) become **clause keywords** on their own
-  lines, no `=`, no brackets, comma only inside the
-  comma-separated list a single clause carries.
-- Slot props (`children: slot`) are typed parameters.
-- The body is in `{ … }` — body blocks (`state`, `computed`,
-  `on`, `style`) followed by the render tree.
-
-Bodyless, clauseless declarations stay terse:
-
-```prui
-component Avatar(src: string, size: px = 32) {
-  <image src={src} width={size} height={size}/>
-}
-
-trait Marker {}                                         -- pure contract
-type Result<T, E> = ok(value: T) | err(error: E)        -- single-line type
-```
-
-### 12.6 Closures — one parameter syntax, two body shapes
-
-The single biggest practical win of the redesign: closures
-break free of the one-expression limit, with **no new
-parameter syntax**.
-
-| Form | Body | Read as |
-|---|---|---|
-| `\|args\| expr` | single expression — the value is `expr` | "given args, the value is expr" |
-| `\|args\| { stmts; last-expr }` | block — last expression is the value; `return` allowed for early exit | "given args, run these statements; the value is the last one" |
-
-Same `|args|` parameter syntax in both. The body switches:
-bare expression on one side of the bar, or `{ … }` block.
-Same scoping; same closure capture.
-
-**Single-line closure** (today's form, unchanged):
-
-```prui
-@change=|v| update(v)
-let double = |x| x * 2
-let format = |amt, cur| (if cur == "USD" then "$" else "€") .. tostring(amt)
-```
-
-**Multi-line closure** (new):
-
-```prui
-@click=|e| {
-  log("clicked", e.x, e.y)
-  let target = e.target
-  open-modal(target.id)
-}
-
-let process = |items| {
-  let active = items.filter(|i| i.active)
-  for (i, it) in active { log(i, it.name) }
-  active                            -- last expression = return value
-}
-```
-
-**Multi-line closure inside a brace-expr on an attribute:**
-
-```prui
-<button @click={|e| {
-  log("click", e.x, e.y)
-  open-modal(e.target.id)
-}}>Click me</button>
-```
-
-The outer `{ … }` opens the attribute brace-expression; the
-inner `|e| { … }` is the closure with a block body. No
-ambiguity — `{` after `|args|` is always a block.
-
-**The block-vs-record-literal rule.** A `{ … }` in expression
-position is a *record literal* if its first non-whitespace
-content is `key =` or `key:`. Otherwise it's a *block*
-(value = last expression). After a declaration head, after
-`|args|`, after `style`, and inside a `class` body, it is
-always a block (or PRSS-shape) — those positions can't host a
-bare record literal. Same rule Rust uses for struct literal
-vs. block expression; in practice it never bites.
-
-### 12.6.1 Function declarations as named closures
-
-Module-level functions get the `fn` keyword — clearer than
-spelling out `let name = |args| { … }`:
-
-```prui
-fn format-date(t: int) → string {
-  os.date("%Y-%m-%d", t)
-}
-
-fn tone-color(tone: Tone) → color {
-  match tone {
-    info        → tokens.muted
-    primary     → tokens.accent
-    danger      → tokens.error
-    custom(c)   → c
-  }
-}
-
-fn compose<A, B, C>(f: |B| → C, g: |A| → B) → |A| → C {
-  |x| f(g(x))                       -- returns a single-expr closure
-}
-```
-
-`fn` carries typed signatures (parameters + return type via
-`→`). The body is always `{ … }`. Desugars to `let name =
-|args| { … }` plus an explicit type signature; the
-duplication earns its keep through LSP hover docs and
-forward-declared call-sites.
-
-### 12.6.2 Function types in type position
-
-Function types use the **same** `|args| → ret` shape as
-closure values, just without a body — the `→` after the
-parameter list disambiguates type from value:
-
-```prui
-component List(
-  items:   array<Task>,
-  row:     slot<|item: Task, index: int| → ui>,
-  empty:   slot<|| → ui> = { <text>No tasks yet.</text> },
-  on-pick: |t: Task| → bool,
-) {
-  …
-}
-```
-
-Value position: `|args| body` (body absent in type
-position). Type position: `|args| → ret` (no body — the `→`
-*is* the type marker). The parser tells them apart by what
-follows the closing `|`: a body shape → value; `→` → type.
-
-### 12.7 Body blocks — `state`, `computed`, `on`, `style`
-
-Component and mixin bodies admit four declarative blocks
-before the render tree, in any order (convention: state →
-computed → on → style → tree):
-
-| Block | Shape | Reads as |
-|---|---|---|
-| `state name [: type] = init` | reactive cell, one line per cell | "remember `name`, starting at `init`" |
-| `computed name [: type] = expr` | derived value, re-runs on dep changes | "`name` is always `expr`" |
-| `on event[(args)] [if cond] { body }` | event handler; chains via `super()` in mixins | "when `event` fires, run `body`" |
-| `style { … PRSS … }` | scoped PRSS, applies to the host element | "this component looks like this" |
-
-```prui
-component Counter(initial: int = 0) {
-  state count = initial
-
-  computed double = count * 2
-  computed parity = if count % 2 == 0 then "even" else "odd"
-
-  on click(e) { count = count + 1 }
-
-  style {
-    padding = 8
-    &:hovered { background = lighten(0.05) }
-  }
-
-  <container>
-    <button @click=$click(_)>{count}</button>
-    <text>Doubled: {double} ({parity})</text>
-  </container>
-}
-```
-
-The same four blocks work in `mixin` bodies — that's how a
-mixin contributes state, hooks, and styles to whatever host
-component composes it in:
-
-```prui
-mixin Draggable {
-  state is-dragging = false
-  state drag-offset = (0, 0)
-
-  on pointerdown(e) {
-    is-dragging = true
-    drag-offset = (e.x - self.x, e.y - self.y)
-  }
-
-  on pointermove(e) if is-dragging {
-    self.x = e.x - drag-offset.x
-    self.y = e.y - drag-offset.y
-  }
-
-  on pointerup(e) { is-dragging = false }
-}
-```
-
-The XML body sub-tags (`<state>`, `<on>`, `<style>`) retire;
-the keyword blocks above are canonical. Each reads as a
-single short sentence.
-
-### 12.8 Pattern matching — markup and expression forms
-
-Two shapes, picked by what the arms produce. Patterns are
-the same in both.
-
-**Markup match** — when arms produce markup, keep the tree
-visible with `<match>` / `<case>` tags:
-
-```prui
-<match on={tone}>
-  <case info>          <icon name=info/>                                </case>
-  <case success(d)>    <progress duration={d}/>                         </case>
-  <case error(_, r)>   <button if={r != nil} @click=r>Retry</button>    </case>
-</match>
-```
-
-**Expression match** — when arms produce values, drop the
-`case` keyword; the arrow `→` separates pattern from value:
-
-```prui
-let label = match tone {
-  info        → "Info"
-  success(_)  → "Success"
-  error(_, _) → "Error"
-}
-
-computed icon-name = match priority {
-  low    → "minus"
-  medium → "circle"
-  high   → "exclamation"
-}
-
-fn tone-symbol(t: Tone) → string {
-  match t {
-    info       → "ℹ"
-    success    → "✓"
-    error      → "✗"
-  }
-}
-```
-
-`match X { pattern → value, … }` — patterns left of `→`,
-values right. `_` matches anything; `Variant(_, r)`
-destructures a variant's positional fields. Same patterns
-work in both shapes; only the wrapper differs (XML tags
-when arms render markup; brace block when arms produce
-values).
-
-### 12.9 Algebraic types and discriminated unions
-
-`type` declarations introduce reusable type names. Union
-variants are separated by `|` — same shape as ML / Rust /
-ReScript:
-
-```prui
-type Tone     = info | primary | danger | custom(color: color)
-type Priority = low  | medium  | high
-
-type Result<T, E> = ok(value: T) | err(error: E)
+type Priority = low | medium | high | critical
 
 type Task = {
   id:       string,
   title:    string,
+  notes:    string?,
   priority: Priority,
-  due:      timestamp?,           -- `?` marks an optional / nullable field
-}
-```
-
-The `|` between variants only appears in *type* position; the
-`→` in match arms only appears in *value* position. They
-never collide.
-
-Inline unions are allowed in component signatures but
-extracting to a named `type` is preferred for anything reused
-in more than one place:
-
-```prui
-component Toast(tone: Tone required) {
-  <match on={tone}>
-    <case info>      <icon name=info/>                  </case>
-    <case primary>   <icon name=star/>                  </case>
-    <case danger>    <icon name=warn/>                  </case>
-    <case custom(c)> <icon style.color={c} name=dot/>   </case>
-  </match>
+  due:      timestamp?,
+  done:     bool,
 }
 
-<Toast tone={custom(color=#3b82f6)}/>
-<Toast tone={info}/>
-```
+type Filter = {
+  search:    string,
+  show-done: bool,
+  by:        all | priority(Priority) | overdue,
+}
 
-Variant constructors accept positional or named arguments:
-`custom(#3b82f6)` and `custom(color=#3b82f6)` both work.
-Destructure patterns bind positional unless `{field=name}`
-shape is used.
+type Saving<T> = idle | saving | saved(T) | failed(message: string)
 
-### 12.10 Inline PRSS — `class` and `style`
+-- ───── TRAITS (structural shapes — used as type bounds and slot contracts) ──
 
-A `class Name { … }` declaration at file top level introduces
-a PRSS class scoped to the file (or to the file's namespace):
+trait Focusable {
+  focus:   action
+  blur:    action
+  focused: bool = false
+}
 
-```prui
-namespace Cards
+trait Editable<T> {
+  value:     T
+  on-change: |T| → unit
+}
 
-class card-base {
+-- ───── PURE HELPERS — `name(args) = expr` for one-liners ───────────────────
+
+fn priority-rank(p: Priority) → int = match p {
+  critical → 0,  high → 1,  medium → 2,  low → 3
+}
+
+fn priority-color(p: Priority) → color = match p {
+  critical → tokens.colors.red.bold
+  high     → tokens.colors.orange.base
+  medium   → tokens.colors.blue.base
+  low      → tokens.colors.gray.muted
+}
+
+fn sort-by-priority(tasks: array<Task>) → array<Task> =
+  tasks.sort(|a, b| priority-rank(a.priority) - priority-rank(b.priority))
+
+fn matches(t: Task, f: Filter) → bool = {
+  let by-text = f.search == "" or t.title.lower().contains(f.search.lower())
+  let by-done = f.show-done or not t.done
+  let by-cat  = match f.by {
+    all          → true
+    priority(p)  → t.priority == p
+    overdue      → t.due != nil and t.due < now()
+  }
+  by-text and by-done and by-cat
+}
+
+-- ───── INLINE STYLES — `class Name { PRSS body }` ──────────────────────────
+
+class app-shell {
   background = surface
-  padding    = 16
-  radius     = 12
-  &:hovered { background = lighten(0.05) }
-  &:pressed { background = darken(0.05) }
+  padding    = 24
+  gap        = 16
+  direction  = column
 }
 
-component Card(title: string) {
-  <container class=card-base>
+class task-row {
+  padding = (10, 14)
+  radius  = 6
+  &:hovered { background = surface.alt }
+  &.done    { opacity = 0.5, decoration = strikethrough }
+  &.urgent  { border-left = (3, solid, accent) }
+}
+
+class chip {
+  padding    = (2, 6)
+  radius     = 4
+  font-size  = 11
+  background = surface.alt
+}
+
+-- ───── MIXINS — behaviour bundles you `use` inside a body ──────────────────
+
+mixin Hoverable {
+  let hovered = state(false)
+  on pointerenter { hovered <- true }
+  on pointerleave { hovered <- false }
+}
+
+mixin AutoFocus {
+  on mount { self.focus() }
+}
+
+-- ───── PRESENTATIONAL COMPONENTS — one-line where possible ─────────────────
+
+-- Pure prop → tree (the favourite gesture)
+component Chip(text: string) = <text class=chip>{text}</text>
+
+-- One stateless helper component, one match expression
+component PriorityBadge(level: Priority) = {
+  let symbol = match level {
+    critical → "‼",  high → "!",  medium → "·",  low → " "
+  }
+  <text class=chip style.color={priority-color(level)}>{symbol}</text>
+}
+
+-- Slot-with-children pattern (children is a magic-named typed param)
+component Card(title: string, children: ui) = {
+  use Hoverable                                 -- mixin: brings `hovered` into scope
+
+  style { padding = 16, radius = 12 }
+  
+  <container direction=column gap=8>
     <heading 3>{title}</heading>
+    {children}                                  -- splice children into the tree
   </container>
 }
-```
 
-Inside a component or mixin body, a `style { … }` block
-applies a scoped style to the host element. Same PRSS-Nesting
-syntax in both:
+-- A presentational row, with a trait annotation, no body state
+component TaskRow(
+  task:      Task,
+  on-toggle: |Task| → unit,
+  on-edit:   |Task| → unit = |_| unit,
+) : Focusable = {
+  let editing = state(false)
 
-```prui
-style {
-  background = accent
-    | :hovered  → lighten(0.1)
-    | :pressed  → darken(0.1)
-    | :disabled → mute
-
-  radius  = 8
-  padding = (8, 16)
-}
-```
-
-The pipeline `|` operator is parsed only in value positions
-typed `Stateful<T>` / `Animated<T>` (Q8 in §8). Logical-or
-stays as `or` in Luau-flavoured expression mode; `||` is
-never an operator in PRUI surface syntax.
-
-For larger style sheets, `import "./theme.prss"` is still the
-right tool. Inline `class` blocks are for the case where the
-styles travel with the component file.
-
-### 12.11 Inline Luau — `let` and `fn`
-
-At file top level, Luau-equivalent declarations use `let`
-(values) and `fn` (functions):
-
-```prui
-namespace Cards
-
-import "./palette.luau" as palette
-
-let DEFAULT_PADDING = 16
-
-fn tone-color(tone: Tone) → color {
-  match tone {
-    primary → palette.accent
-    danger  → palette.error
-    info    → palette.muted
-    default → palette.surface
+  on click(e) {
+    if editing then unit else on-toggle(task)
   }
-}
-```
 
-Inside a component / mixin / macro body, `let` introduces a
-binding scoped to that body:
+  on dblclick(e) {
+    editing <- true
+    on-edit(task)
+  }
 
-```prui
-component TaskList(tasks: array<Task>, filter: string = "") {
-  let visible = tasks.filter(|t| t.title.lower().contains(filter.lower()))
-  let count   = #visible
+  <container
+    class={"task-row"
+      .. (if task.done                  then " done"   else "")
+      .. (if task.priority == critical  then " urgent" else "")}
+    @click=$click(_)
+    @dblclick=$dblclick(_)>
 
-  <container direction=column>
-    <text if={count == 0}>No matching tasks.</text>
-    <text>Showing {count} task{if count == 1 then "" else "s"}.</text>
-    <fragment for={t in visible}>
-      <TaskRow task={t}/>
-    </fragment>
+    <PriorityBadge level={task.priority}/>
+    <text style.flex-grow=1>{task.title}</text>
+
+    {if task.due != nil  then <Chip text={format-due(task.due)}/>}
+    {if editing          then <icon name=pencil tint={tokens.accent}/>}
   </container>
 }
-```
 
-Inside a `{ … }` block (lambda bodies, event handlers, match
-arms), `let` is the standard local binding.
+-- ───── THE BIG COMPONENT — every body statement, every gesture ─────────────
 
-For embedding markup as a value (returning a `ui` fragment
-from a helper), `prui [[ … ]]` is a long-bracket string
-literal whose contents are parsed as PRUI body markup:
+component TaskList(
+  -- Required prop
+  initial-tasks: array<Task>,
 
-```prui
-fn priority-tag(p: Priority) → ui {
-  match p {
-    high   → prui [[ <tag class=urgent>!</tag> ]]
-    medium → prui [[ <tag class=normal>·</tag> ]]
-    low    → prui [[ <tag class=quiet> </tag> ]]
+  -- Optional callbacks — slot-as-function defaults
+  on-pick:  |Task| → unit    = |_| unit,
+  on-edit:  |Task| → unit    = |_| unit,
+  on-new:   |string| → unit  = |_| unit,
+
+  -- Slot-as-tree defaults
+  header:   ui               = <heading 2>Tasks</heading>,
+  empty:    ui               = <text class=muted>No tasks yet.</text>,
+
+  -- Slot-as-function the caller can override
+  toolbar:  |Filter| → ui    = |f| <text>{summarize-filter(f)}</text>,
+) = {
+  -- Capabilities — `requires` is a body statement, not a clause
+  requires storage:   Storage
+  requires clipboard: Clipboard?
+
+  -- Reactive state
+  let tasks  = state(initial-tasks)
+  let filter = state({ search = "", show-done = false, by = all })
+  let sorted = state(true)
+  let save   = state(idle: Saving<unit>)
+
+  -- Computed values (auto-tracked, memoised)
+  let visible = computed {
+    let f = tasks.filter(|t| matches(t, filter))
+    if sorted then sort-by-priority(f) else f
   }
-}
+  let count = computed { visible.length }
 
-component TaskRow(task: Task) {
-  <container>
-    {priority-tag(task.priority)}
-    <text>{task.title}</text>
+  -- Handlers — `on event(args) [if cond] { … }`
+  on filter-change(text) {
+    filter <- filter with { search = text }
+  }
+
+  on toggle-show-done {
+    filter <- filter with { show-done = not filter.show-done }
+  }
+
+  on toggle-sort   { sorted <- not sorted }
+
+  on task-pick(t: Task) {
+    tasks <- tasks.map(|x|
+      if x.id == t.id then x with { done = not x.done } else x)
+    on-pick(t)
+
+    save <- saving
+    storage.write("tasks", tasks)
+      .then(|_| save <- saved(unit))
+      .catch(|e| save <- failed(e.message))
+  }
+
+  on copy-titles {
+    let titles = visible.map(|t| t.title).join("\n")
+    clipboard?.write(titles)                    -- optional capability
+  }
+
+  on new-task(text: string) {
+    if text == "" then unit
+    else {
+      let t: Task = {
+        id        = uuid(),
+        title     = text,
+        notes     = nil,
+        priority  = medium,
+        due       = nil,
+        done      = false,
+      }
+      tasks <- [...tasks, t]
+      on-new(text)
+    }
+  }
+
+  -- Scoped host style
+  style {
+    background = surface
+    padding    = 16
+    radius     = 8
+    min-height = 200
+  }
+
+  -- The component's value: the render tree
+  <container class=app-shell>
+    {header}
+
+    <container direction=row gap=8 align=center>
+      <input
+        placeholder="Filter tasks…"
+        :value={filter.search}
+        @change=$filter-change(_)/>
+
+      <button @click=$toggle-show-done>
+        {if filter.show-done then "Hide done" else "Show all"}
+      </button>
+
+      <button @click=$toggle-sort>
+        Sort: <text style.weight=bold>{if sorted then "priority" else "order"}</text>
+      </button>
+
+      <button if={clipboard != nil} @click=$copy-titles>
+        <icon name=copy/> Copy
+      </button>
+    </container>
+
+    -- Caller-customisable toolbar slot — invoked as a function
+    {toolbar(filter)}
+
+    -- Save indicator: pattern match in tree position via expression
+    {match save {
+       idle         → nil
+       saving       → <text class=muted>Saving…</text>
+       saved(_)     → <text class=muted>Saved.</text>
+       failed(msg)  → <text style.color={tokens.colors.red.base}>Error: {msg}</text>
+    }}
+
+    -- The list itself
+    {if count == 0 then empty else
+       <container direction=column>
+         <fragment for={t in visible}>
+           <TaskRow task={t} on-toggle=$task-pick(_) on-edit={on-edit}/>
+         </fragment>
+       </container>}
+
+    <NewTaskInput on-submit=$new-task(_)/>
+
+    <text class=muted>{count} shown · {tasks.length} total</text>
   </container>
 }
-```
 
-`prui [[ … ]]` mirrors Luau's long-bracket string literal and
-is the only point where markup appears as a *value* rather
-than as a *syntactic position*. The brace-expr interpolation
-inside the markup works the same as in any body.
+component NewTaskInput(on-submit: |string| → unit) = {
+  use AutoFocus
 
-### 12.12 Macros — pattern + expansion
+  let text = state("")
 
-Macros declare a match pattern and an expansion. Captures
-use the same typed-param shape as component props:
-
-```prui
-macro Field(lbl: string, val: string) {
-  match {
-    <Field label={lbl} value={val}/>
+  on submit {
+    on-submit(text)
+    text <- ""
   }
+
+  <container direction=row gap=4>
+    <input
+      :value={text}
+      placeholder="Add a task… (Enter to submit)"
+      @keydown={|e| if e.key == "Enter" then submit()}/>
+    <button @click=$submit>Add</button>
+  </container>
+}
+
+-- ───── DERIVED VARIANTS — composition via `with` ───────────────────────────
+
+-- Same TaskList, different defaults — no new body, no new file boilerplate
+component CompactTaskList = TaskList with {
+  empty   = <text>—</text>
+  toolbar = |_| nil
+}
+
+-- Just call the parent — function composition
+component DemoTaskList(seed: string) =
+  TaskList(initial-tasks = db.demo-tasks(seed))
+
+-- ───── MACROS — pattern match + expansion ──────────────────────────────────
+
+macro Field(label: string, value: string) {
+  match  { <Field label={label} value={value}/> }
   expand {
-    <container direction=column gap=4>
-      <text class=field-label>{lbl}</text>
-      <input :value={val}/>
+    <container direction=row gap=8>
+      <text style.width=120 class=muted>{label}</text>
+      <text>{value}</text>
     </container>
   }
 }
-
-<Field label="Title" value={state.title}/>
 ```
 
-The `match { … }` and `expand { … }` sections sit inside the
-macro body. Captured names (`lbl`, `val`) are typed parameters
-available in the expansion.
+That is the whole language under realistic load. Every
+subsection below drills into one gesture and explains why
+it works the way it does. The features mapped to §6 don't
+change; only the shape they wear.
 
-**Attribute macros** declare an `attribute` modifier on the
-macro head; the expansion emits attribute key/value pairs via
-`expand-attrs`:
+### 12.2 The one gesture — `name = expression`
+
+Every top-level declaration in PRUI follows one of two
+spellings:
+
+| Shape | When |
+|---|---|
+| `<keyword> Name [params] = expression` | The declaration's value is a single expression — terse, common for trivial cases. |
+| `<keyword> Name [params] { body }` | The declaration's value is a *block expression* — statements followed by a final expression. Used when the body needs setup before the value. |
+
+These are the same gesture: the brace-block form is just
+`= { body }` with the `=` dropped (the brace is unambiguous).
+Both forms produce *an expression value bound to a name*.
+
+| Keyword | Value type | Trivial form | Block form |
+|---|---|---|---|
+| `component` | a function from props to ui tree | `component Avatar(src: string) = <image src={src}/>` | `component Card(t: string) { state x = …; <container>…</container> }` |
+| `type` | a type (alias / union / record) | `type Tone = info \| primary \| danger` | (rarely needs a block; lift sub-types instead) |
+| `trait` | a structural shape | `trait Marker = {}` (or `trait Marker {}`) | `trait Pointable { on-click: action, … }` |
+| `mixin` | a behaviour bundle | (rare — mixins almost always have body) | `mixin Hoverable { let hovered = state(false); on pointerenter { … } }` |
+| `class` | an inline PRSS class | (rare — classes almost always have body) | `class card { background = surface, padding = 16 }` |
+| `macro` | a pattern + expansion | (rare) | `macro Field(lbl, val) { match { … } expand { … } }` |
+| `fn` | a function | `fn double(x: int) → int = x * 2` | `fn process(items: array<T>) → array<T> { … ; final-expr }` |
+| `let` | a value | `let MAX = 100` | `let cfg = { let p = load(); p with { … } }` |
+
+Every other syntactic surface — clauses, sub-tags, header
+attributes, declaration ceremonies — collapses into this.
+What was `<component Foo extends=Bar impls=[X] derives=[M]
+capabilities=[c: C]>…</component>` becomes statements
+inside the body:
+
+```prui
+component Foo(args) = {
+  use Bar           -- inheritance via partial application (see §12.5)
+  use X             -- trait conformance
+  use M             -- mixin (parse-time)
+  requires c: C     -- capability
+
+  …
+}
+```
+
+The composition still happens; it just happens *as part of
+the function body*, not as decorations around it.
+
+### 12.3 The component body — statements, then the value
+
+Inside a `{ body }` block, statements run top-to-bottom; the
+final expression is the block's value. For components, that
+final expression is the rendered tree.
+
+The body admits these statement kinds (any order, all
+optional):
+
+| Statement | Shape | Role |
+|---|---|---|
+| `let name [: type] = value` | binding | introduce a value (reactive if RHS is a `state(…)` / `computed { … }` call) |
+| `use Name [, Name …]` | mixin / trait / inheritance | bring a mixin's state+handlers into scope, OR bring a trait into the conformance set, OR inherit from a parent component (§12.5) |
+| `requires name: Type [, …]` | capability request | request a host service; available as `name` for the rest of the body |
+| `on event[(args)] [if cond] { body }` | event handler | register a handler on `self` |
+| `style { … }` | scoped PRSS | apply PRSS to the host element |
+| `<tree/>` | render expression | the body's final value, the rendered tree |
+
+The render expression is just the last expression in the
+block; no separate `render` keyword. If the body is *only*
+the render expression, you can drop the braces:
+
+```prui
+-- Trivial — no body block:
+component Avatar(src: string, size: px = 32) = 
+  <image src={src} width={size} height={size}/>
+
+-- One state cell + tree — body block needed:
+component Counter(initial: int = 0) {
+  let count = state(initial)
+  
+  on click { count <- count + 1 }
+  
+  <button @click=$click>{count}</button>
+}
+```
+
+The `=` in the trivial form is the same `=` from `type X =
+Y` — assignment to a value expression. The body-block form
+drops it because `Name(...) { ... }` is unambiguous on its
+own; both are equivalent.
+
+### 12.4 Reactive state — three primitives, one operator
+
+PRUI doesn't have a `state` *keyword*. State is a value you
+create by calling the `state(initial)` primitive, just like
+any other function call:
+
+```prui
+let count    = state(0)                -- reactive cell
+let title    = state("Untitled")
+let user     = state<User?>(nil)       -- explicit type annotation
+let visible  = computed { count > 0 }  -- auto-tracked derivation
+```
+
+Three primitives, one operator:
+
+| Primitive | What it gives you |
+|---|---|
+| `state(initial)` | A reactive cell. Bare reads (`count`) auto-track; writes use `<-`. |
+| `computed { expr }` | A memoised derivation. Reads inside re-track on dep changes. |
+| `effect { stmts }` | A side effect that re-runs on dep changes. No value. |
+| `cell <- new-value` | The only write operator. Equivalent to `cell.set(new-value)`. |
+
+```prui
+component Counter(initial: int = 0) {
+  let count   = state(initial)
+  let doubled = computed { count * 2 }
+  
+  effect { log("count became", count) }
+  
+  on click { count <- count + 1 }
+  
+  <text>{count} (×2 = {doubled})</text>
+}
+```
+
+A bare reactive cell name in any expression position
+(attribute brace-expr, tree interpolation, RHS of `=`, body
+of `computed`) reads the cell's current value AND
+establishes a tracking dependency. No `.get()` ceremony, no
+`.value` accessor. Writes use `<-` and only `<-`.
+
+There is no `state x = 0` keyword shortcut; the function
+call `state(0)` is the canonical surface. Adding a keyword
+would split the syntax for one micro-saving — every other
+binding shape (`let cfg = computed { … }`, `let e = effect
+{ … }`) already follows the `let name = call(…)` shape.
+
+### 12.5 Composition — `use`, `with`, and function calls
+
+The `extends`/`impls`/`derives` trinity from §6.3 collapses
+into one keyword (`use`) inside the body and one operator
+(`with`) on the value level.
+
+| Composition need | Shape | Where |
+|---|---|---|
+| Inherit from a parent component (Wave J `extends`) | `Comp2 = Comp1 with { overrides }` *or* `Comp2(args) = Comp1(args, override=value)` | value level |
+| Implement a trait (Wave J `impls`) | `use Trait` inside the body, *or* `: Trait` annotation after the param list | body / signature |
+| Mix in behaviour at parse time (Wave J `derives`) | `use Mixin` inside the body | body |
+| Mix in behaviour at runtime | `<container with=[Mixin]>` attr *or* function call `Mixin(<tree/>)` | use site |
+
+**`use Name` inside a body** is the workhorse. It does
+whatever `Name` is registered as:
+
+- `use Hoverable` — Hoverable is a mixin → its state, hooks,
+  and styles inline into this body's scope. The mixin's `let`
+  bindings (e.g. `hovered`) become visible names in the host.
+- `use Focusable` — Focusable is a trait → this component
+  conforms structurally; the trait's required members must
+  appear in the body. The check happens at parse, not
+  runtime.
+- `use Cards.Card` — Card is a component → inherit. The
+  body is appended to (and may override) the parent's body
+  via the parse-time flattening §6.3 specifies.
+
+The parser knows which is which by what `Name` resolved to
+in the registry; the *call site* doesn't need to spell it
+out. Adding a new behaviour kind is a registry registration,
+not a new keyword.
+
+**`with { overrides }` on the value level** is the
+record-update operator applied to a component:
+
+```prui
+component DangerButton = BaseButton with {
+  tone = danger
+}
+
+component CompactList = TaskList with {
+  empty   = <text>—</text>
+  toolbar = |_| nil
+}
+```
+
+It's the same `record with { field = value }` that updates a
+normal record; components are first-class values, so the same
+operator works. No new syntax.
+
+**Inheritance as a function call** is the other option,
+useful when the override changes behaviour rather than just
+defaults:
+
+```prui
+component DangerButton(label: string) = {
+  on confirm-then-click(e) {
+    if confirm("Sure?") then BaseButton.dispatch-click(self, e)
+  }
+  BaseButton(label = label, tone = danger, on-click = $confirm-then-click(_))
+}
+```
+
+The whole component body is plain composition: register a
+handler, then return a `BaseButton(…)` call as the value.
+
+### 12.6 Slots — typed function parameters, period
+
+The `<slot>` machinery from §6.5 dissolves. Slots are just
+**typed function parameters** carrying either a `ui` value
+(a tree) or a `|args| → ui` function (a render-prop).
+
+```prui
+component List(
+  items:  array<Task> required,
+  header: ui                       = <heading>Tasks</heading>,
+  empty:  ui                       = <text>No tasks</text>,
+  row:    |Task, int| → ui         = |t, i| <text>{i}: {t.title}</text>,
+) {
+  <container direction=column>
+    {header}                                           -- splice a tree
+    
+    {if items.length == 0 then empty
+     else <fragment for={t, i in items}>{row(t, i)}</fragment>}
+  </container>
+}
+```
+
+Caller side — slot props are passed like any other prop:
+
+```prui
+<List
+  items={tasks}
+  header={<heading 2>Today's tasks</heading>}        -- tree as a value
+  row={|t, i| <text>{i + 1}. {t.title}</text>}        -- function as a value
+  empty={<text class=muted>Nothing pending.</text>}/>
+```
+
+The `children` prop is magic-named: any unnamed children
+passed inside `<Comp>…</Comp>` flow into a `children: ui`
+parameter automatically (mirrors React / JSX). For named
+slots, just name the parameter. No `<slot/>` tag, no
+`<slot row args={…}>` provider syntax.
+
+`<slot/>` survives only inside macro definitions where it
+serves as a marker for "where the captured tree goes" (§12.10).
+
+### 12.7 Pattern matching at every level
+
+`match` is an expression. It works at every position a value
+goes, including inside a tree. Two surface forms; the author
+picks for clarity:
+
+**Expression form** — value-producing:
+
+```prui
+let symbol = match priority {
+  critical → "‼",  high → "!",  medium → "·",  low → " "
+}
+
+fn render-status(s: Saving<unit>) → ui = match s {
+  idle        → nil
+  saving      → <spinner/>
+  saved(_)    → <text>Saved.</text>
+  failed(msg) → <text>Error: {msg}</text>
+}
+```
+
+`match X { pattern → value, … }` — no `case` keyword. The
+arrow `→` separates pattern from value. Patterns can be:
+- Bare names (variant cases): `info`, `success`
+- Destructure patterns: `custom(c)`, `error(_, retry)`
+- Wildcards: `_`
+- Record patterns: `{title, done = true}` (matches by shape)
+- Literals: `0`, `"text"`, `true`
+
+**Tagged form** — for trees of trees:
+
+```prui
+<container>
+  <match on={view-mode}>
+    <case list>     <TaskList .../>      </case>
+    <case board>    <KanbanBoard .../>   </case>
+    <case calendar> <CalendarView .../>  </case>
+  </match>
+</container>
+```
+
+The tagged form is sugar for the expression form spliced into
+the tree — same AST, different shape. Use the tagged form
+when the arms produce non-trivial trees and the visual
+nesting matches the document structure; use the expression
+form when the arms produce values or short fragments.
+
+### 12.8 Control flow — attribute or expression
+
+The element-level `if=` / `for=` attributes from Wave H stay
+as sugar for the expression form:
+
+| Attribute form | Expression form |
+|---|---|
+| `<container if={cond}>…</container>` | `{if cond then <container>…</container>}` |
+| `<fragment for={t, i in xs}>…</fragment>` | `{xs.map(\|t, i\| …)}` |
+| `<container if={a} for={b in c}>…</container>` | `{b.map(\|b\| if a then … else nil)}` |
+
+Same AST, two surfaces. Inside expression mode (brace exprs,
+function bodies), the canonical shape is the expression form:
+
+```prui
+if cond then expr1 else expr2          -- expression
+if cond then { stmts; last } else { … } -- block branches
+match X { pattern → value, … }          -- expression-form match
+for (item in iter) { stmts }            -- iteration block (no value)
+while cond { stmts }                    -- conditional loop
+```
+
+`if` / `match` are expressions; they produce a value. `for` /
+`while` are statements; they don't.
+
+### 12.9 The tag-expression blend — both ways, freely
+
+Tags and code interleave at every boundary. The rules:
+
+**Code → tree:** any `{expression}` inside a tree position
+splices the expression's value into the tree.
+
+```prui
+<container>
+  <text>Hello, {user.name}</text>             -- string interpolation
+  {if loading then <spinner/>}                -- conditional fragment
+  {visible.map(|t| <Row task={t}/>)}          -- list mapping
+  {match status { ok → <ok/>, _ → <warn/> }}  -- match returning a tree
+</container>
+```
+
+**Tree → code:** trees are first-class values. Bind them with
+`let`, return them from functions, pass them as props:
+
+```prui
+let badge   = <warning-icon class=urgent/>
+let display = if level == high then <fire/> else <leaf/>
+
+fn priority-tag(p: Priority) → ui = match p {
+  critical → <tag class=urgent>‼</tag>
+  high     → <tag class=warn>!</tag>
+  _        → <tag/>
+}
+
+<container>{priority-tag(task.priority)}</container>
+```
+
+**Components are functions** — three call forms produce the
+same value:
+
+```prui
+let card1 = <Card title="Hi"/>                  -- tag form
+let card2 = Card(title = "Hi")                  -- function-call form
+let card3 = Card with { title = "Hi" }          -- partial-app form (no body)
+```
+
+The tag form is sugar for the function call; the parser
+desugars `<Name a=b c=d>k</Name>` into `Name(a=b, c=d,
+children=k)`. Author picks: tag form is natural in a tree
+context; function-call form is natural in an expression
+context.
+
+**Slot providers as expressions** — pass any value into a
+slot parameter:
+
+```prui
+<List
+  items={tasks}
+  header={<heading 2>Today</heading>}            -- tree literal
+  row={|t, i| <text>{i}: {t.title}</text>}        -- lambda
+  empty={"No tasks yet"}                          -- string (auto-wrapped)
+  toolbar={priority-toolbar}                      -- function-bound name
+/>
+```
+
+**Mixins as functions OR as use-site attributes:**
+
+```prui
+<container with=[Hoverable, Pulsing]>…</container>  -- attribute form
+{Hoverable(Pulsing(<container>…</container>))}      -- function-composition form
+```
+
+Both work. The attribute form reads better when applying
+mixins to a container at the call site; the function-call
+form reads better when composing several mixins in a
+helper-function.
+
+This bidirectional flow is the heart of the design.
+Wherever a tree is more visual, write a tag. Wherever code is
+more compact, write an expression. The two never collide
+because the brace `{…}` is always the bridge from one mode
+to the other.
+
+### 12.10 Macros — pattern + expansion, the only sub-tag-style block
+
+Macros are the one place body-tag-style sections survive,
+because the macro's job is to match markup and rewrite to
+markup:
+
+```prui
+macro Field(label: string, value: string) {
+  match  { <Field label={label} value={value}/> }
+  expand {
+    <container direction=row gap=8>
+      <text style.width=120 class=muted>{label}</text>
+      <text>{value}</text>
+    </container>
+  }
+}
+```
+
+`match { ... }` is the input pattern; `expand { ... }` is
+the output. Both are tree-shaped because that's what they
+match and emit. Captured names (`label`, `value`) carry the
+typed-param shape and flow into the expansion.
+
+Attribute macros take an `attribute` modifier and emit
+attribute key/value pairs via `expand-attrs`:
 
 ```prui
 macro Elevation attribute(level: int) {
@@ -4065,448 +4123,445 @@ macro Elevation attribute(level: int) {
 <container elevation=2>…</container>
 ```
 
-Macros declared from Luau use the same `prism.macro{…}`
-builder shape as today; the canonical syntax above is the
-sugared form for in-`.prui` declaration.
-
-### 12.13 Capabilities — the `uses` clause
-
-Capabilities ride the same shape as parameters but declared
-as a clause keyword. The clause carries a comma-separated
-list on one line, or fans across multiple `uses` lines:
+The `<slot/>` tag inside a macro `expand` block marks where
+the captured caller-content goes (the only surviving use
+of the literal `<slot/>` token, see §12.6):
 
 ```prui
-component ShareButton(text: string required)
-  uses clipboard: Clipboard, network: Network optional
-{
-  <button @click={|| clipboard.write(text)}>Copy</button>
+macro Disclosure(title: string) {
+  match  { <Disclosure title={title}><slot/></Disclosure> }
+  expand {
+    <details>
+      <summary>{title}</summary>
+      <slot/>            -- splice the original children
+    </details>
+  }
 }
 
-component AdminPanel(user: User required)
-  uses fs:      FileSystem,
-       network: Network,
-       keyring: Keyring optional
-{
-  …
+<Disclosure title="More">
+  <text>Here's the rest.</text>
+</Disclosure>
+```
+
+### 12.11 Algebraic types — `type X = a | b(…) | c`
+
+```prui
+type Priority = low | medium | high | critical
+type Result<T, E> = ok(value: T) | err(error: E)
+type View = list | board | calendar | timeline(zoom: float)
+type Saving<T> = idle | saving | saved(T) | failed(message: string)
+```
+
+Pipe-separated variants on one line. Each variant is either:
+- A bare PascalCase name (`info`)
+- A name with a parenthesised typed field list (`custom(c:
+  color)`, `error(message: string, retry: action?)`)
+
+Record types use the brace shape:
+
+```prui
+type Task = {
+  id:       string,
+  title:    string,
+  priority: Priority,
+  due:      timestamp?,
+  done:     bool,
 }
 ```
 
-`optional` is the trailing modifier marking a capability the
-host may omit; the body must guard against `nil`, typically
-via `cap?.method(…)` optional-chaining. Without `optional`,
-missing the capability at lower-time is a contribution error
-(the host refuses to render the tree).
-
-### 12.14 Inheritance and composition — clause keywords
-
-Each composition primitive from §6.3 maps to a clause keyword
-(declaration time) or a use-site attribute (instance time):
-
-| Concept | Where | Shape | Cost |
-|---|---|---|---|
-| Single-parent extension | declaration clause | `extends Parent` | parse-time |
-| Trait conformance | declaration clause | `impls Trait1, Trait2` | runtime dispatch |
-| Mixin baked into component | declaration clause | `derives Mixin1, Mixin2` | parse-time (inlined) |
-| Mixin applied at runtime | use-site attribute | `with=[Mixin1, Mixin2]` | runtime chain |
-| Capabilities | declaration clause | `uses cap: Cap` | host-injected |
+`?` after a type marks it nullable. Inline unions are
+allowed in component signatures but extract to a named
+`type` when reused:
 
 ```prui
-component DangerButton(label: string)
-  extends BaseButton
-  derives Hoverable, Focusable
-{
-  style { background = tokens.error }
+-- inline (one-off):
+component Toast(tone: info | success | danger required) { … }
 
-  <container with=[Pulsing]>
-    <text>{label}</text>
-  </container>
+-- named (reused):
+type Tone = info | success | danger
+component Toast(tone: Tone required) { … }
+component Banner(tone: Tone = info) { … }
+```
+
+Constructing a variant uses positional or named args:
+
+```prui
+let r1 = error(message = "bad", retry = $retry)    -- named
+let r2 = custom(c = #3b82f6)                        -- named
+let r3 = ok(42)                                     -- positional
+```
+
+Pattern-matching destructures the same way:
+
+```prui
+match r {
+  ok(v)            → render(v)
+  err({message})   → <text>Error: {message}</text>  -- record-pattern destructure
+  loading          → <spinner/>
 }
 ```
 
-`extends`, `impls`, `derives`, `uses` describe the
-component's identity (clauses on the declaration). `with=`
-describes a specific instance (use-site attribute on a tree
-element).
-
-### 12.15 Traits — typed shape + optional state
+### 12.12 Traits — structural shapes, opt-in conformance
 
 ```prui
-trait Pointable {
-  on-click   : action
-  on-hover   : action
-  is-hovered : bool = false
-}
-
 trait Focusable {
-  focused : bool
-  focus   : action
-  blur    : action
+  focus:   action
+  blur:    action
+  focused: bool = false
 }
+
+trait Editable<T> {
+  value:     T
+  on-change: |T| → unit
+}
+
+trait Marker {}                                     -- pure contract, no members
 
 trait Composite recursive {
-  children : slot<|| → Composite> = nil
+  children: || → Composite = || nil
 }
-
-trait Folder recursive { items  : array<FileLike> }
-trait File   recursive { parent : Folder          }
-
-trait Marker {}              -- bodyless: pure contract for slot matching
 ```
 
-`recursive` is a head modifier (after the name, before the
-body); without it, self-references at type-check fail with a
-clear "this trait isn't marked `recursive`" error (Q5). Mutual
-recursion: every participating trait declares `recursive`.
+A trait is a structural shape — a record type with optional
+members, used as a *contract* for slot types and as a *bound*
+for conformance.
 
-A bodyless trait `trait Marker {}` serves the contract role
-(slot-type matching). A trait with state members tracks
-per-impl state on every component that `impls` it.
+**Two ways to conform:**
 
-### 12.16 Slots — typed props, default bodies, providers
+1. **Implicit / structural** — the component's signature
+   plus body bindings satisfy the trait's shape. Inferred
+   at parse-time; no annotation needed.
 
-Slot props are typed parameters; defaults can be markup
-literals via `{ <…> }`:
+2. **Explicit** — annotate with `: TraitName, …` after the
+   param list, or `use TraitName` inside the body:
+   
+   ```prui
+   component TaskRow(task: Task) : Focusable = { … }
+   
+   -- or:
+   component TaskRow(task: Task) = {
+     use Focusable                  -- explicit conformance
+     …
+   }
+   ```
+   
+   Explicit conformance lets the parser tell you when the
+   body doesn't match the trait yet ("missing `focus`
+   method"). Implicit conformance is for the case where the
+   shape is obvious from the body.
+
+Traits used as slot type bounds:
 
 ```prui
-component List(
-  items:  array<Task> required,
-  row:    slot<|item: Task, index: int| → ui>,
-  header: slot,
-  empty:  slot<|| → ui> = { <text>No tasks yet.</text> },
+component FormField(
+  control: || → Focusable,           -- slot must return a Focusable
 ) {
-  <container direction=column>
-    <slot header/>
-
-    <fragment for={t, i in items} if={#items > 0}>
-      <slot row item={t} index={i}/>
-    </fragment>
-
-    <slot empty if={#items == 0}/>
+  <container>
+    {control()}
   </container>
 }
 ```
 
-Slot type signatures use the closure-type shape `|args| →
-ret`. Callers provide slot bodies with the same `<slot name
-args={…}>…</slot>` provider syntax §6.5 specifies — the
-unification on the call side is unchanged.
+The slot's return type *is* the contract. No special
+"contract" declaration needed.
 
-### 12.17 Optional chains and null-coalescing
-
-Two slick shorthand operators paid for entirely by reading
-clarity:
-
-| Form | Meaning |
-|---|---|
-| `expr?.member` | nil-safe member access — yields `nil` if `expr` is `nil` |
-| `fn?(args)` | nil-safe call — no-op if `fn` is `nil` |
-| `a ?? b` | null-coalesce — `a` if non-nil, else `b` |
+### 12.13 Capabilities — `requires` as a body statement
 
 ```prui
-on click(e) {
-  on-click?(e)                            -- only call if non-nil
-}
-
-on share(e) {
-  network?.post("/share", { title })      -- only if network capability present
-}
-
-let display = state.title ?? "Untitled"
-let depth   = node?.parent?.depth ?? 0
-```
-
-Each desugars to an explicit nil check. The surface buys
-readability on the most common boilerplate patterns
-(optional action props, optional capabilities, fallback
-defaults) without inventing new semantics.
-
-### 12.18 Conditionals and loops
-
-In markup, the existing element-level `if=` and `for=`
-attributes survive — they read more cleanly than wrapping
-every conditional in a tag-wrapper:
-
-```prui
-<container if={items.length > 0}>
-  <fragment for={t, i in items}>
-    <text>{i + 1}. {t.title}</text>
-  </fragment>
-</container>
-
-<text if={loading}>Loading…</text>
-<error-banner if={error != nil} message={error}/>
-```
-
-In expression mode (brace-exprs, lambda bodies, `{ … }`
-blocks), the canonical control-flow shapes are:
-
-```prui
-if cond then expr1 else expr2                    -- expression, no `end`
-if cond then { stmts } else { stmts }            -- statement, brace blocks
-match X { pattern → value, … }                   -- expression-form match
-for (item in iter) { stmts }                     -- iteration block
-while cond { stmts }                             -- conditional loop
-```
-
-No trailing `end` — closing brace closes the block. The
-single-expression `if cond then expr1 else expr2` form is for
-ternaries (`if shared then "Copied!" else "Share"`); it has
-no `end` because there's no block to close.
-
-For logic that produces markup conditionally, prefer
-`<match>` / `<case>` tags (many-armed branching) or a small
-`fn` returning `ui` via `prui [[ … ]]` (one-off branching).
-
-### 12.19 The three modes side by side
-
-A single file showing imperative, declarative, and functional
-all coexisting — each section in its natural shape:
-
-```prui
-namespace Tasks
-
-import "./theme.prss"
-
--- DECLARATIVE — pure data shape
-type Priority = low | medium | high
-type Task = { id: string, title: string, priority: Priority, done: bool }
-
--- FUNCTIONAL — pure transform, no side effects
-fn sort-by-priority(tasks: array<Task>) → array<Task> {
-  let order = |p| match p { high → 0, medium → 1, low → 2 }
-  tasks.sort(|a, b| order(a.priority) - order(b.priority))
-}
-
-fn pending(tasks: array<Task>) → array<Task> {
-  tasks.filter(|t| not t.done)
-}
-
--- DECLARATIVE + IMPERATIVE — state, computed values, handlers, render tree
-component TaskList(items: array<Task>, on-pick: action<Task>) {
-  state filter = ""
-  state sorted = false
-
-  computed visible = {
-    let f = if filter == "" then items
-            else items.filter(|t| t.title.lower().contains(filter.lower()))
-    if sorted then sort-by-priority(f) else f
+component ShareButton(text: string required) {
+  requires clipboard: Clipboard
+  requires network:   Network?
+  
+  on click {
+    clipboard.write(text)
+    network?.post("/share", { text })       -- optional capability call
   }
+  
+  <button @click=$click>Copy & post</button>
+}
+```
 
-  on filter-change(text) { filter = text }
-  on toggle-sort(_)      { sorted = !sorted }
+`requires` is a body statement that requests a capability
+from the host. The bound name is in scope for the rest of
+the body. A `?` after the type marks the capability as
+optional — the body must guard with `cap?.method(…)` or
+`if cap != nil`.
 
-  <container direction=column>
-    <input :value={filter} @change=$filter-change(_)/>
-    <button @click=$toggle-sort(_)>
-      {if sorted then "Unsort" else "Sort by priority"}
-    </button>
+Missing required capability = parse-time failure at the
+host's `lower-time` call. No magic globals; the IDE
+completes `clipboard.<TAB>` after the `requires` line.
 
-    <fragment for={t in visible}>
-      <TaskRow task={t} @click=$on-pick(t)/>
-    </fragment>
+### 12.14 Mixins — `use Foo` inside, or `Foo(<tree/>)` outside
+
+A mixin is a body of `let` / `on` / `style` statements that
+get spliced into whatever component `use`s it:
+
+```prui
+mixin Hoverable {
+  let hovered = state(false)
+  on pointerenter { hovered <- true }
+  on pointerleave { hovered <- false }
+}
+
+mixin Draggable {
+  let dragging = state(false)
+  let offset   = state((0, 0))
+  
+  on pointerdown(e) {
+    dragging <- true
+    offset   <- (e.x - self.x, e.y - self.y)
+  }
+  on pointermove(e) if dragging {
+    self.x <- e.x - offset.x
+    self.y <- e.y - offset.y
+  }
+  on pointerup { dragging <- false }
+}
+
+component Card(title: string) {
+  use Hoverable, Draggable        -- multiple mixins in one statement
+  
+  <container 
+    class={if hovered then "card hovered" else "card"}
+    style.cursor={if dragging then "grabbing" else "grab"}>
+    <heading>{title}</heading>
   </container>
 }
 ```
 
-- `type` is **declarative** — pure data shape.
-- `fn` is **functional** — pure transformation, no captures of
-  surrounding state.
-- `component` blends **declarative** (state, computed, render
-  tree — *what the UI is*) with **imperative** (event
-  handlers — *what happens when input arrives*).
+The mixin's `let` bindings (`hovered`, `dragging`) become
+visible names in the host. The handlers (`on`) chain via
+`super()`. Conflicts at parse time → explicit
+disambiguation required.
 
-Each section wears the shape that fits it best. The file
-reads top-to-bottom: data → helpers → components.
+For runtime composition, mixins are also first-class
+functions from trees to trees, exposed via the use-site
+`with=[…]` attribute or direct function call:
 
-### 12.20 Translation cheatsheet — XML → canonical
+```prui
+<container with=[Hoverable, Pulsing]>…</container>
+{Pulsing(Hoverable(<container>…</container>))}      -- equivalent
+```
 
-Authors migrating existing files use this mapping. Most
-translations are mechanical:
+### 12.15 Inline PRSS — `class Name { body }`
 
-| XML form (the §6 stepping stone) | Canonical form (§12) |
-|---|---|
-| `<component Name attrs>body</component>` | `component Name(params) clauses { body }` |
-| `<trait Name attrs/>` | `trait Name { … }` (or `trait Name {}` bodyless) |
-| `<mixin Name>body</mixin>` | `mixin Name { … }` |
-| `<macro Name>match/expand</macro>` | `macro Name(captures) { match {…} expand {…} }` |
-| `<state name=initial>` | `state name = initial` |
-| `<on event>{handler}</on>` | `on event(e) { handler }` |
-| `<style>…</style>` | `style { … }` |
-| `<import stylesheet="x"/>` | `import "x"` |
-| `<import script="x"/> as h` | `import "x" as h` |
-| `<import widget="x"/>` | `import "x"` (extension `.prui` → component projection) |
-| `<namespace=Foo/>` | `namespace Foo` |
-| `extends=Parent` (header attr) | `extends Parent` (clause) |
-| `impls=[A, B]` (header attr) | `impls A, B` (clause) |
-| `derives=[M]` (header attr) | `derives M` (clause) |
-| `capabilities=[c: C]` (header attr) | `uses c: C` (clause) |
-| `prop: type = default` (header attr) | `prop: type = default` (param) |
-| `prop: type required` (header attr) | `prop: type required` (param) |
-| `tone: union<info, success{d: int}, …>` (header attr) | `tone: info \| success(d: int) \| …` — extract to `type Tone = …` when reused |
-| `\|args\| expr` (closure) | `\|args\| expr` (unchanged) |
-| (no multi-line lambda surface today) | `\|args\| { … }` (new) |
-| `<match>...<case Pattern>arm</case>...</match>` | `<match>` for markup arms; `match X { Pattern → value }` for value arms |
-| `if=` / `for=` element attrs | `if=` / `for=` element attrs (unchanged) |
-| `on:click=$handler()` | `@click=$handler()` |
-| `style:background=…` | `style.background=…` or `style={background=…, …}` |
+A `class Name { … }` at file top level defines a PRSS class
+scoped to the file (or the file's namespace):
 
-A `prism rewrite-canonical` migration command (Phase P2)
-automates ~90% of the translation.
+```prui
+namespace Cards
 
-### 12.21 What stays XML — the tree wins as tags
+class card-base {
+  background = surface
+  padding    = 16
+  radius     = 12
+  &:hovered { background = lighten(0.05) }
+  &:pressed { background = darken(0.05) }
+}
+
+component Card(title: string) = {
+  <container class=card-base>
+    <heading 3>{title}</heading>
+  </container>
+}
+```
+
+Inside a component or mixin body, `style { … }` applies a
+scoped style to the host element:
+
+```prui
+style {
+  background = accent
+    | :hovered  → lighten(0.1)
+    | :pressed  → darken(0.1)
+    | :disabled → mute
+  radius  = 8
+  padding = (8, 16)
+}
+```
+
+Both use the same PRSS-Nesting body — `&:state` selectors,
+brace-expr values, the pipeline `|` operator for state-
+responsive values (Q8 — pipeline `|` only parses in
+value positions typed `Stateful<T>` / `Animated<T>`).
+
+### 12.16 Functions, lambdas, blocks
+
+The closure rules from the previous draft stand:
+
+```prui
+let double = |x| x * 2                          -- single expression
+let format = |amt, cur| {                       -- block body
+  let prefix = if cur == "USD" then "$" else "€"
+  prefix .. tostring(amt)
+}
+```
+
+The block-vs-record disambiguation rule: in expression
+position, `{…}` is a record literal IF its first non-whitespace
+content is `key =` / `key:`. Otherwise it's a block. After
+`|args|`, after a declaration head, after `style`, and inside
+a `class` body, it's always a block (or PRSS body).
+
+Named `fn` declarations use the same gesture:
+
+```prui
+fn double(x: int) → int = x * 2                 -- assignment form
+fn format(amt: int, cur: string) → string = {   -- assignment + block expression
+  let prefix = if cur == "USD" then "$" else "€"
+  prefix .. tostring(amt)
+}
+
+fn process(items: array<Task>) → array<Task> {  -- definition form (no `=`)
+  let active = items.filter(|t| not t.done)
+  sort-by-priority(active)
+}
+```
+
+`fn name(args) → ret = expr` and `fn name(args) → ret {
+body }` are identical in meaning; pick by shape. Function
+types use `|args| → ret` in type position (same shape as
+closure values, just no body).
+
+### 12.17 Imports — bare directive, projection inferred
+
+```prui
+import "./theme.prss"                    -- → stylesheet (extension)
+import "./helpers.luau"     as h         -- → script (extension default)
+import "./card.prui"                     -- → component(s)
+import "./forms.prui"       as forms     -- → multi-component, namespaced
+import "./icons.luau"       as icons     -- → script, exposes `icons.*`
+import "./markdown.luau"    dialect      -- → explicit projection
+```
+
+Shape: `import "<path>" [<projection>] [as <alias>]`. The
+projection is inferred from extension; the trailing keyword
+overrides for ambiguous cases. `as` overrides the imported
+file's own `namespace` declaration.
+
+### 12.18 What stays XML — the render tree wins as tags
 
 Tagged blocks remain canonical for **tree structure**:
 
 - Render trees in component bodies (`<container>`, `<text>`,
-  `<heading>`, `<image>`, `<input>`, `<slot>`, etc.)
-- Component invocation (`<Card title="Hi"/>`,
-  `<Forms.TextField/>`) — the PascalCase rule (§6.1) still
-  applies
-- Control-flow elements (`<match>` / `<case>`,
-  `<fragment for=…>`, element `if=` attributes)
-- Slot providers at call sites
-  (`<slot name args>…content…</slot>`)
-- Primitive elements + HTML pass-through
+  `<heading>`, `<image>`, `<input>`, etc.)
+- Component invocation as a tree value (`<Card title="Hi"/>`,
+  `<Forms.TextField/>`) — sugar for the function call
+- Tagged `<match>` / `<case>` (sugar for expression match)
+- Tagged `<fragment for=…>` (sugar for `.map(|x| …)`)
+- Macro `match` and `expand` body sections (§12.10)
 
-The XML shape wins for trees because the tree shape IS the
-visual structure. This section picks XML up there and lets
-the rest of the language — declarations, types, logic,
-embedded sub-languages — breathe in their natural shapes.
+The render tree, slot defaults that are trees, and the macro
+shape are where XML earns its keep. Everywhere else, code
+shapes win.
 
-### 12.22 Reads as English, reads as code
+### 12.19 Translation cheatsheet — XML → canonical
 
-The clause + signature shape was chosen so the surface reads
-out loud as plain English while still rewarding depth. Walk
-through a declaration:
+| XML form (the §6 stepping stone) | Canonical form (§12) |
+|---|---|
+| `<component Name attrs>body</component>` | `component Name(params) { body-statements; <tree/> }` |
+| `<trait Name attrs/>` | `trait Name { members }` (or `trait Marker {}`) |
+| `<mixin Name>body</mixin>` | `mixin Name { body }` |
+| `<macro Name>match/expand</macro>` | `macro Name(captures) { match {…} expand {…} }` |
+| `<state name=v>` (body sub-tag) | `let name = state(v)` (body statement) |
+| `<on event>{handler}</on>` | `on event(e) { handler }` |
+| `<style>…</style>` | `style { … }` |
+| `<import stylesheet="x"/>` | `import "x"` |
+| `<import script="x"/> as h` | `import "x" as h` |
+| `<namespace=Foo/>` | `namespace Foo` |
+| `extends=Parent` (header attr) | `use Parent` inside body OR `Comp2 = Parent with { … }` |
+| `impls=[A, B]` (header attr) | `: A, B` after params OR `use A, B` inside body |
+| `derives=[M]` (header attr) | `use M` inside body |
+| `capabilities=[c: C]` (header attr) | `requires c: C` inside body |
+| `prop: type = default` (header attr) | `prop: type = default` (param list) |
+| `tone: union<info, success{d: int}, …>` | `tone: info \| success(d: int) \| …` or named `type Tone = …` |
+| `\|args\| expr` | `\|args\| expr` (unchanged) |
+| (no multi-line lambda surface today) | `\|args\| { stmts; last }` (block body) |
+| `<match><case P>arm</case></match>` | `<match><case P>arm</case></match>` (kept) OR `match X { P → V }` (expression) |
+| `<slot name="x">` declaration | typed param `x: ui` or `x: \|args\| → ui` |
+| `<slot name args/>` invocation in body | bare `{x}` or `{x(args)}` |
+| `<slot name>...</slot>` provider on caller | named prop `<Comp x={<tree/>}/>` or `<Comp x={\|args\| …}/>` |
 
-> ```prui
-> component Card(title: string, on-click: action)
->   extends BaseCard
->   impls Pointable
->   derives Hoverable
->   uses clipboard: Clipboard
-> {
->   state expanded = false
->
->   on click(e) {
->     expanded = !expanded
->     on-click?(e)
->   }
->
->   <container @click=$click(_)>
->     <heading 3>{title}</heading>
->   </container>
-> }
-> ```
+A `prism rewrite-canonical path/…` migration command
+(Phase P2) automates ~90% of the translation.
 
-> *"A `Card` component takes a `title` string and an
-> `on-click` action. It extends `BaseCard`, implements
-> `Pointable`, derives from `Hoverable`, and uses the
-> clipboard. It has a state called `expanded` that starts at
-> false. When clicked, it flips `expanded` and calls
-> `on-click` with the event (if provided). Its body is a
-> container that handles clicks, containing a level-3 heading
-> showing the title."*
+### 12.20 Where the language might go wrong — open questions
 
-Every line maps to a sentence. A non-programmer reads it as
-English; a programmer reads it as types + control flow.
+A short, honest list of places the surface might bite back.
+Each has a tentative answer; P1 confirms or revises.
 
-### 12.23 Reads as code (for devs) — what's in the box
+1. **Reactivity granularity** — what makes a `let` binding
+   reactive? Tentative rule: a `let` is reactive iff its RHS
+   calls `state(…)` / `computed { … }` / `effect { … }` or
+   reads a reactive cell. `let snap = cell` *captures the
+   current value* (snapshot, not tracking) — to track, use
+   `let live = computed { cell }`. Open: do we want
+   implicit tracking on bare expressions too, like Solid?
+2. **Block-vs-record disambiguation under `=`** — `let x =
+   { … }` could be a block or a record literal. Rule: first
+   non-whitespace content. `{ key = v }` is a record;
+   `{ let z = 1; z }` is a block; `{ <tree/> }` is a block
+   whose value is a tree. Risk: `{ name }` (one bare
+   identifier) is ambiguous — does the author want a record
+   with a punned field, or a block returning the identifier?
+   Tentative: parse as a block; punned-field shorthand
+   requires `{ name = name }` explicitly.
+3. **`use Name` overload between mixin / trait / inheritance**
+   — `use Cards.Card` could inherit from a component, conform
+   to a trait, or splice in a mixin. The registry tells the
+   parser which, and the parser dispatches. Open: is this
+   ambiguity readable to authors? Mitigation: an LSP hover
+   on `use Name` shows "(mixin)", "(trait)", or
+   "(component-extends)" inline.
+4. **`with { … }` on a component vs. on a record** — both
+   spell the same way. Components are records of props +
+   defaults; the operator is the same. Open: what about
+   `with` on a *running instance* (mutation)? Tentative:
+   forbidden; instances are immutable; mutate state via the
+   `<-` operator on cells.
+5. **Trait conformance with overlapping mixins** — if two
+   mixins both expose `hovered`, who wins? Tentative: parse
+   error, author disambiguates by renaming one
+   (`use Hoverable as h1, Hoverable as h2`).
+6. **`children` magic-name vs. explicit slot** — `children:
+   ui` is special-cased to receive unnamed JSX-style child
+   trees. Risk: authors who want a different name for the
+   default slot. Tentative: only `children` is magic-named;
+   to call it something else, take a normal prop and pass it
+   explicitly at the call site.
+7. **`?` as nullable vs. `?` as optional method-call** —
+   `Network?` is a nullable type; `network?.post(…)` is an
+   optional call. Both use `?`. Disambiguation by position
+   (type vs. expression). Mirrors Swift / TypeScript / Kotlin.
+8. **Component as a tree literal vs. a function call** —
+   `Card(title="A")` and `<Card title="A"/>` both produce
+   the same `ui` value. Risk: which to write? Convention:
+   tag form inside a tree; function form everywhere else.
 
-- **Function-signature props** — typed parameter lists with
-  defaults, requireds, slots, and discriminated unions all in
-  the same syntactic position.
-- **Multi-line lambdas** — `|args| { … }` covers every case
-  the rejected `\fn` long-form did, with one parameter
-  syntax.
-- **Expression-form pattern matching** — `match X { P → V }`
-  threads through let-bindings, computed values, and function
-  bodies as a value-returning expression.
-- **Algebraic types with `|`** — `type Tone = info | primary
-  | danger | custom(color: color)` reads as one line; no
-  `union { … }` ceremony.
-- **Pipeline-shape state values** — `accent | :hovered →
-  lighten(0.1)` collapses N×M state restatement into N+M
-  (§6.6).
-- **Optional chains** — `on-click?(e)` and `network?.post(…)`
-  and `state.title ?? "Untitled"` retire the most common
-  nil-guard boilerplate.
-- **Schema-first cross-language flow** — the same canonical
-  declaration produces Luau type stubs, Rust typed handles,
-  inspector rows, LSP completions (§6.14).
-- **Mixins with super-chains** — `derives` for parse-time
-  inlining, `with=` for runtime chains, `super()` for
-  override-chain traversal.
-- **Capabilities as DI** — typed host services, parse-time
-  validation, test-injection-friendly.
-
-The depth lives in the type system and the composition
-primitives, not in cryptic syntax. Every advanced feature
-reuses syntax forms the simple cases already taught.
-
-### 12.24 Phasing — canonical lives alongside XML
+### 12.21 Phasing — canonical alongside XML
 
 The canonical surface lands as a **second parser** alongside
 the existing XML-shape declaration parser. Body-mode (the
-render tree) is unchanged in both — only the declaration
+render tree) is the same in both — only the declaration
 shape switches.
 
 | Phase | Scope | Reversibility |
 |---|---|---|
-| **P1** — canonical grammar lands as second parser | Both XML and canonical declarations parse to the same `ComponentSchema`. New files can use either; the parser picks based on first non-whitespace token of a declaration (`<` → XML, lowercase keyword → canonical). | reversible — XML parser stays |
-| **P2** — Migration tool ships | `prism rewrite-canonical path/...` walks a tree and rewrites XML-shape declarations mechanically. Ambiguous cases (header attrs the migrator can't classify) get a `TODO` comment for hand review. | reversible — git revert |
-| **P3** — XML-shape declarations deprecated | Parser emits a deprecation warning when it sees an XML-shape declaration. Canonical is canonical in docs and examples. After one release, XML-shape declaration parsing removed; tagged-block bodies stay (they were the same in both). | reversible during the deprecation window |
-| **P4** — Doc rewrite | All §5 and §6 examples in this doc rewritten in canonical shape. Receipts (§10) recomputed against the new LOC. | one-way (a doc commit) |
+| **P1** — canonical grammar lands | Both parsers run; first non-whitespace token of a declaration picks (`<` → XML, lowercase keyword → canonical). Both produce the same `ComponentSchema`. | reversible — XML parser stays |
+| **P2** — migration tool | `prism rewrite-canonical path/…` mechanically rewrites XML to canonical; ambiguous cases get a `TODO` comment. | reversible — git revert |
+| **P3** — XML-shape declarations deprecated | Parser warns on each XML-shape declaration; canonical is canonical in docs and examples. One release later, XML-shape declaration parsing removed (tagged-tree bodies stay). | reversible during the deprecation window |
+| **P4** — doc rewrite | All §5 and §6 examples in this doc rewritten in canonical shape. Receipts (§10) recomputed against the new LOC. | one-way (a doc commit) |
 
 LOC estimate for the canonical-surface work itself:
-- Canonical parser: ~1000 LOC (recursive-descent over the
-  same schema the XML parser produces; no new AST types).
-- Migration tool: ~600 LOC.
+- Canonical parser: ~1200 LOC (recursive-descent; no new
+  AST types — same `ComponentSchema`).
+- Migration tool: ~700 LOC.
 - XML-shape declaration parser deletion (P4): −400 LOC.
-- Net: ~+1200 LOC added, ~−400 LOC removed.
+- Net: ~+1500 LOC added, ~−400 LOC removed.
 
-P1 can land any time after §7 Phase 6 (the unified
-declaration syntax) — Phases 1–5 are runtime/grammar work
-that doesn't depend on declaration shape. Suggested slot: P1
-ships between §7 Phase 6 and §7 Phase 8 so that early adopters
-of the unified declaration syntax pick canonical from day one.
-
-### 12.25 Open decisions for P1
-
-- **Trailing commas** — accepted in parameter lists, clause
-  lists, record literals, array literals. Parser silently
-  consumes them.
-- **Indentation sensitivity** — none. Clauses + body blocks
-  are whitespace-tolerant. (Considered Python-style
-  significant indentation and rejected — copy-paste from
-  chat / docs / inspectors breaks too easily, mirroring Q12's
-  CSS-Nesting-over-YAML resolution.)
-- **`{ … }` block-vs-record disambiguation** — at the start
-  of an expression, `{…}` is a record literal IF its first
-  non-whitespace content is `key =` or `key:`. Otherwise (or
-  after `|args|`, after a declaration head, or with non-key-
-  shaped content) it's a block. Same rule Rust uses for
-  struct literal vs. block expression.
-- **Arrow glyph** — `→` (Unicode) is canonical in pipeline
-  shapes, `match` arms, and closure-type signatures; `->`
-  (ASCII) is accepted as an alias for keyboard friendliness.
-  Both normalised to the Unicode form by `prism fmt`.
-- **`fn` / closure-type return-type arrow** — `→` matches
-  `match` arms (`:` reads worse next to the `:` used for
-  typed params).
-- **Comments** — `--` for line comments, `--[[ ]]` for block
-  comments. Matches the Luau substrate.
-- **`namespace` placement** — must be the first non-comment
-  line in a file that uses one. Files without `namespace`
-  bind their declarations bare.
-- **Logical operators in expression mode** — `and` / `or` /
-  `not` (Luau spellings), reserving `|` for pipeline values
-  and `?` for optional / nullable type marker. `&&` / `||` /
-  `!` are not part of the surface, so the `|` pipeline never
-  collides with logical-or.
-
-None block landing P1; all are style / quality-of-life
-decisions confirmable during implementation review.
+P1 can land any time after §7 Phase 6. Suggested slot: P1
+ships between §7 Phase 6 and §7 Phase 8 so early adopters
+pick canonical from day one.
 
 ---
 
@@ -4551,20 +4606,19 @@ is independently shippable. §11 is the list of things we
 load-bearing design.
 
 **§12 is the syntax that carries it.** Wave J + K + L
-designed the feature set; the canonical surface designs the
-*shape* the features wear. Function-signature declarations
-make props look like parameters; clause keywords
-(`extends`, `impls`, `derives`, `uses`) make composition
-read as English; `import "./path"` drops the angle brackets
-from imports; multi-line `|args| { … }` lambdas free
-handlers from one-expression purgatory; `match X { p → v }`
-collapses pattern dispatch to two tokens of ceremony;
-optional chains (`?.`, `?()`, `??`) retire the most common
-nil-guard boilerplate; embedded `class { … }` and
-`let` / `fn` keep PRSS and Luau-flavoured code inside `.prui`
-files without escape-hatch syntax; the tagged render tree
-stays where it earns its keep. **Tagged blocks for
-structure; function shape for declarations; imperative +
-functional + declarative for logic; English for composition.
-Four shapes; one file; every audience reads the part it
-cares about.**
+designed the feature set; the canonical surface collapses
+the *shape* down to one gesture — **every declaration is
+`name = expression`** (or `name(params) { body
+expression }`). The component is a typed function whose
+value is a tree; state is a value you create with
+`state(…)` and write with `<-`; mixins, traits, and
+inheritance all happen *inside the body* as `use` and
+`requires` statements, not as decorations *around* it. The
+favourite line — `component Avatar(src: string, size: px =
+32) { <image src={src} width={size} height={size}/> }` — is
+the common case; richer cases just add statements before
+the final tree. Tags and code blend bidirectionally: trees
+are expression values, expressions are tree children, and
+`{…}` is the one bridge between them. **Trees stay tagged
+where the visual hierarchy is the structure; everything
+else is one expression.**
