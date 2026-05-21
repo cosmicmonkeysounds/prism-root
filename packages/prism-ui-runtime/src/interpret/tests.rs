@@ -5037,3 +5037,139 @@ fn document_without_script_is_unaffected() {
     };
     assert_eq!(content, "Hi");
 }
+
+// ---------- Phase 7 — component declarations + properties + extends ----------
+
+/// A `component` declaration in canonical syntax registers an
+/// invokable name. The declaration itself renders nothing at its
+/// source position (like `<script>` / `<style>`); the invocation
+/// site at the bottom of the document lowers the body with the
+/// caller's props bound.
+#[test]
+fn canonical_component_decl_renders_via_pascal_invocation() {
+    let src = r#"component Greeting(name: string) = <text>Hello, {name}</text>
+
+<Greeting name="World"/>"#;
+    let nodes = interpret(src).unwrap();
+    assert_eq!(nodes.len(), 1, "component decl must render nothing");
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text from Greeting invocation, got {:?}", nodes[0]);
+    };
+    assert_eq!(content, "Hello, World");
+}
+
+/// Property defaults fire when the caller omits the prop.
+#[test]
+fn component_default_value_applies_when_prop_omitted() {
+    let src = r#"component Title(text: string = "Untitled") = <text>{text}</text>
+
+<Title/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!()
+    };
+    assert_eq!(content, "Untitled");
+}
+
+/// A numeric default round-trips as a number so downstream readers
+/// (`heading level="{n}"`, `padding="{n}"`) see a typed `i64` rather
+/// than the string `"32"`.
+#[test]
+fn component_int_default_round_trips_as_number() {
+    let src = r#"component Box(size: int = 32) = <container width="{size}" height="{size}"/>
+
+<Box/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    assert!(matches!(props.width, Sizing::Fixed(v) if (v - 32.0).abs() < f32::EPSILON));
+    assert!(matches!(props.height, Sizing::Fixed(v) if (v - 32.0).abs() < f32::EPSILON));
+}
+
+/// Caller-supplied prop wins over the declared default.
+#[test]
+fn caller_overrides_default_prop() {
+    let src = r#"component Box(size: int = 32) = <container width="{size}" height="{size}"/>
+
+<Box size="64"/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    assert!(matches!(props.width, Sizing::Fixed(v) if (v - 64.0).abs() < f32::EPSILON));
+}
+
+/// `extends=Parent` (set via a `use Parent` body statement in
+/// canonical syntax) makes the child inherit the parent's render
+/// body when the child has none of its own. §7.3 default-override
+/// variant.
+#[test]
+fn component_extends_parent_inherits_render_body() {
+    let src = r#"component Base(label: string) = <text>{label}</text>
+component Child(label: string) = {
+  use Base
+}
+
+<Child label="from-parent"/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text via parent body, got {:?}", nodes[0])
+    };
+    assert_eq!(content, "from-parent");
+}
+
+/// A child that defines its own render body overrides the parent.
+#[test]
+fn component_extends_child_render_body_wins() {
+    let src = r#"component Base(label: string) = <text>{label}</text>
+component Child(label: string) = {
+  use Base
+  <container><text>{label}</text></container>
+}
+
+<Child label="from-child"/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!("child body wins → container, got {:?}", nodes[0])
+    };
+    let Node::Text { content, .. } = &children[0] else {
+        panic!()
+    };
+    assert_eq!(content, "from-child");
+}
+
+/// PascalCase tags with no matching local declaration fall through
+/// to the usual unknown-tag path (which the runtime treats as a
+/// drop-the-wrapper-keep-children resolver). Guards against
+/// false-positive PascalCase dispatch.
+#[test]
+fn unknown_pascal_tag_falls_through() {
+    let src = r#"<NoSuchComponent><text>kept</text></NoSuchComponent>"#;
+    let nodes = interpret(src).unwrap();
+    // Default unknown-tag behaviour: drop wrapper, keep children.
+    assert_eq!(nodes.len(), 1);
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected fallback text, got {:?}", nodes[0])
+    };
+    assert_eq!(content, "kept");
+}
+
+/// JSX-style children stream into the magic `children: ui` slot,
+/// reachable via `<slot/>` in the component body. §7.5.
+#[test]
+fn component_children_flow_into_default_slot() {
+    let src = r#"component Frame(children: slot) = <container><slot/></container>
+
+<Frame>
+  <text>inner</text>
+</Frame>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let Node::Text { content, .. } = &children[0] else {
+        panic!("expected child text, got {:?}", children[0])
+    };
+    assert_eq!(content, "inner");
+}

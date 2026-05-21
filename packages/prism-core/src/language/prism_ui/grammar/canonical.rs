@@ -177,28 +177,17 @@ impl<'s> CanonicalParser<'s> {
     /// Parse one top-level declaration. Returns `None` on
     /// unrecoverable structural error (the caller advances).
     fn parse_top_level_one(&mut self, start_pos: Position) -> Option<Node> {
-        // A canonical file can still drop into XML at the top level
-        // (e.g. when the user mixes a `<container>` tree alongside
-        // a `component` declaration — the canonical surface lets
-        // any expression-position form be an XML tree). When the
-        // first byte isn't a lowercase letter, fall through to the
-        // XML reader by emitting a parse error pointing the user
-        // at the dispatcher.
+        // A canonical file can drop into XML at the top level —
+        // §6.11 "tag-expression blend, both ways, freely". When the
+        // first non-whitespace token is `<`, parse one balanced XML
+        // element and emit its parsed `Node`(s) as siblings of the
+        // surrounding canonical declarations. This lets a file
+        // declare a `component Greeting(...) = ...` and immediately
+        // invoke it via `<Greeting/>` at file scope.
         let first = self.scanner.peek()?;
         if first == '<' {
-            // The dispatcher should have routed XML-leading input
-            // to the XML parser, but be defensive: produce an
-            // error and bail.
-            self.errors.push(ParseError {
-                message: "Unexpected `<` at top level of canonical input — \
-                         XML and canonical forms must not be intermixed at \
-                         file scope (the dispatcher routes by the first \
-                         non-whitespace token)"
-                    .into(),
-                range: self.range_from(start_pos),
-                code: "canonical-xml-mixin",
-            });
-            return None;
+            let nodes = self.parse_inline_xml_tree(start_pos);
+            return nodes.into_iter().next();
         }
 
         // Scan the keyword.
@@ -2206,6 +2195,27 @@ component Chip(text: string) = <text>{text}</text>
             })
             .collect();
         assert_eq!(tags, vec!["namespace", "import", "type", "component"]);
+    }
+
+    #[test]
+    fn allows_top_level_xml_after_canonical_decl() {
+        // §6.11 — canonical declarations + XML invocations mix freely
+        // at file scope. Phase 7 leans on this: declare `<component
+        // Greeting>` then invoke `<Greeting/>` in the same file.
+        let doc = parse_ok(
+            r#"component Greeting(name: string) = <text>Hello, {name}</text>
+
+<Greeting name="World"/>"#,
+        );
+        let tags: Vec<&str> = doc
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Element(e) => Some(e.tag.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tags, vec!["component", "Greeting"]);
     }
 
     #[test]

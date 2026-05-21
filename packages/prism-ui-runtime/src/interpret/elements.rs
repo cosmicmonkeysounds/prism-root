@@ -287,7 +287,45 @@ fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
             }
         }
     }
+
+    // **Phase 7** — PascalCase tag dispatch. When a tag starts with
+    // an uppercase letter *and* a `<component name="X">` declaration
+    // with that name is present on the scope's local-component
+    // table, instantiate it: bind the call's props, apply declared
+    // defaults, enforce `required`, and lower the body in a child
+    // scope. Mixed-case sub-tags (`<shell.icon-button/>`) still
+    // route to the host's `TagResolver` — only ASCII-uppercase-led
+    // tags qualify. Documents that declare no local components
+    // skip the map probe via the `has_local_components` early-out.
+    if scope.has_local_components()
+        && super::components::is_pascal_case_tag(&el.tag)
+    {
+        if let Some(def) = scope.local_component(&el.tag) {
+            return super::components::instantiate_component(def.as_ref(), el, scope);
+        }
+    }
+
     match el.tag.as_str() {
+        // **Phase 7** — a `<component name="X">` element with a
+        // non-empty `name=` attribute is a *declaration*, not a
+        // container. It contributes to the local component table
+        // during the document pre-pass and renders nothing at its
+        // source position (same shape as `<script>` / `<style>` /
+        // `<import>`). The legacy `<component>`-as-`<container>`
+        // alias (no `name=` attribute) keeps working below; the
+        // §7.1 cutover that retires it is Phase 17.
+        "component" if bare_attr_value(el, "name", scope).is_some() => Vec::new(),
+        // **Phase 7** — sibling top-level declaration tags. The
+        // canonical parser emits `<trait>` / `<mixin>` / `<macro>` /
+        // `<type>` / `<fn>` / `<let>` / `<namespace>` from the
+        // canonical declaration syntax; their semantics live in
+        // Phases 8–11. They round-trip through the AST and render
+        // nothing at the document scope today.
+        "trait" | "mixin" | "macro" | "type" | "fn" | "namespace"
+            if bare_attr_value(el, "name", scope).is_some() =>
+        {
+            Vec::new()
+        }
         "container" | "component" => {
             let mut props = ContainerProps::default();
             let mut id = String::new();

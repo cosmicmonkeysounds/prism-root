@@ -61,6 +61,9 @@ mod elements;
 pub use elements::lower_ast_children;
 use elements::lower_children;
 
+mod components;
+pub use components::{harvest_components, instantiate_component, is_pascal_case_tag, ComponentDef};
+
 // ---------------------------------------------------------------------------
 // Tag resolver — DI hook for unknown tags
 // ---------------------------------------------------------------------------
@@ -270,6 +273,13 @@ pub struct LowerScope {
     /// so the host keeps its end and reads it after `render_tree`.
     #[cfg(feature = "luau")]
     frame_sink: Option<std::rc::Rc<std::cell::RefCell<Option<crate::luau_scope::LuauScopeFrame>>>>,
+    /// **Phase 7 — `component` declarations.** Map of name →
+    /// resolved [`ComponentDef`] for every top-level
+    /// `<component name="X">` harvested from the document (and,
+    /// once Phase 8 lands, every imported `.prui` file). Populated
+    /// once per document by [`lower_document_with_scope`]; carried
+    /// through scope clones for child-scope dispatch.
+    local_components: Arc<HashMap<String, Arc<ComponentDef>>>,
 }
 
 /// **Wave 14.3** — per-element memo cache keyed by `id`. Hosts that
@@ -661,6 +671,35 @@ impl LowerScope {
         &self,
     ) -> Option<&std::rc::Rc<std::cell::RefCell<Option<crate::luau_scope::LuauScopeFrame>>>> {
         self.frame_sink.as_ref()
+    }
+
+    /// **Phase 7** — install the local component table harvested from
+    /// the document. PascalCase tags inside `lower_element_body`
+    /// resolve through this table before falling through to the
+    /// host's `TagResolver`. Carrying as `Arc<HashMap<…>>` keeps
+    /// scope clones cheap during control-flow / slot expansion.
+    pub fn with_local_components(
+        mut self,
+        components: Arc<HashMap<String, Arc<ComponentDef>>>,
+    ) -> Self {
+        self.local_components = components;
+        self
+    }
+
+    /// **Phase 7** — look up a locally-declared component by name.
+    /// Returns `None` when the document declared no component of
+    /// that name (the common case — most lowering paths skip the
+    /// PascalCase dispatch entirely).
+    pub fn local_component(&self, name: &str) -> Option<&Arc<ComponentDef>> {
+        self.local_components.get(name)
+    }
+
+    /// **Phase 7** — is there at least one local component
+    /// registered? Cheap pre-flight check so the per-element
+    /// PascalCase dispatch can skip the map probe on documents that
+    /// declared none.
+    pub fn has_local_components(&self) -> bool {
+        !self.local_components.is_empty()
     }
 
     /// **Wave 14.1** — seed the design-token table as a `tokens`
@@ -1131,6 +1170,22 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
             }
         } else {
             scope
+        }
+    };
+
+    // **Phase 7** — harvest top-level `<component name="X">`
+    // declarations and install them in the scope. PascalCase tags
+    // inside the body resolve through this table during the main
+    // walk. Empty (no `component` decls in this document) → skip
+    // the clone; documents that declare none pay nothing.
+    let components_owned;
+    let scope: &LowerScope = {
+        let table = harvest_components(&document.nodes);
+        if table.is_empty() {
+            scope
+        } else {
+            components_owned = scope.clone().with_local_components(Arc::new(table));
+            &components_owned
         }
     };
 
