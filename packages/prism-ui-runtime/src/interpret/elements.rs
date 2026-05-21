@@ -1323,6 +1323,23 @@ fn apply_container_attributes(
                         .push((format!("data-at-{}", local), value));
                 }
             }
+            // **§7.15 — unified `Animator` trait.** Lower
+            // `animator:<method>=<value>` to `data-animator-<method>`.
+            // The runtime [`crate::animator::Animator`] reads
+            // `data-animator-keyframes` at observe time and installs
+            // a multi-stop timeline (see `parse_keyframes_attr`).
+            // Other methods round-trip without runtime wiring yet —
+            // the namespace exists ahead of trait-registry full
+            // wiring (Phase 9), so adding a new trait method is a
+            // one-line `parse_*` follow-up here.
+            AttributeNamespace::Animator => {
+                if let Some(value) = raw {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("data-animator-{}", local), value));
+                }
+            }
             // Wave 13.3: `use:<id>[="<value>"]` directive sugar for
             // attaching a registered `ModifierBehaviour`. Today the
             // namespace lowers to `data-use-<id>="<value>"` so author

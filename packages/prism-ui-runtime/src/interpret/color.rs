@@ -156,7 +156,7 @@ pub(super) fn lighten(r: u8, g: u8, b: u8, amt: f64) -> (u8, u8, u8) {
 /// `mix(c1, c2, t)` — OKLab lerp on all three axes (`t = 0` → `c1`,
 /// `t = 1` → `c2`). OKLab is the cartesian space; lerping in it
 /// avoids the OKLCh polar interpolation's hue-wrap ambiguity.
-pub(super) fn mix(r1: u8, g1: u8, b1: u8, r2: u8, g2: u8, b2: u8, t: f64) -> (u8, u8, u8) {
+pub(crate) fn mix(r1: u8, g1: u8, b1: u8, r2: u8, g2: u8, b2: u8, t: f64) -> (u8, u8, u8) {
     let t = t.clamp(0.0, 1.0);
     let (lr1, lg1, lb1) = (srgb_to_linear(r1), srgb_to_linear(g1), srgb_to_linear(b1));
     let (lr2, lg2, lb2) = (srgb_to_linear(r2), srgb_to_linear(g2), srgb_to_linear(b2));
@@ -242,6 +242,33 @@ pub(super) fn with_channels(
         (v.clamp(0.0, 1.0) * 255.0).round() as u8
     });
     (rr, gg, bb, aa)
+}
+
+/// **§7.15** — perceptual lerp between two `command::Color`s at
+/// parameter `t ∈ [0, 1]`. RGB rides the OKLab cartesian space via
+/// [`mix`] so a fade between a vivid blue and a vivid red passes
+/// through the saturated perceptual midpoint instead of the muddy
+/// sRGB straight-line midpoint. Alpha lerps linearly (no perceptual
+/// analogue worth threading through the colour space). Used by the
+/// animator's value-change / entry / exit / keyframe paths when a
+/// transition is keyed on a colour-valued property (background,
+/// foreground colour, tint).
+pub(crate) fn lerp_command_color(
+    a: crate::command::Color,
+    b: crate::command::Color,
+    t: f64,
+) -> crate::command::Color {
+    let t = t.clamp(0.0, 1.0);
+    let (r, g, bb) = mix(a.r, a.g, a.b, b.r, b.g, b.b, t);
+    let alpha = (a.a as f64 + (b.a as f64 - a.a as f64) * t)
+        .round()
+        .clamp(0.0, 255.0) as u8;
+    crate::command::Color {
+        r,
+        g,
+        b: bb,
+        a: alpha,
+    }
 }
 
 #[cfg(test)]
@@ -409,6 +436,63 @@ mod tests {
         );
         // 0.5 * 255 = 127.5 → 128.
         assert_eq!(a, 128);
+    }
+
+    /// **§7.15** — `lerp_command_color` rides the OKLab path: lerping
+    /// black → white at `t=0.5` lands on a perceptual mid-grey (well
+    /// below sRGB 0x80), not the sRGB midpoint. Alpha lerps linearly.
+    #[test]
+    fn lerp_command_color_uses_oklab_midpoint() {
+        use crate::command::Color;
+        let from = Color {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        };
+        let to = Color {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        };
+        let mid = lerp_command_color(from, to, 0.5);
+        assert_eq!(mid.r, mid.g);
+        assert_eq!(mid.g, mid.b);
+        assert!(
+            mid.r < 0x80,
+            "OKLab mid-grey must sit below sRGB 0x80, got 0x{:02x}",
+            mid.r
+        );
+        assert_eq!(mid.a, 128, "alpha lerps linearly: (0 + 255)/2 = 128");
+    }
+
+    #[test]
+    fn lerp_command_color_endpoints_exact() {
+        use crate::command::Color;
+        let from = Color {
+            r: 0x3b,
+            g: 0x82,
+            b: 0xf6,
+            a: 0xff,
+        };
+        let to = Color {
+            r: 0xff,
+            g: 0,
+            b: 0,
+            a: 0,
+        };
+        let at_zero = lerp_command_color(from, to, 0.0);
+        // Allow ±1 per channel for sRGB round-trip rounding.
+        assert!((at_zero.r as i32 - 0x3b).abs() <= 1);
+        assert!((at_zero.g as i32 - 0x82).abs() <= 1);
+        assert!((at_zero.b as i32 - 0xf6).abs() <= 1);
+        assert_eq!(at_zero.a, 0xff);
+        let at_one = lerp_command_color(from, to, 1.0);
+        assert!((at_one.r as i32 - 0xff).abs() <= 1);
+        assert!((at_one.g as i32).abs() <= 1);
+        assert!((at_one.b as i32).abs() <= 1);
+        assert_eq!(at_one.a, 0);
     }
 
     #[test]

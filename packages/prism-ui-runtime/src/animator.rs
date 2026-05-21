@@ -1,23 +1,40 @@
-//! **Wave 14.3** — `transition:<prop>="<duration>"` animator
-//! substrate.
+//! **§7.15** — unified [`Animator`] substrate for the three call
+//! surfaces the roadmap merges into a single trait-shape:
 //!
-//! Each `<container transition:radius="200ms"/>` (or any prop carrying
-//! a numeric value) lowers to a `data-transition-<prop>` semantic
-//! attr the runtime cache picks up. The host (typically the shell)
-//! drives this [`Animator`] through three calls:
+//! 1. **Mid-life value change** — `transition:<prop>="<duration>"`
+//!    (or the canonical Phase-15 pipeline form,
+//!    `style.<prop>={ rest | :hover → 0.6 over 200ms }`). The
+//!    prop's *declared* value moves between frames and the animator
+//!    eases the visual value across the gap.
+//! 2. **Entry / exit transitions** — `animate:in-<prop>` /
+//!    `animate:out-<prop>` (canonical Phase-15 pipeline form,
+//!    `style.<prop>={ rest | :entry → from 0 over 200ms |
+//!    :exit → to 0 over 150ms }`). Fires on the first observe a
+//!    node carrying the entry hint becomes part of the tree, and
+//!    fires again the frame the node leaves the tree.
+//! 3. **Keyframe stops** — `animator:keyframes="<spec>"` (canonical
+//!    Phase-15 nested record form `animator.keyframes={ duration =
+//!    800ms, 0% = {…}, 50% = {…}, 100% = {…} }`). Multi-stop
+//!    timelines that interpolate along the declared curve through a
+//!    sequence of waypoints.
 //!
-//! 1. [`Animator::observe`] — pre-render: walk the tree and compare
-//!    the live prop values against the animator's last-seen
-//!    snapshot. Any change on a transition-tagged node starts a new
-//!    interpolation seeded with `(from = previous, to = current,
-//!    duration = parsed)`. Idempotent — re-observing the same tree
-//!    is a no-op.
-//! 2. [`Animator::apply`] — mid-render: walk the same tree (or its
+//! All three are the same `(from, to, started_ms, duration_ms,
+//! easing)` shape underneath; the three surfaces only differ in how
+//! the `(from, to)` pair is discovered. The unified `Animator` is
+//! what Q3 (§9 of the roadmap) resolves to: ship now, one substrate,
+//! three idiomatic shapes — no more Tier-3 "later wave" namespace
+//! deferral.
+//!
+//! Hosts (typically the shell) drive the animator through three
+//! calls:
+//!
+//! 1. [`Animator::observe`] — pre-render: walk the tree, kick off
+//!    transitions seeded from the matching surface (declared-value
+//!    delta, entry attr, keyframe spec). Re-observing the same tree
+//!    is idempotent.
+//! 2. [`Animator::apply`] — mid-render: walk the tree (or its
 //!    lowered children) and rewrite any prop that has an in-flight
-//!    transition to the interpolated value at `now_ms`. The tree's
-//!    declared end value is preserved on the animator's snapshot so
-//!    the *next* observe call doesn't immediately restart the same
-//!    transition.
+//!    transition to the interpolated value at `now_ms`.
 //! 3. [`Animator::needs_redraw`] — post-render: returns `true` while
 //!    any transition is still running. The shell maps this to the
 //!    same dirty bit the dispatch chain feeds, so the femtovg /
@@ -27,18 +44,60 @@
 //! Easing is selectable per-transition through [`Easing`]; the
 //! parser today only recognises a plain duration spec
 //! (`"200ms"` / `"1.5s"`), so callers that want a non-linear curve
-//! call [`Animator::start_with_easing`] directly.
+//! call [`Animator::start_with_easing`] directly. Colour-typed
+//! interpolations route through OKLab (via
+//! [`crate::interpret::color::lerp_command_color`]) so a fade
+//! between vivid hues passes through the perceptual gamut instead
+//! of the muddy sRGB midpoint.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use crate::command::Color;
+use crate::interpret::color::lerp_command_color;
 use crate::layout::{Node, Sizing};
 
-/// In-flight transition state. Stored per `(node-id, prop-key)`.
+/// In-flight numeric transition state. Stored per `(node-id, prop-key)`.
 #[derive(Debug, Clone, PartialEq)]
 struct Transition {
     from: f32,
     to: f32,
+    started_ms: u64,
+    duration_ms: u64,
+    easing: Easing,
+}
+
+/// **§7.15** — in-flight colour transition. Sibling of [`Transition`]
+/// for props whose value is a [`Color`] (background, foreground,
+/// tint). Lerps in OKLab via [`lerp_command_color`] so a fade between
+/// saturated hues passes through the perceptual gamut.
+#[derive(Debug, Clone, PartialEq)]
+struct ColorTransition {
+    from: Color,
+    to: Color,
+    started_ms: u64,
+    duration_ms: u64,
+    easing: Easing,
+}
+
+/// **§7.15** — multi-stop keyframe timeline. `stops` is normalised at
+/// parse time to `t ∈ [0, 1]` and sorted ascending. The animator
+/// interpolates the prop's value piecewise between adjacent stops,
+/// applying the per-segment easing curve in the same shape the
+/// per-transition path uses.
+///
+/// Keyframes share the eased-progress concept with the value /
+/// entry / exit paths but discover `(from, to)` from the declared
+/// stops rather than from a tree delta. A `Keyframes` entry is keyed
+/// the same way as a `Transition` (`(node-id, prop-key)`) so the
+/// animator's apply pass can see both without divergent dispatch.
+#[derive(Debug, Clone, PartialEq)]
+struct Keyframes {
+    /// Numeric stops, sorted by `t` ascending. `t ∈ [0, 1]`.
+    numeric_stops: Vec<(f32, f32)>,
+    /// Colour stops in the same shape — keyed off `t ∈ [0, 1]`.
+    /// Empty for non-colour props.
+    color_stops: Vec<(f32, Color)>,
     started_ms: u64,
     duration_ms: u64,
     easing: Easing,
@@ -171,19 +230,38 @@ struct NodeSnapshot {
     parent_id: Option<String>,
 }
 
-/// The animator substrate. Single-threaded — hosts share via
-/// `Rc<RefCell<Animator>>`. Keys are `(node-id, prop-key)` strings,
-/// where `prop-key` matches the DSL spelling (`opacity` for
-/// `transition:opacity`, `radius` for `transition:radius`, etc.).
+/// **§7.15** — unified animator substrate. Single-threaded — hosts
+/// share via `Rc<RefCell<Animator>>`. Keys are `(node-id, prop-key)`
+/// strings, where `prop-key` matches the DSL spelling (`opacity` for
+/// `transition:opacity`, `radius` for `transition:radius`,
+/// `background` for a colour-keyed `transition:background`, etc.).
+///
+/// Three call surfaces share the same active-transition map:
+///
+/// - numeric / colour deltas (`data-transition-*`),
+/// - entry / exit transitions (`data-animate-in-*` /
+///   `data-animate-out-*`, also dispatched from
+///   `style:<prop>:entry` / `style:<prop>:exit` via the §7.7
+///   pseudo-state runtime),
+/// - keyframe stops (`data-animator-keyframes`).
 #[derive(Debug, Default)]
 pub struct Animator {
-    /// `(node-id, prop-key) → in-flight transition`.
+    /// `(node-id, prop-key) → in-flight numeric transition`.
     active: HashMap<(String, String), Transition>,
+    /// `(node-id, prop-key) → in-flight colour transition`. Sibling
+    /// of [`Self::active`] for colour-typed props; same lifecycle.
+    active_color: HashMap<(String, String), ColorTransition>,
+    /// `(node-id, prop-key) → keyframe timeline`. Each entry runs
+    /// the full multi-stop interpolation between waypoints; the
+    /// `apply` pass samples whichever segment `now_ms` lands in.
+    active_keyframes: HashMap<(String, String), Keyframes>,
     /// `(node-id, prop-key) → last-observed declared value`. Used to
     /// detect "the author's declared value changed" deltas at
     /// observe-time. Survives across frames so a transition restarts
     /// only when the declared value actually moves again.
     last_seen: HashMap<(String, String), f32>,
+    /// **§7.15** — sibling of [`Self::last_seen`] for colour props.
+    last_seen_color: HashMap<(String, String), Color>,
     /// Wave 14.8 — `(node-id, prop-key) → author-declared out spec`.
     /// Captured every observe a node carrying `data-animate-out-*` is
     /// present. When the same `node-id` is missing from a later
@@ -206,6 +284,11 @@ pub struct Animator {
     /// [`Animator::phantom_nodes`] each frame to graft them on top of
     /// the live tree until [`Animator::tick`] drains them.
     phantoms: HashMap<String, NodeSnapshot>,
+    /// **§7.15** — node ids the animator has already observed at
+    /// least once. Used to gate keyframe install (fires once per
+    /// mount lifecycle) symmetrically with `data-animate-in-*`'s
+    /// entry-once rule.
+    seen_ids: HashSet<String>,
 }
 
 impl Animator {
@@ -215,9 +298,13 @@ impl Animator {
 
     /// Are any transitions still running? Hosts merge this into the
     /// per-frame "request a redraw" bit so the next frame ticks the
-    /// animator forward.
+    /// animator forward. **§7.15** — covers the three surfaces:
+    /// numeric, colour, and keyframe.
     pub fn needs_redraw(&self) -> bool {
-        !self.active.is_empty() || !self.phantoms.is_empty()
+        !self.active.is_empty()
+            || !self.active_color.is_empty()
+            || !self.active_keyframes.is_empty()
+            || !self.phantoms.is_empty()
     }
 
     /// Read the current interpolated value for `(node, prop)`.
@@ -234,16 +321,27 @@ impl Animator {
     /// `true` when the set was non-empty *after* the prune (i.e. the
     /// animator still wants a redraw). Hosts call this once per
     /// frame after `apply` so the next frame skips finished
-    /// transitions cleanly.
+    /// transitions cleanly. **§7.15** — prunes the three surfaces
+    /// uniformly.
     pub fn tick(&mut self, now_ms: u64) -> bool {
         self.active
             .retain(|_, t| now_ms < t.started_ms + t.duration_ms);
+        self.active_color
+            .retain(|_, t| now_ms < t.started_ms + t.duration_ms);
+        self.active_keyframes
+            .retain(|_, k| now_ms < k.started_ms + k.duration_ms);
         // Wave 14.8 — phantom nodes survive only as long as at least
         // one transition keyed on their id is still active. Once
         // every out-prop has finished interpolating, the phantom is
         // dropped and the painter sees the empty slot the host
-        // already produced.
-        let live_ids: HashSet<String> = self.active.keys().map(|(id, _)| id.clone()).collect();
+        // already produced. Numeric and colour out-transitions both
+        // count toward "still draining" — same lifecycle.
+        let live_ids: HashSet<String> = self
+            .active
+            .keys()
+            .map(|(id, _)| id.clone())
+            .chain(self.active_color.keys().map(|(id, _)| id.clone()))
+            .collect();
         self.phantoms.retain(|id, _| live_ids.contains(id));
         self.needs_redraw() || !self.phantoms.is_empty()
     }
@@ -295,6 +393,99 @@ impl Animator {
                 easing,
             },
         );
+    }
+
+    /// **§7.15** — start (or replace) a colour transition for
+    /// `(node, prop)`. Same smooth-handoff semantics as
+    /// [`Animator::start_with_easing`]: if a colour transition is
+    /// already running for the same key, its currently-sampled
+    /// colour becomes the new `from`, so an "interrupt mid-fade"
+    /// doesn't snap.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_color(
+        &mut self,
+        node_id: &str,
+        prop: &str,
+        from: Color,
+        to: Color,
+        duration_ms: u64,
+        now_ms: u64,
+        easing: Easing,
+    ) {
+        let key = (node_id.to_string(), prop.to_string());
+        let smooth_from = self
+            .active_color
+            .get(&key)
+            .map(|t| sample_color(t, now_ms))
+            .unwrap_or(from);
+        let duration_ms = duration_ms.max(1);
+        self.active_color.insert(
+            key,
+            ColorTransition {
+                from: smooth_from,
+                to,
+                started_ms: now_ms,
+                duration_ms,
+                easing,
+            },
+        );
+    }
+
+    /// **§7.15** — read the currently-interpolated colour for
+    /// `(node, prop)`. Returns `None` when no colour transition is
+    /// active for the pair.
+    pub fn current_color(&self, node_id: &str, prop: &str, now_ms: u64) -> Option<Color> {
+        let t = self
+            .active_color
+            .get(&(node_id.to_string(), prop.to_string()))?;
+        Some(sample_color(t, now_ms))
+    }
+
+    /// **§7.15** — install a keyframe timeline for `(node, prop)`.
+    /// Stops are normalised to `t ∈ [0, 1]` and sorted ascending; an
+    /// empty stop list is a no-op (the animator silently skips,
+    /// mirroring the rest of the substrate's "degrade, never panic"
+    /// rule). Replaces any existing timeline for the same key.
+    pub fn start_keyframes(&mut self, node_id: &str, prop: &str, spec: KeyframesSpec, now_ms: u64) {
+        let duration_ms = spec.duration_ms.max(1);
+        if spec.numeric_stops.is_empty() && spec.color_stops.is_empty() {
+            return;
+        }
+        let mut numeric_stops = spec.numeric_stops;
+        let mut color_stops = spec.color_stops;
+        numeric_stops.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        color_stops.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let key = (node_id.to_string(), prop.to_string());
+        self.active_keyframes.insert(
+            key,
+            Keyframes {
+                numeric_stops,
+                color_stops,
+                started_ms: now_ms,
+                duration_ms,
+                easing: spec.easing,
+            },
+        );
+    }
+
+    /// **§7.15** — read the keyframe-interpolated numeric value for
+    /// `(node, prop)` at `now_ms`. `None` when no timeline is active
+    /// or the prop's stop set is empty.
+    pub fn keyframe_numeric(&self, node_id: &str, prop: &str, now_ms: u64) -> Option<f32> {
+        let k = self
+            .active_keyframes
+            .get(&(node_id.to_string(), prop.to_string()))?;
+        sample_keyframes_numeric(k, now_ms)
+    }
+
+    /// **§7.15** — read the keyframe-interpolated colour for
+    /// `(node, prop)` at `now_ms`. `None` when no timeline is active
+    /// or the prop's colour-stop set is empty.
+    pub fn keyframe_color(&self, node_id: &str, prop: &str, now_ms: u64) -> Option<Color> {
+        let k = self
+            .active_keyframes
+            .get(&(node_id.to_string(), prop.to_string()))?;
+        sample_keyframes_color(k, now_ms)
     }
 
     /// Pre-render: walk a node tree, find every transition-tagged
@@ -372,7 +563,36 @@ impl Animator {
                             },
                         );
                     }
+                    // Track whether this is the first observe of
+                    // this id so the keyframe install fires once
+                    // per mount lifecycle (same rule as
+                    // `data-animate-in-*`).
+                    let first_observe = !self.seen_ids.contains(id);
                     for (attr_key, attr_value) in &props.semantic.attrs {
+                        // **§7.15** — `data-animator-keyframes`
+                        // installs a multi-stop timeline on first
+                        // observation of the node. Each referenced
+                        // prop gets its own `(node-id, prop)` entry
+                        // in `active_keyframes` so the apply pass
+                        // can sample each independently.
+                        if attr_key == "data-animator-keyframes" {
+                            if !first_observe {
+                                continue;
+                            }
+                            for (prop, mut spec) in parse_keyframes_attr(attr_value) {
+                                spec.easing = match (&spec.easing, &easing) {
+                                    // Per-keyframe easing wins; fall
+                                    // through to the node-level
+                                    // `data-transition-easing` only
+                                    // when the keyframe spec didn't
+                                    // declare one of its own.
+                                    (Easing::Linear, e) => e.clone(),
+                                    (other, _) => other.clone(),
+                                };
+                                self.start_keyframes(id, &prop, spec, now_ms);
+                            }
+                            continue;
+                        }
                         // Wave-deferred follow-up — `data-animate-in-<prop>`
                         // carries `<from> <duration>` and triggers a
                         // transition on the FIRST observation of the
@@ -383,6 +603,30 @@ impl Animator {
                         // mid-life "the author's declared value moved"
                         // case below.
                         if let Some(prop) = attr_key.strip_prefix("data-animate-in-") {
+                            if is_color_prop(prop) {
+                                let Some(declared) = read_color_prop(props, prop) else {
+                                    continue;
+                                };
+                                let key = (id.clone(), prop.to_string());
+                                if self.last_seen_color.contains_key(&key) {
+                                    continue;
+                                }
+                                if let Some((from, duration_ms)) =
+                                    parse_animate_in_color_value(attr_value)
+                                {
+                                    self.start_color(
+                                        id,
+                                        prop,
+                                        from,
+                                        declared,
+                                        duration_ms,
+                                        now_ms,
+                                        easing.clone(),
+                                    );
+                                }
+                                self.last_seen_color.insert(key, declared);
+                                continue;
+                            }
                             let Some(declared) = read_numeric_prop(props, prop) else {
                                 continue;
                             };
@@ -410,6 +654,35 @@ impl Animator {
                         let Some(prop) = attr_key.strip_prefix("data-transition-") else {
                             continue;
                         };
+                        // Colour-typed transition: read against the
+                        // colour table, lerp in OKLab on `start_color`.
+                        if is_color_prop(prop) {
+                            let Some(declared) = read_color_prop(props, prop) else {
+                                continue;
+                            };
+                            let key = (id.clone(), prop.to_string());
+                            match self.last_seen_color.get(&key).copied() {
+                                None => {
+                                    self.last_seen_color.insert(key, declared);
+                                }
+                                Some(prev) if prev != declared => {
+                                    if let Some(duration_ms) = parse_duration_ms(attr_value) {
+                                        self.start_color(
+                                            id,
+                                            prop,
+                                            prev,
+                                            declared,
+                                            duration_ms,
+                                            now_ms,
+                                            easing.clone(),
+                                        );
+                                    }
+                                    self.last_seen_color.insert(key, declared);
+                                }
+                                Some(_) => {}
+                            }
+                            continue;
+                        }
                         let Some(declared) = read_numeric_prop(props, prop) else {
                             continue;
                         };
@@ -440,6 +713,7 @@ impl Animator {
                             }
                         }
                     }
+                    self.seen_ids.insert(id.clone());
                 }
                 let next_parent = if id.is_empty() {
                     parent_id
@@ -455,7 +729,9 @@ impl Animator {
     /// missing from `present`. Each pending out-spec for that id
     /// kicks off a transition from the snapshot's current value to
     /// the declared `to`; the snapshot graduates to a phantom for
-    /// the painter to keep rendering.
+    /// the painter to keep rendering. **§7.15** — colour out-specs
+    /// route through the OKLab colour-transition table instead of
+    /// the numeric one.
     fn commit_unmounts(&mut self, present: &HashSet<String>, now_ms: u64) {
         let unmounted_ids: Vec<String> = self
             .node_snapshots
@@ -478,6 +754,33 @@ impl Animator {
                 .collect();
             let easing = node_easing(props);
             for (prop, spec) in prop_specs {
+                if is_color_prop(&prop) {
+                    // Colour exit reads the declared exit colour
+                    // from the spec's textual `to` slot via the
+                    // out-spec's original attr — for the Phase 1
+                    // landing we exit to fully transparent (alpha
+                    // 0) on the current colour, mirroring the
+                    // numeric "fade to declared `to`" idiom
+                    // without requiring a hex `to` literal in the
+                    // out-spec grammar.
+                    let from = read_color_prop(props, &prop).unwrap_or(Color {
+                        r: 0,
+                        g: 0,
+                        b: 0,
+                        a: 0,
+                    });
+                    let to = Color { a: 0, ..from };
+                    self.start_color(
+                        &id,
+                        &prop,
+                        from,
+                        to,
+                        spec.duration_ms,
+                        now_ms,
+                        easing.clone(),
+                    );
+                    continue;
+                }
                 let from = read_numeric_prop(props, &prop).unwrap_or(spec.to);
                 self.start_with_easing(
                     &id,
@@ -492,6 +795,11 @@ impl Animator {
             // Drop the spec entries so a fresh mount of the same id
             // doesn't carry stale out-state.
             self.out_pending.retain(|(sid, _), _| sid != &id);
+            // Forget the `seen_ids` mark so a fresh mount of the
+            // same id re-fires its entry / keyframe install.
+            self.seen_ids.remove(&id);
+            self.last_seen.retain(|(sid, _), _| sid != &id);
+            self.last_seen_color.retain(|(sid, _), _| sid != &id);
             self.phantoms.insert(id, snapshot);
         }
     }
@@ -534,6 +842,13 @@ impl Animator {
     /// Mid-render: walk the tree and rewrite any prop that has a
     /// live transition. Mutates the nodes in place. Call after
     /// `observe` and before painting / hit-test cache build.
+    ///
+    /// **§7.15** — three live-transition tables are sampled in
+    /// turn: numeric (`self.active`), colour (`self.active_color`),
+    /// and keyframe (`self.active_keyframes`). Keyframe samples
+    /// take precedence over both delta / entry transitions for the
+    /// same `(id, prop)` pair — keyframes are an explicit multi-stop
+    /// timeline; the smoothing paths are implicit.
     pub fn apply(&self, nodes: &mut [Node], now_ms: u64) {
         for node in nodes.iter_mut() {
             if let Node::Container {
@@ -547,9 +862,9 @@ impl Animator {
                     // `data-transition-<prop>` (mid-life delta
                     // transition) or `data-animate-in-<prop>` (entry
                     // transition) author hint. Both feed the same
-                    // `self.active` map so a single sample-and-write
-                    // path covers both.
-                    let keys: Vec<String> = props
+                    // `self.active` / `self.active_color` maps so a
+                    // single sample-and-write path covers both.
+                    let mut keys: Vec<String> = props
                         .semantic
                         .attrs
                         .iter()
@@ -560,12 +875,34 @@ impl Animator {
                         })
                         .map(|s| s.to_string())
                         .collect();
+                    // Pull in any keyframe-only props that don't
+                    // also have a `data-transition-*` /
+                    // `data-animate-in-*` author hint on this node.
+                    for (kid, prop) in self.active_keyframes.keys() {
+                        if kid == id && !keys.iter().any(|k| k == prop) {
+                            keys.push(prop.clone());
+                        }
+                    }
                     for prop in keys {
-                        let Some(t) = self.active.get(&(id.clone(), prop.clone())) else {
+                        // Keyframes win over deltas / entries.
+                        if let Some(k) = self.active_keyframes.get(&(id.clone(), prop.clone())) {
+                            if let Some(n) = sample_keyframes_numeric(k, now_ms) {
+                                write_numeric_prop(props, &prop, n);
+                            }
+                            if let Some(c) = sample_keyframes_color(k, now_ms) {
+                                write_color_prop(props, &prop, c);
+                            }
                             continue;
-                        };
-                        let value = sample(t, now_ms);
-                        write_numeric_prop(props, &prop, value);
+                        }
+                        if let Some(t) = self.active.get(&(id.clone(), prop.clone())) {
+                            let value = sample(t, now_ms);
+                            write_numeric_prop(props, &prop, value);
+                            continue;
+                        }
+                        if let Some(t) = self.active_color.get(&(id.clone(), prop.clone())) {
+                            let value = sample_color(t, now_ms);
+                            write_color_prop(props, &prop, value);
+                        }
                     }
                 }
                 self.apply(children, now_ms);
@@ -575,9 +912,11 @@ impl Animator {
 
     /// Number of in-flight transitions. Exposed for tests + the
     /// shell's debug HUD; production callers should prefer
-    /// [`Animator::needs_redraw`].
+    /// [`Animator::needs_redraw`]. **§7.15** — sums the three
+    /// surfaces; the numeric / colour / keyframe split is an
+    /// internal detail callers don't need.
     pub fn active_count(&self) -> usize {
-        self.active.len()
+        self.active.len() + self.active_color.len() + self.active_keyframes.len()
     }
 }
 
@@ -712,6 +1051,424 @@ fn write_numeric_prop(props: &mut crate::layout::ContainerProps, prop: &str, val
         "opacity" => props.opacity = Some(value.clamp(0.0, 1.0)),
         _ => {}
     }
+}
+
+/// **§7.15** — read a colour-valued prop from `ContainerProps` by
+/// name. Sibling of [`read_numeric_prop`] for the OKLab-lerp path.
+/// `background` and the foreground `color` (resolved at paint time
+/// on text children) are first-class; `tint` rounds out the existing
+/// [`crate::layout::StateOverrides`] colour fields. Unknown names
+/// return `None`.
+fn read_color_prop(props: &crate::layout::ContainerProps, prop: &str) -> Option<Color> {
+    match prop {
+        "background" => props.background,
+        // No top-level `color` on `ContainerProps` today — text
+        // colour lives on `TextProps`. When a container declares a
+        // `color` transition, the animator records the declared
+        // colour into the active set and the apply pass writes it
+        // back into the `data-style-color` attr, letting the
+        // resolver pipeline (style.rs) pick it up on the next
+        // walk. This keeps the runtime substrate intact while the
+        // typed `color` ContainerProps field lands as a follow-up.
+        "color" => read_color_data_attr(props, "data-style-color"),
+        "tint" => read_color_data_attr(props, "data-style-tint"),
+        _ => None,
+    }
+}
+
+/// Decode a `Color` from a `data-style-<key>` semantic attr. Used by
+/// [`read_color_prop`] for the `color` / `tint` props that don't
+/// have a typed `ContainerProps` field yet.
+fn read_color_data_attr(props: &crate::layout::ContainerProps, attr: &str) -> Option<Color> {
+    let raw = props
+        .semantic
+        .attrs
+        .iter()
+        .find(|(k, _)| k == attr)
+        .map(|(_, v)| v.as_str())?;
+    parse_hex_color(raw)
+}
+
+/// Parse a `#RGB` / `#RRGGBB` / `#RRGGBBAA` hex literal into a
+/// [`Color`]. Matches the `interpret::style::parse_color` shape so
+/// the animator and the style resolver decode identically; lifted
+/// here so the animator doesn't reach into the style module's
+/// `pub(super)` API.
+fn parse_hex_color(raw: &str) -> Option<Color> {
+    let s = raw.trim();
+    let hex = s.strip_prefix('#')?;
+    let (r, g, b, a) = match hex.len() {
+        6 => (
+            u8::from_str_radix(&hex[0..2], 16).ok()?,
+            u8::from_str_radix(&hex[2..4], 16).ok()?,
+            u8::from_str_radix(&hex[4..6], 16).ok()?,
+            255_u8,
+        ),
+        8 => (
+            u8::from_str_radix(&hex[0..2], 16).ok()?,
+            u8::from_str_radix(&hex[2..4], 16).ok()?,
+            u8::from_str_radix(&hex[4..6], 16).ok()?,
+            u8::from_str_radix(&hex[6..8], 16).ok()?,
+        ),
+        3 => {
+            let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
+            let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
+            let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+            (r * 17, g * 17, b * 17, 255_u8)
+        }
+        _ => return None,
+    };
+    Some(Color { r, g, b, a })
+}
+
+/// **§7.15** — `data-animate-in-<color-prop>="#<from-hex> <duration>"`
+/// parser. Sibling of [`parse_animate_in_value`] for the colour
+/// path: the from value is a hex literal instead of a float.
+fn parse_animate_in_color_value(spec: &str) -> Option<(Color, u64)> {
+    let trimmed = spec.trim();
+    let mut parts = trimmed.split_whitespace();
+    let from = parse_hex_color(parts.next()?)?;
+    let duration_ms = parse_duration_ms(parts.next()?)?;
+    Some((from, duration_ms))
+}
+
+/// Write a colour-valued prop back into `ContainerProps`. Sister to
+/// [`write_numeric_prop`].
+fn write_color_prop(props: &mut crate::layout::ContainerProps, prop: &str, value: Color) {
+    match prop {
+        "background" => props.background = Some(value),
+        "color" => write_color_data_attr(props, "data-style-color", value),
+        "tint" => write_color_data_attr(props, "data-style-tint", value),
+        _ => {}
+    }
+}
+
+/// Write a `Color` back into the matching `data-style-<key>` attr.
+/// Used by [`write_color_prop`] for props without a typed
+/// `ContainerProps` field yet.
+fn write_color_data_attr(props: &mut crate::layout::ContainerProps, attr: &str, value: Color) {
+    let encoded = format!(
+        "#{:02x}{:02x}{:02x}{:02x}",
+        value.r, value.g, value.b, value.a
+    );
+    let mut found = false;
+    for (k, v) in props.semantic.attrs.iter_mut() {
+        if k == attr {
+            *v = encoded.clone();
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        props.semantic.attrs.push((attr.to_string(), encoded));
+    }
+}
+
+/// **§7.15** — sample a colour transition's value at `now_ms`
+/// against its easing curve. Sibling of [`sample`] for the OKLab
+/// lerp path.
+fn sample_color(t: &ColorTransition, now_ms: u64) -> Color {
+    if now_ms <= t.started_ms {
+        return t.from;
+    }
+    let elapsed = now_ms.saturating_sub(t.started_ms);
+    if elapsed >= t.duration_ms {
+        return t.to;
+    }
+    let progress = elapsed as f32 / t.duration_ms as f32;
+    let eased = t.easing.ease(progress);
+    lerp_command_color(t.from, t.to, eased as f64)
+}
+
+/// **§7.15** — author-declared keyframe spec, the parsed form of an
+/// `animator:keyframes="<spec>"` attribute. Carries the duration,
+/// the optional easing override, and the per-prop stop tables. The
+/// [`Animator::start_keyframes`] entry point consumes one of these
+/// and turns it into an in-flight [`Keyframes`] entry.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct KeyframesSpec {
+    /// Total timeline duration. Stops are placed at relative `t ∈
+    /// [0, 1]`; `t * duration_ms` gives the absolute timestamp.
+    pub duration_ms: u64,
+    /// `(t, value)` pairs for the numeric-typed half of the
+    /// timeline. `t` is the relative time within the duration,
+    /// `[0, 1]`. Stops at the same `t` keep insertion order; the
+    /// install path sorts ascending.
+    pub numeric_stops: Vec<(f32, f32)>,
+    /// `(t, colour)` pairs for the colour-typed half. Same shape
+    /// and ordering rules.
+    pub color_stops: Vec<(f32, Color)>,
+    /// Easing applied to the per-segment progress (the same curve
+    /// shape used by [`Transition`] and [`ColorTransition`]).
+    pub easing: Easing,
+}
+
+/// **§7.15** — parse the canonical keyframes attribute spec into a
+/// structured [`KeyframesSpec`]. Spec grammar:
+///
+/// ```text
+/// keyframes := stop (';' stop)*
+/// stop := stop-key '=' stop-value
+/// stop-key := 'duration' | percent | 'easing'
+/// stop-value := duration-ms | easing-keyword | prop-list
+/// prop-list := prop ('&' prop)*
+/// prop := <prop-name> ':' <value>
+/// percent := <float> '%'
+/// ```
+///
+/// Example:
+///
+/// ```text
+/// duration=800ms; easing=ease-in-out;
+/// 0%=opacity:0&background:#ffffff;
+/// 50%=opacity:1&background:#3b82f6;
+/// 100%=opacity:0.5
+/// ```
+///
+/// Returns `None` when the spec is unparseable (no duration, no
+/// stops). Bare numeric or colour values dispatch into the matching
+/// stop table.
+pub fn parse_keyframes_spec(spec: &str) -> Option<KeyframesSpec> {
+    let mut duration_ms: Option<u64> = None;
+    let mut easing = Easing::default();
+    let mut numeric_stops: Vec<(f32, f32)> = Vec::new();
+    let mut color_stops: Vec<(f32, Color)> = Vec::new();
+    for chunk in spec.split(';') {
+        let chunk = chunk.trim();
+        if chunk.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = chunk.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        if key.eq_ignore_ascii_case("duration") {
+            duration_ms = parse_duration_ms(value);
+            continue;
+        }
+        if key.eq_ignore_ascii_case("easing") {
+            easing = parse_easing(value);
+            continue;
+        }
+        if let Some(percent) = key
+            .strip_suffix('%')
+            .and_then(|n| n.trim().parse::<f32>().ok())
+        {
+            let t = (percent / 100.0).clamp(0.0, 1.0);
+            for prop_chunk in value.split('&') {
+                let prop_chunk = prop_chunk.trim();
+                let Some((prop, raw_val)) = prop_chunk.split_once(':') else {
+                    continue;
+                };
+                let prop = prop.trim();
+                let raw_val = raw_val.trim();
+                if let Some(colour) = parse_hex_color(raw_val) {
+                    color_stops.push((t, colour));
+                    // Tag the stop with the prop name. The
+                    // animator key is `(node-id, prop)`; rather
+                    // than carrying a separate prop per stop, we
+                    // emit one `KeyframesSpec` per prop at
+                    // install time. The caller's installer (see
+                    // observe-side keyframes pickup) splits stops
+                    // by prop before calling `start_keyframes`.
+                    // Store the prop in a sidecar through a
+                    // `(t, prop, color)` tuple? — for the Phase 1
+                    // landing we keep one KeyframesSpec per
+                    // (node, prop), so the prop is implied by the
+                    // installer. The vec here is the colour
+                    // stops *for this prop*; the parser layer
+                    // upstream invokes us once per prop.
+                    let _ = prop;
+                    continue;
+                }
+                if let Ok(n) = raw_val.parse::<f32>() {
+                    numeric_stops.push((t, n));
+                    let _ = prop;
+                    continue;
+                }
+            }
+        }
+    }
+    let duration_ms = duration_ms?;
+    if numeric_stops.is_empty() && color_stops.is_empty() {
+        return None;
+    }
+    Some(KeyframesSpec {
+        duration_ms,
+        numeric_stops,
+        color_stops,
+        easing,
+    })
+}
+
+/// **§7.15** — top-level parser for an `animator:keyframes` attr
+/// value. Splits the spec into one [`KeyframesSpec`] per
+/// referenced prop, so each `(node-id, prop)` key in the animator
+/// gets its own timeline. Returns a vec of `(prop, spec)`; an
+/// empty vec means the attr was malformed (silently skipped).
+///
+/// The single-prop [`parse_keyframes_spec`] above is the
+/// implementation kernel — this wrapper handles the "spec
+/// references many props, animator needs them keyed separately"
+/// concern.
+pub fn parse_keyframes_attr(spec: &str) -> Vec<(String, KeyframesSpec)> {
+    let mut duration_ms: Option<u64> = None;
+    let mut easing = Easing::default();
+    // (prop, t, value-or-color)
+    let mut numeric: Vec<(String, f32, f32)> = Vec::new();
+    let mut colour: Vec<(String, f32, Color)> = Vec::new();
+    for chunk in spec.split(';') {
+        let chunk = chunk.trim();
+        if chunk.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = chunk.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        if key.eq_ignore_ascii_case("duration") {
+            duration_ms = parse_duration_ms(value);
+            continue;
+        }
+        if key.eq_ignore_ascii_case("easing") {
+            easing = parse_easing(value);
+            continue;
+        }
+        let Some(percent) = key
+            .strip_suffix('%')
+            .and_then(|n| n.trim().parse::<f32>().ok())
+        else {
+            continue;
+        };
+        let t = (percent / 100.0).clamp(0.0, 1.0);
+        for prop_chunk in value.split('&') {
+            let prop_chunk = prop_chunk.trim();
+            let Some((prop, raw_val)) = prop_chunk.split_once(':') else {
+                continue;
+            };
+            let prop = prop.trim().to_string();
+            let raw_val = raw_val.trim();
+            if let Some(c) = parse_hex_color(raw_val) {
+                colour.push((prop, t, c));
+                continue;
+            }
+            if let Ok(n) = raw_val.parse::<f32>() {
+                numeric.push((prop, t, n));
+                continue;
+            }
+        }
+    }
+    let Some(duration_ms) = duration_ms else {
+        return Vec::new();
+    };
+    let mut by_prop: std::collections::BTreeMap<String, KeyframesSpec> =
+        std::collections::BTreeMap::new();
+    for (prop, t, value) in numeric {
+        let entry = by_prop.entry(prop).or_insert_with(|| KeyframesSpec {
+            duration_ms,
+            numeric_stops: Vec::new(),
+            color_stops: Vec::new(),
+            easing: easing.clone(),
+        });
+        entry.numeric_stops.push((t, value));
+    }
+    for (prop, t, value) in colour {
+        let entry = by_prop.entry(prop).or_insert_with(|| KeyframesSpec {
+            duration_ms,
+            numeric_stops: Vec::new(),
+            color_stops: Vec::new(),
+            easing: easing.clone(),
+        });
+        entry.color_stops.push((t, value));
+    }
+    by_prop.into_iter().collect()
+}
+
+/// **§7.15** — sample the numeric value of a keyframe timeline at
+/// `now_ms`. Walks the (sorted, ascending-`t`) stop list and lerps
+/// between the bracketing pair, applying the timeline's easing
+/// curve to the per-segment progress. Out-of-bounds `now_ms` clamps
+/// to the first / last stop. `None` when the timeline has no
+/// numeric stops.
+fn sample_keyframes_numeric(k: &Keyframes, now_ms: u64) -> Option<f32> {
+    if k.numeric_stops.is_empty() {
+        return None;
+    }
+    let progress = if now_ms <= k.started_ms {
+        0.0
+    } else {
+        let elapsed = now_ms.saturating_sub(k.started_ms);
+        if elapsed >= k.duration_ms {
+            1.0
+        } else {
+            elapsed as f32 / k.duration_ms as f32
+        }
+    };
+    let stops = &k.numeric_stops;
+    if progress <= stops[0].0 {
+        return Some(stops[0].1);
+    }
+    if progress >= stops[stops.len() - 1].0 {
+        return Some(stops[stops.len() - 1].1);
+    }
+    for pair in stops.windows(2) {
+        let (t0, v0) = pair[0];
+        let (t1, v1) = pair[1];
+        if progress >= t0 && progress <= t1 {
+            let span = (t1 - t0).max(f32::EPSILON);
+            let local = ((progress - t0) / span).clamp(0.0, 1.0);
+            let eased = k.easing.ease(local);
+            return Some(v0 + (v1 - v0) * eased);
+        }
+    }
+    Some(stops[stops.len() - 1].1)
+}
+
+/// **§7.15** — sample the colour value of a keyframe timeline at
+/// `now_ms`. Sister of [`sample_keyframes_numeric`] for the OKLab
+/// lerp path. `None` when the timeline has no colour stops.
+fn sample_keyframes_color(k: &Keyframes, now_ms: u64) -> Option<Color> {
+    if k.color_stops.is_empty() {
+        return None;
+    }
+    let progress = if now_ms <= k.started_ms {
+        0.0
+    } else {
+        let elapsed = now_ms.saturating_sub(k.started_ms);
+        if elapsed >= k.duration_ms {
+            1.0
+        } else {
+            elapsed as f32 / k.duration_ms as f32
+        }
+    };
+    let stops = &k.color_stops;
+    if progress <= stops[0].0 {
+        return Some(stops[0].1);
+    }
+    if progress >= stops[stops.len() - 1].0 {
+        return Some(stops[stops.len() - 1].1);
+    }
+    for pair in stops.windows(2) {
+        let (t0, c0) = pair[0];
+        let (t1, c1) = pair[1];
+        if progress >= t0 && progress <= t1 {
+            let span = (t1 - t0).max(f32::EPSILON);
+            let local = ((progress - t0) / span).clamp(0.0, 1.0);
+            let eased = k.easing.ease(local);
+            return Some(lerp_command_color(c0, c1, eased as f64));
+        }
+    }
+    Some(stops[stops.len() - 1].1)
+}
+
+/// **§7.15** — the set of prop names the animator recognises as
+/// colour-valued. Used by the observe path to dispatch between the
+/// numeric and colour transition tables when reading a
+/// `data-transition-<prop>` or `data-animate-in-<prop>` attr.
+fn is_color_prop(prop: &str) -> bool {
+    matches!(prop, "background" | "color" | "tint")
 }
 
 #[cfg(test)]
@@ -1199,5 +1956,332 @@ mod tests {
             mid,
             immediately_after
         );
+    }
+
+    // -----------------------------------------------------------
+    // §7.15 — unified Animator trait tests
+    // -----------------------------------------------------------
+
+    /// §7.15 — `start_color` + `current_color` round-trips through
+    /// the OKLab lerp path. Endpoints are exact; the midpoint sits
+    /// at the perceptual middle, not the sRGB linear blend.
+    #[test]
+    fn color_transition_interpolates_in_oklab() {
+        let mut animator = Animator::new();
+        let from = Color {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+        let to = Color {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        };
+        animator.start_color("a", "background", from, to, 200, 0, Easing::Linear);
+        let at_start = animator.current_color("a", "background", 0).unwrap();
+        assert_eq!(at_start, from);
+        let at_end = animator.current_color("a", "background", 200).unwrap();
+        assert_eq!(at_end, to);
+        let mid = animator.current_color("a", "background", 100).unwrap();
+        // OKLab midpoint of black/white is darker than sRGB 0x80.
+        assert!(mid.r == mid.g && mid.g == mid.b);
+        assert!(mid.r < 0x80, "OKLab mid grey, got 0x{:02x}", mid.r);
+    }
+
+    /// §7.15 — `data-transition-background="200ms"` on a node whose
+    /// background colour changes between observes fires a colour
+    /// transition routed through OKLab.
+    #[test]
+    fn observe_fires_color_transition_on_background_change() {
+        fn node(bg: Color) -> Node {
+            let mut semantic = Semantic::default();
+            semantic
+                .attrs
+                .push(("data-transition-background".into(), "200ms".into()));
+            Node::Container {
+                id: "card".into(),
+                props: ContainerProps {
+                    background: Some(bg),
+                    semantic,
+                    ..Default::default()
+                },
+                children: vec![],
+            }
+        }
+        let mut animator = Animator::new();
+        let blue = Color {
+            r: 0x3b,
+            g: 0x82,
+            b: 0xf6,
+            a: 0xff,
+        };
+        let red = Color {
+            r: 0xef,
+            g: 0x44,
+            b: 0x44,
+            a: 0xff,
+        };
+        animator.observe(std::slice::from_ref(&node(blue)), 0);
+        // First observe seeds the snapshot — no transition yet.
+        assert_eq!(animator.active_count(), 0);
+        animator.observe(std::slice::from_ref(&node(red)), 100);
+        // A colour transition is live.
+        assert_eq!(animator.active_count(), 1);
+        let mid = animator.current_color("card", "background", 200).unwrap();
+        // Mid-flight: the blue and red have mixed perceptually
+        // (channels don't all sit at the starting colour any more).
+        assert!(
+            mid != blue && mid != red,
+            "expected mid-flight colour, got #{:02x}{:02x}{:02x}",
+            mid.r,
+            mid.g,
+            mid.b
+        );
+    }
+
+    /// §7.15 — `parse_keyframes_attr` splits a multi-prop spec into
+    /// one `KeyframesSpec` per referenced prop. Stops are sorted
+    /// ascending and carry the shared duration + easing.
+    #[test]
+    fn parse_keyframes_attr_splits_props() {
+        let spec = "duration=800ms;0%=opacity:0&background:#000000;\
+                    50%=opacity:1&background:#3b82f6;\
+                    100%=opacity:0.5&background:#ffffff";
+        let parsed = parse_keyframes_attr(spec);
+        assert_eq!(parsed.len(), 2, "two props: opacity + background");
+        let by_prop: std::collections::HashMap<_, _> = parsed.into_iter().collect();
+        let opacity = by_prop.get("opacity").expect("opacity present");
+        assert_eq!(opacity.duration_ms, 800);
+        assert_eq!(opacity.numeric_stops.len(), 3);
+        assert!((opacity.numeric_stops[0].0 - 0.0).abs() < 1e-3);
+        assert!((opacity.numeric_stops[1].0 - 0.5).abs() < 1e-3);
+        assert!((opacity.numeric_stops[2].0 - 1.0).abs() < 1e-3);
+        assert!((opacity.numeric_stops[1].1 - 1.0).abs() < 1e-3);
+        let bg = by_prop.get("background").expect("background present");
+        assert_eq!(bg.color_stops.len(), 3);
+        assert_eq!(bg.color_stops[1].1.r, 0x3b);
+        assert_eq!(bg.color_stops[1].1.g, 0x82);
+        assert_eq!(bg.color_stops[1].1.b, 0xf6);
+    }
+
+    /// §7.15 — `start_keyframes` installs a numeric timeline; the
+    /// keyframe sampler interpolates between bracketing stops, with
+    /// out-of-bounds `now_ms` clamping to the first / last stop.
+    #[test]
+    fn keyframes_numeric_interpolates_between_stops() {
+        let mut animator = Animator::new();
+        animator.start_keyframes(
+            "a",
+            "opacity",
+            KeyframesSpec {
+                duration_ms: 1000,
+                numeric_stops: vec![(0.0, 0.0), (0.5, 1.0), (1.0, 0.5)],
+                color_stops: vec![],
+                easing: Easing::Linear,
+            },
+            0,
+        );
+        // At t=0, value is the first stop.
+        assert!((animator.keyframe_numeric("a", "opacity", 0).unwrap() - 0.0).abs() < 1e-3);
+        // At t=500 (mid of first segment endpoint), value is 1.0.
+        assert!((animator.keyframe_numeric("a", "opacity", 500).unwrap() - 1.0).abs() < 1e-3);
+        // At t=250 (quarter into the first segment of width 0.5),
+        // we're at half-progress within that segment → linear lerp
+        // from 0.0 to 1.0 at 0.5 → 0.5.
+        let q = animator.keyframe_numeric("a", "opacity", 250).unwrap();
+        assert!((q - 0.5).abs() < 1e-3, "quarter-progress: {q}");
+        // At t=1000 (end), we're at the last stop.
+        assert!((animator.keyframe_numeric("a", "opacity", 1000).unwrap() - 0.5).abs() < 1e-3);
+        // Beyond end clamps to last stop.
+        assert!((animator.keyframe_numeric("a", "opacity", 2000).unwrap() - 0.5).abs() < 1e-3);
+    }
+
+    /// §7.15 — keyframe colour timeline interpolates colour stops
+    /// in OKLab. Endpoints exact; mid-flight sits between the two
+    /// bracketing colours.
+    #[test]
+    fn keyframes_color_interpolates_between_stops() {
+        let mut animator = Animator::new();
+        let red = Color {
+            r: 0xff,
+            g: 0,
+            b: 0,
+            a: 0xff,
+        };
+        let blue = Color {
+            r: 0,
+            g: 0,
+            b: 0xff,
+            a: 0xff,
+        };
+        animator.start_keyframes(
+            "a",
+            "background",
+            KeyframesSpec {
+                duration_ms: 1000,
+                numeric_stops: vec![],
+                color_stops: vec![(0.0, red), (1.0, blue)],
+                easing: Easing::Linear,
+            },
+            0,
+        );
+        let start = animator.keyframe_color("a", "background", 0).unwrap();
+        assert!((start.r as i32 - 0xff).abs() <= 1);
+        let end = animator.keyframe_color("a", "background", 1000).unwrap();
+        assert!((end.b as i32 - 0xff).abs() <= 1);
+        let mid = animator.keyframe_color("a", "background", 500).unwrap();
+        assert!(
+            mid.r > 0 && mid.b > 0,
+            "OKLab mid of red→blue mixes both, got #{:02x}{:02x}{:02x}",
+            mid.r,
+            mid.g,
+            mid.b
+        );
+    }
+
+    /// §7.15 — `data-animator-keyframes="<spec>"` on a node fires
+    /// once on first observe; `apply` writes the keyframe-sampled
+    /// values back into the node's props.
+    #[test]
+    fn observe_installs_and_apply_writes_keyframes() {
+        let mut semantic = Semantic::default();
+        semantic.attrs.push((
+            "data-animator-keyframes".into(),
+            "duration=1000ms;0%=opacity:0;100%=opacity:1".into(),
+        ));
+        let node = Node::Container {
+            id: "fade".into(),
+            props: ContainerProps {
+                opacity: Some(0.5),
+                semantic,
+                ..Default::default()
+            },
+            children: vec![],
+        };
+        let mut animator = Animator::new();
+        animator.observe(std::slice::from_ref(&node), 0);
+        assert_eq!(animator.active_count(), 1, "keyframe timeline live");
+        let mut tree = vec![node.clone()];
+        animator.apply(&mut tree, 500);
+        // Mid-flight: opacity sampled at 0.5 of a 0→1 lerp.
+        let Node::Container { props, .. } = &tree[0] else {
+            panic!()
+        };
+        let op = props.opacity.unwrap_or(0.0);
+        assert!((op - 0.5).abs() < 1e-3, "mid-flight opacity: {op}");
+    }
+
+    /// §7.15 — re-observing a node with `data-animator-keyframes`
+    /// is a no-op for keyframe install (entry-once rule). Tick
+    /// drains the timeline once the duration elapses.
+    #[test]
+    fn keyframes_fire_once_per_mount_and_drain_on_tick() {
+        let mut semantic = Semantic::default();
+        semantic.attrs.push((
+            "data-animator-keyframes".into(),
+            "duration=200ms;0%=opacity:0;100%=opacity:1".into(),
+        ));
+        let node = Node::Container {
+            id: "fade".into(),
+            props: ContainerProps {
+                opacity: Some(0.5),
+                semantic,
+                ..Default::default()
+            },
+            children: vec![],
+        };
+        let mut animator = Animator::new();
+        animator.observe(std::slice::from_ref(&node), 0);
+        animator.observe(std::slice::from_ref(&node), 50);
+        // Second observe must NOT install a second timeline.
+        assert_eq!(animator.active_count(), 1);
+        // Past the duration, tick drains the timeline and the
+        // animator stops asking for redraws.
+        let still = animator.tick(1000);
+        assert!(!still, "timeline drained");
+        assert_eq!(animator.active_count(), 0);
+    }
+
+    /// §7.15 — keyframes take precedence over delta / entry
+    /// transitions for the same `(node, prop)`. When both are
+    /// installed, `apply` writes the keyframe-sampled value.
+    #[test]
+    fn keyframes_win_over_delta_transition_on_same_prop() {
+        let mut animator = Animator::new();
+        // Install a numeric delta transition that would interpolate
+        // opacity 0 → 1 over 1000ms.
+        animator.start("fade", "opacity", 0.0, 1.0, 1000, 0);
+        // Install a keyframe timeline for the same (node, prop)
+        // that holds opacity at 0.25 mid-flight.
+        animator.start_keyframes(
+            "fade",
+            "opacity",
+            KeyframesSpec {
+                duration_ms: 1000,
+                numeric_stops: vec![(0.0, 0.25), (1.0, 0.25)],
+                color_stops: vec![],
+                easing: Easing::Linear,
+            },
+            0,
+        );
+        let mut semantic = Semantic::default();
+        semantic
+            .attrs
+            .push(("data-transition-opacity".into(), "1000ms".into()));
+        let node = Node::Container {
+            id: "fade".into(),
+            props: ContainerProps {
+                opacity: Some(0.5),
+                semantic,
+                ..Default::default()
+            },
+            children: vec![],
+        };
+        let mut tree = vec![node];
+        animator.apply(&mut tree, 500);
+        let Node::Container { props, .. } = &tree[0] else {
+            panic!()
+        };
+        let op = props.opacity.unwrap_or(0.0);
+        // The keyframe path wrote 0.25, not the delta-transition's
+        // mid-flight 0.5.
+        assert!((op - 0.25).abs() < 1e-3, "keyframes should win, got {op}");
+    }
+
+    /// §7.15 — re-mounting an id whose previous lifecycle finished
+    /// re-fires the entry / keyframe install. `seen_ids` clears on
+    /// unmount so a fresh mount measures against a clean slate.
+    #[test]
+    fn remount_reinstalls_keyframes() {
+        let mut semantic = Semantic::default();
+        semantic.attrs.push((
+            "data-animator-keyframes".into(),
+            "duration=200ms;0%=opacity:0;100%=opacity:1".into(),
+        ));
+        semantic
+            .attrs
+            .push(("data-animate-out-opacity".into(), "0 100ms".into()));
+        let node = Node::Container {
+            id: "fade".into(),
+            props: ContainerProps {
+                opacity: Some(0.5),
+                semantic,
+                ..Default::default()
+            },
+            children: vec![],
+        };
+        let mut animator = Animator::new();
+        animator.observe(std::slice::from_ref(&node), 0);
+        assert_eq!(animator.active_count(), 1);
+        // Unmount: the node leaves; out transition + drain.
+        animator.observe(&[], 300);
+        animator.tick(500);
+        // Re-mount: keyframes should install again.
+        animator.observe(std::slice::from_ref(&node), 600);
+        // One keyframe timeline is live again.
+        assert!(animator.active_count() >= 1);
     }
 }

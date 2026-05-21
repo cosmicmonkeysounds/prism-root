@@ -147,6 +147,15 @@ pub enum AttributeNamespace {
     /// Lowers to `data-at-<time>`; companion to `transition:` /
     /// `animate:` for multi-stop timelines.
     At,
+    /// **§7.15 — unified `Animator` trait.** `animator:<method>=<value>`
+    /// dispatches into the runtime animator's trait-shape surface.
+    /// The canonical method today is `animator:keyframes="<spec>"`
+    /// (multi-stop timeline); the namespace exists ahead of full
+    /// trait-registry wiring (Phase 9) so the `transition:` /
+    /// `animate:` / `at:` Tier-3 namespaces have a single semantic
+    /// home that retires alongside them in Phase 4. Lowers to
+    /// `data-animator-<method>`.
+    Animator,
     /// `class` / `id` — CSS-style addressing for inspector + HTML.
     Identifier,
 }
@@ -237,6 +246,7 @@ impl AttributeNamespace {
                 "route" => AttributeNamespace::Route,
                 "transition" => AttributeNamespace::Transition,
                 "animate" => AttributeNamespace::Animate,
+                "animator" => AttributeNamespace::Animator,
                 "probe" => AttributeNamespace::Probe,
                 "at" => AttributeNamespace::At,
                 "use" => AttributeNamespace::Use,
@@ -352,6 +362,16 @@ mod tests {
         let (ns, local) = AttributeNamespace::classify("weird:thing");
         assert_eq!(ns, AttributeNamespace::Bare);
         assert_eq!(local, "weird:thing");
+    }
+
+    #[test]
+    fn classify_animator_namespace() {
+        // §7.15 — `animator:<method>=<value>` is the unified trait
+        // surface for the three Tier-3 namespaces (transition /
+        // animate / at). `keyframes` is the canonical Phase-1 method.
+        let (ns, local) = AttributeNamespace::classify("animator:keyframes");
+        assert_eq!(ns, AttributeNamespace::Animator);
+        assert_eq!(local, "keyframes");
     }
 
     #[test]

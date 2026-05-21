@@ -473,20 +473,42 @@ pub fn apply_style_override(props: &mut ContainerProps, local: &str, value: &str
         (key, Some(state)) => {
             // §7.7 Phase 1 — dispatch any key on a first-class state
             // (`hovered` / `pressed` / `focused` / `disabled`) into the
-            // matching `StateOverrides` bucket. The remaining states
-            // (`focus-within` / `selected` / `empty` / `checked` /
-            // `entry` / `exit`) don't have first-class runtime buckets
-            // yet — they fall through to the `data-style-<k>-<s>`
-            // round-trip so author intent survives until their
-            // runtime substrate lands.
+            // matching `StateOverrides` bucket.
             if let Some(slot) = state_override_slot(props, state) {
                 if apply_to_state_overrides(slot, key, value) {
                     return;
                 }
             }
+            // **§7.15** — `:entry` / `:exit` are lifecycle markers
+            // owned by the unified Animator trait, not state
+            // overrides. Redirect them into the existing
+            // `data-animate-in-<prop>` / `data-animate-out-<prop>`
+            // semantic attrs the runtime animator reads at observe
+            // time. The value-side spelling matches the Phase-15
+            // canonical pipeline (`{ rest | :entry → from N over
+            // MS }`) reduced to the attribute shorthand
+            // `"<from> <duration>"` Wave 14.6 already shipped.
+            match state {
+                "entry" => {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("data-animate-in-{}", key), value.to_string()));
+                    return;
+                }
+                "exit" => {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("data-animate-out-{}", key), value.to_string()));
+                    return;
+                }
+                _ => {}
+            }
             // Unrecognised key on a first-class state OR a state
             // without a first-class slot — round-trip as a semantic
-            // attr (Wave 9.2 pattern).
+            // attr (Wave 9.2 pattern). Covers `focus-within` /
+            // `selected` / `empty` / `checked`.
             props
                 .semantic
                 .attrs

@@ -1071,6 +1071,84 @@ fn animate_out_prefix_lowers_to_data_animate_out_attr() {
     assert!(!attrs.keys().any(|k| k.starts_with("data-animate-in-")));
 }
 
+/// §7.15 — `style:<prop>:entry="<from> <duration>"` lowers to the
+/// same `data-animate-in-<prop>` attr the runtime animator's
+/// observe pass reads. `:entry` / `:exit` are not first-class state
+/// override slots — they're animator lifecycle markers — so the
+/// pseudo-state pipeline (`{ rest | :entry → from N over MS }`)
+/// hands off to the unified Animator trait at this seam.
+#[test]
+fn style_entry_state_redirects_to_animate_in_attr() {
+    let nodes = interpret(r#"<container style:opacity:entry="0 200ms"/>"#).unwrap();
+    let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    let attrs: std::collections::HashMap<_, _> = props
+        .semantic
+        .attrs
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    assert_eq!(
+        attrs.get("data-animate-in-opacity").map(String::as_str),
+        Some("0 200ms"),
+        "`:entry` lifecycle lowers to the animator's entry attr"
+    );
+    // The legacy `data-style-<k>-entry` round-trip must NOT fire —
+    // it would silently bypass the animator.
+    assert!(
+        !attrs.contains_key("data-style-opacity-entry"),
+        "entry lifecycle must not double-emit as state-style attr"
+    );
+}
+
+/// §7.15 — `:exit` mirrors `:entry`; lowers into the animator's
+/// `data-animate-out-<prop>` carrier.
+#[test]
+fn style_exit_state_redirects_to_animate_out_attr() {
+    let nodes = interpret(r#"<container style:opacity:exit="0 150ms"/>"#).unwrap();
+    let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    let attrs: std::collections::HashMap<_, _> = props
+        .semantic
+        .attrs
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    assert_eq!(
+        attrs.get("data-animate-out-opacity").map(String::as_str),
+        Some("0 150ms")
+    );
+    assert!(!attrs.contains_key("data-style-opacity-exit"));
+}
+
+/// §7.15 — `animator:keyframes="<spec>"` lowers to the
+/// `data-animator-keyframes` carrier the runtime animator's
+/// observe pass picks up. The data round-trip alone is the
+/// minimum interop contract: an SSR pass / inspector / hot-reload
+/// snapshot can recover the spec verbatim from the rendered tree.
+#[test]
+fn animator_namespace_lowers_to_data_animator_attr() {
+    let nodes = interpret(
+        r#"<container animator:keyframes="duration=800ms;0%=opacity:0;100%=opacity:1"/>"#,
+    )
+    .unwrap();
+    let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    let attrs: std::collections::HashMap<_, _> = props
+        .semantic
+        .attrs
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    assert_eq!(
+        attrs.get("data-animator-keyframes").map(String::as_str),
+        Some("duration=800ms;0%=opacity:0;100%=opacity:1")
+    );
+}
+
 /// Wave 14.6 — `style:opacity="0.5"` lowers to
 /// `ContainerProps::opacity`. Default `None` means fully
 /// opaque; bare values clamp to `[0, 1]`.
@@ -1500,22 +1578,23 @@ fn style_state_namespace_pressed_and_disabled_lower_into_state_overrides() {
     assert_eq!((bg.r, bg.g, bg.b), (0x20, 0x20, 0x20));
 }
 
-/// §7.7 Phase 1 — the five states without first-class runtime buckets
-/// (`focus-within`, `selected`, `empty`, `checked`, `entry`, `exit`)
-/// round-trip as `data-style-<key>-<state>` semantic attrs. The
-/// runtime substrate for each lands in a follow-up (selection model,
-/// content-emptiness probe, animator entry/exit), but the grammar
-/// already accepts them today so authors can write the styles ahead
-/// of behaviour.
+/// §7.7 Phase 1 — three states without first-class runtime buckets
+/// (`focus-within`, `empty`, `checked`) round-trip as
+/// `data-style-<key>-<state>` semantic attrs. The runtime substrate
+/// for each lands in a follow-up (selection model, content-emptiness
+/// probe), but the grammar already accepts them today so authors
+/// can write the styles ahead of behaviour.
+///
+/// **§7.15** — `:entry` / `:exit` are NOT in this set: they're
+/// animator lifecycle markers, not state overrides, and are
+/// covered by their own redirect-to-animator tests above.
 #[test]
 fn style_state_namespace_remaining_phase_1_states_round_trip_as_data_attrs() {
     let nodes = interpret(
         r##"<container
             style:background:focus-within="#303030"
             style:background:empty="#404040"
-            style:background:checked="#505050"
-            style:background:entry="#606060"
-            style:background:exit="#707070"/>"##,
+            style:background:checked="#505050"/>"##,
     )
     .unwrap();
     let crate::layout::Node::Container { props, .. } = &nodes[0] else {
@@ -1531,8 +1610,6 @@ fn style_state_namespace_remaining_phase_1_states_round_trip_as_data_attrs() {
         ("focus-within", "#303030"),
         ("empty", "#404040"),
         ("checked", "#505050"),
-        ("entry", "#606060"),
-        ("exit", "#707070"),
     ] {
         let key = format!("data-style-background-{state}");
         assert_eq!(
@@ -1541,7 +1618,7 @@ fn style_state_namespace_remaining_phase_1_states_round_trip_as_data_attrs() {
             "state `{state}` did not round-trip",
         );
     }
-    // First-class buckets stay empty — these five states have no slot.
+    // First-class buckets stay empty — these three states have no slot.
     assert!(props.hover.is_none());
     assert!(props.pressed.is_none());
     assert!(props.focused.is_none());
