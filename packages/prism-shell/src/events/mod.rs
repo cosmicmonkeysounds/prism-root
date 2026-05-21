@@ -60,6 +60,23 @@ fn dispatch_event_inner(
     event: &Event,
     hit: Option<HitRect>,
 ) -> bool {
+    // §7.7 Phase 1 (Q10) — `:disabled` click suppression. When a
+    // pointer press / release lands on a node declared
+    // `disabled="true"` (lowered onto `ContainerProps::disabled_flag`
+    // and surfaced through `HitRect::disabled`), drop the dispatch
+    // before any routing arm fires. Disabled buttons never invoke
+    // their callback, never start a drag, never capture focus.
+    //
+    // Phase 1 contract — design table Q10: "`:disabled` suppresses
+    // `on:click` at the dispatcher, not only at the style layer."
+    // Repaint of pressed/hover/disabled overrides happens via the
+    // surface's own dirty flow at the shell closure layer; we
+    // short-circuit only the event-routing arms here.
+    if hit.as_ref().is_some_and(|h| h.disabled)
+        && matches!(event, Event::PointerDown { .. } | Event::PointerUp { .. })
+    {
+        return false;
+    }
     match event {
         Event::Resize { width, height } => {
             let mut guard = inner.borrow_mut();

@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(feature = "luau")]
 use crate::command::Color;
 use crate::layout::{compute, ContainerProps, Sizing, TextProps, Viewport};
 use serde_json::json;
@@ -1375,7 +1376,7 @@ fn fct_and_sig_namespaces_lower_on_text_input() {
 /// Wave 9.2 — `style:background:hovered="<color>"` folds into
 /// the container's `hover` override bundle. The plain
 /// `style:background` still lands on `props.background`; the
-/// `:hovered` variant only contributes to `HoverOverrides`.
+/// `:hovered` variant only contributes to `StateOverrides`.
 #[test]
 fn style_state_namespace_hovered_lowers_into_hover_overrides() {
     let nodes = interpret(
@@ -1406,17 +1407,39 @@ fn style_state_namespace_hovered_lowers_radius_to_hover_overrides() {
     assert!((r.br - 8.0).abs() < f32::EPSILON);
 }
 
-/// Wave 9.2 — `:selected` / `:focused` states have no
-/// container-level runtime infra yet, so the override
-/// round-trips as `data-style-<key>-<state>` semantic attrs.
-/// Same shape as Wave 9.4 transitions — data carries author
-/// intent, runtime hookup is the follow-up.
+/// §7.7 Phase 1 — `:focused` is now a first-class state with its
+/// own `StateOverrides` bucket; only `:selected` still round-trips
+/// as `data-style-<key>-<state>` (no first-class slot for it yet).
+/// The original Wave 9.2 test split into two assertions: one for the
+/// promoted state, one for the data-attr fall-through.
 #[test]
-fn style_state_namespace_selected_and_focused_round_trip_as_data_attrs() {
-    let nodes = interpret(
-        r##"<container style:background:selected="#ff0000" style:background:focused="#00ff00"/>"##,
-    )
-    .unwrap();
+fn style_state_namespace_focused_lowers_into_focused_overrides() {
+    let nodes = interpret(r##"<container style:background:focused="#00ff00"/>"##).unwrap();
+    let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    let focused = props
+        .focused
+        .as_ref()
+        .expect("focused override should be set");
+    let bg = focused
+        .background
+        .expect("focused background should be set");
+    assert_eq!((bg.r, bg.g, bg.b), (0x00, 0xff, 0x00));
+    // First-class buckets stay independent — `:focused` populating
+    // `focused` does NOT spill into `hover` / `pressed` / `disabled`.
+    assert!(props.hover.is_none());
+    assert!(props.pressed.is_none());
+    assert!(props.disabled.is_none());
+}
+
+/// `:selected` still has no first-class bucket (no event router to
+/// drive it as a node-level flag yet) so it round-trips as a
+/// semantic attr. Stays this way until §7.6 + the selection model
+/// land in tandem.
+#[test]
+fn style_state_namespace_selected_round_trips_as_data_attr() {
+    let nodes = interpret(r##"<container style:background:selected="#ff0000"/>"##).unwrap();
     let crate::layout::Node::Container { props, .. } = &nodes[0] else {
         panic!()
     };
@@ -1432,16 +1455,10 @@ fn style_state_namespace_selected_and_focused_round_trip_as_data_attrs() {
             .map(String::as_str),
         Some("#ff0000")
     );
-    assert_eq!(
-        attrs
-            .get("data-style-background-focused")
-            .map(String::as_str),
-        Some("#00ff00")
-    );
-    assert!(
-        props.hover.is_none(),
-        "non-hover states should not populate hover"
-    );
+    assert!(props.hover.is_none());
+    assert!(props.pressed.is_none());
+    assert!(props.focused.is_none());
+    assert!(props.disabled.is_none());
 }
 
 /// Wave 9.2 — an unrecognized state suffix (`:active`) is
@@ -1458,6 +1475,120 @@ fn style_state_namespace_unknown_suffix_falls_through_cleanly() {
     assert!(props.background.is_none());
     assert!(props.hover.is_none());
     assert!(props.semantic.attrs.is_empty());
+}
+
+/// §7.7 Phase 1 — `:pressed` and `:disabled` are first-class states
+/// with their own `StateOverrides` buckets (alongside `:hovered` and
+/// `:focused`). They lower into `props.pressed` / `props.disabled`
+/// directly, not the data-attr fallback path.
+#[test]
+fn style_state_namespace_pressed_and_disabled_lower_into_state_overrides() {
+    let nodes = interpret(
+        r##"<container
+            style:background:pressed="#101010"
+            style:background:disabled="#202020"/>"##,
+    )
+    .unwrap();
+    let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    let pressed = props.pressed.as_ref().expect("pressed override");
+    let bg = pressed.background.expect("pressed background");
+    assert_eq!((bg.r, bg.g, bg.b), (0x10, 0x10, 0x10));
+    let disabled = props.disabled.as_ref().expect("disabled override");
+    let bg = disabled.background.expect("disabled background");
+    assert_eq!((bg.r, bg.g, bg.b), (0x20, 0x20, 0x20));
+}
+
+/// §7.7 Phase 1 — the five states without first-class runtime buckets
+/// (`focus-within`, `selected`, `empty`, `checked`, `entry`, `exit`)
+/// round-trip as `data-style-<key>-<state>` semantic attrs. The
+/// runtime substrate for each lands in a follow-up (selection model,
+/// content-emptiness probe, animator entry/exit), but the grammar
+/// already accepts them today so authors can write the styles ahead
+/// of behaviour.
+#[test]
+fn style_state_namespace_remaining_phase_1_states_round_trip_as_data_attrs() {
+    let nodes = interpret(
+        r##"<container
+            style:background:focus-within="#303030"
+            style:background:empty="#404040"
+            style:background:checked="#505050"
+            style:background:entry="#606060"
+            style:background:exit="#707070"/>"##,
+    )
+    .unwrap();
+    let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    let attrs: std::collections::HashMap<_, _> = props
+        .semantic
+        .attrs
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    for (state, expected) in [
+        ("focus-within", "#303030"),
+        ("empty", "#404040"),
+        ("checked", "#505050"),
+        ("entry", "#606060"),
+        ("exit", "#707070"),
+    ] {
+        let key = format!("data-style-background-{state}");
+        assert_eq!(
+            attrs.get(&key).map(String::as_str),
+            Some(expected),
+            "state `{state}` did not round-trip",
+        );
+    }
+    // First-class buckets stay empty — these five states have no slot.
+    assert!(props.hover.is_none());
+    assert!(props.pressed.is_none());
+    assert!(props.focused.is_none());
+    assert!(props.disabled.is_none());
+}
+
+/// §7.7 Phase 1 — the new `StateOverrides` axes (`color`, `padding`,
+/// `opacity`, `tint`) land on the first-class buckets just like
+/// `background` and `radius`. This pins the property whitelist.
+#[test]
+fn style_state_namespace_new_property_axes_lower_into_state_overrides() {
+    let nodes = interpret(
+        r##"<container
+            style:color:hovered="#abcdef"
+            style:padding:pressed="4"
+            style:opacity:disabled="0.5"
+            style:tint:focused="#ff8800"/>"##,
+    )
+    .unwrap();
+    let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    assert_eq!(
+        props
+            .hover
+            .as_ref()
+            .and_then(|h| h.color)
+            .map(|c| (c.r, c.g, c.b)),
+        Some((0xab, 0xcd, 0xef))
+    );
+    assert_eq!(
+        props
+            .pressed
+            .as_ref()
+            .and_then(|p| p.padding)
+            .map(|p| p.top),
+        Some(4.0)
+    );
+    assert_eq!(props.disabled.as_ref().and_then(|d| d.opacity), Some(0.5));
+    assert_eq!(
+        props
+            .focused
+            .as_ref()
+            .and_then(|f| f.tint)
+            .map(|c| (c.r, c.g, c.b)),
+        Some((0xff, 0x88, 0x00))
+    );
 }
 
 #[test]
@@ -4483,9 +4614,20 @@ fn prss_lua_darken_helper() {
     let Node::Container { props, .. } = find_container_by_id(&nodes, "b").unwrap() else {
         panic!()
     };
-    // 0x80 * (1 - 0.5) = 64 = 0x40.
+    // §7.12 (Phase 1) — darken now scales OKLCh lightness by `(1 - amt)`.
+    // For sRGB grey #808080, OKLab L ≈ 0.598; halved → L ≈ 0.299, which
+    // back-converts to a darker perceptual grey (~0x2e), not the sRGB
+    // 50% point (0x40). The byte values are stable to ±1 across
+    // platforms; just check we got a near-uniform grey in the expected
+    // perceptual neighbourhood.
     let bg = props.background.expect("darkened background");
-    assert_eq!((bg.r, bg.g, bg.b), (0x40, 0x40, 0x40));
+    assert_eq!(bg.r, bg.g);
+    assert_eq!(bg.g, bg.b);
+    assert!(
+        (0x28..0x35).contains(&bg.r),
+        "expected OKLCh-darkened mid-grey near 0x2e, got 0x{:02x}",
+        bg.r
+    );
 }
 
 #[test]
@@ -4508,6 +4650,102 @@ fn prss_lua_computed_state_override() {
     let hov = props.hover.as_ref().expect("hover override");
     let bg = hov.background.expect("hovered background");
     assert_eq!((bg.r, bg.g, bg.b), (0xff, 0xff, 0xff));
+}
+
+#[test]
+fn prss_lua_darken_vivid_blue_stays_vivid() {
+    // §7.12 motivating example — sRGB-lerp `darken('#3b82f6', 0.3)`
+    // produces a desaturated grey-blue; OKLCh keeps it a recognisably
+    // vivid darker blue. The contract this test pins is "blue channel
+    // still dominant + chroma not collapsed to grey."
+    let (sheet, errs) = prism_core::language::prss::parse(
+        r##"
+        [class.btn]
+        background = { lua = "darken('#3b82f6', 0.3)" }
+        "##,
+    );
+    assert!(errs.is_empty(), "{errs:?}");
+    let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+    let nodes = interpret_with_scope(r#"<container id="b" class="btn"/>"#, &scope).unwrap();
+    let Node::Container { props, .. } = find_container_by_id(&nodes, "b").unwrap() else {
+        panic!()
+    };
+    let bg = props.background.expect("darkened background");
+    assert!(
+        bg.b > bg.g && bg.g > bg.r,
+        "expected blue > green > red ordering preserved, got #{:02x}{:02x}{:02x}",
+        bg.r,
+        bg.g,
+        bg.b
+    );
+    // Chroma preserved: a true desaturation would collapse (b-r) to
+    // single digits; OKLCh keeps it wide enough that the colour reads
+    // as blue, not grey.
+    assert!(
+        (bg.b as i32 - bg.r as i32) > 0x80,
+        "expected vivid blue, got #{:02x}{:02x}{:02x}",
+        bg.r,
+        bg.g,
+        bg.b
+    );
+}
+
+#[test]
+fn prss_lua_with_lightness_delta_keyword_arg() {
+    // §7.12 `with(c, l=+0.05)` — kwarg parsing + delta semantics.
+    // The leading `+` distinguishes a delta from an absolute set;
+    // a bare number (`l=0.5`) would override the channel.
+    let (sheet, errs) = prism_core::language::prss::parse(
+        r##"
+        [class.btn]
+        background = { lua = "with('#3b82f6', l=+0.05)" }
+        "##,
+    );
+    assert!(errs.is_empty(), "{errs:?}");
+    let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+    let nodes = interpret_with_scope(r#"<container id="b" class="btn"/>"#, &scope).unwrap();
+    let Node::Container { props, .. } = find_container_by_id(&nodes, "b").unwrap() else {
+        panic!()
+    };
+    let bg = props.background.expect("with-adjusted background");
+    // Lightened — sum of channels strictly greater than the source.
+    let before: i32 = 0x3b + 0x82 + 0xf6;
+    let after: i32 = bg.r as i32 + bg.g as i32 + bg.b as i32;
+    assert!(
+        after > before,
+        "expected lightened, got #{:02x}{:02x}{:02x}",
+        bg.r,
+        bg.g,
+        bg.b
+    );
+}
+
+#[test]
+fn prss_lua_saturate_widens_chroma_gap() {
+    // `saturate(c, t)` multiplicatively scales chroma. A neutral grey
+    // (chroma=0) stays grey; a saturated blue gets *more* vivid.
+    let (sheet, errs) = prism_core::language::prss::parse(
+        r##"
+        [class.btn]
+        background = { lua = "saturate('#3b82f6', 0.5)" }
+        "##,
+    );
+    assert!(errs.is_empty(), "{errs:?}");
+    let scope = LowerScope::default().with_stylesheet(Arc::new(sheet));
+    let nodes = interpret_with_scope(r#"<container id="b" class="btn"/>"#, &scope).unwrap();
+    let Node::Container { props, .. } = find_container_by_id(&nodes, "b").unwrap() else {
+        panic!()
+    };
+    let bg = props.background.expect("saturated background");
+    // Chroma widened → max-min channel gap ≥ source gap. The source
+    // is already near sRGB blue's gamut edge, so chroma-reduction may
+    // clip; we just check the colour didn't move *toward* grey.
+    let gap = bg.b as i32 - bg.r as i32;
+    let src_gap = 0xf6 - 0x3b;
+    assert!(
+        gap >= src_gap - 8,
+        "saturate moved toward grey: src gap {src_gap}, got {gap}"
+    );
 }
 
 #[cfg(feature = "luau")]

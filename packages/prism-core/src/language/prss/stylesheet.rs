@@ -60,8 +60,22 @@ pub fn is_descendant_selector(name: &str) -> bool {
 }
 
 /// The recognised state suffixes a `[class.NAME.STATE]` table may
-/// use. Mirrors `prism_core::language::prism_ui::STATE_SUFFIXES`.
-pub const STATE_SUFFIXES: &[&str] = &["hovered", "selected", "focused"];
+/// use. Mirrors `prism_core::language::prism_ui::STATE_SUFFIXES`;
+/// the two must stay in sync since PRSS classes and inline
+/// `style:key:state=` attrs both walk the same state-bucket
+/// runtime. Phase 1 (§7.7) expanded the set from three to ten.
+pub const STATE_SUFFIXES: &[&str] = &[
+    "hovered",
+    "pressed",
+    "focused",
+    "focus-within",
+    "selected",
+    "disabled",
+    "empty",
+    "checked",
+    "entry",
+    "exit",
+];
 
 /// Parsed PRSS file.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

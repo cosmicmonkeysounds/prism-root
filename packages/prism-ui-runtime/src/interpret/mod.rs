@@ -36,6 +36,7 @@ use prism_core::language::prism_ui::{
 
 use crate::layout::Node;
 
+mod color;
 mod control_flow;
 
 mod style;

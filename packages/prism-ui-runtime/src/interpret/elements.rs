@@ -697,7 +697,7 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
     let mut width = Sizing::default();
     let mut height = Sizing::default();
     let mut background: Option<crate::command::Color> = None;
-    let mut hover: Option<crate::layout::HoverOverrides> = None;
+    let mut hover: Option<crate::layout::StateOverrides> = None;
     let mut focused = false;
     let mut multiline = false;
     let mut caret_byte: Option<usize> = None;
@@ -863,7 +863,7 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
                             None => background = Some(c),
                             Some("hovered") => {
                                 hover
-                                    .get_or_insert_with(crate::layout::HoverOverrides::default)
+                                    .get_or_insert_with(crate::layout::StateOverrides::default)
                                     .background = Some(c);
                             }
                             _ => {}
@@ -942,7 +942,7 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
         let needs_hover = hover.as_ref().is_none_or(|h| h.background.is_none());
         if needs_hover {
             hover
-                .get_or_insert_with(crate::layout::HoverOverrides::default)
+                .get_or_insert_with(crate::layout::StateOverrides::default)
                 .background = Some(crate::command::Color {
                 r: 0xe7,
                 g: 0xe9,
@@ -1409,7 +1409,7 @@ fn apply_container_attributes(
         if needs_hover {
             props
                 .hover
-                .get_or_insert_with(crate::layout::HoverOverrides::default)
+                .get_or_insert_with(crate::layout::StateOverrides::default)
                 .background = Some(crate::command::Color {
                 r: 0x00,
                 g: 0x00,

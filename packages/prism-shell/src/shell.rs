@@ -1294,7 +1294,41 @@ impl Shell {
             if matches!(event, Event::PointerMove { .. }) {
                 surface.set_hovered(hit.as_ref().map(|h| h.id.clone()));
             }
+            // §7.7 Phase 1 — pressed-state tracking. On PointerDown
+            // pin the pressed id (unless the hit is disabled —
+            // disabled nodes shouldn't paint pressed either); on
+            // PointerUp clear it. Same dirty-skip optimisation
+            // `set_hovered` uses: no repaint when neither the leaving
+            // nor entering node declares `props.pressed`. The
+            // dispatcher itself short-circuits disabled clicks (Q10);
+            // we mirror the gate here so the paint state matches.
+            let hit_is_disabled = hit.as_ref().is_some_and(|h| h.disabled);
+            match event {
+                Event::PointerDown { .. } if !hit_is_disabled => {
+                    surface.set_pressed(hit.as_ref().map(|h| h.id.clone()));
+                }
+                Event::PointerUp { .. } => {
+                    surface.set_pressed(None);
+                }
+                _ => {}
+            }
             let event_dirty = dispatch_event(&inner, event, hit);
+            // §7.7 Phase 1 — mirror keyboard-focus state into
+            // `Surface::focused_id` so every container declaring
+            // `props.focused` swaps in at paint time. The shell's
+            // canonical focus state lives on `AppState::field_focus`
+            // (input session); this seam relays it into the runtime
+            // every dispatch tick. `set_focused` is no-op + dirty-skip
+            // when the id hasn't changed.
+            {
+                let guard = inner.borrow();
+                let focused_id = guard
+                    .state
+                    .field_focus
+                    .as_ref()
+                    .map(|f| f.target_id.clone());
+                surface.set_focused(focused_id);
+            }
             // Phase 3 of `docs/dev/dioxus-inspiration.md`: reactive
             // services that invalidate through `render_scope` push
             // node IDs into the per-shell `DirtyQueue`. Either path
@@ -2163,7 +2197,7 @@ mod tests {
         // `props.hover` is set — without this, every chrome tint that
         // declares a hover override stays dead in production.
         use prism_ui_runtime::command::{Color, CornerRadius};
-        use prism_ui_runtime::layout::{ContainerProps, HoverOverrides, Padding, Sizing};
+        use prism_ui_runtime::layout::{ContainerProps, Padding, Sizing, StateOverrides};
         let tree = UiNode::Container {
             id: String::new(),
             props: ContainerProps::default(),
@@ -2173,7 +2207,7 @@ mod tests {
                     width: Sizing::Fixed(100.0),
                     height: Sizing::Fixed(40.0),
                     padding: Padding::default(),
-                    hover: Some(HoverOverrides {
+                    hover: Some(StateOverrides {
                         background: Some(Color {
                             r: 0,
                             g: 0,
@@ -2186,6 +2220,7 @@ mod tests {
                             br: 4.0,
                             bl: 4.0,
                         }),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 },

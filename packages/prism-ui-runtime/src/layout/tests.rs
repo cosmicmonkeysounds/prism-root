@@ -186,9 +186,9 @@ fn hover_button_tree() -> Node {
             width: Sizing::Fixed(28.0),
             height: Sizing::Fixed(28.0),
             background: Some(rgb(255, 255, 255)),
-            hover: Some(HoverOverrides {
+            hover: Some(StateOverrides {
                 background: Some(rgb(0, 100, 200)),
-                radius: None,
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -347,6 +347,179 @@ fn hover_overrides_ignored_when_id_does_not_match() {
     assert_eq!(rectangle_color(&cmds), rgb(255, 255, 255));
 }
 
+fn state_button_tree() -> Node {
+    // Same shape as `hover_button_tree` but with all four state buckets
+    // declared so the precedence cascade is observable. Resting paint
+    // is white; each state swaps to a distinct colour so a paint test
+    // can read the active state directly.
+    Node::Container {
+        id: "btn".into(),
+        props: ContainerProps {
+            width: Sizing::Fixed(28.0),
+            height: Sizing::Fixed(28.0),
+            background: Some(rgb(255, 255, 255)),
+            hover: Some(StateOverrides {
+                background: Some(rgb(10, 10, 10)),
+                ..Default::default()
+            }),
+            focused: Some(StateOverrides {
+                background: Some(rgb(20, 20, 20)),
+                ..Default::default()
+            }),
+            pressed: Some(StateOverrides {
+                background: Some(rgb(30, 30, 30)),
+                ..Default::default()
+            }),
+            disabled: Some(StateOverrides {
+                background: Some(rgb(40, 40, 40)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        children: vec![],
+    }
+}
+
+/// §7.7 Phase 1 — the precedence cascade. Multiple states active
+/// together resolve in low → high order: `hover < focused < pressed
+/// < disabled`. A button under the cursor with focus AND a press
+/// MUST paint pressed, not hovered.
+#[test]
+fn state_overrides_precedence_pressed_beats_focused_beats_hovered() {
+    let viewport = Viewport {
+        width: 100.0,
+        height: 100.0,
+    };
+    let tree = state_button_tree();
+    // Hover only → 10,10,10
+    let cmds = compute_full(
+        &tree,
+        &[],
+        viewport,
+        StateIds {
+            hover: Some("btn"),
+            ..Default::default()
+        },
+    );
+    assert_eq!(rectangle_color(&cmds), rgb(10, 10, 10), "hover only");
+
+    // Hover + focused → focused wins (20,20,20)
+    let cmds = compute_full(
+        &tree,
+        &[],
+        viewport,
+        StateIds {
+            hover: Some("btn"),
+            focused: Some("btn"),
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        rectangle_color(&cmds),
+        rgb(20, 20, 20),
+        "focused beats hover"
+    );
+
+    // Hover + focused + pressed → pressed wins (30,30,30)
+    let cmds = compute_full(
+        &tree,
+        &[],
+        viewport,
+        StateIds {
+            hover: Some("btn"),
+            focused: Some("btn"),
+            pressed: Some("btn"),
+        },
+    );
+    assert_eq!(
+        rectangle_color(&cmds),
+        rgb(30, 30, 30),
+        "pressed beats focused"
+    );
+}
+
+/// §7.7 Phase 1 — `disabled` is declarative (`props.disabled_flag`),
+/// not event-driven, and outranks every event-driven state in the
+/// cascade. A button declared disabled MUST paint disabled even
+/// under hover/pressed/focused.
+#[test]
+fn state_overrides_disabled_outranks_event_driven_states() {
+    let viewport = Viewport {
+        width: 100.0,
+        height: 100.0,
+    };
+    let mut tree = state_button_tree();
+    if let Node::Container { props, .. } = &mut tree {
+        props.disabled_flag = true;
+    }
+
+    // Even with pressed + focused + hover all active, disabled wins.
+    let cmds = compute_full(
+        &tree,
+        &[],
+        viewport,
+        StateIds {
+            hover: Some("btn"),
+            focused: Some("btn"),
+            pressed: Some("btn"),
+        },
+    );
+    assert_eq!(rectangle_color(&cmds), rgb(40, 40, 40), "disabled wins");
+}
+
+/// §7.7 Phase 1 — state buckets compose sparsely. A `pressed` bucket
+/// that only sets `opacity` (leaving `background` `None`) does NOT
+/// erase the hovered background; the field-by-field overrides
+/// stack. This is the canonical "pressed dims a hovered button"
+/// shape.
+#[test]
+fn state_overrides_sparse_fields_compose_across_buckets() {
+    let viewport = Viewport {
+        width: 100.0,
+        height: 100.0,
+    };
+    let tree = Node::Container {
+        id: "btn".into(),
+        props: ContainerProps {
+            width: Sizing::Fixed(20.0),
+            height: Sizing::Fixed(20.0),
+            background: Some(rgb(255, 255, 255)),
+            hover: Some(StateOverrides {
+                background: Some(rgb(50, 60, 70)),
+                ..Default::default()
+            }),
+            pressed: Some(StateOverrides {
+                opacity: Some(0.5),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        children: vec![],
+    };
+
+    let cmds = compute_full(
+        &tree,
+        &[],
+        viewport,
+        StateIds {
+            hover: Some("btn"),
+            pressed: Some("btn"),
+            ..Default::default()
+        },
+    );
+    // Background stays the hovered colour (only pressed.opacity was
+    // overridden); paint applies the pressed opacity multiplier so
+    // we see a 50%-alpha-scaled (50, 60, 70).
+    let color = rectangle_color(&cmds);
+    // Opacity 0.5 scales alpha to ~128. Hue stays the hovered RGB.
+    assert_eq!((color.r, color.g, color.b), (50, 60, 70));
+    assert!(
+        color.a >= 120 && color.a <= 135,
+        "expected pressed opacity 0.5 to halve alpha, got {}",
+        color.a
+    );
+}
+
 #[test]
 fn surface_set_hovered_dirty_only_when_paint_actually_changes() {
     let mut surface = Surface::new(
@@ -460,7 +633,7 @@ fn overlay_paints_after_main_tree_at_resolved_corner() {
             width: 800.0,
             height: 600.0,
         },
-        None,
+        StateIds::default(),
     );
     // Main tree paints first, overlay second — z-order via order.
     let main_idx = cmds
@@ -498,7 +671,7 @@ fn overlay_anchor_center_resolves_to_viewport_centre_with_offset() {
             width: 800.0,
             height: 600.0,
         },
-        None,
+        StateIds::default(),
     );
     let bounds = rectangle_at(&cmds, rgb(50, 60, 70));
     // x = (800-400)/2 = 200, y = (600-100)/2 - 100 = 250 - 100 = 150
@@ -517,7 +690,7 @@ fn overlay_anchor_point_translates_verbatim() {
             width: 1000.0,
             height: 600.0,
         },
-        None,
+        StateIds::default(),
     );
     let bounds = rectangle_at(&cmds, rgb(99, 99, 99));
     assert_eq!(bounds.x, 312.5);
@@ -596,9 +769,9 @@ fn surface_overlay_hover_swap_dirties_through_overlay_subtree() {
             width: Sizing::Fixed(40.0),
             height: Sizing::Fixed(20.0),
             background: Some(rgb(255, 255, 255)),
-            hover: Some(HoverOverrides {
+            hover: Some(StateOverrides {
                 background: Some(rgb(1, 2, 3)),
-                radius: None,
+                ..Default::default()
             }),
             ..Default::default()
         },

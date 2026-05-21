@@ -9,7 +9,7 @@ use crate::layout::{Dimension, FlexDirection, FlowProps};
 use crate::style::StyleProperties;
 use prism_ui_runtime::command::{Color, CornerRadius};
 use prism_ui_runtime::layout::{
-    ContainerProps, Direction, HoverOverrides, Node as UiNode, Padding, Semantic, Sizing, TextProps,
+    ContainerProps, Direction, Node as UiNode, Padding, Semantic, Sizing, StateOverrides, TextProps,
 };
 
 pub fn bare_container(
@@ -143,13 +143,14 @@ pub fn colored_text_node(
 /// One-line constructor for the most common interactive-primitive
 /// hover shape: "swap the background only". Returns `None` when the
 /// colour string fails to parse so the caller can `props.hover = ...`
-/// unconditionally without a `parse_color`/`HoverOverrides` two-liner
-/// at every call site. The full `HoverOverrides` struct stays
-/// available for primitives that animate radius / future fields too.
-pub fn hover_bg(color: &str) -> Option<HoverOverrides> {
-    parse_color(color).map(|c| HoverOverrides {
+/// unconditionally without a `parse_color`/`StateOverrides` two-liner
+/// at every call site. The full `StateOverrides` struct stays
+/// available for primitives that animate radius / colour / padding /
+/// opacity / tint on hover too.
+pub fn hover_bg(color: &str) -> Option<StateOverrides> {
+    parse_color(color).map(|c| StateOverrides {
         background: Some(c),
-        radius: None,
+        ..Default::default()
     })
 }
 

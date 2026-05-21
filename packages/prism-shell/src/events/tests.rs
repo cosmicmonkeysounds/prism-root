@@ -20,6 +20,7 @@ fn hit_with(role: &str, target: &str, extra: &[(&str, &str)]) -> HitRect {
             height: 10.0,
         },
         attrs,
+        disabled: false,
     }
 }
 
@@ -649,6 +650,7 @@ fn drag_on_number_field_edit_scrubs_value_proportional_to_delta() {
             ("data-kind".into(), "number".into()),
             ("data-value".into(), "10".into()),
         ],
+        disabled: false,
     };
     let _ = dispatch_event(
         &shell.inner,
@@ -1062,6 +1064,7 @@ fn pointer_down_on_canvas_node_routes_to_select_node() {
             ("data-role".into(), "button".into()),
             ("data-canvas-node".into(), button_id.clone()),
         ],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -1104,6 +1107,7 @@ fn pointer_down_on_chrome_container_does_not_select_canvas_node() {
             height: 800.0,
         },
         attrs: vec![],
+        disabled: false,
     };
     let _ = dispatch_event(
         &shell.inner,
@@ -1147,6 +1151,7 @@ fn pointer_down_on_data_on_click_cmd_runs_the_shell_command() {
             height: 24.0,
         },
         attrs: vec![("data-on-click".into(), "cmd signals.fire-mounted".into())],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -1219,6 +1224,7 @@ fn pointer_down_on_data_on_click_emit_cascades_through_canvas_connections() {
             height: 24.0,
         },
         attrs: vec![("data-on-click".into(), "emit clicked".into())],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -1308,6 +1314,7 @@ fn pointer_down_on_data_on_click_once_fires_only_first_time() {
             "data-on-click-once".into(),
             "cmd signals.fire-mounted".into(),
         )],
+        disabled: false,
     };
     let press = || Event::PointerDown {
         x: 10.0,
@@ -1359,6 +1366,7 @@ fn pointer_down_on_data_on_click_stop_consumes_even_without_fire() {
             // No connection wired — `fire_signal` returns 0.
             "emit nobody-listens".into(),
         )],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -1395,6 +1403,7 @@ fn pointer_down_on_bare_data_on_click_with_no_subscriber_falls_through() {
             height: 24.0,
         },
         attrs: vec![("data-on-click".into(), "emit nobody-listens".into())],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -1457,6 +1466,7 @@ fn pointer_down_on_input_with_bind_value_opens_field_focus() {
             height: 24.0,
         },
         attrs: vec![("data-bind-value".into(), "form-email.value".into())],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -1513,6 +1523,7 @@ fn pointer_down_on_input_with_bogus_bind_path_falls_through() {
             height: 24.0,
         },
         attrs: vec![("data-bind-value".into(), "missing-node.value".into())],
+        disabled: false,
     };
     dispatch_event(
         &shell.inner,
@@ -1617,6 +1628,7 @@ fn pointer_down_on_device_pill_switches_canvas_device() {
             ("data-role".into(), "toolbar-device-pill".into()),
             ("data-device".into(), "tablet".into()),
         ],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -1652,6 +1664,7 @@ fn pointer_down_on_zoom_reset_pill_resets_canvas_zoom() {
             height: 24.0,
         },
         attrs: vec![("data-role".into(), "toolbar-zoom-reset".into())],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -1779,6 +1792,7 @@ fn pointer_down_on_app_card_sets_workspace_active_app() {
             ("data-role".into(), "app-card".into()),
             ("data-app".into(), "lattice".into()),
         ],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -1826,6 +1840,7 @@ fn pointer_down_on_app_card_drives_full_swap_chain() {
             ("data-role".into(), "app-card".into()),
             ("data-app".into(), "flux".into()),
         ],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -1877,6 +1892,7 @@ fn pointer_down_on_already_active_app_card_is_idempotent() {
             ("data-role".into(), "app-card".into()),
             ("data-app".into(), "musica".into()),
         ],
+        disabled: false,
     };
     let _ = dispatch_event(
         &shell.inner,
@@ -1911,6 +1927,7 @@ fn pointer_down_on_create_card_without_data_app_is_a_no_op() {
             ("data-role".into(), "app-card".into()),
             ("data-create".into(), "true".into()),
         ],
+        disabled: false,
     };
     let _ = dispatch_event(
         &shell.inner,
@@ -2072,6 +2089,7 @@ fn pointer_down_on_unsupported_action_does_not_break_chain() {
             height: 24.0,
         },
         attrs: vec![("data-on-click".into(), "yodel loud".into())],
+        disabled: false,
     };
     let _ = dispatch_event(
         &shell.inner,
@@ -2309,6 +2327,7 @@ fn pointer_down_on_canvas_with_palette_armed_begins_palette_drag() {
             ("data-role".into(), "canvas-preview".into()),
             ("data-canvas-node".into(), "demo-heading".into()),
         ],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -2370,6 +2389,7 @@ fn pointer_up_with_active_palette_drag_inserts_node_under_target() {
             ("data-role".into(), "canvas-preview".into()),
             ("data-canvas-node".into(), target_id.clone()),
         ],
+        disabled: false,
     };
     let _ = dispatch_event(
         &shell.inner,
@@ -2446,6 +2466,7 @@ fn pointer_down_on_canvas_without_palette_armed_falls_through_to_select() {
             ("data-role".into(), "canvas-preview".into()),
             ("data-canvas-node".into(), "demo-heading".into()),
         ],
+        disabled: false,
     };
     let _ = dispatch_event(
         &shell.inner,
@@ -2491,6 +2512,7 @@ fn right_click_on_canvas_node_opens_context_menu_with_actions() {
             ("data-role".into(), "canvas-preview".into()),
             ("data-canvas-node".into(), "demo-heading".into()),
         ],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -2547,6 +2569,7 @@ fn right_click_on_empty_canvas_opens_paste_only_menu() {
             height: 600.0,
         },
         attrs: vec![("data-role".into(), "canvas-page".into())],
+        disabled: false,
     };
     let _ = dispatch_event(
         &shell.inner,
@@ -2597,6 +2620,7 @@ fn primary_click_outside_menu_dismisses_open_context_menu() {
             height: 10.0,
         },
         attrs: vec![],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -2633,6 +2657,7 @@ fn pointer_down_on_canvas_node_captures_selection_bbox() {
             ("data-role".into(), "canvas-preview".into()),
             ("data-canvas-node".into(), "demo-heading".into()),
         ],
+        disabled: false,
     };
     let _ = dispatch_event(
         &shell.inner,
@@ -2942,6 +2967,7 @@ fn data_on_click_open_picker_dispatches_through_command_table() {
             "data-on-click".into(),
             "cmd signals.open-connection-picker".into(),
         )],
+        disabled: false,
     };
     let dirty = dispatch_event(
         &shell.inner,
@@ -2957,5 +2983,88 @@ fn data_on_click_open_picker_dispatches_through_command_table() {
     assert!(
         shell.inner.borrow().state.overlay.connection_picker.open,
         "picker opened via command dispatch"
+    );
+}
+
+/// §7.7 Phase 1 (Q10) — `:disabled` click suppression. A pointer
+/// press on a `HitRect` carrying `disabled: true` must NOT route
+/// through the dispatcher: no `data-on-click` arm fires, no command
+/// dispatches, no signal cascade. Repaint of `:disabled` overrides
+/// happens at the surface layer via the same mechanism `:hovered`
+/// uses; this test pins only the dispatcher-level gate.
+#[test]
+fn disabled_hit_suppresses_data_on_click_dispatch() {
+    use prism_ui_runtime::event::PointerButton;
+    let shell = Shell::new().expect("boot");
+    assert!(!shell.inner.borrow().state.overlay.connection_picker.open);
+    // Same `data-on-click` payload as the test above — proves the
+    // route exists and would fire if not disabled.
+    let hit = HitRect {
+        id: "add-button-disabled".into(),
+        bounds: Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 30.0,
+        },
+        attrs: vec![(
+            "data-on-click".into(),
+            "cmd signals.open-connection-picker".into(),
+        )],
+        disabled: true,
+    };
+    let dirty = dispatch_event(
+        &shell.inner,
+        &Event::PointerDown {
+            x: 1.0,
+            y: 1.0,
+            button: PointerButton::Primary,
+            modifiers: Modifiers::default(),
+        },
+        Some(hit),
+    );
+    assert!(!dirty, "disabled hit must produce no redraw signal");
+    assert!(
+        !shell.inner.borrow().state.overlay.connection_picker.open,
+        "disabled click must not open the picker",
+    );
+}
+
+/// §7.7 Phase 1 — enabled hit on the same id (no `disabled` flag)
+/// still routes normally. Sanity sibling to the suppression test so
+/// a future regression that drops the gate doesn't silently keep
+/// both tests passing.
+#[test]
+fn enabled_hit_routes_data_on_click_dispatch() {
+    use prism_ui_runtime::event::PointerButton;
+    let shell = Shell::new().expect("boot");
+    let hit = HitRect {
+        id: "add-button-enabled".into(),
+        bounds: Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 30.0,
+        },
+        attrs: vec![(
+            "data-on-click".into(),
+            "cmd signals.open-connection-picker".into(),
+        )],
+        disabled: false,
+    };
+    let dirty = dispatch_event(
+        &shell.inner,
+        &Event::PointerDown {
+            x: 1.0,
+            y: 1.0,
+            button: PointerButton::Primary,
+            modifiers: Modifiers::default(),
+        },
+        Some(hit),
+    );
+    assert!(dirty);
+    assert!(
+        shell.inner.borrow().state.overlay.connection_picker.open,
+        "enabled click opens the picker",
     );
 }

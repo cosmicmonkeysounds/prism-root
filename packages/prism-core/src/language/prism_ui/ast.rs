@@ -253,11 +253,33 @@ impl AttributeNamespace {
     }
 }
 
-/// Wave 9.2 — recognized pseudo-state suffix on an inline-style key.
+/// Recognized pseudo-state suffix on an inline-style key.
 /// `style:<key>:<state>="<value>"` splits at the trailing colon and
 /// the state segment is matched against this set. Anything outside
 /// the set is treated as part of the key (no state).
-pub const STATE_SUFFIXES: &[&str] = &["hovered", "selected", "focused"];
+///
+/// **Phase 1 (§7.7)** — expanded from the original 3-suffix set
+/// (`hovered` / `selected` / `focused`) to cover the pseudo-states
+/// authors actually reach for: `pressed` (active-pointer feedback),
+/// `disabled` (control-blocked styling + dispatcher click suppression
+/// per Q10), `focus-within` (subtree-focused parents), `empty`
+/// (placeholder styling), `checked` (toggle states), plus the
+/// transition-lifecycle markers `entry` / `exit` owned by the §7.15
+/// `Animator` trait. Runtime application is gated separately — see
+/// `interpret::style::STATE_PROP_WHITELIST` and the per-state
+/// override buckets on `StateOverrides` / siblings.
+pub const STATE_SUFFIXES: &[&str] = &[
+    "hovered",
+    "pressed",
+    "focused",
+    "focus-within",
+    "selected",
+    "disabled",
+    "empty",
+    "checked",
+    "entry",
+    "exit",
+];
 
 impl AttributeName {
     /// Wave 9.2 — split a namespaced local part on its trailing
@@ -377,5 +399,43 @@ mod tests {
     #[test]
     fn split_state_suffix_returns_none_for_plain_local() {
         assert_eq!(split_state_suffix("background"), ("background", None));
+    }
+
+    #[test]
+    fn split_state_suffix_recognizes_phase_1_expanded_states() {
+        // §7.7 Phase 1 — the seven states added on top of the
+        // original `hovered` / `selected` / `focused` trio. Each must
+        // round-trip through `split_state_suffix` as a recognised
+        // state segment, not get folded back into the key.
+        for state in [
+            "pressed",
+            "focus-within",
+            "disabled",
+            "empty",
+            "checked",
+            "entry",
+            "exit",
+        ] {
+            let local = format!("background:{state}");
+            assert_eq!(
+                split_state_suffix(&local),
+                ("background", Some(state)),
+                "expected `{state}` to be recognised as a state suffix",
+            );
+        }
+    }
+
+    #[test]
+    fn split_state_suffix_still_rejects_unsupported_states() {
+        // Sanity: the expansion is bounded — well-meaning misspellings
+        // (`hover` without the `ed`, CSS `:active`, etc.) still fall
+        // back to the key path so authors get unstyled output they can
+        // diagnose, not silent state binding.
+        for unsupported in ["hover", "active", "valid", "checked-radio"] {
+            let local = format!("background:{unsupported}");
+            let (key, state) = split_state_suffix(&local);
+            assert_eq!(state, None, "unexpectedly accepted `{unsupported}`");
+            assert_eq!(key, local);
+        }
     }
 }

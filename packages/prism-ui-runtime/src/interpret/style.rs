@@ -21,7 +21,7 @@ use prism_core::language::prism_ui::{
 };
 
 use crate::command::{Color, CornerRadius};
-use crate::layout::{ContainerProps, Direction, HoverOverrides, Padding, Sizing};
+use crate::layout::{ContainerProps, Direction, Padding, Sizing, StateOverrides};
 
 use super::elements::resolved_attribute_string;
 use super::expression::{
@@ -470,31 +470,23 @@ pub fn apply_style_override(props: &mut ContainerProps, local: &str, value: &str
                 props.opacity = Some(v.clamp(0.0, 1.0));
             }
         }
-        ("background", Some("hovered")) => {
-            if let Some(c) = parse_color(value) {
-                props
-                    .hover
-                    .get_or_insert_with(HoverOverrides::default)
-                    .background = Some(c);
-            }
-        }
-        ("radius", Some("hovered")) => {
-            if let Some(v) = parse_f32(value) {
-                props
-                    .hover
-                    .get_or_insert_with(HoverOverrides::default)
-                    .radius = Some(CornerRadius {
-                    tl: v,
-                    tr: v,
-                    br: v,
-                    bl: v,
-                });
-            }
-        }
         (key, Some(state)) => {
-            // Known state suffix (`:selected` / `:focused`), unknown
-            // key — round-trip as a semantic attr so author intent
-            // survives (Wave 9.2 pattern).
+            // §7.7 Phase 1 — dispatch any key on a first-class state
+            // (`hovered` / `pressed` / `focused` / `disabled`) into the
+            // matching `StateOverrides` bucket. The remaining states
+            // (`focus-within` / `selected` / `empty` / `checked` /
+            // `entry` / `exit`) don't have first-class runtime buckets
+            // yet — they fall through to the `data-style-<k>-<s>`
+            // round-trip so author intent survives until their
+            // runtime substrate lands.
+            if let Some(slot) = state_override_slot(props, state) {
+                if apply_to_state_overrides(slot, key, value) {
+                    return;
+                }
+            }
+            // Unrecognised key on a first-class state OR a state
+            // without a first-class slot — round-trip as a semantic
+            // attr (Wave 9.2 pattern).
             props
                 .semantic
                 .attrs
@@ -507,6 +499,86 @@ pub fn apply_style_override(props: &mut ContainerProps, local: &str, value: &str
             // arbitrary `data-*` payloads have the `data:` namespace.
         }
     }
+}
+
+/// §7.7 Phase 1 — return the `StateOverrides` slot for the given
+/// state, lazily allocating one on `props` if needed. Returns `None`
+/// for states that don't have a first-class runtime bucket yet
+/// (`focus-within` / `selected` / `empty` / `checked` / `entry` /
+/// `exit`); callers fall back to the data-attr round-trip in that
+/// case. The four first-class states are wired this way so adding a
+/// fifth — when its runtime substrate lands — is one match arm here.
+fn state_override_slot<'a>(
+    props: &'a mut ContainerProps,
+    state: &str,
+) -> Option<&'a mut StateOverrides> {
+    match state {
+        "hovered" => Some(props.hover.get_or_insert_with(StateOverrides::default)),
+        "pressed" => Some(props.pressed.get_or_insert_with(StateOverrides::default)),
+        "focused" => Some(props.focused.get_or_insert_with(StateOverrides::default)),
+        "disabled" => Some(props.disabled.get_or_insert_with(StateOverrides::default)),
+        _ => None,
+    }
+}
+
+/// §7.7 Phase 1 — apply a single `key=value` pair onto a state's
+/// `StateOverrides` slot. Returns `true` when the key landed, `false`
+/// when the key isn't understood at the override layer (the caller
+/// falls back to the data-attr round-trip in that case so unknown
+/// keys still survive through SSR / inspector / hot-reload).
+///
+/// The property whitelist matches the new `StateOverrides` fields —
+/// `background`, `radius`, `color`, `padding`, `opacity`, `tint`. The
+/// design table also lists `gap` / `width` / `height` / `transform`
+/// as state-swappable; those force layout-topology rework and stay
+/// data-attr round-trips for now (each will land as it grows its own
+/// override field).
+fn apply_to_state_overrides(slot: &mut StateOverrides, key: &str, value: &str) -> bool {
+    match key {
+        "background" => {
+            if let Some(c) = parse_color(value) {
+                slot.background = Some(c);
+                return true;
+            }
+        }
+        "radius" => {
+            if let Some(v) = parse_f32(value) {
+                slot.radius = Some(CornerRadius {
+                    tl: v,
+                    tr: v,
+                    br: v,
+                    bl: v,
+                });
+                return true;
+            }
+        }
+        "color" => {
+            if let Some(c) = parse_color(value) {
+                slot.color = Some(c);
+                return true;
+            }
+        }
+        "padding" => {
+            if let Some(p) = parse_padding_shorthand(value) {
+                slot.padding = Some(p);
+                return true;
+            }
+        }
+        "opacity" => {
+            if let Some(v) = parse_f32(value) {
+                slot.opacity = Some(v.clamp(0.0, 1.0));
+                return true;
+            }
+        }
+        "tint" => {
+            if let Some(c) = parse_color(value) {
+                slot.tint = Some(c);
+                return true;
+            }
+        }
+        _ => {}
+    }
+    false
 }
 
 pub(super) fn parse_direction(s: &str) -> Direction {

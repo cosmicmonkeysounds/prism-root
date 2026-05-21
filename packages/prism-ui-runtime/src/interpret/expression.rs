@@ -522,10 +522,13 @@ fn try_call_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value> {
     // works without a `<script>`-defined helper; args resolve through
     // the same owned-value pipeline (so `tokens.colors.accent` is a
     // valid first arg).
-    if matches!(name, "darken" | "lighten" | "alpha" | "mix") {
+    if matches!(
+        name,
+        "darken" | "lighten" | "alpha" | "mix" | "with" | "saturate" | "desaturate"
+    ) {
         let close = matching_close_paren(body, open)?;
-        let args = parse_call_args(&body[open + 1..close], scope)?;
-        let v = eval_color_call(name, &args)?;
+        let (positional, kwargs) = parse_call_args(&body[open + 1..close], scope)?;
+        let v = eval_color_call(name, &positional, &kwargs)?;
         let tail = body[close + 1..].trim_start();
         return if tail.is_empty() {
             Some(v)
@@ -544,7 +547,7 @@ fn try_call_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value> {
         if let Some(frame) = scope.luau_scope() {
             if frame.has_function(name) {
                 let close = matching_close_paren(body, open)?;
-                let args = parse_call_args(&body[open + 1..close], scope)?;
+                let (args, _kwargs) = parse_call_args(&body[open + 1..close], scope)?;
                 let result = match frame.call(name, &args)? {
                     Ok(v) => v,
                     Err(_) => return None,
@@ -585,7 +588,7 @@ fn try_call_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value> {
             }
         }
     }
-    let args = parse_call_args(inside, scope)?;
+    let (args, _kwargs) = parse_call_args(inside, scope)?;
     let call_value = eval_array_call(name, &args)?;
     let tail = body[close + 1..].trim_start();
     if tail.is_empty() {
@@ -678,20 +681,50 @@ fn walk_dotted_path(root: &serde_json::Value, path: &str) -> Option<serde_json::
     Some(cursor)
 }
 
+/// Split-call output: positional values in `.0`, raw kwarg pairs in
+/// `.1`. Kwarg RHS stays as `String` so callers that care about
+/// `+0.05` vs `0.05` (delta vs absolute) can inspect the leading
+/// sign before number coercion.
+type ParsedCallArgs = (Vec<serde_json::Value>, Vec<(String, String)>);
+
 /// Split a call argument list on top-level commas (parens-depth
 /// aware) and resolve each argument through the owned-value lookup
 /// surface. Returns `None` when any unbalanced parens / quotes
 /// surface, so a malformed call falls through to the next
 /// resolution layer rather than silently producing wrong data.
-fn parse_call_args(s: &str, scope: &LowerScope) -> Option<Vec<serde_json::Value>> {
+///
+/// Keyword arguments (`l=+0.05`, `c=-0.02`) are sliced off here —
+/// they go into the second tuple element. Today only the colour
+/// `with` call consumes kwargs; everything else passes positional
+/// args and ignores the kwargs vec (which stays empty for pure
+/// positional calls).
+fn parse_call_args(s: &str, scope: &LowerScope) -> Option<ParsedCallArgs> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
-        return Some(Vec::new());
+        return Some((Vec::new(), Vec::new()));
     }
-    let mut args = Vec::new();
+    let mut positional = Vec::new();
+    let mut kwargs = Vec::new();
     let mut current = String::new();
     let mut depth = 0i32;
     let mut in_str: Option<char> = None;
+    let flush = |slot: &mut String,
+                 positional: &mut Vec<serde_json::Value>,
+                 kwargs: &mut Vec<(String, String)>|
+     -> Option<()> {
+        let raw = slot.trim();
+        if raw.is_empty() {
+            slot.clear();
+            return Some(());
+        }
+        if let Some((key, value)) = split_kwarg(raw) {
+            kwargs.push((key.to_string(), value.to_string()));
+        } else {
+            positional.push(eval_call_arg(raw, scope)?);
+        }
+        slot.clear();
+        Some(())
+    };
     for ch in trimmed.chars() {
         match (in_str, ch) {
             (Some(q), c) if c == q => {
@@ -715,8 +748,7 @@ fn parse_call_args(s: &str, scope: &LowerScope) -> Option<Vec<serde_json::Value>
                 current.push(ch);
             }
             (None, ',') if depth == 0 => {
-                args.push(eval_call_arg(current.trim(), scope)?);
-                current.clear();
+                flush(&mut current, &mut positional, &mut kwargs)?;
             }
             (None, c) => current.push(c),
         }
@@ -724,10 +756,29 @@ fn parse_call_args(s: &str, scope: &LowerScope) -> Option<Vec<serde_json::Value>
     if depth != 0 || in_str.is_some() {
         return None;
     }
-    if !current.trim().is_empty() {
-        args.push(eval_call_arg(current.trim(), scope)?);
+    flush(&mut current, &mut positional, &mut kwargs)?;
+    Some((positional, kwargs))
+}
+
+/// `key=value` slicer for [`parse_call_args`]. Returns `Some((key, value))`
+/// when `raw` starts with a bare ident followed by `=` and a non-empty
+/// RHS; otherwise `None` so the caller treats the slot as positional.
+/// Quotes / nested parens inside `value` survive verbatim — kwarg
+/// callers that need typed values run their own coercion on the RHS.
+fn split_kwarg(raw: &str) -> Option<(&str, &str)> {
+    let eq = raw.find('=')?;
+    let key = raw[..eq].trim();
+    let val = raw[eq + 1..].trim();
+    if key.is_empty()
+        || val.is_empty()
+        || !key
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        || !key.chars().next().unwrap_or(' ').is_alphabetic()
+    {
+        return None;
     }
-    Some(args)
+    Some((key, val))
 }
 
 /// Resolve a single call argument to a typed JSON value. Tries, in
@@ -790,10 +841,29 @@ fn rgba_hex(r: u8, g: u8, b: u8, a: u8) -> String {
     format!("#{r:02x}{g:02x}{b:02x}{a:02x}")
 }
 
-/// **Wave F (§7.9)** — colour math for computed PRSS / expression
-/// slots. `amount`/`t` are clamped to `0.0..=1.0`; a non-colour
-/// first arg returns `None`.
-fn eval_color_call(name: &str, args: &[serde_json::Value]) -> Option<serde_json::Value> {
+/// **§7.12 (Phase 1)** — colour math for computed PRSS / expression
+/// slots, OKLCH-backed. `darken` / `lighten` / `mix` lerp in OKLab so
+/// `darken('#3b82f6', 0.3)` produces a *vivid* darker blue, not a
+/// desaturated grey-blue. `alpha` sets the alpha channel directly;
+/// the chroma path is bypassed for it (alpha is RGB-orthogonal).
+///
+/// `with(c, l=, c=, h=, a=)` adjusts any OKLCh channel plus alpha;
+/// leading `+`/`-` on a kwarg RHS marks a *delta* (added to the
+/// current channel), bare numbers are *absolute* (override the
+/// channel). `saturate(c, t)` / `desaturate(c, t)` are shorthands
+/// for `with(c, c=±t * current-chroma)` — they scale chroma
+/// multiplicatively, not additively, so a value-neutral grey stays
+/// grey under `saturate`.
+///
+/// `amount`/`t` are clamped to `0.0..=1.0`; a non-colour first arg
+/// (or a number that doesn't parse) returns `None` so the caller
+/// fails the whole call cleanly.
+fn eval_color_call(
+    name: &str,
+    args: &[serde_json::Value],
+    kwargs: &[(String, String)],
+) -> Option<serde_json::Value> {
+    use super::color::{self, ChannelAdjust, ChannelAdjustments};
     let as_f = |v: &serde_json::Value| match v {
         serde_json::Value::Number(n) => n.as_f64(),
         serde_json::Value::String(s) => s.parse::<f64>().ok(),
@@ -803,19 +873,18 @@ fn eval_color_call(name: &str, args: &[serde_json::Value]) -> Option<serde_json:
         serde_json::Value::String(s) => parse_hex_rgba(s),
         _ => None,
     };
-    let lerp = |x: u8, y: u8, t: f64| (x as f64 + (y as f64 - x as f64) * t).round() as u8;
     match name {
-        "darken" | "lighten" => {
+        "darken" => {
             let (r, g, b, a) = as_hex(args.first()?)?;
-            let amt = as_f(args.get(1)?)?.clamp(0.0, 1.0);
-            let f = |c: u8| {
-                if name == "darken" {
-                    (c as f64 * (1.0 - amt)).round() as u8
-                } else {
-                    (c as f64 + (255.0 - c as f64) * amt).round() as u8
-                }
-            };
-            Some(serde_json::Value::String(rgba_hex(f(r), f(g), f(b), a)))
+            let amt = as_f(args.get(1)?)?;
+            let (rr, gg, bb) = color::darken(r, g, b, amt);
+            Some(serde_json::Value::String(rgba_hex(rr, gg, bb, a)))
+        }
+        "lighten" => {
+            let (r, g, b, a) = as_hex(args.first()?)?;
+            let amt = as_f(args.get(1)?)?;
+            let (rr, gg, bb) = color::lighten(r, g, b, amt);
+            Some(serde_json::Value::String(rgba_hex(rr, gg, bb, a)))
         }
         "alpha" => {
             let (r, g, b, _) = as_hex(args.first()?)?;
@@ -826,12 +895,57 @@ fn eval_color_call(name: &str, args: &[serde_json::Value]) -> Option<serde_json:
             let (r1, g1, b1, a1) = as_hex(args.first()?)?;
             let (r2, g2, b2, a2) = as_hex(args.get(1)?)?;
             let t = as_f(args.get(2)?).unwrap_or(0.5).clamp(0.0, 1.0);
-            Some(serde_json::Value::String(rgba_hex(
-                lerp(r1, r2, t),
-                lerp(g1, g2, t),
-                lerp(b1, b2, t),
-                lerp(a1, a2, t),
-            )))
+            let (r, g, b) = color::mix(r1, g1, b1, r2, g2, b2, t);
+            // Alpha lerps linearly — orthogonal to OKLCh adjustment.
+            let a = (a1 as f64 + (a2 as f64 - a1 as f64) * t).round() as u8;
+            Some(serde_json::Value::String(rgba_hex(r, g, b, a)))
+        }
+        "with" => {
+            let (r, g, b, a) = as_hex(args.first()?)?;
+            // Kwargs: l / c / h / a. Leading `+` or `-` on the RHS
+            // marks a delta; bare number is absolute.
+            let parse_adj = |raw: &str| -> Option<ChannelAdjust> {
+                let r = raw.trim();
+                if let Some(rest) = r.strip_prefix('+') {
+                    Some(ChannelAdjust::Delta(rest.trim().parse::<f64>().ok()?))
+                } else if r.starts_with('-') {
+                    // Leading minus is part of the number; parse as
+                    // delta but keep the sign.
+                    Some(ChannelAdjust::Delta(r.parse::<f64>().ok()?))
+                } else {
+                    Some(ChannelAdjust::Set(r.parse::<f64>().ok()?))
+                }
+            };
+            let mut adj = ChannelAdjustments::default();
+            for (k, v) in kwargs {
+                let parsed = parse_adj(v)?;
+                match k.as_str() {
+                    "l" => adj.l = Some(parsed),
+                    "c" => adj.c = Some(parsed),
+                    "h" => adj.h = Some(parsed),
+                    "a" => adj.a = Some(parsed),
+                    _ => return None,
+                }
+            }
+            let (rr, gg, bb, aa) = color::with_channels(r, g, b, a, adj);
+            Some(serde_json::Value::String(rgba_hex(rr, gg, bb, aa)))
+        }
+        "saturate" | "desaturate" => {
+            // Scale chroma by `1 ± t` — multiplicative so a grey
+            // input stays grey (current chroma is 0; scaling 0 by
+            // anything is still 0). The `with` axis is absolute, so
+            // we compute the target chroma here and feed it as
+            // `c = Set(target)`.
+            let (r, g, b, a) = as_hex(args.first()?)?;
+            let amt = as_f(args.get(1)?)?.clamp(0.0, 1.0);
+            let (cl, cc, ch) = color::srgb_to_oklch(r, g, b);
+            let scale = if name == "saturate" {
+                1.0 + amt
+            } else {
+                1.0 - amt
+            };
+            let (rr, gg, bb) = color::oklch_to_srgb(cl, (cc * scale).max(0.0), ch);
+            Some(serde_json::Value::String(rgba_hex(rr, gg, bb, a)))
         }
         _ => None,
     }
