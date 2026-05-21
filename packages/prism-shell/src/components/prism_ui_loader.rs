@@ -180,10 +180,11 @@ impl Block for PrismUiBlock {
 
         // Wave 11.2 — pre-lowered children the caller (resolver path)
         // handed via `LowerCtx::host_children()` flow into the
-        // DSL-side `<host-children/>` element. Composition wrappers
+        // DSL-side unnamed `<slot/>` element. Composition wrappers
         // (toast-stack, launchpad, app-window) declare a single
-        // `<host-children/>` in their body where the caller's children
-        // should appear.
+        // unnamed `<slot/>` in their body where the caller's children
+        // should appear (Phase 5 collapsed `<host-children/>` into
+        // the unnamed slot).
         if let Some(host) = ctx.host_children() {
             scope = scope.with_host_children_ui(host.to_vec());
         }
@@ -1663,7 +1664,7 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     // the four Rust survivors §11.3 documented). Tabs render via
     // `shell.dock-tab-bar` (guarded by `if="{tabs}"`); content
     // dispatches dynamically through `<dispatch component="{content-tag}"/>`
-    // with `<host-children>` taking precedence when the caller
+    // with the unnamed `<slot/>` taking precedence when the caller
     // authored an explicit body.
     PrismUiSpec::new(
         "shell.dock-panel",

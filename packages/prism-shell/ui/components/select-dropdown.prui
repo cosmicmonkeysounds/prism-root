@@ -37,8 +37,8 @@
     style:radius="6"
     role="listbox"
     aria-label="Select option"
-    animate:opacity="0 160ms"
-    animate:out-opacity="0 120ms"
+    animator:in-opacity="0 160ms"
+    animator:out-opacity="0 120ms"
     data:role="select-dropdown"
     data:visible="true">
   <container

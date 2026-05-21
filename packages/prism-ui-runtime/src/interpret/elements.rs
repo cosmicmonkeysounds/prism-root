@@ -7,7 +7,7 @@
 //! `input_from`), the giant `apply_container_attributes` /
 //! `apply_text_attributes` switches, the attribute-value resolvers
 //! (`bare_attr_value`, `evaluate_bare_attr_typed`, `attribute_string`,
-//! `resolved_attribute_string`), and the `transition:easing` encoder.
+//! `resolved_attribute_string`), and the `animator:easing` encoder.
 
 #[cfg(feature = "luau")]
 use std::sync::Arc;
@@ -23,9 +23,7 @@ use crate::layout::{ContainerProps, Node, Semantic, Sizing, TextProps};
 
 #[cfg(feature = "luau")]
 use super::control_flow::expand_language;
-use super::control_flow::{
-    expand_control_flow, expand_match, expand_suspense, resolve_for_iteration,
-};
+use super::control_flow::{expand_control_flow, expand_match, expand_suspense};
 use super::document::element_with_retagged;
 #[cfg(feature = "luau")]
 use super::expression::looks_like_closure;
@@ -86,7 +84,8 @@ fn lower_node(node: &AstNode, scope: &LowerScope) -> Vec<Node> {
             // (and `<fragment>{children}</fragment>`) splices the
             // caller's already-lowered child nodes verbatim. The
             // macro path binds them via `with_host_children_ui`;
-            // `<host-children/>` is the equivalent explicit form.
+            // the unnamed `<slot/>` is the equivalent explicit form
+            // (Phase 5 collapsed `<host-children/>` into it).
             if expr.body.trim() == "children" {
                 if let Some(injected) = scope.host_children_ui() {
                     return injected.to_vec();
@@ -267,8 +266,8 @@ fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
     // **`<dispatch tag="{expr}"/>` — runtime-tag dispatch.** When the
     // tag attribute resolves to a closed-set runtime primitive
     // (`container`, `text`, `heading`, `image`, `spacer`, `input`,
-    // `fragment`, `slot`, `host-children`), rebuild a synthetic
-    // element with the resolved tag and lower it through the same
+    // `fragment`, `slot`), rebuild a synthetic element with the
+    // resolved tag and lower it through the same
     // primitive arms below. When it resolves to anything else, the
     // synthetic element falls through to the resolver — which now
     // sees the resolved tag instead of `dispatch`, so plugin / shell
@@ -388,16 +387,25 @@ fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
         "input" => vec![input_from(el, scope)],
         "image" => vec![image_from(el, scope)],
         // `<slot/>` and `<slot name="x"/>` resolve to whatever the
-        // caller injected. Lookup order (Wave 13.1):
+        // caller injected. After Phase 5 collapsed the
+        // `<host-children/>` element into this single surface, the
+        // unnamed `<slot/>` is the canonical default-slot spelling —
+        // the DSL loader / macro caller seeds pre-lowered children
+        // via [`LowerScope::with_host_children_ui`] and the unnamed
+        // slot emits them verbatim.
+        //
+        // Lookup order:
         //   1. AST-level slot bindings (`LowerScope::slots`) — set
         //      when a parent component's body interpolated AST-level
         //      slot content (used by template expansion).
         //   2. Pre-lowered named-slot map (`host_children_by_slot`) —
         //      set when the resolver partitioned a dispatched
-        //      element's children by `slot="X"` attribute.
-        //   3. The element's own children (fallback content).
-        // Default slot (no `name=`) maps to the empty-string slot
-        // bucket when reading from the pre-lowered map.
+        //      element's children by `slot="X"` attribute. The
+        //      unnamed slot reads from the empty-string bucket.
+        //   3. **Unnamed slot only** — pre-lowered children from the
+        //      DSL loader / macro caller (`host_children_ui`). This
+        //      is the Phase-5 default-slot seam.
+        //   4. The element's own children (fallback content).
         "slot" => {
             let name = bare_attr_value(el, "name", scope);
             if let Some(injected) = scope.slots.resolve(name.as_deref()) {
@@ -407,21 +415,13 @@ fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
             if let Some(injected) = scope.host_children_for_slot(key) {
                 return injected.to_vec();
             }
+            if name.is_none() {
+                if let Some(injected) = scope.host_children_ui() {
+                    return injected.to_vec();
+                }
+            }
             lower_children(&el.children, scope)
         }
-        // Wave 11.2 — `<host-children/>` injection point. A DSL-
-        // authored shell component (toast-stack, launchpad, app-window)
-        // composes its caller's pre-lowered children at this seam.
-        // The shell's `.prui` loader installs the children via
-        // [`LowerScope::with_host_children_ui`] before invoking
-        // `lower_document_with_scope`; here the runtime emits the
-        // stored `Vec<Node>` verbatim. Falls back to the element's own
-        // AST children (acting as a fallback slot) when nothing is
-        // bound — same semantics `<slot/>` carries.
-        //
-        // Wave 13.1 — opt-in `name="X"` attribute pulls from the
-        // pre-lowered named-slot map instead, so a DSL author can
-        // pick either spelling.
         // **Fragment** — `<fragment>…</fragment>` (also `<></>`-shape
         // counterpart). React `<>…</>` / Vue `<template>` /
         // Svelte `<svelte:fragment>` equivalent. Emits children
@@ -430,46 +430,6 @@ fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
         // imposing a flex parent. Drops `if=` / `for=` correctly
         // because those are handled at the sibling expansion layer.
         "fragment" => lower_children(&el.children, scope),
-        // **A4** — declarative facet repeater. `<facet name="post"
-        // from="state.posts">…</facet>` lowers its children once per
-        // item in the resolved `from` source, binding each item to
-        // the per-iteration scope under `name` (default `"item"`).
-        // Sugars `<container for="post in state.posts">…</container>`
-        // into a dedicated tag that reads at the call site as data
-        // iteration rather than control-flow plumbing.
-        //
-        // Resolves through the same `resolve_for_iteration` helper
-        // `for=` uses, so the `from` source accepts dotted-path
-        // bindings (`state.posts`), virtual segments, ranges
-        // (`0..5`), and the array/object iteration shapes — same
-        // vocabulary, one resolver. Closes A4 of
-        // `docs/dev/ui-migration-followups.md`.
-        "facet" => {
-            let name = bare_attr_value(el, "name", scope).unwrap_or_else(|| "item".to_string());
-            let Some(from) = bare_attr_value(el, "from", scope) else {
-                // No `from` → render nothing rather than panic. Same
-                // shape as a `for=` with an unresolved source.
-                return Vec::new();
-            };
-            let iter = resolve_for_iteration(&from, None, false, scope);
-            let mut out = Vec::new();
-            for (_key, item) in iter {
-                let child_scope = scope.clone().with_binding(name.clone(), item);
-                out.extend(lower_children(&el.children, &child_scope));
-            }
-            out
-        }
-        "host-children" => {
-            if let Some(name) = bare_attr_value(el, "name", scope) {
-                if let Some(injected) = scope.host_children_for_slot(&name) {
-                    return injected.to_vec();
-                }
-            }
-            match scope.host_children_ui() {
-                Some(injected) => injected.to_vec(),
-                None => lower_children(&el.children, scope),
-            }
-        }
         // Unknown tag — first ask the host's tag resolver (if any).
         // Hosts plug a `TagResolver` (e.g. `prism-builder`'s
         // `RegistryTagResolver`) through `LowerScope::with_resolver`
@@ -670,7 +630,7 @@ fn image_from(el: &Element, scope: &LowerScope) -> Node {
                     semantic.attrs.push((format!("aria-{}", local), value));
                 }
             }
-            AttributeNamespace::Data | AttributeNamespace::Route => {
+            AttributeNamespace::Data => {
                 if let Some(value) = raw {
                     semantic.attrs.push((format!("data-{}", local), value));
                 }
@@ -881,19 +841,14 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
                     semantic.attrs.push((format!("data-bind-{}", local), v));
                 }
             }
-            AttributeNamespace::Facet => {
-                if let Some(v) = raw {
-                    semantic.attrs.push((format!("data-fct-{}", local), v));
-                }
-            }
             AttributeNamespace::Signal => {
                 if let Some(v) = raw {
                     semantic.attrs.push((format!("data-sig-{}", local), v));
                 }
             }
-            // `aria:*` / `data:*` / `route:*` pass through to the
-            // semantic carrier so inputs participate in the same
-            // hit-test / SSR routing the containers do.
+            // `aria:*` / `data:*` pass through to the semantic carrier
+            // so inputs participate in the same hit-test / SSR routing
+            // the containers do.
             AttributeNamespace::Aria => {
                 if let Some(v) = raw.filter(|s| !s.is_empty()) {
                     semantic.attrs.push((format!("aria-{}", local), v));
@@ -901,11 +856,6 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
             }
             AttributeNamespace::Data => {
                 if let Some(v) = raw.filter(|s| !s.is_empty()) {
-                    semantic.attrs.push((format!("data-{}", local), v));
-                }
-            }
-            AttributeNamespace::Route => {
-                if let Some(v) = raw {
                     semantic.attrs.push((format!("data-{}", local), v));
                 }
             }
@@ -1104,9 +1054,9 @@ fn apply_container_attributes(
                 // role="navigation" aria-label="Pages"/>` against the
                 // same struct. The dedicated fields land on
                 // `props.semantic.{tag, role, aria_label}` (separate
-                // from the generic `attrs` vec the `data:` / `aria:` /
-                // `route:` namespaces append to) so the HTML emitter
-                // picks them up at the same seam it always did.
+                // from the generic `attrs` vec the `data:` / `aria:`
+                // namespaces append to) so the HTML emitter picks
+                // them up at the same seam it always did.
                 "tag" => {
                     if let Some(v) = raw {
                         props.semantic.tag = Some(v);
@@ -1189,23 +1139,6 @@ fn apply_container_attributes(
                         .push((format!("data-on-{}", local_key), action));
                 }
             }
-            // Wave 9.1: `route:<key>="<value>"` lowers to a
-            // `data-<key>` semantic attribute. Lifts the hit-test
-            // routing convention — `data-role`, `data-target-id`,
-            // `data-direction`, etc. — into a typed namespace so
-            // `.prui` authors write
-            // `<container route:role="resize-handle" route:direction="br"/>`
-            // instead of the bare `data-` ladder. The runtime
-            // contract is the same — `data-*` attrs flow through
-            // the hit-test cache verbatim.
-            AttributeNamespace::Route => {
-                if let Some(value) = raw {
-                    props
-                        .semantic
-                        .attrs
-                        .push((format!("data-{}", local), value));
-                }
-            }
             // `aria:<role>="<value>"` and `data:<key>="<value>"` are
             // pass-through; preserve them on the semantic emission
             // so the HTML / SSR backends inherit them and the
@@ -1238,68 +1171,9 @@ fn apply_container_attributes(
                         .push((format!("data-{}", local), value));
                 }
             }
-            // Wave 9.4: `transition:<prop>="<duration>"` records a
-            // declarative animation hint as `data-transition-<prop>`
-            // so the host can read it at install time. The runtime
-            // `Effect`-driven animator that consumes the hint is
-            // the follow-up — today the data round-trips through
-            // the semantic attrs without behaviour change.
-            AttributeNamespace::Transition => {
-                if local == "easing" {
-                    // **§4.1** — `transition:easing` selects the timing
-                    // curve. A Luau closure (`{\fn(t) … end}`) is
-                    // *sampled here* (the per-document Lua frame is
-                    // live during lowering) into a comma-joined LUT so
-                    // the animator never calls Lua per frame; a named
-                    // keyword (`ease-in`, `linear`, …) round-trips
-                    // verbatim. No frame / not a closure → the keyword
-                    // path; unresolvable → attr omitted (animator
-                    // defaults to linear).
-                    if let Some(encoded) = encode_easing_attr(&attr.value, scope) {
-                        props
-                            .semantic
-                            .attrs
-                            .push(("data-transition-easing".to_string(), encoded));
-                    }
-                } else if let Some(value) = raw {
-                    props
-                        .semantic
-                        .attrs
-                        .push((format!("data-transition-{}", local), value));
-                }
-            }
-            // Wave 14.6 — `animate:<prop>="<from> <duration>"`
-            // records the entry-transition hint as
-            // `data-animate-in-<prop>`. The runtime animator
-            // (`prism-ui-runtime::animator`) reads this attr on the
-            // first observation of the node and starts a transition
-            // from the parsed `from` to the prop's declared value.
-            // No behaviour change on re-render — the entry runs once
-            // per mount lifecycle.
-            //
-            // Wave 14.8 — explicit `animate:in-<prop>` and
-            // `animate:out-<prop>` differentiate entry vs unmount
-            // transitions; the bare `animate:<prop>` form remains a
-            // shorthand for `animate:in-<prop>` so existing call
-            // sites continue to work. `out` lowers to
-            // `data-animate-out-<prop>` for the animator's pending
-            // node-retention path to consume.
-            AttributeNamespace::Animate => {
-                if let Some(value) = raw {
-                    let attr = if let Some(prop) = local.strip_prefix("in-") {
-                        format!("data-animate-in-{}", prop)
-                    } else if let Some(prop) = local.strip_prefix("out-") {
-                        format!("data-animate-out-{}", prop)
-                    } else {
-                        format!("data-animate-in-{}", local)
-                    };
-                    props.semantic.attrs.push((attr, value));
-                }
-            }
             // **Wave G (§7.11)** — `probe:<name>="event-key"` taps a
             // value/interaction into the document probe stream.
-            // Lowers to `data-probe-<name>` (same round-trip
-            // discipline as `route:` / `use:`); `prism.probes:on`
+            // Lowers to `data-probe-<name>`; `prism.probes:on`
             // subscribes. Live event firing off the data attr is a
             // host event-router follow-up (open question 3 family).
             AttributeNamespace::Probe => {
@@ -1310,51 +1184,46 @@ fn apply_container_attributes(
                         .push((format!("data-probe-{}", local), value));
                 }
             }
-            // **Wave G (§7.12)** — `at:<time>="{…}"` keyframe stop.
-            // Lowers to `data-at-<time>` so the animator can read the
-            // timeline at observe time; mirrors `transition:` /
-            // `animate:` (the Effect-driven animator that consumes
-            // these is the shared follow-up).
-            AttributeNamespace::At => {
-                if let Some(value) = raw {
-                    props
-                        .semantic
-                        .attrs
-                        .push((format!("data-at-{}", local), value));
-                }
-            }
-            // **§7.15 — unified `Animator` trait.** Lower
-            // `animator:<method>=<value>` to `data-animator-<method>`.
-            // The runtime [`crate::animator::Animator`] reads
-            // `data-animator-keyframes` at observe time and installs
-            // a multi-stop timeline (see `parse_keyframes_attr`).
-            // Other methods round-trip without runtime wiring yet —
-            // the namespace exists ahead of trait-registry full
-            // wiring (Phase 9), so adding a new trait method is a
-            // one-line `parse_*` follow-up here.
+            // **§7.15 — unified `Animator` trait.** The single home
+            // for every animation surface; subsumed `transition:` /
+            // `animate:` / `at:` when Phase 4 retired them.
+            //
+            // Method routing — the local part picks the lowered attr:
+            // - `animator:in-<prop>` → `data-animate-in-<prop>` (entry
+            //   transition; runtime animator reads on first observe).
+            // - `animator:out-<prop>` → `data-animate-out-<prop>` (exit
+            //   transition; runtime animator reads on unmount).
+            // - `animator:transition-<prop>` → `data-transition-<prop>`
+            //   (mid-life value-change delta; animator interpolates
+            //   between declared values).
+            // - `animator:easing` → `data-transition-easing` (curve
+            //   selector; a `\fn(t)…end` Luau closure is sampled at
+            //   lowering time into a comma-joined LUT so the animator
+            //   never calls Lua per frame; a named keyword
+            //   (`ease-in`, …) round-trips verbatim).
+            // - any other `animator:<method>` → `data-animator-<method>`
+            //   (canonical home is `keyframes`; the registry stays
+            //   open so adding a new method is a one-line parser
+            //   follow-up).
             AttributeNamespace::Animator => {
-                if let Some(value) = raw {
-                    props
-                        .semantic
-                        .attrs
-                        .push((format!("data-animator-{}", local), value));
-                }
-            }
-            // Wave 13.3: `use:<id>[="<value>"]` directive sugar for
-            // attaching a registered `ModifierBehaviour`. Today the
-            // namespace lowers to `data-use-<id>="<value>"` so author
-            // intent round-trips through the SSR / hit-test caches;
-            // full runtime modifier-fold integration follows when the
-            // resolver-side `ModifierRegistry` thread-through lands.
-            // Same data-round-trips-now pattern Wave 9.4 (transitions)
-            // and Wave 9.2 (:selected / :focused state styles) use.
-            AttributeNamespace::Use => {
-                let value = raw.unwrap_or_else(|| "true".into());
-                if !value.is_empty() {
-                    props
-                        .semantic
-                        .attrs
-                        .push((format!("data-use-{}", local), value));
+                if local == "easing" {
+                    if let Some(encoded) = encode_easing_attr(&attr.value, scope) {
+                        props
+                            .semantic
+                            .attrs
+                            .push(("data-transition-easing".to_string(), encoded));
+                    }
+                } else if let Some(value) = raw {
+                    let attr_name = if let Some(prop) = local.strip_prefix("in-") {
+                        format!("data-animate-in-{}", prop)
+                    } else if let Some(prop) = local.strip_prefix("out-") {
+                        format!("data-animate-out-{}", prop)
+                    } else if let Some(prop) = local.strip_prefix("transition-") {
+                        format!("data-transition-{}", prop)
+                    } else {
+                        format!("data-animator-{}", local)
+                    };
+                    props.semantic.attrs.push((attr_name, value));
                 }
             }
             // `bind:<key>="<source>"` is sugar for
@@ -1373,22 +1242,12 @@ fn apply_container_attributes(
                         .push((format!("data-bind-{}", local), value));
                 }
             }
-            // `fct:<key>="<source>"` (facet) and `sig:<key>="<source>"`
-            // (signal declaration) follow the same carry-through
-            // pattern. The host walks the lowered tree post-interpret
-            // and acts on `data-fct-*` / `data-sig-*` semantic attrs
-            // — facets expand against `BuilderDocument::facets`,
-            // signal declarations register against the shell's signal
+            // `sig:<key>="<source>"` follows the same carry-through
+            // pattern as `bind:`. The host walks the lowered tree
+            // post-interpret and acts on `data-sig-*` semantic attrs
+            // — signal declarations register against the shell's signal
             // scope. SSR backends pass them through to the rendered
             // HTML where consumers (e.g. relay JS) can pick them up.
-            AttributeNamespace::Facet => {
-                if let Some(value) = raw {
-                    props
-                        .semantic
-                        .attrs
-                        .push((format!("data-fct-{}", local), value));
-                }
-            }
             AttributeNamespace::Signal => {
                 if let Some(value) = raw {
                     props
@@ -1659,8 +1518,8 @@ pub(super) fn resolved_attribute_string(
 #[cfg_attr(not(feature = "luau"), allow(dead_code))]
 const EASING_LUT_SAMPLES: usize = 24;
 
-/// **§4.1 (`prism-cross-cutting-systems.md`)** — encode a
-/// `transition:easing` value into the `data-transition-easing` attr
+/// **§4.1 (`prism-cross-cutting-systems.md`)** — encode an
+/// `animator:easing` value into the `data-transition-easing` attr
 /// the [`crate::animator::Animator`] reads.
 ///
 /// - A **named keyword** (`"ease-in"`, `linear`, …), whether written
@@ -1680,8 +1539,8 @@ fn encode_easing_attr(value: &AttributeValue, scope: &LowerScope) -> Option<Stri
     let body = match value {
         AttributeValue::Expression(e) => e.body.trim().to_string(),
         // A keyword string / binding / template resolves through the
-        // normal attribute path (`transition:easing="ease-in"` or
-        // `transition:easing={someKeyword}`).
+        // normal attribute path (`animator:easing="ease-in"` or
+        // `animator:easing={someKeyword}`).
         _ => return resolved_attribute_string(value, scope).filter(|s| !s.is_empty()),
     };
 
@@ -1712,7 +1571,7 @@ fn encode_easing_attr(value: &AttributeValue, scope: &LowerScope) -> Option<Stri
     }
 
     // Not a closure (or no `luau` feature): resolve as a keyword
-    // expression (`transition:easing={mode}` where `mode == "ease"`).
+    // expression (`animator:easing={mode}` where `mode == "ease"`).
     let resolved = resolved_attribute_string(value, scope)?;
     if resolved.is_empty() {
         Some(body).filter(|s| !s.is_empty())

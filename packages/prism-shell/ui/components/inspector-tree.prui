@@ -4,7 +4,7 @@
   inspector_tree.rs.
 
   The `nodes` JSON array drives the dispatched-row path (the §43 C3
-  selection-driven binding); `<host-children/>` lets a `.prui`
+  selection-driven binding); the unnamed `<slot/>` lets a `.prui`
   caller embed extra rows inline (used by the canonical skeleton tests).
 -->
 <container
@@ -14,7 +14,7 @@
     width="grow"
     role="tree"
     aria-label="{aria-label}">
-  <host-children/>
+  <slot/>
   <shell.inspector-row
       for="item in nodes"
       id="{item.node-id}"
@@ -31,7 +31,7 @@
     width="grow"
     role="tree"
     aria-label="Document tree">
-  <host-children/>
+  <slot/>
   <shell.inspector-row
       for="item in nodes"
       id="{item.node-id}"

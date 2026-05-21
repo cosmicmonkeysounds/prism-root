@@ -18,7 +18,6 @@ pub mod component;
 pub mod core_widget;
 pub mod dialects;
 pub mod document;
-pub mod facet;
 pub mod html;
 pub mod layout;
 pub mod luau_bindings_consts;
@@ -58,7 +57,6 @@ pub use component::{Component, ComponentId, RenderError};
 pub use core_widget::{collect_all_contributions, register_core_widgets, CoreWidgetBlock};
 pub use dialects::builtin_dialect_sources;
 pub use document::{BuilderDocument, Node, NodeId};
-pub use facet::resolve_template_expressions;
 pub use html::{escape_attr, escape_text, Html};
 pub use layout::{
     compute_layout, compute_track_sizes, path_from_string, path_to_string, AbsoluteProps, CellEdge,

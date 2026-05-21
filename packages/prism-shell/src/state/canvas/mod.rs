@@ -646,9 +646,6 @@ impl CanvasSlot {
         let Some(root) = self.document.root.as_ref() else {
             return Vec::new();
         };
-        // Facet templates are now real `node.children` — the facet
-        // block's own `lower_ui` repeats them per data item. No canvas
-        // pre-pass: the normal walk renders + tags them like any node.
         let lower_root: &prism_builder::Node = root;
         let cascade = prism_builder::StyleProperties::default();
         let mut ctx = prism_builder::ui_lower::LowerCtx::new(Some(reg), &cascade)

@@ -15,8 +15,8 @@
     style:background="#f2ffffff"
     style:radius="8"
     role="{kind == 'error' ? 'alert' : 'status'}"
-    animate:opacity="0 220ms"
-    animate:out-opacity="0 200ms"
+    animator:in-opacity="0 220ms"
+    animator:out-opacity="0 200ms"
     data:kind="{kind}">
   <container
       width="3"

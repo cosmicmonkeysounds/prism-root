@@ -10,6 +10,16 @@
 //! - `<tag/>` self-closing elements
 //! - `<!-- ... -->` comments
 //! - `{expr}` interpolations inside attribute values and child runs
+//! - **Canonical declarations** (Phase 2 of the expressiveness
+//!   roadmap, `docs/dev/prui-expressiveness-roadmap.md` §6): the
+//!   `component Card(...) = <…/>` family, alongside `trait` /
+//!   `mixin` / `macro` / `class` / `type` / `fn` / `let` /
+//!   `import` / `namespace`. Dispatch is by first non-whitespace
+//!   token — `<` opens the XML reader, a lowercase keyword opens
+//!   the canonical reader in [`canonical`]. Both produce the same
+//!   [`Document`] / [`Node`] shapes, so downstream consumers (the
+//!   `prism-ui-runtime::interpret` walker, `prism-ui-build`, the
+//!   syntax provider) read either surface uniformly.
 //!
 //! Returns a typed [`Document`] plus a parallel generic [`RootNode`]
 //! adapter for `LanguageContribution::parse` consumers.
@@ -25,6 +35,11 @@ use super::ast::{
     Attribute, AttributeName, AttributeNamespace, AttributeValue, Document, Element, Expression,
     Node, ParseError, TemplatePart,
 };
+
+pub mod canonical;
+pub mod migrate;
+
+pub use migrate::rewrite_xml_to_canonical;
 
 /// Tags whose body the PRUI parser must scan verbatim (no nested
 /// elements / interpolations / comments). The Wave A landing of
@@ -43,7 +58,30 @@ fn is_raw_text_tag(tag: &str) -> bool {
 /// Returns the document plus a list of recoverable [`ParseError`]s —
 /// the parser tries to keep going after a malformed element so the
 /// editor can show every problem at once.
+///
+/// Phase 2 dispatch (`docs/dev/prui-expressiveness-roadmap.md` §6 +
+/// §8): the first non-whitespace, non-comment token of the source
+/// picks the reader. A `<` opens the XML-shape parser (the historic
+/// path); a lowercase ASCII keyword that names a canonical
+/// declaration — `component` / `trait` / `mixin` / `macro` /
+/// `class` / `type` / `fn` / `let` / `import` / `namespace` — opens
+/// the canonical parser in [`canonical`]. Anything else falls
+/// through to the XML reader so legacy text-leading documents keep
+/// parsing. Both readers produce the same [`Document`] shape so
+/// downstream consumers don't branch.
 pub fn parse(source: &str) -> (Document, Vec<ParseError>) {
+    if canonical::looks_canonical(source) {
+        return canonical::parse(source);
+    }
+    let mut parser = Parser::new(source);
+    let nodes = parser.parse_nodes(None);
+    (Document { nodes }, parser.errors)
+}
+
+/// XML-form-only parse path, exposed for the migration tool +
+/// tests that need to read the legacy surface unconditionally
+/// (regardless of dispatch). Callers should prefer [`parse`].
+pub fn parse_xml(source: &str) -> (Document, Vec<ParseError>) {
     let mut parser = Parser::new(source);
     let nodes = parser.parse_nodes(None);
     (Document { nodes }, parser.errors)

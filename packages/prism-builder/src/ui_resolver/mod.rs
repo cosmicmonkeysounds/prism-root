@@ -168,7 +168,7 @@ impl TagResolver for RegistryTagResolver {
         // `shell.properties-panel`) get empty props / zero children.
         // Wave 11.3 — treat empty pre_lowered as "no host children"
         // rather than "host children present and empty". Without this
-        // filter, a DSL block's `<host-children>fallback</host-children>`
+        // filter, a DSL block's `<slot>fallback</slot>`
         // pattern always picks the empty path because the loader
         // installs `Some(empty Vec)` regardless. The lower_as path
         // already had this filter; the resolver path inherits it now

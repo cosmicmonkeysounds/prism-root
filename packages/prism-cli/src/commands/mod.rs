@@ -21,6 +21,7 @@ pub mod fmt;
 pub mod gc;
 pub mod lint;
 pub mod new;
+pub mod rewrite_canonical;
 pub mod scripts;
 pub mod test;
 pub mod visual;
@@ -83,6 +84,11 @@ pub enum Command {
     /// Scaffold a new widget (`prism new widget <name>`) in the
     /// §5.10-canonical surface syntax.
     New(new::NewArgs),
+    /// Phase 2 migration tool — rewrite legacy XML-shape PRUI
+    /// declarations into the canonical surface
+    /// (`docs/dev/prui-expressiveness-roadmap.md` §6.24).
+    #[command(name = "rewrite-canonical")]
+    RewriteCanonical(rewrite_canonical::RewriteCanonicalArgs),
 }
 
 /// Dispatch a parsed [`Cli`] to the right subcommand.
@@ -102,6 +108,7 @@ pub fn run(cli: &Cli, workspace: &Workspace) -> Result<u8> {
         Command::Codegen(args) => codegen::run(args, workspace, cli.dry_run),
         Command::Scripts(args) => scripts::run(args, workspace, cli.dry_run),
         Command::New(args) => new::run(args, workspace, cli.dry_run),
+        Command::RewriteCanonical(args) => rewrite_canonical::run(args, workspace, cli.dry_run),
     }
 }
 

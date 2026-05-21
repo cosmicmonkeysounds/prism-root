@@ -21,7 +21,7 @@
     padding-bottom="12"
     data:role="properties-panel"
     aria:label="Properties">
-  <host-children/>
+  <slot/>
   <dispatch
       for="row, idx in rows"
       id="props::row::{idx}"

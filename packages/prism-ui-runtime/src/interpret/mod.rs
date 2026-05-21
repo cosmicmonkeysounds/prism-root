@@ -166,14 +166,16 @@ pub struct LowerScope {
     /// would have applied. `Arc` for the same cheap-fork rationale as
     /// `host_children_by_tag`.
     tag_emissions: Arc<HashMap<String, TagEmission>>,
-    /// Wave 11.2 — `<host-children/>` injection point for a DSL-
-    /// authored shell component composing its caller's pre-lowered
-    /// children. The loader's [`crate::interpret::lower_document_with_scope`]
+    /// Wave 11.2 — default-slot injection point for a DSL-authored
+    /// shell component composing its caller's pre-lowered children.
+    /// The loader's [`crate::interpret::lower_document_with_scope`]
     /// caller stuffs the calling `LowerCtx::host_children()` here at
-    /// invocation time; the element handler emits the UiNodes
-    /// verbatim. Distinct from `host_children_by_tag` (resolver-side,
-    /// tag-keyed pre-injection) and from [`SlotBindings`] (AST-level
-    /// `<slot/>` expansion). `None` outside the loader's seam.
+    /// invocation time; the runtime's unnamed `<slot/>` emits the
+    /// UiNodes verbatim (Phase 5 collapsed `<host-children/>` into
+    /// this single slot surface). Distinct from
+    /// `host_children_by_tag` (resolver-side, tag-keyed pre-injection)
+    /// and from [`SlotBindings`] (AST-level `<slot/>` expansion via
+    /// template binding). `None` outside the loader's seam.
     host_children_ui: Option<Arc<Vec<Node>>>,
     /// **Wave 13.1** — pre-lowered named-slot map. The resolver
     /// buckets a dispatched element's children by their `slot="X"`
@@ -534,19 +536,21 @@ impl LowerScope {
         Arc::clone(&self.tag_emissions)
     }
 
-    /// Wave 11.2 — install the pre-lowered children the `<host-children/>`
-    /// element should emit. The shell's `.prui` loader sets this
-    /// before invoking [`lower_document_with_scope`] so a DSL-authored
-    /// wrapper component (toast-stack, launchpad) consumes its caller's
-    /// children via one declarative element instead of a Rust `ctx.host_children()`
-    /// call.
+    /// Wave 11.2 — install the pre-lowered children that the runtime's
+    /// unnamed `<slot/>` should emit. The shell's `.prui` loader sets
+    /// this before invoking [`lower_document_with_scope`] so a
+    /// DSL-authored wrapper component (toast-stack, launchpad)
+    /// consumes its caller's children via one declarative element
+    /// instead of a Rust `ctx.host_children()` call. (Phase 5
+    /// collapsed `<host-children/>` into the unnamed slot.)
     pub fn with_host_children_ui(mut self, children: Vec<Node>) -> Self {
         self.host_children_ui = Some(Arc::new(children));
         self
     }
 
-    /// The pre-lowered children currently bound to the
-    /// `<host-children/>` element. `None` outside the loader's seam.
+    /// The pre-lowered children currently bound to the unnamed
+    /// `<slot/>` (Phase-5 default-slot seam). `None` outside the
+    /// loader's seam.
     pub fn host_children_ui(&self) -> Option<&[Node]> {
         self.host_children_ui.as_deref().map(|v| v.as_slice())
     }

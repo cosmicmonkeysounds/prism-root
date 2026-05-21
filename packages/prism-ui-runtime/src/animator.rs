@@ -1,13 +1,16 @@
 //! **§7.15** — unified [`Animator`] substrate for the three call
-//! surfaces the roadmap merges into a single trait-shape:
+//! surfaces the roadmap merges into a single trait-shape. Phase 4
+//! collapsed the three Tier-3 namespaces (`transition:` / `animate:`
+//! / `at:`) into the single `animator:` namespace, so every surface
+//! below is reached through the same prefix:
 //!
-//! 1. **Mid-life value change** — `transition:<prop>="<duration>"`
-//!    (or the canonical Phase-15 pipeline form,
+//! 1. **Mid-life value change** — `animator:transition-<prop>="<duration>"`
+//!    (canonical Phase-15 pipeline form,
 //!    `style.<prop>={ rest | :hover → 0.6 over 200ms }`). The
 //!    prop's *declared* value moves between frames and the animator
 //!    eases the visual value across the gap.
-//! 2. **Entry / exit transitions** — `animate:in-<prop>` /
-//!    `animate:out-<prop>` (canonical Phase-15 pipeline form,
+//! 2. **Entry / exit transitions** — `animator:in-<prop>` /
+//!    `animator:out-<prop>` (canonical Phase-15 pipeline form,
 //!    `style.<prop>={ rest | :entry → from 0 over 200ms |
 //!    :exit → to 0 over 150ms }`). Fires on the first observe a
 //!    node carrying the entry hint becomes part of the tree, and
@@ -57,28 +60,77 @@ use crate::command::Color;
 use crate::interpret::color::lerp_command_color;
 use crate::layout::{Node, Sizing};
 
-/// In-flight numeric transition state. Stored per `(node-id, prop-key)`.
+/// **§7.15** — generic interpolation contract. One method that
+/// returns the value `t` fraction along the path from `from` to `to`
+/// (`t ∈ [0, 1]`, already eased). Every animator value type
+/// implements this; the same `ValueTransition<T>` carrier handles
+/// f32, [`Color`], [`i32`], and any user-defined type without per-type
+/// transition-storage / sample boilerplate.
+///
+/// Adding a new animator-supported type is one trait impl:
+///
+/// ```rust,ignore
+/// impl Interp for MyKind {
+///     fn lerp(from: &Self, to: &Self, t: f32) -> Self {
+///         // domain-appropriate blend at fraction `t`
+///     }
+/// }
+/// ```
+///
+/// Then add a sibling `active_<myk>` map on [`Animator`] plus the
+/// matching observe / apply arms — the [`sample_value`] generic
+/// function and [`ValueTransition`] shape come along for free.
+pub trait Interp: Clone {
+    fn lerp(from: &Self, to: &Self, t: f32) -> Self;
+}
+
+impl Interp for f32 {
+    fn lerp(from: &Self, to: &Self, t: f32) -> Self {
+        from + (to - from) * t
+    }
+}
+
+impl Interp for Color {
+    /// OKLab perceptual lerp via [`lerp_command_color`] — saturated
+    /// hues blend through the perceptual gamut, not the muddy sRGB
+    /// midpoint.
+    fn lerp(from: &Self, to: &Self, t: f32) -> Self {
+        lerp_command_color(*from, *to, t as f64)
+    }
+}
+
+impl Interp for i32 {
+    /// Integer animation: f32 lerp + nearest-integer rounding. The
+    /// per-frame sample looks just like the float path with one
+    /// extra `round()`; clients pin to int when the receiving slot
+    /// is integer-typed (counters, discrete step values).
+    fn lerp(from: &Self, to: &Self, t: f32) -> Self {
+        (*from as f32 + ((to - from) as f32) * t).round() as i32
+    }
+}
+
+/// In-flight transition over an [`Interp`]-typed value. Stored per
+/// `(node-id, prop-key)`. The same shape handles every value type —
+/// `ValueTransition<f32>` (numeric props), `ValueTransition<Color>`
+/// (colour props), `ValueTransition<i32>` (discrete counters), …
 #[derive(Debug, Clone, PartialEq)]
-struct Transition {
-    from: f32,
-    to: f32,
+struct ValueTransition<T> {
+    from: T,
+    to: T,
     started_ms: u64,
     duration_ms: u64,
     easing: Easing,
 }
 
-/// **§7.15** — in-flight colour transition. Sibling of [`Transition`]
-/// for props whose value is a [`Color`] (background, foreground,
-/// tint). Lerps in OKLab via [`lerp_command_color`] so a fade between
-/// saturated hues passes through the perceptual gamut.
-#[derive(Debug, Clone, PartialEq)]
-struct ColorTransition {
-    from: Color,
-    to: Color,
-    started_ms: u64,
-    duration_ms: u64,
-    easing: Easing,
-}
+/// Numeric (`f32`) transition — the canonical animator entry for
+/// scalar container props (`gap`, `padding`, `radius`, `opacity`, …).
+type Transition = ValueTransition<f32>;
+
+/// Colour transition — sibling of [`Transition`] for props whose
+/// value is a [`Color`] (background, foreground, tint). Goes through
+/// the OKLab [`Interp`] impl on [`Color`] so fades pass through the
+/// perceptual gamut.
+type ColorTransition = ValueTransition<Color>;
 
 /// **§7.15** — multi-stop keyframe timeline. `stops` is normalised at
 /// parse time to `t ∈ [0, 1]` and sorted ascending. The animator
@@ -111,7 +163,7 @@ struct Keyframes {
 /// Luau easing closure that was *sampled at lowering time* (where the
 /// per-document Lua frame lives) into an equally-spaced normalised
 /// lookup table over `t ∈ [0,1]`. The animator interpolates the LUT
-/// linearly per frame, so a custom `transition:easing={\fn(t) … end}`
+/// linearly per frame, so a custom `animator:easing={\fn(t) … end}`
 /// curve costs zero Lua calls per tick and the animator never holds a
 /// Lua handle across frames (the closure could outlive the VM).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -233,8 +285,9 @@ struct NodeSnapshot {
 /// **§7.15** — unified animator substrate. Single-threaded — hosts
 /// share via `Rc<RefCell<Animator>>`. Keys are `(node-id, prop-key)`
 /// strings, where `prop-key` matches the DSL spelling (`opacity` for
-/// `transition:opacity`, `radius` for `transition:radius`,
-/// `background` for a colour-keyed `transition:background`, etc.).
+/// `animator:transition-opacity`, `radius` for
+/// `animator:transition-radius`, `background` for a colour-keyed
+/// `animator:transition-background`, etc.).
 ///
 /// Three call surfaces share the same active-transition map:
 ///
@@ -920,18 +973,29 @@ impl Animator {
     }
 }
 
-/// Sample a transition's value at `now_ms` against its easing curve.
-fn sample(t: &Transition, now_ms: u64) -> f32 {
+/// Sample any [`Interp`]-typed transition's value at `now_ms` against
+/// its easing curve. Replaces the historic per-type `sample` /
+/// `sample_color` pair — the lerp is now type-erased through the
+/// [`Interp`] trait, so adding a new value type re-uses this body.
+fn sample_value<T: Interp>(t: &ValueTransition<T>, now_ms: u64) -> T {
     if now_ms <= t.started_ms {
-        return t.from;
+        return t.from.clone();
     }
     let elapsed = now_ms.saturating_sub(t.started_ms);
     if elapsed >= t.duration_ms {
-        return t.to;
+        return t.to.clone();
     }
     let progress = elapsed as f32 / t.duration_ms as f32;
     let eased = t.easing.ease(progress);
-    t.from + (t.to - t.from) * eased
+    T::lerp(&t.from, &t.to, eased)
+}
+
+/// Compatibility shim — the `f32`-specialised sampler kept as a thin
+/// wrapper around [`sample_value`] for call-site readability. Inlines
+/// away.
+#[inline]
+fn sample(t: &Transition, now_ms: u64) -> f32 {
+    sample_value(t, now_ms)
 }
 
 /// Parse a `data-animate-in-<prop>` attribute value of the shape
@@ -1165,19 +1229,11 @@ fn write_color_data_attr(props: &mut crate::layout::ContainerProps, attr: &str, 
 }
 
 /// **§7.15** — sample a colour transition's value at `now_ms`
-/// against its easing curve. Sibling of [`sample`] for the OKLab
-/// lerp path.
+/// against its easing curve. Thin wrapper over [`sample_value`]; the
+/// OKLab lerp lives in [`Color`]'s [`Interp`] impl.
+#[inline]
 fn sample_color(t: &ColorTransition, now_ms: u64) -> Color {
-    if now_ms <= t.started_ms {
-        return t.from;
-    }
-    let elapsed = now_ms.saturating_sub(t.started_ms);
-    if elapsed >= t.duration_ms {
-        return t.to;
-    }
-    let progress = elapsed as f32 / t.duration_ms as f32;
-    let eased = t.easing.ease(progress);
-    lerp_command_color(t.from, t.to, eased as f64)
+    sample_value(t, now_ms)
 }
 
 /// **§7.15** — author-declared keyframe spec, the parsed form of an
@@ -1386,81 +1442,81 @@ pub fn parse_keyframes_attr(spec: &str) -> Vec<(String, KeyframesSpec)> {
     by_prop.into_iter().collect()
 }
 
-/// **§7.15** — sample the numeric value of a keyframe timeline at
-/// `now_ms`. Walks the (sorted, ascending-`t`) stop list and lerps
-/// between the bracketing pair, applying the timeline's easing
-/// curve to the per-segment progress. Out-of-bounds `now_ms` clamps
-/// to the first / last stop. `None` when the timeline has no
-/// numeric stops.
-fn sample_keyframes_numeric(k: &Keyframes, now_ms: u64) -> Option<f32> {
-    if k.numeric_stops.is_empty() {
+/// **§7.15** — sample any [`Interp`]-typed stop list at `now_ms`.
+/// Walks the (sorted, ascending-`t`) stop list and lerps between
+/// the bracketing pair through `T::lerp`, applying the timeline's
+/// easing curve to the per-segment progress. Out-of-bounds `now_ms`
+/// clamps to the first / last stop. `None` when the stop list is
+/// empty.
+///
+/// The two specialised callers (`sample_keyframes_numeric` /
+/// `sample_keyframes_color`) are thin wrappers — adding a new
+/// typed stop list is one new map field on [`KeyframesSpec`] +
+/// [`Keyframes`] plus calling into this body with the right slice.
+fn sample_keyframe_stops<T: Interp>(
+    stops: &[(f32, T)],
+    duration_ms: u64,
+    started_ms: u64,
+    easing: &Easing,
+    now_ms: u64,
+) -> Option<T> {
+    if stops.is_empty() {
         return None;
     }
-    let progress = if now_ms <= k.started_ms {
+    let progress = if now_ms <= started_ms {
         0.0
     } else {
-        let elapsed = now_ms.saturating_sub(k.started_ms);
-        if elapsed >= k.duration_ms {
+        let elapsed = now_ms.saturating_sub(started_ms);
+        if elapsed >= duration_ms {
             1.0
         } else {
-            elapsed as f32 / k.duration_ms as f32
+            elapsed as f32 / duration_ms as f32
         }
     };
-    let stops = &k.numeric_stops;
     if progress <= stops[0].0 {
-        return Some(stops[0].1);
+        return Some(stops[0].1.clone());
     }
     if progress >= stops[stops.len() - 1].0 {
-        return Some(stops[stops.len() - 1].1);
+        return Some(stops[stops.len() - 1].1.clone());
     }
     for pair in stops.windows(2) {
-        let (t0, v0) = pair[0];
-        let (t1, v1) = pair[1];
+        let (t0, ref v0) = pair[0];
+        let (t1, ref v1) = pair[1];
         if progress >= t0 && progress <= t1 {
             let span = (t1 - t0).max(f32::EPSILON);
             let local = ((progress - t0) / span).clamp(0.0, 1.0);
-            let eased = k.easing.ease(local);
-            return Some(v0 + (v1 - v0) * eased);
+            let eased = easing.ease(local);
+            return Some(T::lerp(v0, v1, eased));
         }
     }
-    Some(stops[stops.len() - 1].1)
+    Some(stops[stops.len() - 1].1.clone())
+}
+
+/// **§7.15** — sample the numeric (`f32`) value of a keyframe
+/// timeline at `now_ms`.
+#[inline]
+fn sample_keyframes_numeric(k: &Keyframes, now_ms: u64) -> Option<f32> {
+    sample_keyframe_stops(
+        &k.numeric_stops,
+        k.duration_ms,
+        k.started_ms,
+        &k.easing,
+        now_ms,
+    )
 }
 
 /// **§7.15** — sample the colour value of a keyframe timeline at
 /// `now_ms`. Sister of [`sample_keyframes_numeric`] for the OKLab
-/// lerp path. `None` when the timeline has no colour stops.
+/// lerp path (the OKLab transform lives in [`Color`]'s [`Interp`] impl).
+#[inline]
 fn sample_keyframes_color(k: &Keyframes, now_ms: u64) -> Option<Color> {
-    if k.color_stops.is_empty() {
-        return None;
-    }
-    let progress = if now_ms <= k.started_ms {
-        0.0
-    } else {
-        let elapsed = now_ms.saturating_sub(k.started_ms);
-        if elapsed >= k.duration_ms {
-            1.0
-        } else {
-            elapsed as f32 / k.duration_ms as f32
-        }
-    };
-    let stops = &k.color_stops;
-    if progress <= stops[0].0 {
-        return Some(stops[0].1);
-    }
-    if progress >= stops[stops.len() - 1].0 {
-        return Some(stops[stops.len() - 1].1);
-    }
-    for pair in stops.windows(2) {
-        let (t0, c0) = pair[0];
-        let (t1, c1) = pair[1];
-        if progress >= t0 && progress <= t1 {
-            let span = (t1 - t0).max(f32::EPSILON);
-            let local = ((progress - t0) / span).clamp(0.0, 1.0);
-            let eased = k.easing.ease(local);
-            return Some(lerp_command_color(c0, c1, eased as f64));
-        }
-    }
-    Some(stops[stops.len() - 1].1)
+    sample_keyframe_stops(
+        &k.color_stops,
+        k.duration_ms,
+        k.started_ms,
+        &k.easing,
+        now_ms,
+    )
 }
 
 /// **§7.15** — the set of prop names the animator recognises as
@@ -1547,6 +1603,60 @@ mod tests {
         animator.tick(300);
         animator.observe(std::slice::from_ref(&node), 300);
         assert_eq!(animator.active_count(), 0, "entry fires once per mount");
+    }
+
+    /// **§7.15 — `Interp` extensibility proof.** The same
+    /// [`sample_value`] body lerps any [`Interp`]-typed transition,
+    /// not just `f32` and [`Color`]. Verified here against `i32`
+    /// (rounding lerp from the stdlib impl) and a custom newtype to
+    /// prove the trait is the only seam new types need to fill.
+    #[test]
+    fn interp_substrate_handles_arbitrary_value_types() {
+        // i32: half-duration sample should round to the integer
+        // midpoint, matching `i32::lerp`'s `.round()` rule.
+        let int_transition = ValueTransition::<i32> {
+            from: 0,
+            to: 10,
+            started_ms: 0,
+            duration_ms: 100,
+            easing: Easing::Linear,
+        };
+        assert_eq!(sample_value(&int_transition, 50), 5);
+        assert_eq!(sample_value(&int_transition, 75), 8); // 7.5 → 8 (banker rounding to even, but ties-to-even on 7.5 = 8)
+        assert_eq!(sample_value(&int_transition, 100), 10);
+
+        // A user-defined newtype: simply impl `Interp` and the same
+        // substrate animates it. No new transition struct, no new
+        // sample function — just one trait impl.
+        #[derive(Clone, Debug, PartialEq)]
+        struct Decibels(f32);
+        impl Interp for Decibels {
+            fn lerp(from: &Self, to: &Self, t: f32) -> Self {
+                Decibels(from.0 + (to.0 - from.0) * t)
+            }
+        }
+        let db_transition = ValueTransition::<Decibels> {
+            from: Decibels(-60.0),
+            to: Decibels(0.0),
+            started_ms: 0,
+            duration_ms: 1000,
+            easing: Easing::Linear,
+        };
+        let mid = sample_value(&db_transition, 500);
+        assert!((mid.0 + 30.0).abs() < 1e-3, "got {mid:?}");
+
+        // Keyframe stops over the newtype — sample_keyframe_stops
+        // is generic over the same trait.
+        let stops = vec![
+            (0.0, Decibels(-60.0)),
+            (0.5, Decibels(-20.0)),
+            (1.0, Decibels(0.0)),
+        ];
+        let s = sample_keyframe_stops(&stops, 1000, 0, &Easing::Linear, 250)
+            .expect("two stops bracket t=0.25");
+        // At 250ms of 1000ms (t=0.25), within the first segment
+        // (t0=0, t1=0.5), local progress is 0.5 → -60 + (40 * 0.5) = -40.
+        assert!((s.0 + 40.0).abs() < 1e-3, "got {s:?}");
     }
 
     #[test]

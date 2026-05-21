@@ -47,10 +47,6 @@ const PRISM_UI_TAGS: &[(&str, &str)] = &[
     ("list", "List / repeated items"),
     ("table", "Tabular data"),
     ("tabs", "Tab strip"),
-    (
-        "facet",
-        "Facet binding (`<facet name=\"...\" from=\"resource:...\">`)",
-    ),
 ];
 
 const PRISM_UI_ATTR_NAMESPACES: &[(&str, &str)] = &[
@@ -60,7 +56,6 @@ const PRISM_UI_ATTR_NAMESPACES: &[(&str, &str)] = &[
         "style:",
         "Token-resolved style (`style:background=\"{tokens.colors.surface}\"`)",
     ),
-    ("fct:", "Facet binding (`fct:items=\"resource:posts\"`)"),
     ("sig:", "Declared signal shorthand"),
     ("aria:", "ARIA attribute, passes through to HTML lowering"),
     ("data:", "data-* attribute, passes through to HTML lowering"),

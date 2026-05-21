@@ -138,7 +138,7 @@ mod tests {
     fn new_registers_builtins() {
         let state = AppState::new();
         let core_widget_count = prism_builder::collect_all_contributions().len();
-        assert_eq!(state.registry.len(), 17 + core_widget_count);
+        assert_eq!(state.registry.len(), 16 + core_widget_count);
         for id in [
             "text",
             "image",
@@ -155,7 +155,6 @@ mod tests {
             "table",
             "tabs",
             "accordion",
-            "facet",
         ] {
             assert!(state.registry.get(id).is_some(), "missing builtin: {id}");
         }

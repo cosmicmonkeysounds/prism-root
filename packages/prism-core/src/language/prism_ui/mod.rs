@@ -4,7 +4,7 @@
 //! Clay-based UI runtime (see `docs/dev/clay-migration-plan.md` and
 //! ADR-008). Files use the `.prui` extension and carry tag-element
 //! markup with attribute-namespace behaviour (`on:click`, `bind:value`,
-//! `style:background`, `fct:items`, `sig:clicked`, `if`/`for`/`else`).
+//! `style:background`, `sig:clicked`, `if`/`for`/`else`).
 //!
 //! This module owns:
 //!
@@ -32,5 +32,5 @@ pub use ast::{
     Element, Expression, Node, ParseError, STATE_SUFFIXES,
 };
 pub use contribution::{create_prism_ui_contribution, PRISM_UI_EXTENSIONS, PRISM_UI_ID};
-pub use grammar::parse;
+pub use grammar::{canonical, migrate, parse, parse_xml, rewrite_xml_to_canonical};
 pub use provider::PrismUiSyntaxProvider;

@@ -84,41 +84,12 @@ pub enum AttributeNamespace {
     ControlFlow,
     /// `style:<token>` — token-resolved style attribute.
     Style,
-    /// `fct:<name>` — facet binding; carried through as a
-    /// `data-fct-*` semantic attr for a host/SSR consumer.
-    Facet,
     /// `sig:<name>` — declared signal shorthand.
     Signal,
     /// `aria:*` — pass-through to HTML lowering.
     Aria,
     /// `data:*` — pass-through to HTML lowering.
     Data,
-    /// Wave 9.1 of `docs/dev/composable-builder-plan.md` —
-    /// `route:<key>="..."` lowers to `data-<key>` semantic attrs.
-    /// The shell's chrome components emit `data-role` /
-    /// `data-target-id` / `data-direction` / `data-on-click` by
-    /// hand; the `route:` namespace lifts the convention into the
-    /// DSL so authoring a routable affordance reads
-    /// `<container route:role="foo" route:target-id="bar"/>`
-    /// instead of a `data-` ladder. Consumers (lowering pipeline,
-    /// HTML emitter, SSR) treat `route:k` and `data-k` as
-    /// equivalent — the namespace is sugar, not a new runtime
-    /// concept.
-    Route,
-    /// Wave 9.4 — `transition:<prop>="200ms"` declares a CSS-style
-    /// transition on a prop. The grammar layer parses the
-    /// namespace verbatim; runtime interpretation (animator
-    /// install, per-prop interpolation) lands when the
-    /// `Effect`-driven animator does (`docs/dev/composable-builder-plan.md` §9.4).
-    Transition,
-    /// **Wave 13.3** — `use:<modifier-id>[="<value>"]` directive
-    /// (Vue `v-X`, Svelte `use:X`). Author shorthand for attaching a
-    /// registered `ModifierBehaviour` from DSL. Today the runtime
-    /// lowers `use:hover` / `use:tooltip="Click"` to a `data-use-<id>`
-    /// semantic attr so author intent round-trips; full modifier-fold
-    /// integration is a follow-up alongside the resolver-side
-    /// modifier seam.
-    Use,
     /// `class:<name>="{cond}"` — Svelte-style reactive class toggle.
     /// The local part is the class name; the value is a boolean
     /// expression. When truthy, the named PRSS class is applied to
@@ -127,34 +98,29 @@ pub enum AttributeNamespace {
     /// degrades to. Distinct from [`Self::Identifier`], which
     /// classifies bare `class="..."` (the static class list).
     Class,
-    /// **Wave 14.6** — `animate:<prop>="<from> <duration>"` declares
-    /// an entry transition that fires on the first frame the node
-    /// appears: the animator interpolates the prop from `<from>` to
-    /// its declared (or default) value over `<duration>`. Lowers to
-    /// `data-animate-in-<prop>` semantic attr the runtime animator
-    /// reads at observe time. `animate:opacity="0 200ms"` on a
-    /// toast / overlay produces a fade-in; `animate:height="0 250ms"`
-    /// produces a slide-down expand. Companion to the `transition:`
-    /// namespace which owns the mid-life value-change case.
-    Animate,
     /// **Wave G (`prui-luau-fusion.md` §7.11)** — `probe:<name>=
     /// "event-key"` taps a render-time value / interaction into a
     /// document-scoped event stream. Lowers to `data-probe-<name>`;
     /// `prism.probes:on(name, fn)` subscribes Luau-side.
     Probe,
-    /// **Wave G (§7.12)** — `at:<time>="{ …keyframe… }"` declares a
-    /// keyframe animation state at `<time>` (`0`, `50%`, `200ms`).
-    /// Lowers to `data-at-<time>`; companion to `transition:` /
-    /// `animate:` for multi-stop timelines.
-    At,
     /// **§7.15 — unified `Animator` trait.** `animator:<method>=<value>`
-    /// dispatches into the runtime animator's trait-shape surface.
-    /// The canonical method today is `animator:keyframes="<spec>"`
-    /// (multi-stop timeline); the namespace exists ahead of full
-    /// trait-registry wiring (Phase 9) so the `transition:` /
-    /// `animate:` / `at:` Tier-3 namespaces have a single semantic
-    /// home that retires alongside them in Phase 4. Lowers to
-    /// `data-animator-<method>`.
+    /// is the single home for every animation surface — mid-life
+    /// value change, entry / exit transitions, and keyframe stops.
+    /// Methods recognised today (lowered to the matching semantic
+    /// attribute):
+    /// - `animator:in-<prop>="<from> <duration>"` → entry transition
+    ///   (`data-animate-in-<prop>`).
+    /// - `animator:out-<prop>="<to> <duration>"` → exit transition
+    ///   (`data-animate-out-<prop>`).
+    /// - `animator:keyframes="<spec>"` → multi-stop timeline
+    ///   (`data-animator-keyframes`).
+    /// - any other method round-trips as `data-animator-<method>`,
+    ///   ready for the §7.15 pipeline / nested-record shapes (Phase 15+).
+    ///
+    /// Subsumes the retired Phase 4 namespaces (`transition:` /
+    /// `animate:` / `at:`) — every spelling collapsed into this one
+    /// surface so the AttributeNamespace enum carries one animator
+    /// home, not four (`docs/dev/prui-expressiveness-roadmap.md` §7.15).
     Animator,
     /// `class` / `id` — CSS-style addressing for inspector + HTML.
     Identifier,
@@ -239,17 +205,11 @@ impl AttributeNamespace {
                 "on" => AttributeNamespace::On,
                 "bind" => AttributeNamespace::Bind,
                 "style" => AttributeNamespace::Style,
-                "fct" => AttributeNamespace::Facet,
                 "sig" => AttributeNamespace::Signal,
                 "aria" => AttributeNamespace::Aria,
                 "data" => AttributeNamespace::Data,
-                "route" => AttributeNamespace::Route,
-                "transition" => AttributeNamespace::Transition,
-                "animate" => AttributeNamespace::Animate,
                 "animator" => AttributeNamespace::Animator,
                 "probe" => AttributeNamespace::Probe,
-                "at" => AttributeNamespace::At,
-                "use" => AttributeNamespace::Use,
                 "class" => AttributeNamespace::Class,
                 _ => return (AttributeNamespace::Bare, raw.to_string()),
             };

@@ -58,7 +58,7 @@
     <prism.builder-host
         id="{id}::preview"
         selection-id="{selection-id}">
-      <host-children/>
+      <slot/>
     </prism.builder-host>
     <container
         id="{id}::grid"

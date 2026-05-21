@@ -5,7 +5,7 @@
 
   Reads `title` (section title), `schema-name` (sub-label rendered
   as "schema · <name>"), and `fields` (JSON array of schema-row
-  props). `<host-children/>` lets caller-supplied chrome land
+  props). `<slot/>` lets caller-supplied chrome land
   between the header and the dispatched rows.
 -->
 <container
@@ -22,6 +22,6 @@
     data:role="schema-designer">
   <text if="{title}" font-size="14" style:color="#000000">{title}</text>
   <text if="{schema-name}" font-size="11" style:color="#80000000">schema · {schema-name}</text>
-  <host-children/>
+  <slot/>
   <shell.schema-row for="item in fields" id="{item.field-id}" props="{item}"/>
 </container>

@@ -1,17 +1,17 @@
 //! Starter component catalog — the default block registry.
 //!
-//! Seventeen blocks land here, declared as a single `BUILTINS` table of
+//! Sixteen blocks land here, declared as a single `BUILTINS` table of
 //! `BlockSpec` rows. Each row carries `(id, schema, help, signals,
 //! variants, lower)`; one [`SpecBlock`] type implements `Block` by
 //! delegating to its spec. There are no per-block trait impls — adding
 //! a new block is one `const SPEC` and one entry in the table.
 //!
-//! `facet` is a one-off `Component`; the other 16 (text, image,
-//! container, form, input, button, code, divider, spacer, columns,
-//! list, table, tabs, accordion, graph-view, **card**) flow through
-//! `SpecBlock` + `BlockSpec`. `card` was a `PrefabDef`-backed builtin
-//! until §4.4 folded it into a plain `BlockSpec`; `PrefabDef` now
-//! exists only as the hidden user/promotion mechanism.
+//! The 16 starters (text, image, container, form, input, button, code,
+//! divider, spacer, columns, list, table, tabs, accordion, graph-view,
+//! **card**) flow through `SpecBlock` + `BlockSpec`. `card` was a
+//! `PrefabDef`-backed builtin until §4.4 folded it into a plain
+//! `BlockSpec`; `PrefabDef` now exists only as the hidden
+//! user/promotion mechanism.
 
 use std::sync::Arc;
 
@@ -20,7 +20,6 @@ use serde_json::json;
 use crate::asset::AssetSource;
 use crate::block::{register_specs, BlockSpec, SpecBlock};
 use crate::document::Node;
-use crate::facet::FacetComponent;
 use crate::registry::{ComponentRegistry, FieldSpec, RegistryError};
 use crate::schemas;
 use crate::signal::{with_common_signals, SignalDef};
@@ -43,15 +42,13 @@ pub fn builtin_block(id: &str) -> Option<Arc<SpecBlock>> {
         .map(|spec| SpecBlock::arc(spec))
 }
 
-/// Register every entry in [`BUILTINS`] plus the one-off `facet`
-/// component. `card` is now a plain `BlockSpec` in the table (§4.4 —
-/// the prefab-backed builtin was folded into a SpecBlock; `PrefabDef`
-/// stays only as the hidden user/promotion mechanism). The Slint DSL
-/// emit path is gone; the unified Taffy/SSR pipeline is the single
-/// render path.
+/// Register every entry in [`BUILTINS`]. `card` is now a plain
+/// `BlockSpec` in the table (§4.4 — the prefab-backed builtin was
+/// folded into a SpecBlock; `PrefabDef` stays only as the hidden
+/// user/promotion mechanism). The Slint DSL emit path is gone; the
+/// unified Taffy/SSR pipeline is the single render path.
 pub fn register_builtins(components: &mut ComponentRegistry) -> Result<(), RegistryError> {
     register_specs(components, BUILTINS)?;
-    components.register(Arc::new(FacetComponent::new()))?;
     Ok(())
 }
 

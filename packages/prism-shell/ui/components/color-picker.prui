@@ -36,8 +36,8 @@
     style:radius="8"
     role="dialog"
     aria-label="Pick a color"
-    animate:opacity="0 180ms"
-    animate:out-opacity="0 140ms"
+    animator:in-opacity="0 180ms"
+    animator:out-opacity="0 140ms"
     data:role="color-picker"
     data:visible="true">
   <container

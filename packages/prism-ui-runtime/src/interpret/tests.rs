@@ -887,36 +887,9 @@ fn on_event_attribute_lowers_to_data_on_attr_on_container() {
     );
 }
 
-/// Wave 9.1 — `route:<key>="<value>"` lowers to a `data-<key>`
-/// semantic attribute the hit-test cache reads off. The
-/// namespace is sugar — `route:role="x"` and `data:role="x"`
-/// emit the same `data-role="x"`.
-#[test]
-fn route_namespace_lowers_to_data_dash_attr_on_container() {
-    let nodes =
-        interpret(r#"<container id="btn" route:role="resize-handle" route:direction="br"/>"#)
-            .unwrap();
-    let crate::layout::Node::Container { props, .. } = &nodes[0] else {
-        panic!("expected container, got {:?}", nodes[0])
-    };
-    let attrs: std::collections::HashMap<_, _> = props
-        .semantic
-        .attrs
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    assert_eq!(
-        attrs.get("data-role").map(String::as_str),
-        Some("resize-handle")
-    );
-    assert_eq!(attrs.get("data-direction").map(String::as_str), Some("br"));
-}
-
-/// `data:<key>="<value>"` pass-through stays equivalent to the
-/// `route:` namespace — same lowered shape, different
-/// authoring vocabulary (data: is the bare pass-through,
-/// route: is sugar for the hit-test conventions). Either form
-/// reaches the hit cache.
+/// `data:<key>="<value>"` pass-through carries semantic
+/// attributes through the lowering pipeline so the hit-test
+/// cache + SSR backends can route off them.
 #[test]
 fn data_namespace_lowers_to_data_dash_attr_on_container() {
     let nodes =
@@ -988,14 +961,16 @@ fn bare_semantic_attrs_set_dedicated_fields_on_container() {
     assert!(props.semantic.attrs.is_empty());
 }
 
-/// Wave 14.6 — `animate:<prop>="<from> <duration>"` lowers to
-/// a `data-animate-in-<prop>` semantic attribute the runtime
-/// animator consumes on first observe to start an entry
-/// transition.
+/// §7.15 — `animator:in-<prop>` lowers to `data-animate-in-<prop>`,
+/// the entry-transition hint the runtime animator picks up on the
+/// first observe of the node. Subsumes the retired `animate:` /
+/// `animate:in-` namespace after Phase 4 collapsed the three Tier-3
+/// labels into the single `animator:` home.
 #[test]
-fn animate_namespace_lowers_to_data_animate_in_attr() {
+fn animator_in_prefix_lowers_to_data_animate_in_attr() {
     let nodes =
-        interpret(r#"<container animate:opacity="0 200ms" animate:gap="0 120ms"/>"#).unwrap();
+        interpret(r#"<container animator:in-opacity="0 200ms" animator:in-gap="0 120ms"/>"#)
+            .unwrap();
     let crate::layout::Node::Container { props, .. } = &nodes[0] else {
         panic!()
     };
@@ -1013,43 +988,17 @@ fn animate_namespace_lowers_to_data_animate_in_attr() {
         attrs.get("data-animate-in-gap").map(String::as_str),
         Some("0 120ms")
     );
-}
-
-/// Wave 14.8 — `animate:in-<prop>` is the explicit spelling for
-/// the entry-transition hint; it lowers to the same
-/// `data-animate-in-<prop>` attr the bare `animate:<prop>`
-/// shorthand uses. Mixing the two forms on one element is
-/// supported (the shell uses the bare form on most blocks but
-/// `animate:in-opacity` is what authors will reach for once the
-/// `animate:out-*` sister exists).
-#[test]
-fn animate_in_prefix_lowers_to_data_animate_in_attr() {
-    let nodes = interpret(r#"<container animate:in-opacity="0 200ms"/>"#).unwrap();
-    let crate::layout::Node::Container { props, .. } = &nodes[0] else {
-        panic!()
-    };
-    let attrs: std::collections::HashMap<_, _> = props
-        .semantic
-        .attrs
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    assert_eq!(
-        attrs.get("data-animate-in-opacity").map(String::as_str),
-        Some("0 200ms")
-    );
     // No accidental `data-animate-out-*` emission.
     assert!(!attrs.keys().any(|k| k.starts_with("data-animate-out-")));
 }
 
-/// Wave 14.8 — `animate:out-<prop>` lowers to
-/// `data-animate-out-<prop>` for the runtime animator's pending
-/// retention path. Substrate-only today: the data round-trip
-/// lands, the painter-side node retention is the next step.
+/// §7.15 — `animator:out-<prop>` lowers to `data-animate-out-<prop>`
+/// for the runtime animator's pending retention path. Mirrors the
+/// `:in-` arm — same `animator:` namespace, different prefix.
 #[test]
-fn animate_out_prefix_lowers_to_data_animate_out_attr() {
+fn animator_out_prefix_lowers_to_data_animate_out_attr() {
     let nodes =
-        interpret(r#"<container animate:out-opacity="0 250ms" animate:out-padding="0 150ms"/>"#)
+        interpret(r#"<container animator:out-opacity="0 250ms" animator:out-padding="0 150ms"/>"#)
             .unwrap();
     let crate::layout::Node::Container { props, .. } = &nodes[0] else {
         panic!()
@@ -1178,14 +1127,16 @@ fn style_opacity_clamps_out_of_range_values() {
     assert_eq!(props.opacity, Some(0.0));
 }
 
-/// Wave 9.4 — `transition:<prop>="<duration>"` lowers to a
-/// `data-transition-<prop>` semantic attribute the
-/// `Effect`-driven animator (follow-up) consumes.
+/// §7.15 — `animator:transition-<prop>="<duration>"` lowers to a
+/// `data-transition-<prop>` semantic attribute the animator
+/// consumes for mid-life value-change interpolation. Subsumes the
+/// retired `transition:` namespace.
 #[test]
-fn transition_namespace_lowers_to_data_transition_attr() {
-    let nodes =
-        interpret(r#"<container transition:opacity="200ms" transition:transform="120ms"/>"#)
-            .unwrap();
+fn animator_transition_prefix_lowers_to_data_transition_attr() {
+    let nodes = interpret(
+        r#"<container animator:transition-opacity="200ms" animator:transition-transform="120ms"/>"#,
+    )
+    .unwrap();
     let crate::layout::Node::Container { props, .. } = &nodes[0] else {
         panic!()
     };
@@ -1205,12 +1156,16 @@ fn transition_namespace_lowers_to_data_transition_attr() {
     );
 }
 
-/// §4.1 — `transition:easing="ease-in"` round-trips the keyword
+/// §4.1 — `animator:easing="ease-in"` round-trips the keyword
 /// verbatim into `data-transition-easing`; the animator's
-/// `parse_easing` maps it to the builtin cubic curve.
+/// `parse_easing` maps it to the builtin cubic curve. (The
+/// lowered attr keeps its historic `data-transition-easing` name
+/// since it gates every animation surface on the node — entry,
+/// mid-life delta, exit — same way CSS's `transition-timing-function`
+/// scopes per element.)
 #[test]
-fn transition_easing_keyword_round_trips() {
-    let nodes = interpret(r#"<container transition:easing="ease-in"/>"#).unwrap();
+fn animator_easing_keyword_round_trips() {
+    let nodes = interpret(r#"<container animator:easing="ease-in"/>"#).unwrap();
     let crate::layout::Node::Container { props, .. } = &nodes[0] else {
         panic!()
     };
@@ -1227,15 +1182,15 @@ fn transition_easing_keyword_round_trips() {
     );
 }
 
-/// §4.1 — a Luau easing closure on `transition:easing` is sampled
+/// §4.1 — a Luau easing closure on `animator:easing` is sampled
 /// at lowering time into a numeric LUT the animator interpolates
 /// with zero per-frame Lua calls. `\fn(t) return t*t end` → the
 /// decoded curve must satisfy `ease(0)=0`, `ease(1)=1`,
 /// `ease(0.5)≈0.25` (the quadratic at its midpoint).
 #[cfg(feature = "luau")]
 #[test]
-fn transition_easing_closure_samples_to_lut() {
-    let nodes = interpret(r#"<container transition:easing={\fn(t) return t * t end}/>"#).unwrap();
+fn animator_easing_closure_samples_to_lut() {
+    let nodes = interpret(r#"<container animator:easing={\fn(t) return t * t end}/>"#).unwrap();
     let crate::layout::Node::Container { props, .. } = &nodes[0] else {
         panic!()
     };
@@ -1262,35 +1217,6 @@ fn transition_easing_closure_samples_to_lut() {
     );
 }
 
-/// Wave 13.3 — `use:<modifier-id>[="<value>"]` directive lowers
-/// to a `data-use-<id>` semantic attribute. Authors write
-/// `<container use:hover use:tooltip="Click to save"/>` instead
-/// of hand-emitting the `data-use-` ladder; runtime modifier-fold
-/// integration is a follow-up.
-#[test]
-fn use_namespace_lowers_to_data_use_attr() {
-    let nodes = interpret(r#"<container use:hover use:tooltip="Click to save"/>"#).unwrap();
-    let crate::layout::Node::Container { props, .. } = &nodes[0] else {
-        panic!()
-    };
-    let attrs: std::collections::HashMap<_, _> = props
-        .semantic
-        .attrs
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    // Empty-bodied `use:hover` materialises as `data-use-hover="true"`
-    // so SSR / hit-test caches see a non-empty value to dispatch on.
-    assert_eq!(
-        attrs.get("data-use-hover").map(String::as_str),
-        Some("true")
-    );
-    assert_eq!(
-        attrs.get("data-use-tooltip").map(String::as_str),
-        Some("Click to save")
-    );
-}
-
 /// `bind:<key>="<source>"` lowers to a `data-bind-<key>`
 /// semantic attribute carrying the source path verbatim. The
 /// reactive-binding installer (Phase 4 of the dioxus plan)
@@ -1313,15 +1239,12 @@ fn bind_namespace_lowers_to_data_bind_attr() {
     );
 }
 
-/// `fct:<key>="<source>"` and `sig:<key>="<source>"` follow the
-/// same carry-through pattern as `bind:` — they surface as
-/// `data-fct-<key>` / `data-sig-<key>` semantic attrs so the
-/// host's facet expander / signal-scope installer can act on
-/// them post-interpret.
+/// `sig:<key>="<source>"` follows the same carry-through pattern
+/// as `bind:` — surfaces as a `data-sig-<key>` semantic attr so
+/// the host's signal-scope installer can act on it post-interpret.
 #[test]
-fn fct_and_sig_namespaces_lower_to_data_attrs() {
-    let nodes =
-        interpret(r#"<container fct:source="resource:posts" sig:emit="clicked"/>"#).unwrap();
+fn sig_namespace_lowers_to_data_attr() {
+    let nodes = interpret(r#"<container sig:emit="clicked"/>"#).unwrap();
     let crate::layout::Node::Container { props, .. } = &nodes[0] else {
         panic!()
     };
@@ -1332,107 +1255,16 @@ fn fct_and_sig_namespaces_lower_to_data_attrs() {
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
     assert_eq!(
-        attrs.get("data-fct-source").map(String::as_str),
-        Some("resource:posts")
-    );
-    assert_eq!(
         attrs.get("data-sig-emit").map(String::as_str),
         Some("clicked")
     );
 }
 
-/// A4 — `<facet name="row" from="<source>">…</facet>` lowers its
-/// children once per item resolved from `from`, binding each
-/// item under `name` in the per-iteration scope. Same vocabulary
-/// as `for="row in source"`, dedicated tag for declarative
-/// authorship.
-#[test]
-fn facet_element_repeats_children_once_per_item() {
-    let mut scope = LowerScope::default();
-    scope.bindings.insert(
-        "posts".to_string(),
-        serde_json::json!([
-            {"title": "First"},
-            {"title": "Second"},
-            {"title": "Third"},
-        ]),
-    );
-    let nodes = interpret_with_scope(
-        r#"<facet name="post" from="posts"><text>{post.title}</text></facet>"#,
-        &scope,
-    )
-    .unwrap();
-    // One Text node per post.
-    assert_eq!(nodes.len(), 3);
-    let titles: Vec<String> = nodes
-        .iter()
-        .map(|n| match n {
-            crate::layout::Node::Text { content, .. } => content.clone(),
-            other => panic!("expected text, got {other:?}"),
-        })
-        .collect();
-    assert_eq!(titles, vec!["First", "Second", "Third"]);
-}
-
-/// Default item-binding name is `"item"` when `name=` is omitted.
-/// `<facet from="rows">{item.foo}</facet>` reads the same as
-/// `<facet name="item" from="rows">{item.foo}</facet>`.
-#[test]
-fn facet_element_defaults_item_name_to_item() {
-    let mut scope = LowerScope::default();
-    scope.bindings.insert(
-        "rows".to_string(),
-        serde_json::json!([{"value": "alpha"}, {"value": "beta"}]),
-    );
-    let nodes = interpret_with_scope(
-        r#"<facet from="rows"><text>{item.value}</text></facet>"#,
-        &scope,
-    )
-    .unwrap();
-    assert_eq!(nodes.len(), 2);
-    let values: Vec<String> = nodes
-        .iter()
-        .map(|n| match n {
-            crate::layout::Node::Text { content, .. } => content.clone(),
-            other => panic!("expected text, got {other:?}"),
-        })
-        .collect();
-    assert_eq!(values, vec!["alpha", "beta"]);
-}
-
-/// A `<facet>` with no resolvable `from` source lowers to empty
-/// — matches the `for=` behaviour and keeps headless / boot
-/// paths panic-free.
-#[test]
-fn facet_element_with_missing_source_lowers_to_empty() {
-    let nodes = interpret(r#"<facet name="row" from="nope.does.not.exist"/>"#).unwrap();
-    assert!(nodes.is_empty());
-}
-
-/// A `<facet>` accepts inline range sources (same vocabulary as
-/// `for="i in 0..3"`).
-#[test]
-fn facet_element_supports_range_sources() {
-    let nodes = interpret(r#"<facet name="i" from="0..3"><text>row {i}</text></facet>"#).unwrap();
-    assert_eq!(nodes.len(), 3);
-    let labels: Vec<String> = nodes
-        .iter()
-        .map(|n| match n {
-            crate::layout::Node::Text { content, .. } => content.clone(),
-            other => panic!("expected text, got {other:?}"),
-        })
-        .collect();
-    assert_eq!(labels, vec!["row 0", "row 1", "row 2"]);
-}
-
 /// Same carry-through on `<input>` so text-input authors can
-/// bind facets / signals at the field boundary too.
+/// bind signals at the field boundary too.
 #[test]
-fn fct_and_sig_namespaces_lower_on_text_input() {
-    let nodes = interpret(
-        r#"<input fct:option="resource:options" sig:on:change="emit form.email-changed"/>"#,
-    )
-    .unwrap();
+fn sig_namespace_lowers_on_text_input() {
+    let nodes = interpret(r#"<input sig:on:change="emit form.email-changed"/>"#).unwrap();
     let crate::layout::Node::TextInput { semantic, .. } = &nodes[0] else {
         panic!()
     };
@@ -1441,10 +1273,6 @@ fn fct_and_sig_namespaces_lower_on_text_input() {
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    assert_eq!(
-        attrs.get("data-fct-option").map(String::as_str),
-        Some("resource:options")
-    );
     assert_eq!(
         attrs.get("data-sig-on:change").map(String::as_str),
         Some("emit form.email-changed")
@@ -5049,11 +4877,11 @@ fn tier3_require_transitive_through_resolver() {
     assert_eq!(text_contents(&nodes), vec!["5".to_string()]);
 }
 
-// ---------- Wave G: probe: + at: ----------
+// ---------- Wave G: probe: namespace ----------
 
 #[test]
 fn probe_namespace_lowers_to_data_attr() {
-    let nodes = interpret(r#"<container probe:render="card-shown" at:0="{opacity: 0}"/>"#).unwrap();
+    let nodes = interpret(r#"<container probe:render="card-shown"/>"#).unwrap();
     let Node::Container { props, .. } = &nodes[0] else {
         panic!()
     };
@@ -5063,10 +4891,6 @@ fn probe_namespace_lowers_to_data_attr() {
             .iter()
             .any(|(k, v)| k == "data-probe-render" && v == "card-shown"),
         "{attrs:?}"
-    );
-    assert!(
-        attrs.iter().any(|(k, _)| k == "data-at-0"),
-        "at: keyframe attr missing: {attrs:?}"
     );
 }
 

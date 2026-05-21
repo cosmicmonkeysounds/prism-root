@@ -19,7 +19,7 @@ fn text_schema_has_body_level_href() {
 }
 
 #[test]
-fn register_builtins_seeds_seventeen_components() {
+fn register_builtins_seeds_sixteen_components() {
     let reg = setup();
     for id in [
         "text",
@@ -37,7 +37,6 @@ fn register_builtins_seeds_seventeen_components() {
         "table",
         "tabs",
         "accordion",
-        "facet",
         "graph-view",
     ] {
         assert!(reg.get(id).is_some(), "missing component: {id}");

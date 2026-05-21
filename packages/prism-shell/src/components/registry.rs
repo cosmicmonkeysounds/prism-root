@@ -211,8 +211,8 @@ pub fn register_full_shell_chrome(reg: &mut ShellComponentRegistry) -> Result<()
     Ok(())
 }
 
-/// Merge the document-side builder catalog (`prism_builder::starter::BUILTINS`
-/// plus the `card` prefab and `facet` component) into the live shell
+/// Merge the document-side builder catalog
+/// (`prism_builder::starter::BUILTINS`) into the live shell
 /// registry. Required so `select_node` →
 /// `resync_builder_for_selection` can resolve schemas for builder
 /// nodes (`text` / `button` / …) and populate the inspector property
@@ -291,8 +291,8 @@ mod tests {
 
     /// Wave 5.2 of `docs/dev/composable-builder-plan.md` — boot-time
     /// contract that the shell namespace (`shell.*`) and the builder
-    /// document catalog (`prism_builder::starter::BUILTINS` + the
-    /// `card` prefab + the `facet` component) carry disjoint ids.
+    /// document catalog (`prism_builder::starter::BUILTINS`) carry
+    /// disjoint ids.
     /// `register_specs` rejects duplicates at runtime via
     /// `RegistryError::AlreadyRegistered`, so a collision *would*
     /// crash `Shell::new` at the second registration call — but a
@@ -304,12 +304,10 @@ mod tests {
 
         let shell_ids: HashSet<&str> = SHELL_BUILTINS.iter().map(|spec| spec.id).collect();
 
-        let mut doc_ids: HashSet<&str> = prism_builder::starter::BUILTINS
+        let doc_ids: HashSet<&str> = prism_builder::starter::BUILTINS
             .iter()
             .map(|spec| spec.id)
             .collect();
-        doc_ids.insert("card");
-        doc_ids.insert("facet");
 
         // Wave 10 — the 14 `prism.*` primitives merge in alongside
         // the document builtins. Keep them in their own namespace so

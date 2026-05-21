@@ -3,9 +3,9 @@
   shell.toast children. Wave 11.2 migration of toast_stack.rs.
 
   The caller supplies `<shell.toast>` children inside the wrapping tag;
-  the `<host-children/>` element emits the pre-lowered children at
-  exactly this seam. Host typically mounts the whole stack onto the
-  overlay z-layer with a BottomRight anchor.
+  the unnamed `<slot/>` emits the pre-lowered children at exactly
+  this seam. Host typically mounts the whole stack onto the overlay
+  z-layer with a BottomRight anchor.
 -->
 <container
     tag="div"
@@ -18,5 +18,5 @@
     padding-right="12"
     padding-top="12"
     padding-bottom="12">
-  <host-children/>
+  <slot/>
 </container>

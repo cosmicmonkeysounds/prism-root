@@ -233,18 +233,6 @@ pub fn accordion() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-pub(crate) struct FacetProps {
-    #[field(label = "Data source")]
-    pub(crate) from: String,
-    #[field(label = "Max items", min = 1.0, max = 10_000.0)]
-    pub(crate) max_items: i64,
-}
-
-pub fn facet() -> Vec<FieldSpec> {
-    FacetProps::field_specs()
-}
-
-#[derive(PrismField)]
 pub(crate) struct GraphViewProps {
     #[field(label = "Node label field", default = "label")]
     pub(crate) node_label_field: String,

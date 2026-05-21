@@ -188,6 +188,25 @@ lists the files without writing; existing files are refused unless
 `--force`; path-traversal names are rejected. Pure filesystem
 scaffold — does not shell out. Lives in `commands::new`.
 
+### `prism rewrite-canonical <paths>... [--stdout] [--force] [--check]`
+Phase 2 of the expressiveness roadmap
+(`docs/dev/prui-expressiveness-roadmap.md` §6.24 + §8). Walks one or
+more `.prui` files (or directories — `target/` / `.git/` /
+`node_modules/` / `dist/` / `.next/` are skipped) and rewrites
+their XML-shape declarations into the canonical surface. The
+rewriter is **idempotent** — running it twice over a tree changes
+nothing on the second pass — so it's safe to wire into a pre-commit
+hook. `--stdout` prints the rewritten content instead of overwriting
+the source (single-file review); `--check` (or the global
+`--dry-run`) reports what would change without touching disk;
+`--force` commits the best-effort output for files that surfaced XML
+parse errors (without `--force` those files are skipped with an
+informational warning and the CLI exits 2). The rewriter delegates
+all transformation logic to `prism_core::language::prism_ui::
+rewrite_xml_to_canonical` (the migration tool's payload), so the
+behaviour is identical whether invoked via the CLI or library.
+Lives in `commands::rewrite_canonical`.
+
 ## Automatic build-artefact GC
 After every successful `prism build`, `prism test`, or `prism dev`
 (web preflight), the CLI runs `gc::sweep` over `target/` and returns a

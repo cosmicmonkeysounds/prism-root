@@ -6,8 +6,8 @@
     - menu    (top strip)       — fallback: `<shell.menu-bar-row>`
     - nav     (left activity)   — fallback: dispatched `<shell.nav-button>` per entry in `nav-buttons`
     - status  (bottom strip)    — fallback: `<shell.status-bar>` carrying the `status` prop
-    - default (content body)    — no override surface today; `<host-children/>` emits the caller's
-                                  non-slotted children verbatim
+    - default (content body)    — no override surface today; the unnamed `<slot/>` emits the
+                                  caller's non-slotted children verbatim
 
   A caller authors a slot override with `<text slot="menu">Custom</text>`;
   the resolver buckets the AST child by `slot=` attribute and threads
@@ -59,7 +59,7 @@
         height="grow"
         style:background="#ffffff"
         role="main">
-      <host-children/>
+      <slot/>
     </container>
   </container>
 

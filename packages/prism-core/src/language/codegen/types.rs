@@ -27,8 +27,6 @@ pub const EMITTER_KIND_SCHEMA: &str = "schema";
 pub const EMITTER_KIND_DATA: &str = "data";
 /// Well-known `input_kind` for AST round-trip emitters.
 pub const EMITTER_KIND_AST: &str = "ast";
-/// Well-known `input_kind` for facet-builder configs.
-pub const EMITTER_KIND_FACET: &str = "facet";
 
 /// One file produced by an emitter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

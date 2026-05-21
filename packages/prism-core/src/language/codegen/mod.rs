@@ -42,5 +42,5 @@ pub use symbol_emitter::{
 pub use text_emitter::TextEmitter;
 pub use types::{
     CodegenInputs, CodegenMeta, CodegenResult, EmittedFile, Emitter, EMITTER_KIND_AST,
-    EMITTER_KIND_DATA, EMITTER_KIND_FACET, EMITTER_KIND_SCHEMA, EMITTER_KIND_SYMBOLS,
+    EMITTER_KIND_DATA, EMITTER_KIND_SCHEMA, EMITTER_KIND_SYMBOLS,
 };

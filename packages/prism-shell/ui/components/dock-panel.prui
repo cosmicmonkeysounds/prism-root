@@ -10,8 +10,8 @@
   - The runtime's `<dispatch component="{expr}"/>` substrate
     handles dynamic-tag dispatch from a binding value — the same
     seam `shell.properties-panel`'s rows-with-component-field uses.
-  - The runtime's `<host-children/>` element accepts inline
-    fallback children that emit when nothing was injected — the
+  - The runtime's unnamed `<slot/>` accepts inline fallback
+    children that emit when nothing was injected — the
     slot-fallback contract from Wave 13.1.
 
   Body precedence: pre-lowered host children (from the AST or a
@@ -38,11 +38,11 @@
       width="grow"
       height="grow"
       data:role="dock-body">
-    <host-children>
+    <slot>
       <dispatch
           if="{content-tag}"
           component="{content-tag}"
           id="{id}::content"/>
-    </host-children>
+    </slot>
   </container>
 </container>

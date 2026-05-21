@@ -41,14 +41,13 @@ From `src/lib.rs`:
 - `ComponentRegistry`, `RegistryError` — DI entry point. Implements
   `HelpProvider` to collect entries from registered components.
 - `starter::register_builtins(&mut ComponentRegistry)` — seeds the
-  17-block default catalog (`text`, `image`, `container`, `form`,
+  16-block default catalog (`text`, `image`, `container`, `form`,
   `input`, `button`, `card`, `code`, `divider`, `spacer`, `columns`,
-  `list`, `table`, `tabs`, `accordion`, `facet`, `graph-view`). The
-  16 `Block` rows (incl. `card` — §4.4 folded it from a `PrefabDef`
-  into a plain `BlockSpec`) go through one `SpecBlock` type driven by
-  a `BUILTINS: &[&BlockSpec]` const table — no per-block trait impl;
-  add a builtin = one `const SPEC` + one row. `facet` is the lone
-  one-off `Component`.
+  `list`, `table`, `tabs`, `accordion`, `graph-view`). All 16 rows
+  (incl. `card` — §4.4 folded it from a `PrefabDef` into a plain
+  `BlockSpec`) go through one `SpecBlock` type driven by a
+  `BUILTINS: &[&BlockSpec]` const table — no per-block trait impl;
+  add a builtin = one `const SPEC` + one row.
 - `block::BlockSpec`, `block::SpecBlock`, `block::register_specs`,
   `block::{HelpDef, LowerFn, default_lower, default_signals,
   no_schema, no_variants}` — the declarative spec primitive +
@@ -166,7 +165,7 @@ nothing regenerates it from the document tree.
 
 ### Shared
 - `BuilderDocument`, `Node`, `NodeId` — serializable document tree.
-  Carries `resources`, `connections`, `prefabs`, `facets`.
+  Carries `resources`, `connections`, `prefabs`.
 - `FieldSpec`, `FieldKind`, `NumericBounds`, `SelectOption`,
   `FieldValue` — property-panel field factories.
 - `Html`, `escape_text`, `escape_attr` — HTML buffer helpers.
@@ -187,13 +186,6 @@ Modules in `src/` (excluding `lib.rs`):
   fans out across every domain/interaction module that exposes
   `widget_contributions()`. `register_core_widgets` plugs them in.
 - `document.rs` — `BuilderDocument` + `Node` + `NodeId`.
-- `facet/` — `FacetComponent` (the data-repeat block) +
-  `resolve_template_expressions` (the `{{field}}` interpolator).
-  A `facet` node lowers its child subtree once per item in its data
-  source, reading the source from `Node.props` so the whole thing
-  travels through the standard `Component::lower_ui` contract — no
-  `BuilderDocument` side-table. Replaced the prior `FacetDef`
-  data-model subsystem; see `docs/dev/wysiwyg-builder-roadmap.md` §4.
 - `html.rs` — `Html` buffer + escape helpers (chrome composition).
 - `layout.rs` — Taffy layout (ADR-003). `PageLayout`, `LayoutMode`
   variants, `compute_layout`.
@@ -266,8 +258,8 @@ Modules in `src/` (excluding `lib.rs`):
   `.write_at(root, target_id, key, value)` replace the open-coded
   `Value::Object(ref mut map).insert(..)` patterns and the legacy
   `prefab::apply_prop_to_node`. Single builder; JSON write +
-  reactive notify in one call. Used by `prefab`, `facet`, and the
-  shell's `AppState::set_node_prop`.
+  reactive notify in one call. Used by `prefab` and the shell's
+  `AppState::set_node_prop`.
 - `ui_resolver.rs` — `<shell.*>` tag resolution helpers consumed by
   the runtime's interpret pipeline.
 - `ui_runtime.rs` — `BuilderDocument` →

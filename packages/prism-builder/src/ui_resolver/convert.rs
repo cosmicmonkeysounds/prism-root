@@ -186,7 +186,7 @@ pub(crate) fn attach_style_overrides(node: &mut UiNode, element: &Element, scope
 /// | `data:k="v"`        | `node.props[k]`    |
 /// | `aria:k="v"`        | `node.props["aria-{k}"]` |
 /// | `style:*`           | ignored (cascade comes from `parent_style`) |
-/// | `on:*` / `bind:*` / `sig:*` / `fct:*` / control-flow | ignored (handled separately upstream) |
+/// | `on:*` / `bind:*` / `sig:*` / control-flow | ignored (handled separately upstream) |
 ///
 /// Boolean attributes (`<el disabled>`) become `Bool(true)`.
 /// Strings stay strings; the block's schema does the typed coercion.
@@ -256,8 +256,8 @@ pub(crate) fn element_to_builder_node(element: &Element, scope: &LowerScope) -> 
                     resolved_attribute_value(&attr.value, scope),
                 );
             }
-            // Styling, signals, facets, control-flow keywords
-            // are not block-prop carriers — the cascade handles styles,
+            // Styling, signals, control-flow keywords are not
+            // block-prop carriers — the cascade handles styles,
             // signals flow through their own dispatch paths,
             // and control-flow attrs were consumed by the runtime's
             // pre-pass before the resolver was called.
