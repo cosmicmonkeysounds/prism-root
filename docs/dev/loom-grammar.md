@@ -216,19 +216,38 @@ drives  on_complete  on_fail
                                                        // factions (§19)
 faction  template  members  state  stance
 emerges  dissolves  grows  shrinks  changes
-proposes  founds  asymmetric
+proposes  founds  asymmetric  parent
 default  size  age  has_stance  is_at_least  is_at_most
+visibility  public  private  actually
+as_known_by  believes  reveal  revealed  hidden_from
+discovers_member  membership
                                                        // built-in stance levels
 hostile  wary  neutral  friendly  allied
+                                                       // scheduling tiers (§9.8 design)
+focal  active  ambient  budget_ms  tier
+                                                       // improv advancement (§8.5 design)
+advance_on  pedal  tap  speech  gesture  quorum
+stage_manager  performer
+                                                       // template knobs
+settling_window  spawn_rate_limit
+late_join_observer_template
 ```
 
 `is not`, `has not`, `each visit`, `participant joins`,
 `participant leaves`, `participant enters`, `participant exits`,
 `participant proposes faction`, `participant joins faction`,
 `participant leaves faction`, `faction emerges`, `faction dissolves`,
-`faction grows`, `faction shrinks`, `stance changes`, `is_at_least`,
-`is_at_most`, `passes`, `drops below`, and `wait until` are
-multi-word lexical tokens; the lexer joins them with look-ahead.
+`faction grows`, `faction shrinks`, `stance changes`, `stance revealed`,
+`membership revealed`, `is_at_least`, `is_at_most`, `passes`,
+`drops below`, and `wait until` are multi-word lexical tokens; the
+lexer joins them with look-ahead.
+
+Identifiers containing underscores (`active_when`, `as_known_by`,
+`is_at_least`, `discovers_member`, `settling_window`, `late_join_observer_template`,
+etc.) lex as a single `IDENT` by the §3 rule. They appear in the
+keyword list above because they are reserved against user-defined
+identifier collision; the lexer does not need look-ahead to assemble
+them.
 
 ### 3.2 Speaker vs identifier
 
@@ -362,6 +381,23 @@ ImprovSpec
   ::= '.latitude' , '(' , NUMBER , ')'              // 0..1
     | '.topic' , '(' , STRING , ')'
     | '.duration' , '(' , Duration , ')'
+    | '.advance_on' , AdvanceQuorum ':' , AdvanceSignal (',' , AdvanceSignal)*
+
+AdvanceQuorum
+  ::= 'any'
+    | 'all'
+    | 'quorum' , '(' , NUMBER , ')'                  // N-of-list
+
+AdvanceSignal
+  ::= 'pedal'
+    | 'tap'
+    | 'duration'
+    | 'speech'         , '(' , STRING , ')'
+    | 'gesture'        , '(' , StaticRef , ')'
+    | 'stage_manager.tap'
+    | 'performer'      , '(' , (ResolveRef | StaticRef) , ')' , '.' , IDENT
+    | 'participant'    , '.' , IDENT
+    | RegisteredAdvanceSignal                        // §11 extension API
 
 Duration
   ::= NUMBER , ('s' | 'ms' | 'm')                   // 60s, 250ms, 5m
@@ -1444,6 +1480,10 @@ This table is the parser's source of truth for "what can come next".
 | `StanceBlock` | `StanceEntry` only |
 | `FactionEvent` (`when faction …`) | `Content` |
 | `ParticipantFactionLifecycle` | `Content` |
+| `DiscoveryEvent` (`when stance/membership revealed …`) | `Content` |
+| `GeneratorDecl` header | optional `SchedulerProperty` block before `GeneratorBody` |
+| `SceneCoroutineDecl` header | optional `SchedulerProperty` block before `SceneState`s |
+| `:faction :template` document body | `FactionTemplateProperty` (§19.9), then `FactionBodyItem` (members optional) |
 
 A line whose indent says "I am a child of X" but whose class is not in
 that row is a parse error (`unexpected-child`) with a helpful message
@@ -1482,6 +1522,14 @@ rejects them as hard errors.
 | Stance cycle of mirrors | `A mirrors B mirrors A` — same rule as disposition. |
 | `as faction` on a target that isn't a faction | The resolve must bind to a faction at scope-entry time. |
 | `Faction.spawn` outside a `when participant proposes faction` body or a `~` action line | Side effect requires explicit position. |
+| `as_known_by` on a non-stance predicate | The observer-keyed layer currently covers stance + membership only; `believes(...)` generalizes for everything else. |
+| Visibility clause on a `match` member entry whose predicate is observer-keyed | Visibility is per-membership, not per-predicate — invariant of the resolver. |
+| `actually(...)` nested inside another `actually(...)` | Idempotent; collapsed to a single bypass. Warn. |
+| `.tier` value not in the tier registry | Tier names are registered (focal/active/ambient + extensions). |
+| `.priority` outside `[0.0, 1.0]` | Priority is a normalized scalar; clamp + warn. |
+| `.advance_on` quorum count > signal-list length | Quorum unreachable — error. |
+| `reveal` on a stance that doesn't yet exist | Stance must be initialized before being revealed. |
+| Sub-faction `@A` listed in `@B.members` where `@B` is in `@A.members` (cycle) | Membership closure must terminate. |
 
 ---
 
@@ -1950,7 +1998,17 @@ living system. See [design §9](loom-design.md#9-reactivity--dynamics).
 ```
 GeneratorDecl
   ::= 'generator' , IDENT , ParamList? , NL
+  , (INDENT , SchedulerProperty+ , DEDENT)?
   , INDENT , GeneratorBody , DEDENT
+
+SchedulerProperty
+  ::= '.tier'     , Tier                             , NL    // §9.8
+    | '.priority' , NUMBER                           , NL    // tie-break
+    | '.budget_ms', NUMBER                           , NL    // soft per-tick ceiling
+
+Tier
+  ::= 'focal' | 'active' | 'ambient'
+    | IDENT                                          // open extension
 
 GeneratorBody
   ::= GeneratorItem+
@@ -2013,6 +2071,7 @@ world boot.
 ```
 SceneCoroutineDecl
   ::= 'scene' , IDENT , ParamList? , NL
+  , (INDENT , SchedulerProperty+ , DEDENT)?
   , INDENT , SceneState+ , DEDENT
 
 SceneState
@@ -2198,15 +2257,55 @@ MembersBlock
   , INDENT , MemberEntry+ , DEDENT
 
 MemberEntry
-  ::= StaticRef (',' , StaticRef)*                   , NL    // explicit characters
-    | 'cohort' , IDENT                               , NL    // cohort inclusion
-    | 'match'  , Expr                                , NL    // reactive predicate
+  ::= StaticRef (',' , StaticRef)* , VisibilityClause? , NL    // explicit characters / sub-factions
+    | 'cohort'  , IDENT            , VisibilityClause? , NL    // cohort inclusion
+    | 'match'   , Expr             , VisibilityClause? , NL    // reactive predicate
+
+VisibilityClause
+  ::= 'visibility' , ':' , VisibilityLevel
+
+VisibilityLevel
+  ::= 'public'
+    | 'private'
+    | 'cohort'      , '(' , IDENT     , ')'
+    | 'participant' , '(' , ResolveRef , ')'
+    | 'faction'     , '(' , FactionRef , ')'
 ```
 
 Multiple `MemberEntry` lines compose additively. The `match` form is
 re-evaluated whenever any read variable changes; the resulting member
-set is a union of all entries. See
+set is a union of all entries. Default visibility is `public`. A
+`StaticRef` in an explicit-list entry that resolves to a faction
+makes that faction a *sub-faction* — its members become transitive
+members of the parent. See
 [design §10.3](loom-design.md#103-membership).
+
+#### 19.1.1 The `.parent` property
+
+```
+ParentProperty
+  ::= '.parent' , FactionRef , NL
+```
+
+A faction can declare its parent without being listed in the parent's
+`members`; the two forms collapse to the same membership-closure
+entry in the registry. Declaring both forms is allowed and idempotent.
+
+#### 19.1.2 Membership queries respect visibility
+
+The query atoms gain a truth-bypass modifier:
+
+```
+MembershipQuery
+  ::= ResolveRef , '.' , 'in_faction' , '(' , FactionRef , ')'
+    | 'actually' , '(' , Expr , ')'                  // bypass visibility
+```
+
+Inside `actually(...)`, all membership and stance lookups read the
+canonical truth, ignoring the observer's view. Outside, the resolver
+threads the *current observer* (the enclosing `as participant` /
+`as character` scope, or `nil` for unscoped queries which return
+truth) through every lookup.
 
 ### 19.2 State block
 
@@ -2267,6 +2366,81 @@ FactionRef
 
 `has_stance(@F)` is a single-target predicate that returns true if
 the subject faction has any non-default stance toward `@F`.
+
+#### 19.3.1 Believed stance (information asymmetry)
+
+Stance has two layers: *actual* (the canonical matrix above) and
+*believed* (one value per observer per (A, B) pair). See
+[design §10.2.1](loom-design.md#1021-believed-stance--the-information-asymmetry-layer).
+
+```
+BelievedStancePred
+  ::= 'stance' , '(' , FactionRef , ',' , FactionRef , ')'
+    , 'as_known_by' , Observer , StancePredOp
+
+BelievesPred
+  ::= 'believes' , '(' , Observer , ',' , Expr , ')'
+
+Observer
+  ::= ResolveRef                                     // $PARTICIPANT / $elena / $cohort
+    | StaticRef                                      // @merchants / @bell_tower
+    | '(' , 'cohort' , IDENT     , ')'               // cohort(name)
+    | '(' , 'faction' , FactionRef , ')'             // faction(@F)
+    | ':all'                                         // every observer
+```
+
+`believes($X, P)` is the generalized form — it accepts any condition
+predicate (not just stance) and evaluates `P` against the observer's
+*view* of the world instead of the canonical truth. Currently only
+stance and membership predicates participate; future observer-keyed
+state (knowledge, perceived disposition) will plug in here.
+
+```
+StanceMutation
+  ::= '~' , 'stance' , '(' , FactionRef , ',' , FactionRef , ')'
+    , ('as_known_by' , Observer)? , ':=' , StanceLevel
+    , 'asymmetric'?
+    , HiddenFromClause?
+    , NL
+
+HiddenFromClause
+  ::= 'hidden_from' , BroadcastScope                 // reuses §5.8 BroadcastScope grammar
+```
+
+The `hidden_from` clause is sugar for "set the actual value, but
+pin every matching observer's belief to the prior value." See
+[design §10.2.1](loom-design.md#1021-believed-stance--the-information-asymmetry-layer).
+
+```
+RevealAction
+  ::= '~' , 'reveal' , RevealSubject , 'to' , Observer , NL
+
+RevealSubject
+  ::= 'stance' , '(' , FactionRef , ',' , FactionRef , ')'
+    | 'membership' , '(' , (ResolveRef | StaticRef) , ',' , FactionRef , ')'
+```
+
+`reveal` writes a `StanceRevealed` or `MembershipRevealed` ledger
+entry and fires any matching discovery hooks.
+
+#### 19.3.2 Discovery events
+
+```
+DiscoveryEvent
+  ::= 'when' , DiscoveryVerb , NL
+  , INDENT , Content* , DEDENT
+
+DiscoveryVerb
+  ::= 'stance' , '(' , FactionRef , ',' , FactionRef , ')' , 'revealed' , 'to' , Observer
+    | 'membership' , 'of' , (ResolveRef | StaticRef) , 'in' , FactionRef , 'revealed' , 'to' , Observer
+    | FactionRef , 'discovers_member' , (ResolveRef | StaticRef)
+    | 'stance' , 'revealed' , 'to' , Observer                         // catch-all on revealing
+    | 'membership' , 'revealed' , 'to' , Observer                     // catch-all on revealing
+```
+
+Inside the body, `$OBSERVER` is bound; for the `stance` form,
+`$FACTION` / `$OTHER` carry the two factions; for the `membership`
+form, `$CHARACTER` / `$FACTION` carry the membership in question.
 
 ### 19.4 Faction events (lifecycle hooks)
 
@@ -2359,15 +2533,48 @@ does not introduce new syntax. The calls are:
 ```
 Faction.spawn        { template:@T, label:STRING, founder:$P,
                         founding_members:[$P, …], initial_state:{…} } -> ResolveRef
-Faction.dissolve     ResolveRef
+Faction.dissolve     ResolveRef , ('reason:' , STRING)?
 Faction.set_template ResolveRef , StaticRef
-Faction.add_member   ResolveRef , (StaticRef | ResolveRef)
+Faction.add_member   ResolveRef , (StaticRef | ResolveRef) ,
+                       ('visibility:' , VisibilityLevel)?
 Faction.remove_member ResolveRef , (StaticRef | ResolveRef)
+Faction.set_visibility ResolveRef , (StaticRef | ResolveRef) , VisibilityLevel
 Faction.set_stance   ResolveRef , ResolveRef , StanceLevel , 'asymmetric'?
+Faction.set_belief   Observer , 'stance' , ResolveRef , ResolveRef , StanceLevel
+Faction.reveal_stance     ResolveRef , ResolveRef , 'to' , Observer
+Faction.reveal_membership (StaticRef | ResolveRef) , ResolveRef , 'to' , Observer
+Faction.discovers_member  ResolveRef , (StaticRef | ResolveRef)    // for AI / runtime
 ```
+
+`Faction.discovers_member` is the in-narrative form of an
+observation event — used by AI sensors / detection logic to trigger
+the `when @F discovers_member $X` hook (§19.3.2). Studios that
+implement their own detection systems call this from Luau.
 
 These are registered builtins; calling an undeclared method on the
 `Faction.` namespace is `unknown-namespace-call`.
+
+### 19.9 Faction template properties
+
+A `:faction :template` document accepts extra header properties that
+plain `:faction` documents do not:
+
+```
+FactionTemplateProperty
+  ::= '.min_members'         , NUMBER                              , NL
+    | '.max_members'         , NUMBER                              , NL
+    | '.auto_dissolve_when'  , Expr                                , NL
+    | '.default_stance'      , StanceLevel                         , NL
+    | '.primary_priority'    , NUMBER                              , NL
+    | '.settling_window'     , Duration                            , NL  // §19.9 emerges-after-N
+    | '.spawn_rate_limit'    , NUMBER , '/' , ('s'|'m'|'h')        , NL
+    | '.parent'              , FactionRef                          , NL
+    | '.late_join_observer_template' , StaticRef                   , NL  // see design §13 open Q3
+```
+
+`.settling_window 0` opts out of the deferral (every spawn fires
+`emerges` immediately). `.spawn_rate_limit nil` (or omission) means
+unlimited. See [design §10.6](loom-design.md#106-templates-and-organic-emergence).
 
 ---
 
@@ -2477,6 +2684,26 @@ above the line; hard errors below.
 | `unknown-namespace-call` | error | `Faction.<method>` (or any registered namespace) called on an unknown method. |
 | `faction-dissolve-no-reason` | info | `~ $f.dissolve` with no `reason:` argument — accepted but harder to trace in the ledger. |
 | `member-match-cyclic` | error | `members match` predicate references the very faction it belongs to (self-membership). |
+| `faction-membership-cycle` | error | Sub-faction graph contains a cycle. |
+| `believed-stance-bad-observer` | error | `as_known_by <X>` where `<X>` doesn't resolve to a faction / character / participant / cohort. |
+| `reveal-stance-uninit` | error | `~ reveal stance(A, B) to X` where `stance(A, B)` is still the default (nothing to reveal). |
+| `visibility-bad-target` | error | `visibility:` clause on a `MemberEntry` whose target isn't observable (e.g. a `match` predicate that returns multiple kinds). |
+| `visibility-level-unknown` | error | `VisibilityLevel` is neither built-in nor registered. |
+| `actually-double` | warning | Nested `actually(actually(...))` — second is redundant. |
+| `believes-non-observer` | error | First argument to `believes(...)` doesn't resolve to a valid observer. |
+| `parent-redundant` | info | Faction declares `.parent @P` and is also listed in `@P.members` — same effect, mention once. |
+| `tier-unknown` | error | `.tier <X>` value is not in the tier registry. |
+| `priority-out-of-range` | warning | `.priority` outside `[0, 1]`. Clamped at runtime. |
+| `budget-ms-no-tier` | warning | `.budget_ms` set on a generator with no `.tier` — tier-scoped budget has no anchor. |
+| `advance-on-quorum-unreachable` | error | `quorum(N)` with fewer than N signals listed. |
+| `advance-on-empty` | error | `.advance_on` declared with no signals — improv would never advance. |
+| `settling-window-non-positive` | warning | `.settling_window` is exactly `0` (opts out of emergence deferral) — info-level annotation that the show wants instant emergence. |
+| `spawn-rate-limit-malformed` | error | `.spawn_rate_limit` denominator is not `s` / `m` / `h`. |
+| `late-join-template-unknown` | error | `.late_join_observer_template` references an undeclared template. |
+| `reveal-membership-uninit` | error | `~ reveal membership($X, @F) to ...` where `$X` is not (and never was) a member of `@F`. |
+| `discovery-hook-bad-arity` | error | `when @F discovers_member $X` where `@F` doesn't resolve to a faction. |
+| `improv-signal-unknown` | error | `AdvanceSignal` is neither built-in nor registered. |
+| `stance-as-known-by-symmetric` | warning | Setting `stance(A, B) as_known_by C` only — `(B, A)` belief is left as default-mirror, which is rarely intended. |
 
 These are stable IDs — tooling can suppress them by ID.
 

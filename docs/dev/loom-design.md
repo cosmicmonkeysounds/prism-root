@@ -799,6 +799,42 @@ playback in the booth, and `since(event)` / `last(event)` queries
 subscribe to the same stream — there is no parallel "telemetry"
 channel.
 
+**One canonical ledger; many materialized views.** A 200-participant
+immersive show *needs* a per-participant ledger (their barks fire
+off their own history, not the show's). A single-player RPG needs a
+per-character ledger (Elena's memory of "the player betrayed Wren"
+isn't the player's). And both still need a single canonical record
+of what happened.
+
+The design resolves the tension at the *projection* layer:
+
+- The **canonical ledger** is one append-only stream. Every envelope
+  is tagged with the entities it affects — `participants: [...]`,
+  `characters: [...]`, `factions: [...]`, plus the location/cohort
+  scope it fired under.
+- **Views** are materialized projections over the canonical ledger,
+  keyed by an entity. The runtime maintains them incrementally —
+  every canonical write that mentions the entity appends to its
+  view. Querying `since($participant, bell_rung)` reads the
+  view, not the canonical stream.
+- Views are *derived*, not authoritative. A fresh view rebuilds from
+  the canonical log in O(n) where n is the entity's tagged-event
+  count. Save/load only persists the canonical log; views rebuild
+  on demand.
+
+This lets writers use whichever frame matches the query:
+
+```loom
+if since(bell_rung) < 30s                    # show-global
+if since($PARTICIPANT, bell_rung) < 30s      # this participant's view
+if last($elena, speaker) == @wren            # Elena's view of who last spoke
+```
+
+Storage cost stays linear in the canonical log (the one source of
+truth). Read cost stays linear in the *view* (small, per-entity)
+rather than the full log. Saves are one canonical append-only file
+plus a content hash for integrity.
+
 ### 6.3 Conversation engine state
 
 Beyond the playhead and the ledger, the per-conversation runtime
@@ -1008,10 +1044,47 @@ makes it a flavor line, never spoken aloud). The runtime:
 
 - displays the directive on the performer's prompter (a Luau-driven
   PRUI surface served by `prism-relay` to their device);
-- holds the playhead until the stage manager / performer advances it
-  (foot pedal, tap, speech-recognition trigger), *or* until
-  `.duration` elapses;
+- holds the playhead until **any configured advancement signal** is
+  received, *or* until `.duration` elapses;
 - writes `ImprovBeatStarted` / `ImprovBeatAdvanced` to the ledger.
+
+**Advancement is pluggable.** Different shows want different cues:
+some run on foot pedals, some on mic VAD ("the actor said the
+trigger phrase"), some on a stage-manager tap, some on a sensed
+gesture, some on a participant action. The `.advance_on` property
+lists the signals that count, combined with a quorum operator:
+
+```loom
+BELLKEEPER (improv .duration(45s)
+                   .advance_on any:
+                     pedal,                           # any foot pedal hit
+                     speech("anchor phrase"),         # mic VAD + phrase match
+                     gesture(@bow))                   # detected gesture
+  > Greet warmly.
+  -> next_beat
+
+# Composite: pedal AND mic-confirm before advancing
+BELLKEEPER (improv .advance_on all:
+                     pedal,
+                     speech("ready"))
+  > Don't advance until you've genuinely committed.
+
+# Quorum: any 2 of 3 (useful for distributed multi-performer scenes)
+BELLKEEPER (improv .advance_on quorum(2):
+                     performer($BELLKEEPER).pedal,
+                     performer($ELENA).pedal,
+                     stage_manager.tap)
+  > Trio confirm.
+```
+
+Built-in advancement signals: `pedal`, `tap`, `speech(STR)`,
+`gesture(@G)`, `duration`, `stage_manager.tap`,
+`performer(@X).<signal>`, `participant.<verb>`. Studios register
+more via the extension API (§11) — eye-gaze, brainwave devices,
+audience-applause threshold, whatever the show requires.
+
+The default is `any: pedal, tap, duration` — backward-compatible
+with the "foot pedal or tap or timeout" original semantics.
 
 Mid-line improv between scripted lines:
 
@@ -1033,6 +1106,44 @@ The booth UI — a Prism app driven by the same `LoomRuntime` — can:
 
 Every booth action is a Loro CRDT op on the same store the rest of the
 runtime reads. The booth is just another client.
+
+### 8.7 Cue-list interchange
+
+Theatre crews live in ETC Eos, QLab, ChamSys MagicQ, GrandMA — and
+expecting them to run the show off a `.loom` file isn't realistic.
+Cues have to flow **both ways**: out of Loom to a crew's preferred
+console, and back into Loom after the crew edits their own format.
+
+**Out (export).** A `prism loom cue export --format <fmt>` command
+takes a compiled `LoomDatabase` and emits the corresponding cue
+list. Built-in formats:
+
+| Format | Surface | Notes |
+|---|---|---|
+| `eos` | ETC `.esf` cue-list export | full cue numbers + labels + targets |
+| `qlab` | QLab 5 `.qlab5` bundle | one cue per declared `cue` + inline triggers folded into "memo" cues |
+| `chamsys` | ChamSys `.scn` text export | basic palettes + cue stack |
+| `osc` | OSC bundle (`/cue/<name>`) | for live-routed consoles |
+| `midi` | MIDI Show Control standard | program-change + sysex per cue |
+| `sacn` | sACN universe-mapped JSON | streaming-protocol layout |
+| `csv` | bare cue-list CSV | universal interchange / spreadsheet review |
+
+**In (import).** `prism loom cue import --format <fmt>` consumes a
+crew-edited file and updates the `CueDecl`s in the project (changes
+land as a patch on a designated `imports/` module). Identity is by
+cue name (canonical form: lowercase + snake_case); rename detection
+is best-effort with a manual confirmation prompt.
+
+**Round-trip integrity.** For every supported format, a golden test
+asserts: `(parse → export → re-import → re-export)` is byte-equal at
+the second export. This catches information loss on the round-trip
+(an Eos cue with a custom timing curve that becomes "linear" on
+import is a regression).
+
+**Open extension.** Studios register their own adapters via the
+extension API (§11) by implementing the `CueListAdapter` trait —
+`export(LoomDatabase) -> Bytes` + `import(Bytes) -> CueListPatch`.
+New formats land in the registry alongside the built-ins.
 
 ---
 
@@ -1238,10 +1349,75 @@ spawn daily_routine($wren)
 cancel @scene_id                             # stop a running scene/generator
 ```
 
-The runtime's scheduler is fair-share across concurrent generators
-and scenes. Per-character generators have a single-process invariant
-(only one routine generator active per character at a time) — others
-queue.
+### 9.8 Scheduling: tiers, priority, time budgets
+
+Round-robin scheduling is fine for a handful of characters and falls
+apart at scale — a 200-participant immersive show with 50 ambient
+character routines plus a half-dozen high-stakes scenes can't afford
+to give the background fishmonger the same tick budget as the
+courtroom scene the audience is watching. Loom uses a **tiered
+scheduler** with explicit author control.
+
+**Tiers.** Every generator and scene runs in one of three tiers:
+
+| Tier | When it ticks | Default population |
+|---|---|---|
+| `focal` | every frame | the active conversation; scenes the camera/PoV is in |
+| `active` | every N ms (default 100ms) | nearby NPCs; characters the player has spoken with recently; scenes spawned by the booth |
+| `ambient` | every M ms (default 2s) | distant NPCs; world generators; village background |
+
+Each tier has a **per-tick time budget**; if the tier exceeds it,
+remaining generators in that tier defer to the next tick of that
+tier (not the next frame). The runtime tracks per-generator
+wall-clock cost and exposes it on a `prism loom profile` overlay.
+
+**Author control.** Generators / scenes declare their tier and
+priority:
+
+```loom
+generator harbor_chorus
+  .tier     ambient
+  .priority 0.3                 # tiebreak when budget tightens
+
+  loop
+    wait random(20s, 60s)
+    yield bark from harbor_set
+```
+
+Default tier for a top-level `generator` is `ambient`; for a
+character-scoped `generator` it follows the character's *importance*
+(see below). Scenes default to `active`. Override is always
+explicit.
+
+**Character importance.** A character carries an `importance` axis
+(0..1) — default 0.3, manually settable, automatically promoted when:
+
+- the character is the active speaker in a conversation,
+- the camera / lens is on them (PoV-game / film),
+- the participant scope marker is on them (immersive),
+- a story `~ promote $X` action fires.
+
+Promotion is sticky for a configurable cooldown (`focus_cooldown`,
+default 30s) so a character doesn't drop out of `active` the moment
+the camera cuts away.
+
+**Adaptive degradation.** When the `active` tier's frame budget is
+exceeded for `N` consecutive ticks (default 3), the runtime emits a
+`SchedulerSaturated` event. Studios can react however they like —
+push lower-importance characters down to `ambient`, throttle bark
+frequency, broadcast a notice on the booth. The runtime's *default*
+reaction is "drop the bottom-quartile-priority generators in the
+saturated tier to the lower tier until the saturation clears."
+
+**The single-process invariant.** Per-character generators still
+enforce "only one routine generator active per character at a time"
+(others queue). What changes is *which* one wins under contention:
+the runtime picks the highest `.priority` among the eligible ones,
+not the most-recently-spawned.
+
+**Foreground guarantee.** A scene marked `.focal` is *never* deferred
+— if its tier runs out of budget, the scheduler steals from
+`active` and `ambient` before dropping the focal frame.
 
 ---
 
@@ -1360,14 +1536,100 @@ The ordinal scale (`hostile < wary < neutral < friendly < allied`)
 makes `is_at_least` / `is_at_most` work naturally. Extension stances
 register their position in the scale.
 
+#### 10.2.1 Believed stance — the information-asymmetry layer
+
+Real politics has two stances: what's *true* and what each side
+*believes is true*. A faction can be plotting a coup while
+publicly allied; a participant can think their cohort is friendly
+to another when the other side has secretly declared hostility.
+Loom models this as a second stance layer on top of the canonical
+matrix:
+
+| Layer | What it stores | Updated when |
+|---|---|---|
+| **Actual stance** | `stance(A, B)` — the truth | Story / runtime writes via `:=` |
+| **Believed stance** | `stance(A, B) as_known_by C` — C's view | Discovery events; explicit reveals |
+
+Believed stance defaults to "C believes the actual stance" — every
+observer starts informed, and divergence is opt-in. This keeps the
+common case ("most factions know where they stand") free of
+boilerplate.
+
+**Diverging belief from truth.** Story writes:
+
+```loom
+# rebels and loyalists are actually hostile, but the merchants don't know yet:
+~ stance($rebels, $loyalists) := hostile
+
+# merchants still believe the old neutral relationship:
+~ stance($rebels, $loyalists) as_known_by @merchants := neutral
+
+# or hide the change retroactively from everyone except a specific cohort:
+~ stance($rebels, $loyalists) := hostile  hidden_from :all  but :cohort(spies)
+```
+
+The `hidden_from` clause on a stance mutation is sugar for "update
+the actual value, but pin every observer's belief to the *previous*
+value." Each pinned observer's belief then thaws individually
+through discovery (§10.2.3 below).
+
+**Querying believed stance.**
+
+```loom
+if stance($rebels, $loyalists) is hostile                            # truth
+if stance($rebels, $loyalists) as_known_by @merchants is neutral     # what merchants think
+if stance($rebels, $loyalists) as_known_by $PARTICIPANT is hostile   # per-participant
+if believes($PARTICIPANT, stance($rebels, $loyalists) is hostile)    # short form
+```
+
+The `as_known_by` qualifier accepts any observer: a faction, a
+character, a participant, a cohort. Cohorts return "the consensus
+belief — majority wins; tie returns the actual stance."
+
+**Discovery events.** Truth catches up to belief through:
+
+```loom
+~ reveal stance($rebels, $loyalists) to @merchants                   # update one observer's belief
+~ reveal stance($rebels, $loyalists) to :location(@BELL_TOWER)       # everyone in a place
+~ reveal stance($rebels, $loyalists) to :all                         # public knowledge
+
+when stance($A, $B) revealed to $observer
+  if $observer == $PARTICIPANT and stance($A, $B) is hostile
+    NARRATOR { whispering }
+      You understand now — they're enemies.
+```
+
+Each `reveal` writes a `StanceRevealed { a, b, observer, prior_belief,
+new_belief }` ledger entry. The narrative engine fires `when stance
+revealed` hooks once per (truth, observer) pair, never twice for the
+same revelation.
+
+**The boundary.** Believed stance is informational — it never gates
+the *actual* effects of stance (combat tags, AI hostility, broadcast
+filters all run off the truth). It's the substrate for:
+
+- player-facing UI ("they're acting friendly but…"),
+- dramatic-irony conditions (`if stance is hostile and $PLAYER
+  believes(stance is allied)`),
+- spy and double-agent stories (§10.3 visibility uses the same
+  observer-keyed model),
+- live-show beats where the booth wants to reveal information at
+  dramatic timing.
+
+If a show doesn't model belief at all, every observer's belief
+tracks truth, every `as_known_by` query returns the canonical
+stance, and `reveal` becomes a no-op. Zero overhead for shows that
+don't need it.
+
 ### 10.3 Membership
 
-Membership is a *live set*. Three sources contribute:
+Membership is a *live set*. Four sources contribute:
 
 ```loom
 members
   @WREN, @ELENA                              # explicit characters
   cohort initiate                            # plus a cohort
+  @lighthouse_keepers                        # plus a sub-faction (all of its members)
   match $X.disposition($WREN).trust > 60     # plus a reactive predicate
 ```
 
@@ -1377,28 +1639,149 @@ leaves when it stops. This is how loyalty mechanics fall out for
 free — Elena joins the rebels when her trust in Wren passes 60, and
 leaves if Wren betrays her.
 
-**Mutation.** Story can join / kick explicitly:
+#### Sub-factions
+
+Listing a `@faction` inside `members` makes that faction a *member of
+this faction*. Effects:
+
+- every current member of the sub-faction is also a member of the
+  parent (membership is transitive);
+- the parent's `size` includes the sub-faction's members;
+- a member of multiple paths to the same faction counts once;
+- stance set on the parent applies to every member of the
+  sub-faction unless the sub-faction overrides it locally;
+- the sub-faction can declare `.parent @P` instead of (or in
+  addition to) being listed in the parent's `members`; both forms
+  end up at the same place in the registry.
+
+Nesting depth is unbounded; cycles are an error
+(`faction-membership-cycle`). The runtime memoizes the closure so
+queries against deeply-nested factions are cheap.
+
+#### Multi-membership and primaries
+
+A character can belong to multiple factions (a noble *and* a
+merchant guild *and* the secret society they founded last week).
+Every membership is independent — joining one doesn't remove the
+others. The *primary* faction is the highest-priority one by
+`.primary_priority`; ties go to declaration order. Story can pin a
+primary explicitly:
 
 ```loom
-~ $rebels.members += @maren                  # add
-~ $rebels.members -= @gareth                 # remove
-~ $rebels.disband                            # remove everyone, mark dissolved
+~ $elena.primary_faction := @rebels          # override priority resolution
+~ $elena.primary_faction := nil              # clear; falls back to priority
 ```
 
-Each mutation writes `MembershipChanged { faction, character, kind }`
-(`kind` ∈ `joined` / `left` / `kicked` / `dissolved_with`).
+#### Visibility — public membership vs covert membership
 
-**Inverse query.** A character knows its faction memberships:
+Every membership carries a **visibility scope** describing *who
+knows* about it. This is the substrate for spies, double agents,
+sleeper cells, and any "they were one of us all along" beat.
 
 ```loom
-$elena.factions                              # list<faction>
-$elena.faction                               # primary; nil if none
-if $elena.in_faction(@rebels)
+members
+  @WREN                                       # default: public (everyone knows)
+  @ELENA  visibility: private                 # nobody knows except those told
+  @MAREN  visibility: cohort(inner_circle)    # inner_circle knows, others don't
+  @KAI    visibility: participant($PLAYER)    # only the player knows
 ```
 
-A character can belong to multiple factions (e.g. a noble house *and*
-a merchant guild). The *primary* faction is the highest-priority one
-by `.primary_priority`; ties go to declaration order.
+Visibility levels:
+
+| Level | Who can see the membership |
+|---|---|
+| `public` | everyone (the default) |
+| `cohort(C)` | members of cohort C |
+| `participant(P)` | one specific participant |
+| `faction(F)` | members of another faction (the sub-faction can see) |
+| `private` | nobody — query returns "no" until reveal |
+
+The `Faction.add_member(...)` runtime API takes the same visibility
+argument:
+
+```loom
+~ Faction.add_member($rebels, $elena, visibility: private)
+```
+
+#### Queries respect visibility
+
+`$elena.in_faction(@rebels)` returns the truth *from the querying
+observer's perspective*. Inside an `as participant` / `as character`
+scope the observer is implicit:
+
+```loom
+-- harbor_scene as $PARTICIPANT
+  if $elena.in_faction(@rebels)               # only true if $PARTICIPANT can see this membership
+    NARRATOR
+      You recognize the rebel pin.
+```
+
+Outside an observer scope, an unscoped query returns the *actual*
+truth (the runtime needs a way to ask "is Elena really a rebel" to
+drive AI). Be explicit when you need the truth in observer context:
+
+```loom
+if actually($elena.in_faction(@rebels))       # bypass visibility
+```
+
+`$elena.factions` returns *only those visible* to the current
+observer; `$elena.public_factions` is the always-visible subset
+shorthand.
+
+#### Mutation
+
+```loom
+~ $rebels.members += @maren                                     # public add
+~ $rebels.add_member(@maren, visibility: private)               # covert add
+~ $rebels.members -= @gareth                                    # remove
+~ $rebels.disband                                               # dissolve
+~ $rebels.set_visibility(@elena, public)                        # promote to public
+~ $rebels.set_visibility(@elena, cohort(inner_circle))          # demote
+```
+
+Each mutation writes `MembershipChanged { faction, character, kind,
+visibility, before_visibility }` so the materialized views (§7.2)
+can update per-observer correctly.
+
+#### Discovery — outing a covert member
+
+Visibility doesn't just flip via `set_visibility`. Most of the
+drama comes from *organic* discovery:
+
+```loom
+when @rebels discovers_member $X
+  ~ $rebels.set_visibility($X, public)
+  fire spy_exposed with: { faction: $rebels, who: $X }
+
+when membership of $X in @F revealed to $observer
+  if $observer == $PARTICIPANT
+    NARRATOR { whispering }
+      ${$X.label}? They were with the ${@F.label} the whole time.
+```
+
+Story explicitly fires discovery with `~ reveal`:
+
+```loom
+~ reveal membership($elena, @rebels) to $PARTICIPANT
+~ reveal membership($elena, @rebels) to @loyalists          # one faction finds out
+~ reveal membership($elena, @rebels) to :all                # public outing
+```
+
+Each reveal writes `MembershipRevealed { character, faction,
+observer, prior_visibility }` and fires the discovery hook once per
+(membership, observer) pair.
+
+#### Inverse query
+
+A character knows its faction memberships — *subject to visibility*:
+
+```loom
+$elena.factions                              # list<faction> (visible to observer)
+$elena.faction                               # primary (visible); nil if none visible
+$elena.all_factions                          # truth, ignores visibility
+if $elena.in_faction(@rebels)                # visibility-respecting
+if actually($elena.in_faction(@rebels))      # truth-respecting
+```
 
 ### 10.4 Collective state
 
@@ -1465,6 +1848,10 @@ and tears it down on removal.
   .default_stance neutral
   .primary_priority 0.2          # below permanent factions in the primary slot
 
+  # Settling: emergence fires only after the faction has held shape.
+  .settling_window 5s            # default; 0 disables
+  .spawn_rate_limit 6/m          # cap spawns globally; nil = unlimited
+
 state
   cohesion    = 0..100, init 50
   visibility  = 0..100, init 30
@@ -1475,6 +1862,29 @@ on member_count passes 10
 on member_count drops below $min_members
   ~ $self.dissolve
 ```
+
+**Settling window.** A faction spawned via `Faction.spawn` is
+*provisional* until it has existed for `.settling_window` and
+satisfies `min_members`. While provisional, the `when faction
+emerges` hook does *not* fire — so a 200-participant show that
+spawns and immediately dissolves dozens of false-start crowds
+doesn't choke the narrative engine with `emerges` matches it would
+have to undo. If the faction survives the window, `emerges` fires
+(retroactively from the faction's creation time, for ledger
+ordering); if not, `FactionDissolved { reason: did_not_settle }` is
+written and the lifecycle is otherwise silent.
+
+The window is **per-template** and **opt-out by zero** —
+`.settling_window 0` reverts to fire-on-spawn. Authors who want
+"every single faction spawn is dramatic" can take it.
+
+**Spawn rate limit.** `.spawn_rate_limit N/m` (or `/s` / `/h`) caps
+how often the template can be instantiated worldwide. When the cap
+is hit, further `Faction.spawn` calls return `nil` and write a
+`SpawnRateLimited { template, attempted_at_ms }` ledger entry. The
+booth UI surfaces these so a stage manager can see "the audience
+tried to start 30 crowds in the last minute; we suppressed 24."
+Defaults to `nil` (unlimited) — the throttle is opt-in.
 
 Spawning at runtime, from any action context:
 
@@ -1748,43 +2158,70 @@ src="@harbor_arrival"/>` into a PRUI scene like any other widget.
 
 ## 13. Open questions
 
-1. **Generator scheduling fairness.** Many characters with many
-   routines + ambient generators — what's the scheduling policy?
-   Round-robin per character is the obvious start; whether that
-   holds under 100+ NPCs is empirical.
-2. **Improv input modality.** Foot pedal, body-mic speech detection,
-   stage-manager tap. Probably all of the above; the priority and
-   failure modes need a real workshop.
-3. **Cue-list interchange.** Theatre crews live in ETC Eos, QLab,
-   ChamSys. Loom should export to their cue-list formats and ideally
-   re-import after the crew edits in their own UI. Spec the
-   round-trip.
-4. **Per-character ledger vs single ledger.** Per-character is
-   cleaner for immersive (each participant's ledger drives their
-   barks) but storage cost is linear in participant count. A single
-   ledger with participant-tagged events may be simpler. Benchmark
-   before committing.
-5. **Faction spawn churn under load.** A 200-participant show that
-   lets anyone propose a faction at any time could spawn dozens per
-   minute (most dissolving within seconds for failing
-   `min_members`). The reactive substrate handles the predicates
-   fine; the question is whether the *narrative engine* re-evaluates
-   `when faction emerges` matches at acceptable cost when the
-   spawn-then-dissolve rate is high. Likely fix: a settling window
-   (a faction must persist N seconds before `emerges` fires), but
-   N has to come from a workshop.
-6. **Symmetric vs asymmetric stance defaults.** Symmetric (mirror)
-   matches how most writers think and reads cleanest in the
-   declaration grammar. Asymmetric matches *political reality*
-   (one side declares hostility before the other knows). The
-   current draft picks symmetric default + explicit `asymmetric`
-   override. Whether to flip the default — particularly for
-   immersive shows where information asymmetry is dramatic — is
-   open.
-7. **Faction-of-factions.** Can a faction be a member of another
-   faction (alliances-as-factions)? The current model says no — a
-   member is a character or a cohort, period — but the request will
-   come up. Empirical question whether the simpler model holds.
+> Resolved questions are now described in body sections; this list
+> only carries what's *still* open. Cross-refs in `[brackets]` point
+> to where each resolved decision now lives in the spec.
+
+> *Resolved.* Generator scheduling → tiered focal/active/ambient
+> scheduler with priority + budget [§9.8]. Improv modality →
+> pluggable `.advance_on` signal pipeline [§8.5]. Cue-list
+> interchange → bidirectional import/export with golden round-trip
+> tests, six built-in formats + open extension [§8.7]. Per-actor
+> vs single ledger → one canonical log with per-entity materialized
+> views [§7.2]. Faction spawn churn → settling window + per-template
+> spawn rate limit [§10.6]. Symmetric vs asymmetric stance →
+> symmetric actual stance + per-observer believed stance for
+> asymmetry-of-information [§10.2 + §10.2.1]. Sub-factions and
+> multi-membership → nested membership with visibility-scoped covert
+> roles [§10.3].
+
+Still genuinely open:
+
+1. **Promotion criteria tuning.** The default tier-promotion rules
+   ("speaker promotes to focal, recently spoken with → active,
+   participant scope → focal") are reasonable defaults but a real
+   show will demand more knobs (PoV camera distance, participant
+   gaze tracking, voice-line cooldown). The fixed defaults need a
+   workshop before committing to a config schema.
+
+2. **Round-trip integrity edge cases for non-Loom-native cue
+   features.** Eos has palette referencing across cue lists; QLab
+   has nested groups with their own playback rules. The first export
+   is straightforward; the *first re-import after the crew edited
+   their own format* will surface cases where Loom can't represent
+   the crew's edits. Need to decide per-format whether unsupported
+   constructs are preserved as opaque blobs (round-trippable but
+   uneditable in Loom) or lossy-imported with diagnostics.
+
+3. **Discovery model under late join.** A participant who joins
+   mid-show should see the world as it currently is — but for
+   covert memberships and divergent believed-stance, "as it
+   currently is" depends on *who they would have learned things
+   from*. Open: do new participants get default-`public`-only
+   visibility (safest, but the show feels different mid-act), or
+   does the booth manually assign their belief state on join, or
+   does the show declare a `.late_join_observer_template` that
+   inherits a cohort's beliefs? Probably all three are needed; the
+   UX for the booth flow is open.
+
+4. **AI characters and theory-of-mind.** The believed-stance and
+   visibility model lets *humans* play with information asymmetry,
+   but an AI-driven NPC trying to act realistically needs to reason
+   *over* the same model — "Elena should pretend not to know what
+   she actually knows in this scene." This is a substantial
+   substrate (per-character world model + selective lookup
+   blinding) and is not in scope for v1. The grammar reserves
+   enough headroom for it (`believes(...)` is already a predicate);
+   the implementation question is open.
+
+5. **Faction-of-faction stance composition.** When Faction A is a
+   sub-faction of B, and B has stance "hostile" toward C, does A
+   inherit that stance, or default to neutral until A declares
+   independently? Current draft inherits + allows local override.
+   Whether the inheritance is reactive (A flips when B flips) or
+   only at declaration time is genuinely open — the reactive form
+   is more expressive but couples factions in ways that may surprise
+   writers.
 
 ---
 

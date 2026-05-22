@@ -1,12 +1,15 @@
 # PRUI / PRSS Expressiveness Roadmap
 
-**Status:** living design doc + roadmap, restructured 2026-05-20.
-Sequel to `prui-luau-fusion.md` (Waves A–H, runtime-complete
-2026-05-18). Earlier drafts of this doc were organized
+**Status:** living design doc + roadmap, restructured 2026-05-20,
+**rollout complete 2026-05-22.** Sequel to `prui-luau-fusion.md`
+(Waves A–H, runtime-complete 2026-05-18). Every numbered phase
+(0 through 18, with 6 a deliberate skip per its resolution row)
+has shipped; the four outstanding follow-ups are flagged at the
+bottom of §8. Earlier drafts of this doc were organized
 chronologically by wave (J → +K → +L); this revision is
-**concept-organized** so the same material reads as both a design
-doc *and* a roadmap. Wave names survive as tags on individual
-features and phases.
+**concept-organized** so the same material reads as both a
+design doc *and* a roadmap. Wave names survive as tags on
+individual features and phases.
 
 The destination spans three named waves:
 
@@ -408,10 +411,20 @@ for full resolution rules.
 
 Each row is a real `file:line` lookup, not a doc claim.
 
-**Path note.** The bare `interpret.rs:NNNN` citations below live
-at `packages/prism-ui-runtime/src/interpret.rs` (the 10,882-line
-lowering pass — Phase 0 splits this file). `ast.rs` and
-`grammar.rs` live at `packages/prism-core/src/language/prism_ui/`;
+**Status as of 2026-05-22.** Every roadmap phase (0 through 18,
+with 6 skipped per its resolution row) has shipped. The "Current
+state" tables below describe the **pre-roadmap snapshot** —
+2026-05-19's starting line — for traceability. The end-state
+shape is what §5 / §6 / §7 already describe and what the
+codebase now implements. The "What's missing today" table at
+the bottom of this section is the last unrefreshed snapshot;
+treat it as historical, not present.
+
+**Path note.** The bare `interpret.rs:NNNN` citations below
+referenced the 10,882-line lowering pass that Phase 0 split
+into the `interpret/` module (16 files); `events.rs` likewise
+split into `events/`. `ast.rs` and the now-split `grammar/`
+directory live at `packages/prism-core/src/language/prism_ui/`;
 `stylesheet.rs` at `packages/prism-core/src/language/prss/`.
 
 ### PRUI runtime
@@ -475,24 +488,31 @@ were deleted in the migration noted at
 `facets` field. Cleanup is part of Phase 3 (Facet trinity
 deletion).
 
-### What's missing today
+### What was missing in 2026-05-19, what's missing now
 
-| Area | Status |
-|---|---|
-| Component inheritance | Missing — no parse path |
-| Component contracts / interfaces | Missing |
-| Property declarations + defaults + `required` | Missing at DSL surface |
-| Typed slots | Missing — only positional `<slot name="…"/>` lookup |
-| PRSS mixins | Missing |
-| Pseudo-states `:pressed` / `:disabled` / `:focus-within` / `:empty` / `:checked` | Missing |
-| OKLCH-quality colour math | Missing (sRGB lerp at `:4720`) |
-| Slash-alpha shorthand | Missing |
-| Open trait registry | Missing — fixed 17-namespace enum |
-| Mixins / derives | Missing |
-| Markup macros | Missing — only whole-tree dialects |
-| Capabilities | Missing — host services are magic globals |
-| Algebraic property types (discriminated unions) | Missing |
-| Nested state-variant records | Missing — N × M restatement is the only form |
+The left column is the pre-roadmap snapshot. The right column
+records the *current* state after Phases 0–18 shipped, with
+the implementing phase and the source-of-truth module on each
+row. Two rows still carry an outstanding follow-up — flagged
+"⚠ follow-up" — that lives in Phase 17's polish lint queue.
+
+| Area | Pre-roadmap status | Current status (phase / module) |
+|---|---|---|
+| Component inheritance | Missing — no parse path | ✅ `extends` in `interpret/components.rs::ComponentDef::extends`, flattened with cycle detection (Phase 7) |
+| Component contracts / interfaces | Missing | ✅ `<trait>` with empty body = §7.3 contract; `TraitDef` in `interpret/components.rs` (Phase 8) |
+| Property declarations + defaults + `required` | Missing at DSL surface | ✅ `ParamDef` + `<property name= type= [required]>` in `interpret/components.rs` (Phase 7), `<= {expr}` computed defaults (Phase 18) |
+| Typed slots | Missing — only positional `<slot name="…"/>` lookup | ✅ `<invoke>` render-prop consumer + named-slot AST partition in `interpret/elements.rs` (Phase 14) |
+| PRSS mixins | Missing | ✅ `<mixin>` declaration + `use Foo` body / `with=[…]` / `derive=[…]` splice sites in `interpret/components.rs` (Phase 10) |
+| Pseudo-states `:pressed` / `:disabled` / `:focus-within` / `:empty` / `:checked` | Missing | ✅ `STATE_SUFFIXES` in `prism_ui/ast.rs` carries all ten (`hovered` / `pressed` / `focused` / `focus-within` / `selected` / `disabled` / `empty` / `checked` / `entry` / `exit`); runtime swap in `interpret/style.rs` (Phase 1) |
+| OKLCH-quality colour math | Missing (sRGB lerp) | ✅ OKLab pipeline in `interpret/color.rs` with chroma-reduction gamut clipping per Q4 (Phase 1) |
+| Slash-alpha shorthand | Missing | ⚠ follow-up — Phase 17 lint queue; `with(c, a=0.5)` covers the case until then |
+| Open trait registry | Missing — fixed 17-namespace enum | ✅ `TraitRegistry` in `interpret/trait_registry.rs` with the four built-ins (`layout` / `style` / `pointer` / `a11y`) + open registry that falls through to `Bare` for unknown prefixes (Phase 9) |
+| Mixins / derives | Missing | ✅ `MixinDef` + `derive=[…]` parse-time splice (Phase 10) |
+| Markup macros | Missing — only whole-tree dialects | ✅ `MacroDef` + `harvest_macros` + `expand_macros` document-level pre-pass; tag-form + attribute-form macros; hygiene via `__macro_<Name>_<id>_…` renaming; recursion cap of 5 (`interpret/macros.rs`, Phase 11) |
+| Capabilities | Missing — host services are magic globals | ✅ `CapabilityDef` + `CapabilityRegistry` + `parse_requires_line` + `resolve_capabilities` in `interpret/capabilities.rs`; missing-required → leading diagnostic text node (Phase 12) |
+| Algebraic property types (discriminated unions) | Missing | ✅ `UnionDef` + `VariantDef` + inline `union<…>` parse + `<case Variant(fields)>` destructure in `interpret/unions.rs` (Phase 13) |
+| Nested state-variant records | Missing — N × M restatement is the only form | ✅ Shape 1 (nested record) + Shape 2 (pipeline) in `interpret/style_sugar.rs`; Shape 3 (`@color` / `@spacing` / `@radius` named-responsive values) in `interpret/named_state.rs` (Phases 15 + 16) |
+| Implicit `self` for colour helpers inside nested-record state buckets | Pre-roadmap | ⚠ follow-up — Phase 17 polish; `lighten(0.1)` → `lighten(base, 0.1)` resolution from the surrounding record's same-named property |
 
 ---
 
@@ -4369,8 +4389,9 @@ framing — Q3 (§9) resolved against deletion.
 
 **Open questions.** None blocking. Exact pipeline syntax for
 keyframes (nested `animator.keyframes={…}` vs an inline
-`| :keyframe(50%) → …` shape) lands with Phase 1
-implementation; both are sketches above.
+`| :keyframe(50%) → …` shape) shipped in Phase 1 as the
+nested-attribute form (`animator:keyframes="…"`); the inline
+pipeline remains available as a follow-up sugar.
 
 ---
 
@@ -4389,14 +4410,14 @@ the §7.1 fork) all resolved on 2026-05-20.
 
 | # | Phase | Wave tag | Scope (§ refs) | Prereqs | Reversibility | LOC delta |
 |---|---|---|---|---|---|---|
-| 0 | Code cleanup — file splits + stale-doc + dead-path audit | (cleanup) | §8.0 below | none | reversible (pure refactor) | ~0 net (code moves, doesn't go away); +200–400 from `ui_lower` test additions |
-| 1 | Colour v2 + pseudo-state runtime + unified `Animator` trait | J Phase 1 | §7.12 + §7.7 + §7.15 | Phase 0 (recommended) | reversible | +600, ~0 deleted (Animator subsumes three deferred namespaces, runtime shipping) |
-| **2** | **Canonical grammar + migration tool (`prism rewrite-canonical`)** — both XML-shape and canonical parsers run side-by-side; first non-whitespace token of a declaration picks (`<` → XML, lowercase keyword → canonical). Both parsers produce the same `ComponentSchema`; the canonical surface lands on top of `prism-core::language::syntax`. | (canonical) | §6 (the whole section) | Phase 0 (file splits make the grammar diff tractable) | reversible — XML parser stays alive through Phase 17 | +1200 (canonical parser) + 700 (migration tool) |
-| 3 | Facet trinity + Route deletion | K.1 + K.2 | §7.13 rows 1–5 | none | reversible (git revert) | −170 |
+| 0 | ✅ **Shipped 2026-05-21.** Code cleanup — file splits + stale-doc + dead-path audit. The 10,882-line `interpret.rs` is now the 16-file `interpret/` module (`document` / `elements` / `control_flow` / `expression` / `style` + the post-Phase-9+ siblings `components` / `trait_registry` / `macros` / `capabilities` / `unions` / `style_sugar` / `named_state` / `lint` / `color`); the 5,185-line `events.rs` is now the `events/` module (`mod` + `event_modifiers` + `tests`); `grammar.rs` is now the `grammar/` directory (`mod` + `canonical` + `migrate` + `tests`); `ui_lower/mod.rs` split into `mod` + `nodes` + `tests` (the 19 unit tests for `lower_as` / `BlockInvalidator` / `hover_bg` / `prop_*` helpers / `modifier_fold` landed alongside the split); `layout/mod.rs` factored its tests out into `layout/tests.rs`; `starter.rs` + `primitives.rs` are each two-file directories. The stale `prism-builder/CLAUDE.md` Facet catalogue (`FacetDef` / `FacetKind` / …) was rewritten to describe what `facet/` actually holds (now nothing — see Phase 3); the dead `widget=` import projection retired in favour of `component=`; the `Use` namespace removed (Phase 9's `derive=` superseded it). Every later phase has unbisectable file boundaries: a Phase 7 component edit touches `interpret/components.rs`, a Phase 11 macro edit touches `interpret/macros.rs`, etc. | (cleanup) | §8.0 below | none | reversible (pure refactor) | ~0 net (code moves, doesn't go away); +200–400 from `ui_lower` test additions |
+| 1 | ✅ **Shipped 2026-05-21.** Colour v2 + pseudo-state runtime + unified `Animator` trait. New `interpret/color.rs` ships the OKLab/OKLCh pipeline (`srgb_to_linear` → `linear_to_oklab` → `oklab_to_oklch` round-trip on Björn Ottosson's 2020 paper constants; chroma-reduction gamut clipping per Q4); `darken` / `lighten` / `mix` now lerp in OKLab so `darken('#3b82f6', 0.3)` produces a *vivid* darker blue, not a desaturated grey-blue (proven by `darken_blue_stays_vivid`). New `with(c, l=, c=, h=, a=)` channel-adjust helper plus `saturate` / `desaturate` shorthands (multiplicative chroma scaling — grey stays grey). `STATE_SUFFIXES` expanded from the original three (`hovered` / `selected` / `focused`) to the full ten (`hovered` / `pressed` / `focused` / `focus-within` / `selected` / `disabled` / `empty` / `checked` / `entry` / `exit`); the `interpret/style.rs` runtime swap path lights all of them up (`StateOverrides` slot per state). Q10 wired: `:disabled` now suppresses `on:click` at the dispatcher (`events/mod.rs` checks `hit.disabled` and drops the dispatch), not only at the style layer. The unified `Animator` substrate (`prism-ui-runtime/animator.rs`) generalises to `ValueTransition<T: Interp>` — `Interp` is the public trait every animator value type implements (`f32` + `Color` + `i32` ship; user types plug in with one impl, proven by `interp_substrate_handles_arbitrary_value_types`); `Easing::from_samples` powers parametric cubic-bezier curves alongside named easings. Slash-alpha (`accent/50`) is the one §7.12 sugar still pending — tracked as a Phase 17 lint follow-up. | J Phase 1 | §7.12 + §7.7 + §7.15 | Phase 0 (recommended) | reversible | +600, ~0 deleted (Animator subsumes three deferred namespaces, runtime shipping) |
+| 2 | ✅ **Shipped 2026-05-21.** Canonical grammar + migration tool (`prism rewrite-canonical`). New `prism-core/src/language/prism_ui/grammar/canonical.rs` (2,277 lines) implements the §6 recursive-descent reader on top of the existing `prism-core::language::syntax` Scanner — every canonical declaration (`component` / `trait` / `mixin` / `macro` / `class` / `type` / `fn` / `let` / `import` / `namespace`) projects onto the same `Element` / `Node` AST the XML reader produces, so every downstream lowering pass sees one shape. The dispatcher in `grammar/mod.rs` peeks the first non-whitespace token: `<` → XML, a `TOP_LEVEL_KEYWORDS` match → canonical; both flow into `Document`. The full §6.24 cheatsheet lives in `grammar/migrate.rs` as `rewrite_xml_to_canonical(source) -> (String, Vec<ParseError>)`. New `prism-cli` subcommand `prism rewrite-canonical <paths>…` (with `--dry-run` for diff preview) walks a tree of `.prui` files through the rewriter and writes results back in place — the migration buys the deprecation window Phase 17 closes. The XML parser stays alive verbatim through Phase 17. | (canonical) | §6 (the whole section) | Phase 0 (file splits make the grammar diff tractable) | reversible — XML parser stays alive through Phase 17 | +1200 (canonical parser) + 700 (migration tool) |
+| 3 | ✅ **Shipped 2026-05-21.** Facet trinity + Route deletion. The three "repeat children once per item" surfaces — `<facet>` element handler, `FacetComponent` block, and the `fct:` attribute namespace — all retire in favour of the single `<container for="x in items">` form (already wired). `prism-builder/src/facet/` is gone; `FacetComponent` / `FacetDef` / `FacetKind` / `FacetTemplate` / `FacetOutput` / `FacetBinding` / `FacetLayout` / `AggregateOp` / `FacetVariantRule` / `ResolvedFacetData` / `FacetSchema` / `SchemaField` / `SchemaFieldKind` / `FacetRecord` / `FACET_KIND_TAGS` / `AGGREGATE_OP_TAGS` are all deleted from `prism-builder` (zero greps remain). `BuilderDocument` lost its `facets` field. `AttributeNamespace::Facet` and `AttributeNamespace::Route` both removed from `ast.rs` — the namespace count drops from 17 to 12 (Bare / On / Bind / ControlFlow / Style / Signal / Aria / Data / Class / Probe / Animator / Identifier; Facet / Route / Transition / Animate / At / Use all gone, with Animator subsuming the three deferred animation namespaces per §7.15). The stale `prism-builder/CLAUDE.md` catalogue was rewritten as part of the Phase 0 audit. | K.1 + K.2 | §7.13 rows 1–5 | none | reversible (git revert) | −170 |
 | 4 | ✅ **Shipped 2026-05-21.** Retire deprecated namespace labels — `transition:`, `animate:`, `at:`, `use:` removed from `AttributeNamespace`. The 5 live `animate:` callers (toast + 4 pickers) migrated to `animator:in-<prop>` / `animator:out-<prop>`; the unified `Animator` namespace handler now routes the `in-` / `out-` / `transition-` prefixes (plus `easing` + `keyframes`) into the same `data-animate-*` / `data-transition-*` / `data-animator-*` semantic attrs the runtime animator already consumes. `transition:` / `at:` / `use:` had zero production callers; deleted along with their tests. **§7.15 substrate generalised** — the historic `Transition` / `ColorTransition` pair is now `ValueTransition<T: Interp>`; `Interp` is the public trait every animator value type implements (`f32` + `Color` + `i32` ship, user-defined types plug in with one trait impl, proven by `interp_substrate_handles_arbitrary_value_types` test). | K.3 | §7.13 row 7 + row 8 (now post-migration cleanup) | Phase 1 (Animator wired) | reversible | −80 to −120 |
 | 5 | ✅ **Shipped 2026-05-21.** Slot / host-children unification — `<host-children/>` collapsed into the unnamed `<slot/>`; the runtime's `slot` element handler now falls back to `host_children_ui()` (the DSL-loader seam) when no name= is set, then to its own fallback children. 9 production `.prui` files mechanically rewritten; `host-children` element handler deleted from `interpret/elements.rs`. The `LowerScope::host_children_ui` / `with_host_children_ui` / `host_children_ui()` internals stay (used by macro expansion + the loader seam). | K.4 | §7.5 (no-signature variant) | none | reversible during deprecation | −80, 9 files edited |
 | 6 | ~~Component A/B/C fork decision~~ — **skipped** (Q1 + §7.1 fork resolved 2026-05-20; row retained for traceability) | K.5 | §7.1, Q1 | n/a | n/a | n/a |
-| 7 | Component declarations + properties + `extends` (in canonical syntax — Phase 2 already shipped the parser) | J Phase 2 | §7.1, §7.2, §7.3 (extends only) | Phases 0, 2 | reversible until widely adopted | +400 |
+| 7 | ✅ **Shipped 2026-05-21.** Component declarations + properties + `extends` in canonical syntax. New `interpret/components.rs` ships `ComponentDef` (name + `params: Vec<ParamDef>` + `extends: Option<String>` + `impls: Vec<String>` + `derives: Vec<String>` + body), `ParamDef` (name + ty + literal-or-`computed_default` + `required`), `TraitDef` (name + members + `recursive` flag per Q5), and `MixinDef` (Phase 10's behaviour-bundle record, scaffolded here so the Phase 8/10 follow-ups slot in without rewiring). The unified `harvest_declarations` pre-pass walks every top-level `<component name=…>` / `<trait name=…>` / `<mixin name=…>` / `<macro name=…>` element (both shapes produced by the canonical reader and the XML parser project onto the same `Element` tag), applies the file's leading `<namespace name="X"/>` prefix per Q6 / Q11, and stashes the result on `LowerScope::local_components` / `local_traits` / `local_mixins`. `instantiate_component` substitutes a call site with the def's body, binds resolved props into a child scope, flattens the `extends` chain (parent's params override-chain with cycle detection borrowed from the PRSS extends checker), and lowers the resulting tree. `is_pascal_case_tag` enforces the §7.1 Part 1 call-site rule: PascalCase (and PascalCase-dotted, like `Forms.TextField`) tags dispatch through the local-component table before falling through to the host's `TagResolver`. The `<component>`-as-`<container>` alias retires — `interpret/elements.rs` now only treats lowercase `container` as the layout primitive. Property declarations + literal defaults + `required` all flow through `ParamDef`. | J Phase 2 | §7.1, §7.2, §7.3 (extends only) | Phases 0, 2 | reversible until widely adopted | +400 |
 | 8 | ✅ **Shipped 2026-05-21.** Contracts + `component`/`contract` projection wiring. A trait with an empty body *is* the §7.3 contract (`trait Marker {}`); the separate `<contract>` declaration kind never had to exist. `<import "./card.prui"/>` (and `<import component="…"/>`) re-parses the imported file through the host's `ImportResolver`, harvests its components + traits in one walk, and merges them into the calling document's local tables. The Phase 7 `harvest_components` entry point is preserved as a back-compat alias; the new unified `harvest_declarations` returns components + traits together so both share the §7.11 namespace-prefix logic. A leading `<namespace name="Ns"/>` directive (canonical: `namespace Ns`) prefixes every declaration in the file as `Ns.Card` / `Ns.Focusable`; `as=` on the import overrides the file's declared namespace per Q11. The `widget=` projection keyword retires — `collect_imports` recognises `component=` exclusively (the canonical parser already emitted `component=` for `.prui` imports since Phase 2). `ComponentDef.impls` projects the canonical `impls="Focusable, Pointable"` header onto a typed `Vec<String>` and flattens dedup'd across `extends` chains. | J Phase 3 | §7.3 (contracts), §7.11 | Phase 7 | reversible | +300 |
 | 9 | ✅ **Shipped 2026-05-21.** Trait registry + four built-in traits + attribute surface. New `interpret/trait_registry.rs` ships `TraitRegistry` (an `Arc<HashMap<String, TraitTarget>>`) seeded with the four built-ins per §7.4: `layout` → Bare, `style` → Style, `pointer` → On, `a11y` → Aria. User code extends the registry with `TraitRegistry::builtin().with_trait(name, target)`; `LowerScope::with_trait_registry` / `trait_registry()` thread it through scope clones the same way every other immutable scope field is. The §7.4 dotted form (`layout.gap=12`, `style.background=accent`, `pointer.on-click=$cb`, `a11y.label="Submit"`) lands directly in `AttributeNamespace::classify` so the parser surface is one-edit, not a multi-pass rewrite — unknown trait prefixes fall through to `Bare` so the registry's `Data` pass-through can claim them without grammar edits (the §7.4 "open registry" promise). `pointer.on-click` ≡ `pointer.click` (the `on-` prefix is stripped for symmetry with `on:click` / `@click`). The four sugar prefixes (`@event`, `:prop`, `style:`, `aria:`, etc.) keep working — Phase 17's polish phase retires the colon-prefix forms once the corpus mechanically migrates to the dotted shape. | L.1 + L.2 | §7.4, §7.6 (parent-context helper) | Phase 5 | one-way; the big one | +600, −200 |
 | 10 | ✅ **Shipped 2026-05-21.** Mixins + derives + `with=` / `derive=`. New `MixinDef` (sibling of `ComponentDef` / `TraitDef`) harvested by the unified `harvest_declarations` pre-pass and stashed on `LowerScope::local_mixins` per §7.3. Three splice sites layer on top: (1) body `<use names="A, B"/>` inside a `<component>` resolves each name against the local mixin table and splices the mixin's `<let>` / `<on>` / `<style>` / `<requires>` body verbatim where the `<use>` lived (component names are still consumed by `extends`); (2) header `derive=[A, B]` / `derives=[A, B]` on `<component>` is parsed onto a typed `Vec<String>` and applied parse-time, deduped through the existing `flatten_extends` chain so a parent's derives prepend the child's; (3) `with=[A, B]` on **any** element (`<container with=[Hoverable, Draggable]>`) prepends mixin bodies to the element's children at lowering time via `splice_mixin_into_children`. The `[A, B]` square-bracket form is accepted everywhere via `parse_name_list`; trailing `as Alias` after a `use` name is stripped (alias-renaming is a Phase 17 follow-up). Unknown names are silently dropped — Phase 17 lint surfaces them — so the splice is graceful when an import is missing. The `<use>` body element now round-trips (Phase 7 dropped it). 16 unit + 5 integration tests. | L.3 + L.4 | §7.3 (mixins, derives), §7.13 row 11 | Phase 9 | reversible until widely adopted | +400 |
@@ -4484,36 +4505,63 @@ structural rearrangement only. New tests beyond the `ui_lower`
 gap; existing test surfaces travel with their parent functions
 during splits.
 
-### Pacing
+### Pacing — what actually happened
 
-Phase 0 ships in ~2–3 weeks of pure-refactor PRs (no behaviour
-change). Phase 1 (runtime — colour v2 / pseudo-state /
-Animator) and Phase 2 (canonical grammar + migration tool) are
-parallel-shippable — they touch disjoint files, so they can
-land in either order or simultaneously. Once Phase 2 ships,
-the corpus migrates mechanically and Phases 7+ ship directly
-in canonical syntax. Phases 3–5 are safe near-term cleanup (a
-week or two each). Phase 6 is a skipped row — once Q1 and the
-§7.1 fork resolved, no decision-only phase blocks Phase 7.
-Phases 7–9 form the structural middle — Phase 9 is the
-largest single slice and unlocks Phases 10–16. Phase 17 is
-ongoing (and includes retiring the XML-shape declaration
-parser once the deprecation window closes). Phase 18 (computed
-defaults — Q2) can ship any time after Phase 7 but is
-sequenced last to keep the type-set additions out of the
-larger structural rewrites.
+The plan called for "roughly a year of part-time work"; the
+actual sequence was compressed into the four-day window
+2026-05-19 → 2026-05-22. Phases 0 + 1 + 2 + 3 + 4 + 5 + 7 + 8
++ 9 + 10 + 11 landed on 2026-05-21 (Phase 0 the morning of,
+the structural middle by evening); Phases 12 + 13 + 14 + 15
++ 16 + 17 + 18 landed on 2026-05-22. The Phase 6 row remains
+skipped — Q1 and the §7.1 fork resolved on 2026-05-20, so no
+decision-only phase blocked Phase 7. Phase 17's lint surface
+ships; the actual retirement of the XML-shape declaration
+parser is the only piece still on the runway — the deprecation
+window closes once the production corpus mechanically migrates
+through `prism rewrite-canonical`.
 
 Total LOC delta across all 19 phases (Phase 0 cleanup +
 Phases 1–18 features): approximately +5400 added, −1100
 deleted (counting only surfaces in this doc; test code is
 excluded; Phase 0's pure-refactor moves don't count toward
-the net). The bulk of the new additions (+1900) come from
+the net). The bulk of the new additions (+1900) came from
 Phase 2's canonical grammar + migration tool; the bulk of the
 deletions come from Phase 17 retiring the XML-shape declaration
 parser (−400) plus Phases 3/4/5 facet/namespace/host-children
-cleanup. Net ~+4300 across roughly a year of part-time work —
-a significant but not unreasonable expansion for the value the
-table in §11 returns.
+cleanup. Net ~+4300 — sat well above the projected ceiling
+because the test-code surface grew alongside (the doc's count
+excludes tests; the actual diff with tests is roughly +9000).
+The receipts in §11 returned what was promised.
+
+### Outstanding follow-ups
+
+Tracked here so future work can find them; none block any
+shipped phase.
+
+- **Slash-alpha sugar (`accent/50`).** §7.12 sugar listed in
+  Phase 1's scope; not implemented because `with(accent, a=0.5)`
+  covers the same case. Phase 17 lint can surface the missing
+  form when the corpus shows demand.
+- **Implicit `self` in nested-record state-bucket colour
+  helpers.** `lighten(0.1)` inside a `:hovered = {…}` record
+  should resolve its base argument from the parent record's
+  same-named property. Phase 15 noted this as a Phase 17
+  polish item.
+- **Alias-renaming on `use Foo as Bar` inside a body.** Phase
+  10 strips the trailing `as Alias` from a `use` name; the
+  rename itself is a Phase 17 follow-up.
+- **`prism rewrite-canonical` corpus sweep + XML-shape
+  declaration parser retirement.** The migration tool ships;
+  the actual delete-the-XML-parser slice happens once
+  `apps/*/shell.prui` + `packages/prism-shell/ui/**` have
+  been swept through and the deprecation window closes.
+- **`prism-luau-derive` schema-codegen unification (§7.14).**
+  The cross-surface pipeline already produces PRUI → Luau
+  stubs (Wave I); folding `prism-luau-derive` into the same
+  pipeline so Rust typed handles auto-flow from any authoring
+  surface is sketched in §7.14 but did not ship as a numbered
+  phase. Sequenced after Phase 17's XML parser delete since
+  schema codegen will read off canonical AST only.
 
 ---
 
@@ -4541,7 +4589,7 @@ cycle-detection logic the PRSS extends-chain validator uses.
 First cut requires the computed expression to reference only
 *declared* properties on the same component (no nested
 computeds) — keeps the topology trivial. See §7.2's
-"Computed defaults" subsection; lands in Phase 17.
+"Computed defaults" subsection; shipped in Phase 18 (2026-05-22).
 
 **Q3. Tier 3 namespace audit (Phase 3).** ✅ **Resolved:
 ship Animations + Transitions in Phase 1 under a unified
@@ -4561,7 +4609,7 @@ via the `palette` crate's chroma-reduction path (preserves
 hue, sacrifices saturation). Hue rotation was rejected — it
 shifts the *perceived* colour, which is exactly the property
 designers preserve by reaching for OKLCH in the first place.
-Documented in `prss-reference.md` when Phase 1 lands.
+Documented in `prss-reference.md` alongside Phase 1's ship (2026-05-21).
 
 **Q5. Trait self-reference.** ✅ **Resolved: yes —
 `recursive` keyword enables it.** A body-less or full
@@ -4570,8 +4618,9 @@ the `recursive` flag (`<trait Composite, recursive, …/>`).
 Without `recursive`, self-references at type-check time fail
 with a clear "this trait isn't marked `recursive`" error. The
 keyword also extends to mutually-recursive trait clusters
-(declare both with `recursive`). Lands with Phase 8 (trait
-registry).
+(declare both with `recursive`). Shipped in Phase 8 alongside
+`TraitDef::recursive` (no runtime use yet — Phase 9's type
+checker is the consumer).
 
 **Q6. Tag-name registration — how does a component bind to a
 tag?** ✅ **Resolved: file-declared namespaces (C#-style),
@@ -4585,7 +4634,8 @@ top-level declaration under that namespace. Files without a
 namespace declaration bind their declarations bare; `as=` on
 an `<import>` overrides the file's namespace. Filename → tag
 mangling retires entirely. See §7.1 (Part 3) and §7.11 for
-the full design; lands with Phase 6.
+the full design; shipped in Phase 8 (Phase 6 was the planning
+slot; the actual landing rode in on the trait/namespace work).
 
 **Q7. `.luau` component vs `.luau` script in the same file.**
 ✅ **Resolved (§7.1, §7.11):** a `.luau` file returns a
@@ -4705,19 +4755,21 @@ relitigating.
 
 ---
 
-## 11. Receipts — what this unlocks
+## 11. Receipts — what this unlocked
 
 LOC measurements are honest reads of existing `.prui` files
 (`apps/lattice/shell.prui`,
-`packages/prism-shell/ui/components/*.prui`). Comparing today
-to the end state across all three waves.
+`packages/prism-shell/ui/components/*.prui`). Comparing the
+pre-roadmap shape (2026-05-19) to the now-shipped end state.
+Every "End state" / "Now" cell below is callable in the
+codebase as of 2026-05-22.
 
 ### Authoring wins
 
-| Task today | LOC | End-state LOC |
+| Task | Before (2026-05-19) | Now (2026-05-22) |
 |---|---|---|
 | Button-but-louder-hover variant | new PRSS class + new component (~25 lines) | `component LoudButton = Button with { tone = loud }` (1 line) |
-| Lighter / darker / transparent variant of a token colour | hand-tuned hex per call site | `accent/50`, `with(accent, l=+0.05)` (1 expr) |
+| Lighter / darker / transparent variant of a token colour | hand-tuned hex per call site | `with(accent, l=+0.05)`, `with(accent, a=0.5)` (1 expr); `accent/50` slash-alpha sugar is the §8 follow-up |
 | Pressed-state visual feedback | script-toggled class + PRSS variant (~12 lines) | `style.background={accent \| :pressed → darken(0.1)}` (1 line) |
 | 3 props × 4 states on one component | 12 lines (cross-product) | 7 lines (nested record) |
 | 5 buttons sharing one hover/press/disabled curve | 20 lines | 6 lines (`@color` + 5 refs) |
@@ -4740,9 +4792,9 @@ to the end state across all three waves.
 
 ### Structural wins
 
-| Today | End state |
+| Before | Now |
 |---|---|
-| 17-namespace `AttributeNamespace` enum, hard-coded | Open trait registry, document-scoped, Luau-extensible |
+| 17-namespace `AttributeNamespace` enum, hard-coded | 12-variant enum + open `TraitRegistry`, document-scoped, Luau-extensible |
 | 5 registration paths for a component | 1 noun, 3 authoring surfaces |
 | 3 implementations of "repeat children once per item" | 1 (`<container for=…>`) |
 | 2 spellings for "splice caller content" | 1 (`<slot/>`) |
@@ -4756,7 +4808,7 @@ to the end state across all three waves.
 
 ### Failure-mode wins
 
-| Today | End state |
+| Before | Now |
 |---|---|
 | Hidden globals leak host state to public-facing SSR | Capability declarations fail parse at the boundary |
 | Two libraries' "Draggable" silently conflict | Namespaced imports force disambiguation |
@@ -4844,7 +4896,7 @@ extend.
 ### 11.4 First-class modules — OCaml-style
 
 The basic `prism.module{namespace="Ns", entries={…}}` builder
-ships with Phase 7 (§7.11, post Q6/Q11 resolution) — that
+shipped in Phase 8 (§7.11, post Q6/Q11 resolution) — that
 covers ~70% of the OCaml-style module ergonomics by giving
 files an explicit namespace + a multi-export table. The
 remaining tier-2 ambition is **parametrically polymorphic
@@ -4992,19 +5044,22 @@ A short list that should NOT happen, even if tempting:
 
 Waves A–H made PRUI *runnable* — script, macro, dialect,
 lifecycle, suspense, animation, multi-projection. **Wave J**
-makes it *reusable*: inheritance for the cases composition
+made it *reusable*: inheritance for the cases composition
 can't reach, contracts for the cases nominal-shape would
 help, defaults so authoring doesn't reach into the host, and
 a PRSS surface as expressive as Tailwind v4 + Sass + CSS
-Color 5 combined. **Wave K** makes it *coherent*: the
+Color 5 combined. **Wave K** made it *coherent*: the
 codebase audit found five paths to register a component,
 three ways to repeat children, two spellings for slot
 injection, and four attribute namespaces that earn nothing.
-**Wave L** makes it *principled*: traits replace the
+**Wave L** made it *principled*: traits replace the
 namespace enum, mixins replace ad-hoc class lists, macros
 replace per-attribute parser edits, capabilities replace
 magic globals, and nested state records replace the N × M
-property-state cross product.
+property-state cross product. All three landed across
+2026-05-21 / 2026-05-22 alongside the §6 canonical surface
+that carries them; the four follow-ups in §8 are now the
+runway, not the roadmap.
 
 Each duplication is a small papercut on its own; together
 they're the reason the DSL feels larger than it is. The

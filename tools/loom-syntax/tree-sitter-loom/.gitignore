@@ -1,0 +1,19 @@
+# tree-sitter generated artifacts
+src/parser.c
+src/grammar.json
+src/node-types.json
+src/tree_sitter/
+
+# build outputs
+build/
+prebuilds/
+node_modules/
+target/
+*.wasm
+*.dylib
+*.so
+*.dll
+
+# editor
+.vscode/
+*.log
