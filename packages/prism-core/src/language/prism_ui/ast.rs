@@ -215,6 +215,34 @@ impl AttributeNamespace {
             };
             return (ns, rest.to_string());
         }
+        // **Phase 9 §7.4** — `trait.method` dotted form. The four
+        // built-in traits route to a fixed downstream namespace so
+        // authors can write `layout.gap=12`, `style.background=
+        // accent`, `pointer.click=$handler`, `a11y.label="Submit"`
+        // interchangeably with the legacy colon-prefix forms.
+        // Unknown trait prefixes fall through to `Bare` so the
+        // runtime's open registry (`TraitRegistry`, downstream) can
+        // claim them via the `data:` pass-through with no grammar
+        // edit. The split is on the *first* dot to keep dotted
+        // method names like `layout.gap-x` valid.
+        if let Some((prefix, rest)) = raw.split_once('.') {
+            if !rest.is_empty() {
+                let (ns, local) = match prefix {
+                    "layout" => (AttributeNamespace::Bare, rest.to_string()),
+                    "style" => (AttributeNamespace::Style, rest.to_string()),
+                    "pointer" => {
+                        // `pointer.on-click` strips the `on-` prefix
+                        // for symmetry with the `on:click` namespace;
+                        // `pointer.click` is also accepted.
+                        let local = rest.strip_prefix("on-").unwrap_or(rest).to_string();
+                        (AttributeNamespace::On, local)
+                    }
+                    "a11y" => (AttributeNamespace::Aria, rest.to_string()),
+                    _ => return (AttributeNamespace::Bare, raw.to_string()),
+                };
+                return (ns, local);
+            }
+        }
         match raw {
             "if" | "else-if" | "else" | "for" => (AttributeNamespace::ControlFlow, raw.to_string()),
             "class" | "id" => (AttributeNamespace::Identifier, raw.to_string()),
@@ -346,6 +374,58 @@ mod tests {
         let (ns, local) = AttributeNamespace::classify("class");
         assert_eq!(ns, AttributeNamespace::Identifier);
         assert_eq!(local, "class");
+    }
+
+    #[test]
+    fn classify_layout_dot_routes_to_bare() {
+        // §7.4 — `layout.gap=12` ≡ bare `gap=12`. Same downstream
+        // lowering, dotted authoring surface.
+        let (ns, local) = AttributeNamespace::classify("layout.gap");
+        assert_eq!(ns, AttributeNamespace::Bare);
+        assert_eq!(local, "gap");
+    }
+
+    #[test]
+    fn classify_style_dot_routes_to_style() {
+        let (ns, local) = AttributeNamespace::classify("style.background");
+        assert_eq!(ns, AttributeNamespace::Style);
+        assert_eq!(local, "background");
+    }
+
+    #[test]
+    fn classify_pointer_on_click_strips_on_prefix() {
+        // `pointer.on-click` ≡ `pointer.click` ≡ `on:click` ≡ `@click`.
+        // All four spellings reach the same downstream namespace + local.
+        let (ns, local) = AttributeNamespace::classify("pointer.on-click");
+        assert_eq!(ns, AttributeNamespace::On);
+        assert_eq!(local, "click");
+        let (ns2, local2) = AttributeNamespace::classify("pointer.click");
+        assert_eq!(ns2, AttributeNamespace::On);
+        assert_eq!(local2, "click");
+    }
+
+    #[test]
+    fn classify_a11y_routes_to_aria() {
+        let (ns, local) = AttributeNamespace::classify("a11y.label");
+        assert_eq!(ns, AttributeNamespace::Aria);
+        assert_eq!(local, "label");
+    }
+
+    #[test]
+    fn classify_unknown_dotted_prefix_falls_back_to_bare() {
+        // §7.4 — an unknown trait prefix round-trips as `Bare` with
+        // the full raw name preserved. The runtime's open trait
+        // registry can claim it without a grammar edit.
+        let (ns, local) = AttributeNamespace::classify("widget.foo");
+        assert_eq!(ns, AttributeNamespace::Bare);
+        assert_eq!(local, "widget.foo");
+    }
+
+    #[test]
+    fn classify_dotted_method_with_dashes_preserved() {
+        let (ns, local) = AttributeNamespace::classify("style.background-color");
+        assert_eq!(ns, AttributeNamespace::Style);
+        assert_eq!(local, "background-color");
     }
 
     #[test]

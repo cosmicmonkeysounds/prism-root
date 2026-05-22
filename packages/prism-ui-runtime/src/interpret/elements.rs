@@ -297,9 +297,7 @@ fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
     // route to the host's `TagResolver` — only ASCII-uppercase-led
     // tags qualify. Documents that declare no local components
     // skip the map probe via the `has_local_components` early-out.
-    if scope.has_local_components()
-        && super::components::is_pascal_case_tag(&el.tag)
-    {
+    if scope.has_local_components() && super::components::is_pascal_case_tag(&el.tag) {
         if let Some(def) = scope.local_component(&el.tag) {
             return super::components::instantiate_component(def.as_ref(), el, scope);
         }

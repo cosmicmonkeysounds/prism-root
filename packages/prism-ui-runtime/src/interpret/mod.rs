@@ -62,7 +62,13 @@ pub use elements::lower_ast_children;
 use elements::lower_children;
 
 mod components;
-pub use components::{harvest_components, instantiate_component, is_pascal_case_tag, ComponentDef};
+pub use components::{
+    harvest_components, harvest_declarations, instantiate_component, is_pascal_case_tag,
+    ComponentDef, HarvestedDeclarations, ParamDef, TraitDef,
+};
+
+mod trait_registry;
+pub use trait_registry::{TraitRegistry, TraitTarget};
 
 // ---------------------------------------------------------------------------
 // Tag resolver — DI hook for unknown tags
@@ -275,11 +281,26 @@ pub struct LowerScope {
     frame_sink: Option<std::rc::Rc<std::cell::RefCell<Option<crate::luau_scope::LuauScopeFrame>>>>,
     /// **Phase 7 — `component` declarations.** Map of name →
     /// resolved [`ComponentDef`] for every top-level
-    /// `<component name="X">` harvested from the document (and,
-    /// once Phase 8 lands, every imported `.prui` file). Populated
-    /// once per document by [`lower_document_with_scope`]; carried
-    /// through scope clones for child-scope dispatch.
+    /// `<component name="X">` harvested from the document and from
+    /// every `<import component="./foo.prui"/>` projection (Phase
+    /// 8). Populated once per document by
+    /// [`lower_document_with_scope`]; carried through scope clones
+    /// for child-scope dispatch.
     local_components: Arc<HashMap<String, Arc<ComponentDef>>>,
+    /// **Phase 8 — `trait` declarations.** Companion table to
+    /// [`Self::local_components`] for `<trait name="X">` decls
+    /// (typed shapes / contracts per §7.3). Carried through scope
+    /// clones identically — empty for documents that declare none.
+    local_traits: Arc<HashMap<String, Arc<TraitDef>>>,
+    /// **Phase 9 — trait registry.** Open registry of trait names
+    /// to attribute method sets, consulted at parse / lowering time
+    /// by `trait.method=value` attribute dispatch (§7.4). Seeded
+    /// with the four built-in traits (`layout` / `style` / `pointer`
+    /// / `a11y`); user code extends it via Luau / Rust registration.
+    /// Distinct from [`Self::local_traits`] — `local_traits` holds
+    /// document-author-declared `<trait>` shapes; this is the
+    /// runtime's attribute-dispatch registry.
+    trait_registry: Arc<TraitRegistry>,
 }
 
 /// **Wave 14.3** — per-element memo cache keyed by `id`. Hosts that
@@ -700,6 +721,40 @@ impl LowerScope {
     /// declared none.
     pub fn has_local_components(&self) -> bool {
         !self.local_components.is_empty()
+    }
+
+    /// **Phase 8** — install the local trait table harvested from
+    /// the document and from `<import component="…"/>` projections.
+    /// Empty on documents that declare none (the common case).
+    pub fn with_local_traits(mut self, traits: Arc<HashMap<String, Arc<TraitDef>>>) -> Self {
+        self.local_traits = traits;
+        self
+    }
+
+    /// **Phase 8** — look up a locally-declared trait by name. The
+    /// Phase 9 attribute-classifier will read this to resolve
+    /// `Focusable.focused` against an author-declared `<trait>` shape;
+    /// today it round-trips for documentation + LSP consumers.
+    pub fn local_trait(&self, name: &str) -> Option<&Arc<TraitDef>> {
+        self.local_traits.get(name)
+    }
+
+    /// **Phase 9** — install the trait registry (the four built-in
+    /// `layout` / `style` / `pointer` / `a11y` traits plus any
+    /// user-registered traits). The default is
+    /// [`TraitRegistry::builtin`], so the scope carries it
+    /// transparently and call sites that don't extend the registry
+    /// pay nothing.
+    pub fn with_trait_registry(mut self, registry: TraitRegistry) -> Self {
+        self.trait_registry = Arc::new(registry);
+        self
+    }
+
+    /// **Phase 9** — borrow the active trait registry. Used by the
+    /// attribute classifier (Phase 9+ parser work) to resolve dotted
+    /// `trait.method=` syntax against the open registry.
+    pub fn trait_registry(&self) -> &TraitRegistry {
+        &self.trait_registry
     }
 
     /// **Wave 14.1** — seed the design-token table as a `tokens`
@@ -1173,19 +1228,38 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
         }
     };
 
-    // **Phase 7** — harvest top-level `<component name="X">`
-    // declarations and install them in the scope. PascalCase tags
-    // inside the body resolve through this table during the main
-    // walk. Empty (no `component` decls in this document) → skip
-    // the clone; documents that declare none pay nothing.
-    let components_owned;
+    // **Phase 7 + 8** — harvest top-level `<component name="X">` and
+    // `<trait name="X">` declarations from the active document, then
+    // resolve every `<import component="./path.prui"/>` projection
+    // (Phase 8 §7.11) by re-parsing the imported source through the
+    // host's `ImportResolver` and merging its declarations into the
+    // local tables. The file-declared `<namespace name="Ns"/>` of
+    // each imported file is honoured automatically; an `as=` alias
+    // on the import overrides it (Q11). Documents that declare no
+    // components AND have no `component` imports skip both clones.
+    let local_decls_owned;
     let scope: &LowerScope = {
-        let table = harvest_components(&document.nodes);
-        if table.is_empty() {
+        let mut declarations = harvest_declarations(&document.nodes, None);
+        if let Some(res) = scope.import_resolver() {
+            for imp in collect_imports(&document.nodes) {
+                if imp.kind != "component" {
+                    continue;
+                }
+                if let Some(src) = res.resolve_import("component", &imp.path) {
+                    let (imported_doc, _errs) = parse(&src);
+                    let imported = harvest_declarations(&imported_doc.nodes, imp.alias.as_deref());
+                    declarations.merge(imported);
+                }
+            }
+        }
+        if declarations.components.is_empty() && declarations.traits.is_empty() {
             scope
         } else {
-            components_owned = scope.clone().with_local_components(Arc::new(table));
-            &components_owned
+            local_decls_owned = scope
+                .clone()
+                .with_local_components(Arc::new(declarations.components))
+                .with_local_traits(Arc::new(declarations.traits));
+            &local_decls_owned
         }
     };
 

@@ -1,38 +1,50 @@
-//! Phase 7 — component declarations + properties + `extends`.
+//! Phase 7–9 — component / trait declarations, file namespaces,
+//! and the `<import component="…"/>` projection.
 //!
-//! See `docs/dev/prui-expressiveness-roadmap.md` §7.1–§7.3. The
-//! canonical parser (`prism_core::language::prism_ui::grammar::canonical`)
-//! already lowers `component Name(params) = body` and `component
-//! Name(params) { body }` declarations into a single `<component
-//! name="Name">` element whose children are `<property>`s plus the
-//! body. This module turns those AST shapes into invokable component
-//! definitions — `<Card title="…"/>` at a call site instantiates the
-//! body with the call attributes bound as props, defaults applied,
-//! and `required` enforced.
+//! See `docs/dev/prui-expressiveness-roadmap.md` §7.1–§7.4 and §7.11.
+//! The canonical parser already projects every declaration onto a
+//! single AST element whose `tag` is the keyword and whose header
+//! data lives on attributes:
+//!
+//! - `<component name="Card">` with `<property>` children + body.
+//! - `<trait name="Focusable">` with body children (empty body = a
+//!   pure contract; `<trait Marker {}/>` is the trivial case).
+//! - `<namespace name="Forms"/>` — a leading file-scope directive
+//!   that prefixes every component / trait declared in this file
+//!   (§7.11 C# rule).
 //!
 //! ## Surface
 //!
-//! - [`ComponentDef`] / [`ParamDef`] — the declaration record. A
-//!   pre-pass over the document harvests every `<component name=…>`
-//!   into a name → def map carried on [`LowerScope::local_components`].
-//! - [`harvest_components`] — the pre-pass entry point.
+//! - [`ComponentDef`] / [`ParamDef`] / [`TraitDef`] — the declaration
+//!   records. A pre-pass over the document harvests every
+//!   `<component name=…>` / `<trait name=…>` element into name →
+//!   def maps carried on [`LowerScope::local_components`] /
+//!   [`LowerScope::local_traits`].
+//! - [`harvest_declarations`] — the unified pre-pass; replaces the
+//!   Phase 7 `harvest_components`-only entry point. Returns components
+//!   *and* traits in one walk so both share the namespace prefix logic.
+//!   The legacy [`harvest_components`] alias is retained for call
+//!   sites that only need the component half.
 //! - [`is_pascal_case_tag`] — the call-site rule per §7.1 part 1:
-//!   PascalCase tags dispatch through the local-component table
-//!   before falling through to the host's `TagResolver`.
+//!   PascalCase (and PascalCase-dotted, like `Forms.TextField`) tags
+//!   dispatch through the local-component table before falling
+//!   through to the host's `TagResolver`.
 //! - [`instantiate_component`] — substitutes a call site with the
 //!   component's body, bound props in scope. Honours `extends=` /
 //!   `use Parent` body statements (Phase 7's §7.3 inheritance slice).
 //!
-//! Traits / mixins / contracts / capabilities are Phase 9+ and not
-//! resolved here — `<requires>` / `<style>` / `<on>` body statements
-//! round-trip through the AST untouched today. `<requires>` will be
-//! consumed by Phase 12's capability injection pipeline; `<on>` and
-//! `<style>` are inert until Phase 9's trait registry lands.
+//! Mixins / capabilities are Phase 10+ and not resolved here —
+//! `<requires>` / `<style>` / `<on>` body statements round-trip
+//! through the AST untouched today. `<requires>` will be consumed by
+//! Phase 12's capability injection pipeline; `<on>` and `<style>` are
+//! inert until Phase 10's mixin pipeline lands.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use prism_core::language::prism_ui::{AttributeNamespace, AttributeValue, Element, Node as AstNode};
+use prism_core::language::prism_ui::{
+    AttributeNamespace, AttributeValue, Element, Node as AstNode,
+};
 
 use crate::layout::Node;
 
@@ -64,27 +76,226 @@ pub struct ComponentDef {
     /// flattened into the first parent here; secondary parents are
     /// Phase 9 mixin territory and are ignored for Phase 7.
     pub extends: Option<String>,
+    /// Phase 8 — `: Trait, Trait` conformance list. Parsed by the
+    /// canonical reader into the `impls="Focusable, Pointable"`
+    /// header attribute; we project it onto a typed `Vec` here so
+    /// downstream passes (the trait registry resolution and the
+    /// LSP) don't have to re-split. Empty when the component
+    /// conforms to no traits (the common case).
+    pub impls: Vec<String>,
     /// Render-tree children — the body minus `<property>` /
     /// `<requires>` / `<use>` / `<style>` / `<on>` declarations.
     pub body: Vec<AstNode>,
 }
 
-/// Pre-pass that harvests every top-level `<component name="…">`
-/// element. Returns an empty map on documents that declare no local
-/// components — the common case for shells / scenes / one-off views.
-pub fn harvest_components(nodes: &[AstNode]) -> HashMap<String, Arc<ComponentDef>> {
-    let mut out = HashMap::new();
+/// Phase 8 — a registered trait declaration. Each top-level
+/// `<trait name="X">` (and each trait registered through the
+/// `<import component="./*.prui"/>` projection) lives in the
+/// scope's `local_traits` table. A trait with an empty member list
+/// *is* the §7.3 "contract" — Marker-shape, used only for slot-type
+/// bounds. Non-empty `members` describe the typed shape conformers
+/// must provide.
+#[derive(Debug, Clone)]
+pub struct TraitDef {
+    pub name: String,
+    /// The typed members the trait declares — projected from each
+    /// `<property name="…" type="…">` child the canonical parser
+    /// emitted for `name: type` body lines. Empty list = contract.
+    pub members: Vec<ParamDef>,
+    /// `recursive` flag (Q5) — set when the canonical header
+    /// carried the `recursive` keyword. Trait self-reference is
+    /// only legal when this is true; Phase 8 records it so a Phase 9
+    /// type-checker can enforce it. No runtime effect today.
+    pub recursive: bool,
+}
+
+/// Phase 8 unified harvester output — every component + trait
+/// declaration in a single document or imported file, with the
+/// file's leading `<namespace name="X"/>` directive already
+/// applied to each name as a `Ns.Card`-shape prefix per §7.11.
+#[derive(Debug, Clone, Default)]
+pub struct HarvestedDeclarations {
+    pub components: HashMap<String, Arc<ComponentDef>>,
+    pub traits: HashMap<String, Arc<TraitDef>>,
+}
+
+impl HarvestedDeclarations {
+    /// Merge `other` into `self` with the same C# / collision rule as
+    /// §7.11 / Q1: duplicate bare names are skipped (last-wins is
+    /// rejected — but at the runtime layer we can't usefully surface
+    /// the parse error from a downstream pass, so we degrade to a
+    /// silent first-wins). The merge runs after both files have had
+    /// their own `<namespace>` prefix applied, so a collision here
+    /// means two files declared the same bare component.
+    pub fn merge(&mut self, other: HarvestedDeclarations) {
+        for (k, v) in other.components {
+            self.components.entry(k).or_insert(v);
+        }
+        for (k, v) in other.traits {
+            self.traits.entry(k).or_insert(v);
+        }
+    }
+}
+
+/// Phase 8 — unified pre-pass that harvests every top-level
+/// `<component name="…">` and `<trait name="…">` element in one
+/// walk, applying the file's leading `<namespace name="Ns"/>`
+/// directive (or an external `alias` override) as a `Ns.<Name>`
+/// prefix per §7.11. The dotted form is what `<Ns.Card/>` resolves
+/// against at the call site.
+pub fn harvest_declarations(nodes: &[AstNode], alias: Option<&str>) -> HarvestedDeclarations {
+    // §7.11 — `<namespace name="X"/>` at file scope wins unless the
+    // importer overrides with `as=`. `alias` carries the override.
+    let file_namespace = nodes.iter().find_map(|n| match n {
+        AstNode::Element(el) if el.tag == "namespace" => bare_string_attr(el, "name"),
+        _ => None,
+    });
+    let prefix = alias
+        .map(|s| s.to_string())
+        .or(file_namespace)
+        .filter(|s| !s.is_empty());
+
+    let mut out = HarvestedDeclarations::default();
     for node in nodes {
         let AstNode::Element(el) = node else { continue };
-        if el.tag != "component" {
-            continue;
+        match el.tag.as_str() {
+            "component" => {
+                let Some(mut def) = element_to_def(el) else {
+                    continue;
+                };
+                if let Some(p) = &prefix {
+                    def.name = format!("{p}.{}", def.name);
+                }
+                out.components.insert(def.name.clone(), Arc::new(def));
+            }
+            "trait" => {
+                let Some(mut def) = element_to_trait(el) else {
+                    continue;
+                };
+                if let Some(p) = &prefix {
+                    def.name = format!("{p}.{}", def.name);
+                }
+                out.traits.insert(def.name.clone(), Arc::new(def));
+            }
+            _ => {}
         }
-        let Some(def) = element_to_def(el) else {
-            continue;
-        };
-        out.insert(def.name.clone(), Arc::new(def));
     }
     out
+}
+
+/// Phase 7 back-compat wrapper — the unified [`harvest_declarations`]
+/// is the new entry point, but call sites that only care about the
+/// component half still get the lean Map<name, def> shape they had.
+/// No `<namespace>` prefix is applied here (the unified entry runs
+/// for documents that need it).
+pub fn harvest_components(nodes: &[AstNode]) -> HashMap<String, Arc<ComponentDef>> {
+    harvest_declarations(nodes, None).components
+}
+
+/// Project a `<trait name="X">` AST element into a [`TraitDef`].
+/// Returns `None` when the element has no `name=` attribute.
+///
+/// Trait body lines (`focus: action`, `is-hovered: bool = false`)
+/// arrive in two shapes from the canonical reader:
+///
+/// 1. `<property name="focus" type="action"/>` — when the keyword
+///    `property` was explicitly written (a forward-compat shape).
+/// 2. `<expr body="focus: action"/>` — the common case, since
+///    trait member lines don't lead with a body-keyword and the
+///    block-body parser falls back to the opaque-expression slot.
+///
+/// We parse both into [`ParamDef`] rows so the trait's typed
+/// members surface uniformly downstream regardless of the parser's
+/// internal projection.
+fn element_to_trait(el: &Element) -> Option<TraitDef> {
+    let name = bare_string_attr(el, "name")?;
+    let recursive = bare_string_attr(el, "recursive")
+        .map(|v| v == "true" || v == "1" || v.is_empty())
+        .unwrap_or(false);
+    let mut members = Vec::new();
+    for child in &el.children {
+        let AstNode::Element(child_el) = child else {
+            continue;
+        };
+        match child_el.tag.as_str() {
+            "property" => {
+                if let Some(p) = property_to_param(child_el) {
+                    members.push(p);
+                }
+            }
+            "expr" => {
+                if let Some(body) = bare_string_attr(child_el, "body") {
+                    if let Some(p) = parse_trait_member_line(&body) {
+                        members.push(p);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(TraitDef {
+        name,
+        members,
+        recursive,
+    })
+}
+
+/// Parse a single trait body line into a [`ParamDef`]. Accepts the
+/// canonical `name: type` and `name: type = default` shapes (with an
+/// optional trailing `required`). Lines that don't match `name:`
+/// fall through as `None` — the caller skips them (parse-time
+/// diagnostics belong to the canonical reader).
+fn parse_trait_member_line(line: &str) -> Option<ParamDef> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    let (name, rest) = line.split_once(':')?;
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let rest = rest.trim();
+    // Pull off an optional `required` token (may sit before or
+    // after `= default`).
+    let (rest, required_a) = strip_required(rest);
+    // Pull off an optional `= default`.
+    let (ty, default) = if let Some(eq_idx) = rest.find('=') {
+        let (ty, default) = rest.split_at(eq_idx);
+        (ty.trim().to_string(), Some(default[1..].trim().to_string()))
+    } else {
+        (rest.to_string(), None)
+    };
+    let (ty, required_b) = strip_required(&ty);
+    Some(ParamDef {
+        name,
+        ty: if ty.is_empty() {
+            None
+        } else {
+            Some(ty.to_string())
+        },
+        default,
+        required: required_a || required_b,
+    })
+}
+
+fn strip_required(s: &str) -> (&str, bool) {
+    let t = s.trim();
+    if let Some(rest) = t.strip_suffix("required") {
+        // Ensure `required` is a whole-word suffix, not e.g. the tail
+        // of an identifier like `is-required`.
+        let prefix = rest.trim_end();
+        if prefix.len() < rest.len() {
+            return (prefix, true);
+        }
+    }
+    if let Some(rest) = t.strip_prefix("required") {
+        let after = rest.trim_start();
+        if after.len() < rest.len() {
+            return (after, true);
+        }
+    }
+    (t, false)
 }
 
 /// Project one `<component name="…">` AST element into a
@@ -140,10 +351,23 @@ fn element_to_def(el: &Element) -> Option<ComponentDef> {
         }
     }
 
+    // Phase 8 — `: Trait, Trait` lands on `impls="Focusable, Pointable"`
+    // from the canonical parser (see `grammar/canonical.rs::parse_impl_list`).
+    // Split on `,` and trim; empty stays an empty Vec.
+    let impls = bare_string_attr(el, "impls")
+        .map(|s| {
+            s.split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
     Some(ComponentDef {
         name,
         params,
         extends: extends_header.or(extends_from_body),
+        impls,
         body,
     })
 }
@@ -178,7 +402,10 @@ fn bare_string_attr(el: &Element, name: &str) -> Option<String> {
 /// primitives or pass through to the host's resolver. First
 /// character is the discriminator.
 pub fn is_pascal_case_tag(tag: &str) -> bool {
-    tag.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+    tag.chars()
+        .next()
+        .map(|c| c.is_ascii_uppercase())
+        .unwrap_or(false)
 }
 
 /// Instantiate `def` at a call site `el` against `scope`. Returns
@@ -190,11 +417,7 @@ pub fn is_pascal_case_tag(tag: &str) -> bool {
 /// (`<MyToggle disabled/>`) bind to `true`. Literal-string defaults
 /// (`tone: string = "primary"`) lose their surrounding quotes;
 /// boolean / numeric / token defaults round-trip through serde.
-pub fn instantiate_component(
-    def: &ComponentDef,
-    el: &Element,
-    scope: &LowerScope,
-) -> Vec<Node> {
+pub fn instantiate_component(def: &ComponentDef, el: &Element, scope: &LowerScope) -> Vec<Node> {
     // Flatten the extends chain once: parent's params override-chain
     // (child wins), parent's body is the fallback when the child
     // has no body of its own. Multi-level chains walk via recursion
@@ -303,10 +526,21 @@ fn flatten_extends(
         parent_resolved.body.clone()
     };
 
+    // Phase 8 — trait conformance flattens like params: parent first,
+    // child's additions appended (deduped). The combined list is what
+    // a future trait-registry pass walks to install the conformance.
+    let mut impls: Vec<String> = parent_resolved.impls.clone();
+    for t in &def.impls {
+        if !impls.iter().any(|existing| existing == t) {
+            impls.push(t.clone());
+        }
+    }
+
     ComponentDef {
         name: def.name.clone(),
         params,
         extends: parent_resolved.extends.clone(),
+        impls,
         body,
     }
 }
@@ -390,8 +624,7 @@ mod tests {
 
     #[test]
     fn harvests_param_with_default() {
-        let def =
-            first_component(r#"component Avatar(size: int = 32) = <image size={size}/>"#);
+        let def = first_component(r#"component Avatar(size: int = 32) = <image size={size}/>"#);
         assert_eq!(def.name, "Avatar");
         assert_eq!(def.params.len(), 1);
         assert_eq!(def.params[0].name, "size");
@@ -456,6 +689,121 @@ component Child(label: string) = {
         assert!(!is_pascal_case_tag("container"));
         assert!(!is_pascal_case_tag("shell.icon-button"));
         assert!(!is_pascal_case_tag(""));
+    }
+
+    #[test]
+    fn harvests_trait_with_members() {
+        let (doc, _) = parse(
+            r#"trait Focusable {
+  focus: action
+  blur: action
+}"#,
+        );
+        let out = harvest_declarations(&doc.nodes, None);
+        let t = out.traits.get("Focusable").expect("trait missing");
+        assert_eq!(t.members.len(), 2);
+        assert_eq!(t.members[0].name, "focus");
+        assert_eq!(t.members[1].name, "blur");
+    }
+
+    #[test]
+    fn harvests_marker_contract_trait() {
+        // §7.3 — a body-less trait *is* the contract form.
+        let (doc, _) = parse("trait Marker");
+        let out = harvest_declarations(&doc.nodes, None);
+        let t = out.traits.get("Marker").expect("marker trait missing");
+        assert!(t.members.is_empty(), "expected contract (no members)");
+    }
+
+    #[test]
+    fn harvests_component_impls() {
+        let (doc, _) =
+            parse(r#"component TaskRow(task: Task) : Focusable, Pointable = <container/>"#);
+        let out = harvest_declarations(&doc.nodes, None);
+        let c = out.components.get("TaskRow").expect("component missing");
+        assert_eq!(
+            c.impls,
+            vec!["Focusable".to_string(), "Pointable".to_string()]
+        );
+    }
+
+    #[test]
+    fn file_namespace_prefixes_declarations() {
+        // §7.11 — `<namespace name="Forms"/>` at the head of a file
+        // prefixes every component / trait in the file. The dotted
+        // form is what a call site like `<Forms.TextField/>` resolves
+        // against.
+        let (doc, _) = parse(
+            r#"namespace Forms
+
+component TextField(value: string) = <input value={value}/>
+component DropdownField(value: string) = <input value={value}/>
+trait FieldLike { value: any }"#,
+        );
+        let out = harvest_declarations(&doc.nodes, None);
+        assert!(out.components.contains_key("Forms.TextField"));
+        assert!(out.components.contains_key("Forms.DropdownField"));
+        assert!(out.traits.contains_key("Forms.FieldLike"));
+        // The bare names should NOT be present — the prefix is the
+        // only entry point.
+        assert!(!out.components.contains_key("TextField"));
+    }
+
+    #[test]
+    fn import_alias_overrides_file_namespace() {
+        // §7.11 — `as=fields` on the import overrides the file's own
+        // `<namespace=Forms/>` directive.
+        let (doc, _) = parse(
+            r#"namespace Forms
+component TextField(value: string) = <input value={value}/>"#,
+        );
+        let out = harvest_declarations(&doc.nodes, Some("fields"));
+        assert!(out.components.contains_key("fields.TextField"));
+        assert!(!out.components.contains_key("Forms.TextField"));
+    }
+
+    #[test]
+    fn merge_keeps_first_on_collision() {
+        let mut a = HarvestedDeclarations::default();
+        a.components.insert(
+            "Card".into(),
+            Arc::new(ComponentDef {
+                name: "Card".into(),
+                params: Vec::new(),
+                extends: None,
+                impls: Vec::new(),
+                body: Vec::new(),
+            }),
+        );
+        let mut b = HarvestedDeclarations::default();
+        b.components.insert(
+            "Card".into(),
+            Arc::new(ComponentDef {
+                name: "Card".into(),
+                params: vec![ParamDef {
+                    name: "shouldnt-show".into(),
+                    ty: None,
+                    default: None,
+                    required: false,
+                }],
+                extends: None,
+                impls: Vec::new(),
+                body: Vec::new(),
+            }),
+        );
+        a.merge(b);
+        let merged = a.components.get("Card").unwrap();
+        assert!(merged.params.is_empty(), "first wins on collision");
+    }
+
+    #[test]
+    fn dotted_pascal_case_is_recognised() {
+        // Phase 8 call-site dispatch: `<Forms.TextField/>` still
+        // passes the PascalCase check because the first character
+        // is uppercase. The dispatch path keys off the full dotted
+        // tag string.
+        assert!(is_pascal_case_tag("Forms.TextField"));
+        assert!(is_pascal_case_tag("MyNs.SubNs.Field"));
     }
 
     #[test]

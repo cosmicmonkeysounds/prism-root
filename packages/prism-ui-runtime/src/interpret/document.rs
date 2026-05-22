@@ -76,12 +76,15 @@ pub(super) struct ImportSpec {
     pub(super) alias: Option<String>,
 }
 
-/// **Wave H (§5.4)** — collect every `<import>` row. The `kind`/path
-/// is the first attribute whose local name is one of the three
-/// projections (`stylesheet` / `script` / `dialect`); an `as=`
-/// attribute on the same element supplies the alias. The `widget=`
-/// projection was Phase-0-removed (`docs/dev/prui-expressiveness-roadmap.md`
-/// §7.0); Phase 7 reintroduces component imports under `component=`.
+/// **Wave H (§5.4) + Phase 8 (§7.11)** — collect every `<import>`
+/// row. The `kind`/path is the first attribute whose local name is
+/// one of the four live projections (`stylesheet` / `script` /
+/// `dialect` / `component`); an `as=` attribute on the same element
+/// supplies the alias. The earlier `widget=` projection was renamed
+/// to `component=` in Phase 8 — the parser emits `component=` for
+/// every `.prui` import and `widget=` is no longer recognised at the
+/// projection level (the `<import widget=…/>` collector path is
+/// gone with this rename).
 pub(super) fn collect_imports(nodes: &[AstNode]) -> Vec<ImportSpec> {
     let mut out = Vec::new();
     for node in nodes {
@@ -96,7 +99,10 @@ pub(super) fn collect_imports(nodes: &[AstNode]) -> Vec<ImportSpec> {
             })?
         });
         for a in &el.attributes {
-            if matches!(a.name.local.as_str(), "stylesheet" | "script" | "dialect") {
+            if matches!(
+                a.name.local.as_str(),
+                "stylesheet" | "script" | "dialect" | "component"
+            ) {
                 if let AttributeValue::String { value, .. } = &a.value {
                     out.push(ImportSpec {
                         kind: a.name.local.clone(),
