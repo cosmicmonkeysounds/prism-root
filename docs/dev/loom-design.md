@@ -123,7 +123,7 @@ are **additive only**. They cannot override core. There is no
 
 ---
 
-## 3. The trinity — characters, stats, story
+## 3. The world model — characters, stats, factions, story
 
 A Loom project is one tree of `.loom` files. Every document opens
 with a header tag declaring its **archetype**:
@@ -131,25 +131,36 @@ with a header tag declaring its **archetype**:
 ```
 # elena            :character        ← who exists
 # combat           :stats            ← what state
+# rebels           :faction          ← who's with whom
 # harbor_intro     :conversation     ← what happens
 ```
 
-Three archetypes, three layers of the same world. They cross-
-reference by `@id`: a story line names a `@character`; a character
-slot binds a `@stats` profile; a stats expression reads a character's
-`$attributes`. The dependency graph is one-way:
+Four archetypes, four layers of the same world. They cross-reference
+by `@id`: a story line names a `@character`; a character slot binds a
+`@stats` profile; a faction lists members by `@character`; a stats
+expression reads a character's `$attributes`. The dependency graph is
+one-way:
 
 ```
-story  ──reads──▶  characters  ──reads──▶  stats
-                       ▲
-                       │
-   live performance ───┘   (cast slots, participants, cohorts)
+story  ──reads──▶  factions  ──reads──▶  characters  ──reads──▶  stats
+                       ▲                     ▲
+                       │                     │
+   live performance ───┴─────────────────────┘   (cast slots, participants, cohorts)
 ```
 
-The runtime composes the three. A `LoomDatabase` is built once from
-all three archetypes; at runtime, the conversation engine, the
-character lifecycle manager, and the stat system share one Loro
-store and one ledger.
+The runtime composes the four. A `LoomDatabase` is built once from
+all four archetypes; at runtime, the conversation engine, the
+character lifecycle manager, the stat system, and the faction
+registry share one Loro store and one ledger.
+
+> **Why four, not three.** Characters, stats, and story alone get
+> you a complete RPG or screenplay. Factions are the load-bearing
+> fourth layer for *political simulation* — alliances, betrayals,
+> uprisings, crowds — and for *live immersive theatre*, where
+> participants self-organize during the show and the narrative must
+> respond to groups it didn't know would exist at write time. See
+> [§10](#10-factions) for the full treatment; emergence is what
+> makes them a peer archetype, not a sub-feature of characters.
 
 What goes in which archetype is a content-organization decision, not
 a language decision — a tiny game can put everything in one file:
@@ -162,6 +173,10 @@ cast WREN
   .stats { attack: 8, perception: 14 }
   disposition $PLAYER
     trust = 30
+
+faction lighthouse_keepers
+  members @WREN
+  stance @PLAYER = neutral
 
 # intro :conversation
 
@@ -492,7 +507,7 @@ the built-in event registry. The core registry exposes:
 | `on event X` | a user-fired `fire X` event | `$payload` |
 
 Studios register additional hook predicates through the extension API
-(§10). A hook predicate that the registry doesn't recognize is a
+(§11). A hook predicate that the registry doesn't recognize is a
 build error (`unknown-hook-pred`).
 
 **Scheduling.** Hooks are *queued*, not preemptive. When a ledger
@@ -1230,7 +1245,429 @@ queue.
 
 ---
 
-## 10. Extension model
+## 10. Factions
+
+> Factions are the **fourth layer** of the world model — the
+> political dimension. A faction is a *named, addressable collective*
+> with members, state, stance toward other factions, collective
+> goals, and a life cycle. They can be declared up front; they can
+> also *emerge at runtime*, especially in immersive theatre where
+> participants form their own.
+
+The trinity gets you everything a single character can do; factions
+get you everything multiple characters can do *as a group*. That
+includes alliances, betrayals, uprisings, congregations, mobs,
+guilds, parties, crews, cohorts-with-teeth — every collective whose
+state and stance need to be referenced from story.
+
+### 10.1 Declaration
+
+The simplest faction: an id, a label, a member list, and a default
+stance toward everyone else.
+
+```loom
+# rebels :faction
+  .label  "The Bell Rebels"
+  .color  #ff6b35
+  .sigil  @sigil.broken_bell
+  .home   @lighthouse_interior
+
+members
+  @WREN, @ELENA                              # explicit characters
+  cohort initiate                            # plus everyone in this cohort
+
+state
+  morale      = 0..100, init 60
+  resources   = 0..100, init 20
+  notoriety   = 0..100, init 10
+
+stance
+  @loyalists           = hostile
+  @merchants           = wary
+  @neutral_observers   = neutral
+  default              = neutral             # what new factions get
+
+goal restore_the_bell
+  priority    = 0.9
+  active_when = $rebels.morale > 30
+  completes_when = $bell.functional
+  drives generator coordinate_rebellion
+```
+
+A `:faction` document is the heaviest form. Lightweight factions also
+work as inline declarations inside any document:
+
+```loom
+faction lighthouse_keepers
+  members @WREN
+  state morale = 50
+  stance default = friendly
+```
+
+The body of a faction declaration uses the same building blocks as
+characters — `members`, `state`, `stance`, `goal`, `on` (hooks),
+`generator`, `scene`. Where a character is *one* entity, a faction is
+*many entities + collective state*. The vocabulary is shared on
+purpose; the runtime knows which is which from the archetype.
+
+### 10.2 Stance
+
+The **stance** between two factions is the political axis of the
+world model — what colour the relationship paints onto every
+character belonging to one when interacting with a character in the
+other.
+
+```loom
+stance
+  @loyalists           = hostile
+  @merchants           = wary
+  @neutral_observers   = neutral
+  default              = neutral
+```
+
+Stance is drawn from a small named set: `allied`, `friendly`,
+`neutral`, `wary`, `hostile`. Studios register more via the
+extension API (§11) — `vassal`, `tributary`, `oathbound`, whatever
+the show needs. The runtime maintains stance as a *symmetric matrix
+by default* (mirror is implicit) — declaring `rebels → loyalists =
+hostile` also makes `loyalists → rebels = hostile`. Asymmetric stance
+exists for one-sided relationships:
+
+```loom
+stance
+  @loyalists           = hostile asymmetric    # we hate them; they may not yet know
+```
+
+**Mutation.** Story mutates stance with `:=`:
+
+```loom
+~ stance($rebels, $loyalists) := allied
+~ stance($rebels, @merchants) := hostile asymmetric
+```
+
+The mutation writes one `StanceChanged { a, b, before, after, at_ms }`
+ledger entry. Hooks (§4.8 / §10.5 / §10.7) subscribe to this stream.
+
+**Querying.** Stance is a first-class condition atom:
+
+```loom
+if stance($PLAYER.faction, @rebels) is hostile
+if stance($PLAYER.faction, @rebels) is_at_least friendly       # ≥ on the ordinal scale
+if $PLAYER.faction has_stance(@rebels)                         # any non-default
+```
+
+The ordinal scale (`hostile < wary < neutral < friendly < allied`)
+makes `is_at_least` / `is_at_most` work naturally. Extension stances
+register their position in the scale.
+
+### 10.3 Membership
+
+Membership is a *live set*. Three sources contribute:
+
+```loom
+members
+  @WREN, @ELENA                              # explicit characters
+  cohort initiate                            # plus a cohort
+  match $X.disposition($WREN).trust > 60     # plus a reactive predicate
+```
+
+The `match` form is the most powerful: any character matching the
+predicate is *automatically* a member while the predicate holds and
+leaves when it stops. This is how loyalty mechanics fall out for
+free — Elena joins the rebels when her trust in Wren passes 60, and
+leaves if Wren betrays her.
+
+**Mutation.** Story can join / kick explicitly:
+
+```loom
+~ $rebels.members += @maren                  # add
+~ $rebels.members -= @gareth                 # remove
+~ $rebels.disband                            # remove everyone, mark dissolved
+```
+
+Each mutation writes `MembershipChanged { faction, character, kind }`
+(`kind` ∈ `joined` / `left` / `kicked` / `dissolved_with`).
+
+**Inverse query.** A character knows its faction memberships:
+
+```loom
+$elena.factions                              # list<faction>
+$elena.faction                               # primary; nil if none
+if $elena.in_faction(@rebels)
+```
+
+A character can belong to multiple factions (e.g. a noble house *and*
+a merchant guild). The *primary* faction is the highest-priority one
+by `.primary_priority`; ties go to declaration order.
+
+### 10.4 Collective state
+
+A faction's `state` block declares numeric axes — exactly the same
+shape as a character's `disposition` axes (§4.3) — that the runtime
+tracks per-faction:
+
+```loom
+state
+  morale      = 0..100, init 60
+  resources   = 0..100, init 20
+  notoriety   = 0..100, init 10
+  cohesion    = 0..100, init 80
+```
+
+Story mutates these via the same `:=` / `+=` / `-=` action surface
+characters use. Two synthesized accessors come for free on every
+faction:
+
+- `$F.size` — the live count of `$F.members`.
+- `$F.age` — wall-clock duration since `$F` was instantiated
+  (declared factions instantiate at world boot; emergent factions at
+  spawn time).
+
+Plus all of `$F.state.<axis>` for declared axes.
+
+### 10.5 Collective goals
+
+A faction's `goal` block is the same state machine as a character
+goal (§4.6), except `active_when` / `completes_when` / `fails_when`
+have visibility into collective state, member positions, and stance:
+
+```loom
+goal restore_the_bell
+  priority       = 0.9
+  active_when    = $rebels.morale > 30 and $rebels.size >= 5
+  completes_when = $bell.functional
+  fails_when     = $rebels.size < 3 or $rebels.morale < 10
+  drives generator coordinate_rebellion
+  on_complete    -> celebration as $rebels
+  on_fail        -> dissolve_faction $rebels
+```
+
+`drives generator G` here means: while this goal is pursued, every
+member runs `G` as a character-scoped generator with `$FACTION` and
+`$GOAL` bound. The runtime fans the generator out to current members
+and tears it down on removal.
+
+### 10.6 Templates and organic emergence
+
+> **The headline feature.** A faction template is a *recipe* — a
+> declared shape that the runtime can instantiate into new factions
+> at any time. This is how Loom expresses the live-immersive case:
+> participants gather in a corner, a moderator (or the runtime
+> itself) calls `Faction.spawn(template, ...)`, and a fresh faction
+> exists with state, stance, goals — all wired into the same
+> narrative engine.
+
+```loom
+# crowd_faction :template :faction
+  .min_members 3
+  .max_members 30
+  .auto_dissolve_when $size < $min_members
+  .default_stance neutral
+  .primary_priority 0.2          # below permanent factions in the primary slot
+
+state
+  cohesion    = 0..100, init 50
+  visibility  = 0..100, init 30
+
+on member_count passes 10
+  ~ $self.template := @uprising      # template evolution (10.8)
+
+on member_count drops below $min_members
+  ~ $self.dissolve
+```
+
+Spawning at runtime, from any action context:
+
+```loom
+let f = Faction.spawn {
+  template: @crowd_faction,
+  label:    "The Sea-Wall Crowd",
+  founder:  $PARTICIPANT,
+  founding_members: [$PARTICIPANT],
+  initial_state: { cohesion: 70 },           # override defaults
+}
+```
+
+`Faction.spawn` returns a *resolve* — `$f` is bindable like any other
+participant or character handle. The new faction is immediately
+addressable by every part of the narrative engine that already
+understood declared factions.
+
+**Dissolution.** Factions go away through:
+- explicit `~ $f.dissolve` action,
+- `auto_dissolve_when` predicate becoming true,
+- last member leaving (configurable per template).
+
+Dissolution writes `FactionDissolved { faction, reason }` and runs
+each member-character's `on $faction dissolves` hook (§10.7) before
+removing the faction from the registry.
+
+**Template evolution.** A faction can change template at runtime
+(`~ $self.template := @new_template`). The new template's `state`
+axes are merged onto the existing ones (existing axis values are
+preserved; new axes initialize); goals are replaced; default stance
+re-resolves. Useful for "the crowd becomes a riot becomes a faction"
+arcs.
+
+### 10.7 Narrative pattern-matching against emergent factions
+
+> The hardest design question: *how do you write story that responds
+> to a faction the author didn't know would exist?* Loom's answer:
+> write against **templates**, **roles**, and **lifecycle events**,
+> not against individual `@ids`.
+
+Three handles, ranked from most specific to most general:
+
+**By template:**
+
+```loom
+when faction emerges from template @crowd_faction
+  let $C = $FACTION
+  NARRATOR
+    Something is gathering at the harbor.
+  -> investigate_crowd as $C
+```
+
+**By role:**
+
+Roles are reactive `let` bindings whose values are factions:
+
+```loom
+let dominant_faction = first(@factions sorted_by .size desc)
+let player_faction   = $PLAYER.faction
+let player_enemies   = [f for f in @factions
+                        where stance(player_faction, f) is hostile]
+
+if any($player_enemies)
+  -> hostility_warning
+```
+
+The `dominant_faction` binding recomputes whenever any faction's
+size changes. Sections can `as faction` scope to a role:
+
+```loom
+-- crisis_moment as $dominant_faction
+  ...
+```
+
+Inside, `$state.cohesion` means `$FACTION.state.cohesion`.
+
+**By lifecycle event:**
+
+```loom
+when faction emerges                         # any faction, any template
+when faction dissolves
+when faction grows                           # member added
+when faction shrinks                         # member removed
+when stance changes                          # any stance edge
+when stance($A, $B) changes                  # specific pair
+```
+
+Inside, `$FACTION` (and `$OTHER`, for stance pairs) are bound.
+
+**Catch-all:**
+
+A `match $faction.template` covers the "we know there will be
+*some* uprising and want to write the response":
+
+```loom
+when faction emerges
+  match $FACTION.template
+    @crowd_faction
+      -> harbor_crowd_response
+    @uprising
+      -> uprising_response
+    @merchant_guild
+      -> trade_response
+    _                                       # studio-extended template
+      -> generic_emergence_response
+```
+
+Writers who want to ignore emergent factions entirely can — every
+construct here is opt-in. The default contract is "code that doesn't
+mention factions is unaffected by them."
+
+### 10.8 Live performance integration
+
+In `:immersive` documents, factions are the first-class output of the
+"audience self-organizes" loop. Three constructs make it work.
+
+**Participants propose factions.**
+
+```loom
+when participant proposes faction
+  let f = Faction.spawn {
+    template: @crowd_faction,
+    label:    $PARTICIPANT.proposed_label,
+    founder:  $PARTICIPANT,
+    founding_members: [$PARTICIPANT],
+  }
+  broadcast :location($PARTICIPANT.at)
+    NARRATOR { whispering }
+      Someone is starting to gather followers.
+  -> faction_announce as $f
+```
+
+The booth UI (or a participant-facing prompter — see §8.5) exposes a
+"start a faction" affordance; the runtime fires this lifecycle when
+they confirm.
+
+**Participants join existing factions.**
+
+```loom
+when participant joins faction
+  enroll $PARTICIPANT into $FACTION             # adds to members
+  if $FACTION.template == @crowd_faction
+    ~ $FACTION.state.cohesion += 5
+```
+
+**Faction-scoped broadcast.** Cues, dialogue, and narration can be
+scoped to a faction's members:
+
+```loom
+broadcast :faction($rebels) and :location(@BELL_TOWER)
+  ~ cue private_signal
+  NARRATOR { whispering }
+    Now.
+```
+
+`:faction(F)` is a scope atom alongside `:cohort`, `:location`,
+`:participant`, `:cast` (§8.4). It composes with `and` / `but` just
+like the others. The runtime evaluates membership live — a
+participant who joined a faction mid-show receives faction broadcasts
+from the moment of joining.
+
+**Booth controls.** The booth UI (the Prism app reading the same
+LoomRuntime) can `Faction.spawn`, `Faction.dissolve`,
+`Faction.set_template`, `Faction.add_member`, `Faction.set_stance`,
+and live-edit goal predicates — all as Loro CRDT ops on the same
+store. A stage manager who sees the crowd splitting into two camps
+can spawn a second faction from the console and the narrative engine
+picks it up at the next tick.
+
+### 10.9 What factions are *not*
+
+Calling out the design boundary so the next reader doesn't have to
+reverse-engineer it:
+
+- **Not cohorts.** Cohorts are flat membership sets without state,
+  stance, or goals. A faction *can have* a cohort as a member
+  source; the cohort stays simple.
+- **Not character traits.** A character's `disposition($PLAYER)` is
+  a one-to-one relationship axis. A faction's stance is a *bilateral
+  political stance* between two collectives. You can model both
+  simultaneously (Elena distrusts the player but is loyal to the
+  rebels who are allied with the player).
+- **Not type hierarchy.** Templates are runtime instantiation
+  recipes, not OO subclasses. Two factions sharing a template don't
+  share identity, and a faction can change template at runtime.
+- **Not events.** Factions are *entities*. Events about them
+  (emergence, growth, stance change) flow through the same ledger
+  every other entity uses.
+
+---
+
+## 11. Extension model
 
 Studios extend Loom by **registering** new constructs through Luau at
 workspace boot. Extensions are **additive only**.
@@ -1253,6 +1690,8 @@ Registerable:
 | Character type | a custom subtype of `@humanoid` |
 | Slot | a new component slot (`@studio:psychology`) |
 | Stat advancement mode | beyond the built-in five |
+| Stance level | a new entry on the ordinal stance scale (`vassal`, `tributary`) |
+| Faction template | a runtime-instantiable faction recipe |
 
 Not registerable (invariants):
 
@@ -1260,7 +1699,8 @@ Not registerable (invariants):
   the three operators.
 - Speaker detection (ALLCAPS or `$UPPER`).
 - Indentation semantics.
-- The trinity (character / stats / story) and the live constructs.
+- The four archetypes (character / stats / faction / story) and the
+  live constructs.
 
 At workspace boot every `*.luau` in `workspace/loom/extensions/` runs
 against a staging registry. After all extensions execute, the staging
@@ -1269,7 +1709,7 @@ are build errors. There is no mid-session registration.
 
 ---
 
-## 11. Implementation notes
+## 12. Implementation notes
 
 > Brief — full implementation plan in `loom-impl.md` once the work
 > starts.
@@ -1306,7 +1746,7 @@ src="@harbor_arrival"/>` into a PRUI scene like any other widget.
 
 ---
 
-## 12. Open questions
+## 13. Open questions
 
 1. **Generator scheduling fairness.** Many characters with many
    routines + ambient generators — what's the scheduling policy?
@@ -1324,10 +1764,31 @@ src="@harbor_arrival"/>` into a PRUI scene like any other widget.
    barks) but storage cost is linear in participant count. A single
    ledger with participant-tagged events may be simpler. Benchmark
    before committing.
+5. **Faction spawn churn under load.** A 200-participant show that
+   lets anyone propose a faction at any time could spawn dozens per
+   minute (most dissolving within seconds for failing
+   `min_members`). The reactive substrate handles the predicates
+   fine; the question is whether the *narrative engine* re-evaluates
+   `when faction emerges` matches at acceptable cost when the
+   spawn-then-dissolve rate is high. Likely fix: a settling window
+   (a faction must persist N seconds before `emerges` fires), but
+   N has to come from a workshop.
+6. **Symmetric vs asymmetric stance defaults.** Symmetric (mirror)
+   matches how most writers think and reads cleanest in the
+   declaration grammar. Asymmetric matches *political reality*
+   (one side declares hostility before the other knows). The
+   current draft picks symmetric default + explicit `asymmetric`
+   override. Whether to flip the default — particularly for
+   immersive shows where information asymmetry is dramatic — is
+   open.
+7. **Faction-of-factions.** Can a faction be a member of another
+   faction (alliances-as-factions)? The current model says no — a
+   member is a character or a cohort, period — but the request will
+   come up. Empirical question whether the simpler model holds.
 
 ---
 
-## 13. References
+## 14. References
 
 - The formal grammar: [`loom-grammar.md`](loom-grammar.md).
 - Legacy spec parents (read for context, not parity):

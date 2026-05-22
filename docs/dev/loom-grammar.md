@@ -118,8 +118,8 @@ standard JSON-style escapes (`\"`, `\\`, `\n`, `\t`, `\r`, `\u{NNNN}`).
 ## 3. Lexical structure (terminal tokens)
 
 These are the terminals the parser sees. The lexer is a hand-rolled
-`Scanner`-based tokenizer (no regex on the hot path —
-[design §2.5 / 7](loom-design.md#7-crate-layout)).
+`Scanner`-based tokenizer (no regex on the hot path — see
+[design §12](loom-design.md#12-implementation-notes)).
 
 ```
 IDENT        ::= [a-zA-Z_] , [a-zA-Z0-9_]*           // user identifiers
@@ -213,12 +213,22 @@ random  compose  pattern  bark  from
                                                        // goal knobs
 priority  active_when  completes_when  fails_when
 drives  on_complete  on_fail
+                                                       // factions (§19)
+faction  template  members  state  stance
+emerges  dissolves  grows  shrinks  changes
+proposes  founds  asymmetric
+default  size  age  has_stance  is_at_least  is_at_most
+                                                       // built-in stance levels
+hostile  wary  neutral  friendly  allied
 ```
 
 `is not`, `has not`, `each visit`, `participant joins`,
 `participant leaves`, `participant enters`, `participant exits`,
-`passes`, `drops below`, and `wait until` are multi-word lexical
-tokens; the lexer joins them with look-ahead.
+`participant proposes faction`, `participant joins faction`,
+`participant leaves faction`, `faction emerges`, `faction dissolves`,
+`faction grows`, `faction shrinks`, `stance changes`, `is_at_least`,
+`is_at_most`, `passes`, `drops below`, and `wait until` are
+multi-word lexical tokens; the lexer joins them with look-ahead.
 
 ### 3.2 Speaker vs identifier
 
@@ -265,10 +275,12 @@ determines which top-level items are legal in the body.
 | `:script` | stage / film script | `Section`, `SluglineScene`, declarations (no choices) |
 | `:film` | film screenplay | `Section`, `SluglineScene`, `TimecodeBlock`, declarations (no choices) |
 | `:immersive` | live immersive theatre | every Body item including `ParticipantLifecycle`, `LocationEvent`, `Broadcast` |
-| `:character` | character archetype | `CharacterBody` items only (§7) |
-| `:type` | character-type definition | `TypeBody` items only (§7.1) |
-| `:stats` | stats sheet | `StatsBody` items only (§8) |
-| `:tree` | progression tree | `TreeNodeDecl`+ only (§8.4) |
+| `:character` | character archetype | `CharacterBody` items only (§16) |
+| `:type` | character-type definition | `TypeBody` items only (§16) |
+| `:stats` | stats sheet | `StatsBody` items only (§17) |
+| `:tree` | progression tree | `TreeNodeDecl`+ only (§17.5) |
+| `:faction` | faction archetype | `FactionBody` items only (§19) |
+| `:faction :template` | faction template | `FactionBody` items (members optional) (§19) |
 | `:typewriter` | typewriter profile | property-only (no body) |
 | `:module` | shared module | declarations only (no sections) |
 
@@ -297,13 +309,17 @@ TopLevelItem
     | ParticipantLifecycle                          // :immersive
     | LocationEvent                                 // :immersive
     | BroadcastBlock                                // :immersive
-    | CharacterBodyItem                             // :character (§7)
-    | TypeBodyItem                                  // :type (§7.1)
-    | StatsBodyItem                                 // :stats (§8)
-    | TreeNodeDecl                                  // :tree (§8.4)
-    | GeneratorDecl                                 // any (§9.3)
-    | SceneCoroutineDecl                            // any (§9.4)
-    | ComposeDecl                                   // any (§9.6)
+    | CharacterBodyItem                             // :character (§16)
+    | TypeBodyItem                                  // :type (§16)
+    | StatsBodyItem                                 // :stats (§17)
+    | TreeNodeDecl                                  // :tree (§17.5)
+    | FactionBodyItem                               // :faction (§19)
+    | InlineFactionDecl                             // any archetype (§19)
+    | FactionEvent                                  // any (§19.4)
+    | ParticipantFactionLifecycle                   // :immersive (§19.6)
+    | GeneratorDecl                                 // any (§18.1)
+    | SceneCoroutineDecl                            // any (§18.2)
+    | ComposeDecl                                   // any (§18.3)
     | Declaration
     | Definition
     | Import
@@ -1420,6 +1436,14 @@ This table is the parser's source of truth for "what can come next".
 | `ComposeDecl` | `PatternBlock` |
 | `PatternBlock` | `PatternArm` only |
 | `YieldStmt` (body form) | `Content` |
+| `:faction` document body | `FactionBodyItem` (§19) |
+| `:faction :template` document body | `FactionBodyItem` (members optional) (§19) |
+| `InlineFactionDecl` | `FactionBodyItem` (§19) |
+| `MembersBlock` | `MemberEntry` only |
+| `StateBlock` (in faction) | `StateAxis` only |
+| `StanceBlock` | `StanceEntry` only |
+| `FactionEvent` (`when faction …`) | `Content` |
+| `ParticipantFactionLifecycle` | `Content` |
 
 A line whose indent says "I am a child of X" but whose class is not in
 that row is a parse error (`unexpected-child`) with a helpful message
@@ -1453,6 +1477,11 @@ rejects them as hard errors.
 | Tree node `requires` cycle | DAG required for topo-sort of unlocks. |
 | `stat X = expr` followed by indented body | Pick one form; mixed shape is `stat-form-ambiguous`. |
 | Reactive `let` rebind in the same scope | Reactive bindings are write-once. Use `var` + `:=`. |
+| Faction without `.label` | Factions are addressable in UI; an unnamed faction can't render. |
+| Faction `MembersBlock` on a `:template` document | Templates declare shape, not population. Use `min_members` / `default_stance`. |
+| Stance cycle of mirrors | `A mirrors B mirrors A` — same rule as disposition. |
+| `as faction` on a target that isn't a faction | The resolve must bind to a faction at scope-entry time. |
+| `Faction.spawn` outside a `when participant proposes faction` body or a `~` action line | Side effect requires explicit position. |
 
 ---
 
@@ -2116,7 +2145,233 @@ The compiler lowers reactive `let` to
 
 ---
 
-## 19. What this grammar deliberately doesn't specify
+## 19. Faction archetype
+
+A `:faction` document declares one faction; a `:faction :template`
+combination declares a runtime-instantiable template. Lightweight
+factions also live inline as `faction <name> ... ` blocks inside any
+document. See [design §10](loom-design.md#10-factions).
+
+```
+FactionBody
+  ::= FactionBodyItem*
+
+FactionBodyItem
+  ::= MembersBlock
+    | StateBlock
+    | StanceBlock
+    | GoalDecl                                       // §16.3 (shared with characters)
+    | HookDecl                                       // §16.5 (shared)
+    | GeneratorDecl                                  // §18.1
+    | SceneCoroutineDecl                             // §18.2
+    | LetBinding
+    | Property                                       // .label / .color / .sigil / .home / .primary_priority / .min_members / .max_members / .auto_dissolve_when / .default_stance
+    | Comment
+
+InlineFactionDecl
+  ::= 'faction' , IDENT , NL
+  , INDENT , FactionBodyItem+ , DEDENT
+```
+
+The `:faction` document body and the inline form share `FactionBody`
+— same vocabulary, different position. A `:faction` document may
+also carry the `:template` tag; the additional tag makes its
+`MembersBlock` optional (templates declare *shape* not *membership*).
+
+```
+FactionDocHeader
+  ::= '#' , IDENT , STRING? , ':faction' , ':template'?
+
+FactionPropertyOnTemplate
+  ::= '.min_members'         , NUMBER             , NL
+    | '.max_members'         , NUMBER             , NL
+    | '.auto_dissolve_when'  , Expr               , NL
+    | '.default_stance'      , StanceLevel        , NL
+    | '.primary_priority'    , NUMBER             , NL
+```
+
+### 19.1 Members block
+
+```
+MembersBlock
+  ::= 'members' , NL
+  , INDENT , MemberEntry+ , DEDENT
+
+MemberEntry
+  ::= StaticRef (',' , StaticRef)*                   , NL    // explicit characters
+    | 'cohort' , IDENT                               , NL    // cohort inclusion
+    | 'match'  , Expr                                , NL    // reactive predicate
+```
+
+Multiple `MemberEntry` lines compose additively. The `match` form is
+re-evaluated whenever any read variable changes; the resulting member
+set is a union of all entries. See
+[design §10.3](loom-design.md#103-membership).
+
+### 19.2 State block
+
+```
+StateBlock
+  ::= 'state' , NL
+  , INDENT , StateAxis+ , DEDENT
+
+StateAxis
+  ::= IDENT , '=' , NumRange , (',' , 'init' , NUMBER)? , (',' , MirrorClause)? , NL
+```
+
+`StateAxis` reuses the disposition-axis shape (§16.4) — same range +
+init + mirror semantics. The runtime tracks one value per axis per
+faction instance. Two axes are auto-synthesized and not declarable:
+`size` and `age` (read-only, computed). See
+[design §10.4](loom-design.md#104-collective-state).
+
+### 19.3 Stance block
+
+```
+StanceBlock
+  ::= 'stance' , NL
+  , INDENT , StanceEntry+ , DEDENT
+
+StanceEntry
+  ::= StanceTarget , '=' , StanceLevel , ('asymmetric')? , NL
+
+StanceTarget
+  ::= StaticRef                                      // @loyalists
+    | 'default'                                      // default vs anyone else
+
+StanceLevel
+  ::= 'hostile' | 'wary' | 'neutral' | 'friendly' | 'allied'
+    | IDENT                                          // registry-extension level
+```
+
+Stance is symmetric by default — declaring `A → B = hostile` implies
+`B → A = hostile`. The trailing `asymmetric` keyword opts out of the
+mirror. See [design §10.2](loom-design.md#102-stance).
+
+Stance is queryable as an ordinal predicate atom in expressions:
+
+```
+StancePred
+  ::= 'stance' , '(' , FactionRef , ',' , FactionRef , ')' , StancePredOp
+
+StancePredOp
+  ::= 'is'         , StanceLevel
+    | 'is_at_least', StanceLevel
+    | 'is_at_most' , StanceLevel
+    | 'is not'     , StanceLevel
+
+FactionRef
+  ::= ResolveRef                                     // $rebels
+    | StaticRef                                      // @rebels
+```
+
+`has_stance(@F)` is a single-target predicate that returns true if
+the subject faction has any non-default stance toward `@F`.
+
+### 19.4 Faction events (lifecycle hooks)
+
+```
+FactionEvent
+  ::= 'when' , FactionEventVerb , FactionEventQualifier? , NL
+  , INDENT , Content* , DEDENT
+
+FactionEventVerb
+  ::= 'faction' , FactionLifecycle
+    | 'stance'  , 'changes'
+
+FactionLifecycle
+  ::= 'emerges'
+    | 'dissolves'
+    | 'grows'
+    | 'shrinks'
+
+FactionEventQualifier
+  ::= 'from' , 'template' , StaticRef                // when faction emerges from template @X
+    | 'in'   , ResolveRef                            // when faction grows in $F
+    | '(' , FactionRef , ',' , FactionRef , ')'      // when stance changes (a, b)
+```
+
+Inside the body, `$FACTION` is bound for `emerges` / `dissolves` /
+`grows` / `shrinks`; `$FACTION` and `$OTHER` for stance changes
+(`$FACTION` is the subject; `$OTHER` is the other party). See
+[design §10.7](loom-design.md#107-narrative-pattern-matching-against-emergent-factions).
+
+### 19.5 Faction-scoped section / divert
+
+The `as faction` modifier appears wherever `as participant` does:
+
+```
+FactionScope
+  ::= 'as' , ('faction' | ResolveRef)                // resolve must bind to a faction
+```
+
+Inside a faction-scoped region, unqualified `$name` lookups resolve
+to `$FACTION.<name>` first, then fall back to global. A section with
+`as faction` is a per-faction state-morphing region (think
+"crisis_moment as $dominant_faction").
+
+The bare keyword `faction` (no `$`) means "the current faction,
+whoever it is at runtime" — structural marker, not a reference.
+
+### 19.6 Participant-driven faction founding
+
+```
+ParticipantFactionLifecycle
+  ::= 'when' , 'participant' , ParticipantFactionVerb , NL
+  , INDENT , Content* , DEDENT
+
+ParticipantFactionVerb
+  ::= 'proposes' , 'faction'
+    | 'joins'    , 'faction'
+    | 'leaves'   , 'faction'
+```
+
+Inside the body, `$PARTICIPANT` is the participant and `$FACTION` is
+the faction they proposed/joined/left. For `proposes faction`,
+`$FACTION` is *not yet* bound (the body's job is to call
+`Faction.spawn(...)`); a synthetic `$PARTICIPANT.proposed_label`
+carries the participant-supplied label if any.
+
+### 19.7 Faction broadcast scope atom
+
+The `ScopeAtom` rule (§5.8) gains a faction form:
+
+```
+ScopeAtom
+  ::= 'cohort'      , '(' , IDENT       , ')'
+    | 'location'    , '(' , StaticRef   , ')'
+    | 'participant' , '(' , ResolveRef  , ')'
+    | 'cast'        , '(' , SPEAKER     , ')'
+    | 'faction'     , '(' , FactionRef  , ')'        // ← added §19.7
+```
+
+`broadcast :faction($rebels)` filters content to current members of
+`$rebels`. Membership is evaluated live — a participant who joined
+the faction mid-broadcast starts receiving content from the point of
+joining onward. See
+[design §10.8](loom-design.md#108-live-performance-integration).
+
+### 19.8 Faction runtime API
+
+The grammar exposes the runtime API as a `NamespaceCall` (§7.5) and
+does not introduce new syntax. The calls are:
+
+```
+Faction.spawn        { template:@T, label:STRING, founder:$P,
+                        founding_members:[$P, …], initial_state:{…} } -> ResolveRef
+Faction.dissolve     ResolveRef
+Faction.set_template ResolveRef , StaticRef
+Faction.add_member   ResolveRef , (StaticRef | ResolveRef)
+Faction.remove_member ResolveRef , (StaticRef | ResolveRef)
+Faction.set_stance   ResolveRef , ResolveRef , StanceLevel , 'asymmetric'?
+```
+
+These are registered builtins; calling an undeclared method on the
+`Faction.` namespace is `unknown-namespace-call`.
+
+---
+
+## 20. What this grammar deliberately doesn't specify
 
 - **Whitespace inside expression operators.** Spaces around `>=`, `:=`,
   `==`, etc. are always legal and stripped. The lexer normalizes.
@@ -2129,11 +2384,11 @@ The compiler lowers reactive `let` to
   Unicode. Localizing the *language* itself is out of scope.
 - **The bytecode / IR.** This is a source grammar. The compiled
   `LoomDatabase` shape is defined in
-  [`loom-design.md` §8](loom-design.md#8-pipeline-source--bundle--runtime).
+  [`loom-design.md` §12](loom-design.md#12-implementation-notes).
 
 ---
 
-## 20. Diagnostics & lint catalog
+## 21. Diagnostics & lint catalog
 
 The parser emits diagnostics with these IDs. Lint rules (warnings)
 above the line; hard errors below.
@@ -2208,12 +2463,26 @@ above the line; hard errors below.
 | `knowledge-arithmetic` | error | Arithmetic op on a knowledge field (only `:=` / `+=` / `-=` on lists are legal). |
 | `hook-trigger-unmatched` | warning | `passes` / `drops below` predicate has no upper expression (e.g. `on $x passes` missing the threshold). |
 | `list-comprehension-bad-var` | error | List comprehension variable shadows an outer `let` binding. |
+| `unknown-faction` | error | `@F` referenced as a faction is not in the faction registry. |
+| `unknown-template` | error | `Faction.spawn { template: @X }` references an undeclared `:template` doc. |
+| `unknown-stance-level` | error | `StanceLevel` token is neither built-in nor registry-registered. |
+| `faction-no-label` | error | Faction declaration body has no `.label` property. |
+| `faction-template-with-members` | error | `:template` document declares a `MembersBlock` (templates have shape only). |
+| `faction-members-empty` | warning | Non-template faction declares an empty `MembersBlock`. |
+| `stance-cycle` | error | Mirrored stance pairs form a cycle. |
+| `stance-default-conflict` | warning | `default = X` collides with an explicit entry for the same target. |
+| `as-faction-bad-target` | error | `as faction` modifier on a resolve that isn't a faction. |
+| `faction-spawn-position` | error | `Faction.spawn` invoked outside `when participant proposes faction` or an action line. |
+| `faction-event-no-binding` | warning | `when faction emerges` body never reads `$FACTION` — likely an oversight. |
+| `unknown-namespace-call` | error | `Faction.<method>` (or any registered namespace) called on an unknown method. |
+| `faction-dissolve-no-reason` | info | `~ $f.dissolve` with no `reason:` argument — accepted but harder to trace in the ledger. |
+| `member-match-cyclic` | error | `members match` predicate references the very faction it belongs to (self-membership). |
 
 These are stable IDs — tooling can suppress them by ID.
 
 ---
 
-## 21. Conformance
+## 22. Conformance
 
 A Loom parser is **conformant** if, for every `.loom` file in
 `tests/golden/`:
