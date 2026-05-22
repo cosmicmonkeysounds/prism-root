@@ -5173,3 +5173,208 @@ fn component_children_flow_into_default_slot() {
     };
     assert_eq!(content, "inner");
 }
+
+// ─── Phase 10 — mixin splice integration tests ───────────────────
+
+/// Body `use Mixin` inside a component declaration splices the
+/// mixin's behaviour bundle in front of the component's render
+/// tree. Phase 10's runtime semantics are structural — the mixin's
+/// `<let>` / `<on>` / `<style>` statements round-trip as inert AST
+/// elements today, while the render tree itself still lowers
+/// unchanged. The visible assertion is that the mixin's presence
+/// doesn't break instantiation: a `Card` deriving `Hoverable`
+/// still emits the same `Container > Text` tree the un-mixed
+/// declaration would have.
+#[test]
+fn component_with_body_use_mixin_renders_render_tree() {
+    let src = r#"mixin Hoverable {
+  let hovered = state(false)
+}
+
+component Card(title: string) = {
+  use Hoverable
+  <container><text>{title}</text></container>
+}
+
+<Card title="hi"/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!("expected container from Card body, got {:?}", nodes[0])
+    };
+    let Node::Text { content, .. } = &children[0] else {
+        panic!("expected text child")
+    };
+    assert_eq!(content, "hi");
+}
+
+/// `derive="Hoverable"` as a header attribute on a component is the
+/// parse-time equivalent of body `use Hoverable`. The render tree
+/// still renders verbatim; the mixin contributes inert body
+/// statements that don't change the visible output today.
+#[test]
+fn component_header_derive_attribute_renders_render_tree() {
+    let src = r#"mixin Hoverable {
+  let hovered = state(false)
+}
+
+<component name="Card" derive="Hoverable"><text>hi</text></component>
+
+<Card/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text from Card body, got {:?}", nodes[0])
+    };
+    assert_eq!(content, "hi");
+}
+
+/// `with="Mixin"` on any element splices the mixin's body in front
+/// of that element's children. The render-tree children still
+/// lower, so visible output is unchanged for mixins whose body is
+/// entirely `<let>` / `<on>` / `<style>` (today's inert kinds).
+#[test]
+fn element_with_attribute_does_not_break_lowering() {
+    let src = r#"mixin Hoverable {
+  let hovered = state(false)
+}
+
+<container with="Hoverable"><text>hi</text></container>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    // The mixin's `<let>` is structurally spliced but lowers to
+    // nothing visually, so the only emitted child is the text.
+    let Node::Text { content, .. } = &children[0] else {
+        panic!("expected text child first, got {:?}", children[0])
+    };
+    assert_eq!(content, "hi");
+}
+
+/// Multi-mixin `with="A, B"` accepts both bracketed and
+/// comma-separated forms uniformly.
+#[test]
+fn element_with_attribute_bracket_form_renders_children() {
+    let src = r#"mixin A { let a = state(0) }
+mixin B { let b = state(0) }
+
+<container with="[A, B]"><text>both</text></container>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let text = children.iter().find_map(|c| match c {
+        Node::Text { content, .. } => Some(content.clone()),
+        _ => None,
+    });
+    assert_eq!(text.as_deref(), Some("both"));
+}
+
+/// Unknown mixin in `with=` is silently dropped — no error, the
+/// element still lowers its children intact.
+#[test]
+fn element_with_unknown_mixin_drops_silently() {
+    let src = r#"<container with="DoesNotExist"><text>kept</text></container>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let Node::Text { content, .. } = &children[0] else {
+        panic!()
+    };
+    assert_eq!(content, "kept");
+}
+
+// ─── Phase 11 — macro expansion integration tests ─────────────────
+
+/// A document with a tag-form macro and an invocation: the macro
+/// declaration round-trips (renders nothing at its source), and
+/// the invocation site is replaced by the macro's expansion.
+#[test]
+fn macro_tag_form_invocation_substitutes_expansion() {
+    let src = r#"macro Greeting(name: string) {
+  match { <Greeting name={name}/> }
+  expand { <text>Hello, {name}</text> }
+}
+
+<Greeting name="World"/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text from Greeting expansion, got {:?}", nodes[0])
+    };
+    assert_eq!(content, "Hello, World");
+}
+
+/// Attribute-form macros expand a host element's attribute into
+/// the macro's `<expand>` body bare attrs. The container then
+/// lowers with those attributes resolved through the runtime's
+/// normal `style:` / sizing path.
+#[test]
+fn macro_attribute_form_expands_into_host_attrs() {
+    let src = r#"<macro name="elevation" attribute="true">
+  <property name="level" type="int"/>
+  <expand>
+    <expr body="width = 64"/>
+    <expr body="height = 64"/>
+  </expand>
+</macro>
+
+<container elevation="2"/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { props, .. } = &nodes[0] else {
+        panic!("expected container, got {:?}", nodes[0])
+    };
+    // The attribute macro should have set `width=64` + `height=64`
+    // on the container.
+    assert!(matches!(props.width, Sizing::Fixed(v) if (v - 64.0).abs() < f32::EPSILON));
+    assert!(matches!(props.height, Sizing::Fixed(v) if (v - 64.0).abs() < f32::EPSILON));
+}
+
+/// Macros may invoke other macros in their expansion body. The
+/// expander recurses (bounded by `MAX_EXPANSION_DEPTH`).
+#[test]
+fn macro_recursive_expansion_substitutes_through_two_levels() {
+    let src = r#"macro Outer(label: string) {
+  match { <Outer label={label}/> }
+  expand { <Inner label={label}/> }
+}
+macro Inner(label: string) {
+  match { <Inner label={label}/> }
+  expand { <text>{label}</text> }
+}
+
+<Outer label="nested"/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text after double expansion, got {:?}", nodes[0])
+    };
+    assert_eq!(content, "nested");
+}
+
+/// A self-recursive macro hits the depth limit and stops; the
+/// outermost call is left in place (and falls through the unknown-
+/// tag path).
+#[test]
+fn macro_recursion_terminates_at_depth_limit() {
+    let src = r#"macro Loop(n: int) {
+  match { <Loop n={n}/> }
+  expand { <Loop n={n}/> }
+}
+
+<Loop n="0"/>"#;
+    // Lowering must terminate (the test passing is the assertion).
+    let _ = interpret(src).unwrap();
+}
+
+/// A document with neither macro declarations nor macro
+/// invocations doesn't pay any cost for the pre-pass.
+#[test]
+fn macroless_document_still_lowers_unchanged() {
+    let nodes = interpret(r#"<container><text>plain</text></container>"#).unwrap();
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let Node::Text { content, .. } = &children[0] else {
+        panic!()
+    };
+    assert_eq!(content, "plain");
+}

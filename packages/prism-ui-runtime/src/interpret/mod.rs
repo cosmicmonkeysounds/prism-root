@@ -62,13 +62,17 @@ pub use elements::lower_ast_children;
 use elements::lower_children;
 
 mod components;
+pub(crate) use components::splice_mixin_into_children;
 pub use components::{
     harvest_components, harvest_declarations, instantiate_component, is_pascal_case_tag,
-    ComponentDef, HarvestedDeclarations, ParamDef, TraitDef,
+    ComponentDef, HarvestedDeclarations, MixinDef, ParamDef, TraitDef,
 };
 
 mod trait_registry;
 pub use trait_registry::{TraitRegistry, TraitTarget};
+
+mod macros;
+pub use macros::{expand_macros, harvest_macros, MacroDef, MAX_EXPANSION_DEPTH};
 
 // ---------------------------------------------------------------------------
 // Tag resolver — DI hook for unknown tags
@@ -292,6 +296,19 @@ pub struct LowerScope {
     /// (typed shapes / contracts per §7.3). Carried through scope
     /// clones identically — empty for documents that declare none.
     local_traits: Arc<HashMap<String, Arc<TraitDef>>>,
+    /// **Phase 10 — `mixin` declarations.** Sibling table to
+    /// [`Self::local_components`] / [`Self::local_traits`]. The
+    /// splicer (`components::splice_mixins`) reads it to inline
+    /// mixin bodies on `use` / `derive=` / `with=` sites. Empty for
+    /// documents that declare no mixins (the common case so far).
+    pub(crate) local_mixins: Arc<HashMap<String, Arc<MixinDef>>>,
+    /// **Phase 11 — `macro` declarations.** Round-tripped through
+    /// scope for tooling consumers (LSP, lint). The macro expansion
+    /// itself runs in a *pre-pass* over the AST before
+    /// [`lower_document_with_scope`] starts the main walk, so the
+    /// lowering paths below never see a macro invocation directly.
+    /// Empty for documents that declare none (the common case).
+    pub(crate) local_macros: Arc<HashMap<String, Arc<MacroDef>>>,
     /// **Phase 9 — trait registry.** Open registry of trait names
     /// to attribute method sets, consulted at parse / lowering time
     /// by `trait.method=value` attribute dispatch (§7.4). Seeded
@@ -739,6 +756,49 @@ impl LowerScope {
         self.local_traits.get(name)
     }
 
+    /// **Phase 10** — install the local mixin table harvested from
+    /// the document and from `<import component="…"/>` projections.
+    /// Empty on documents that declare none.
+    pub fn with_local_mixins(mut self, mixins: Arc<HashMap<String, Arc<MixinDef>>>) -> Self {
+        self.local_mixins = mixins;
+        self
+    }
+
+    /// **Phase 10** — look up a locally-declared mixin by name.
+    /// Returns `None` for the common case (no mixins on the scope).
+    pub fn local_mixin(&self, name: &str) -> Option<&Arc<MixinDef>> {
+        self.local_mixins.get(name)
+    }
+
+    /// **Phase 10** — is there at least one local mixin registered?
+    /// Cheap pre-flight check so the per-element `with=` dispatch
+    /// can skip the map probe on documents that declared none.
+    pub fn has_local_mixins(&self) -> bool {
+        !self.local_mixins.is_empty()
+    }
+
+    /// **Phase 11** — install the local macro table harvested from
+    /// the document and from `<import component="…"/>` projections
+    /// of files that declared macros. Empty on documents that
+    /// declare none.
+    pub fn with_local_macros(mut self, macros: Arc<HashMap<String, Arc<MacroDef>>>) -> Self {
+        self.local_macros = macros;
+        self
+    }
+
+    /// **Phase 11** — look up a locally-declared macro by name.
+    /// Tooling consumers (LSP, lint) reach for this — the runtime's
+    /// own expansion pass owns the registry locally during the
+    /// pre-pass, then deposits it here for downstream consumers.
+    pub fn local_macro(&self, name: &str) -> Option<&Arc<MacroDef>> {
+        self.local_macros.get(name)
+    }
+
+    /// **Phase 11** — is there at least one local macro registered?
+    pub fn has_local_macros(&self) -> bool {
+        !self.local_macros.is_empty()
+    }
+
     /// **Phase 9** — install the trait registry (the four built-in
     /// `layout` / `style` / `pointer` / `a11y` traits plus any
     /// user-registered traits). The default is
@@ -1069,6 +1129,27 @@ pub fn lower_document(document: &AstDocument) -> Vec<Node> {
 }
 
 pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> Vec<Node> {
+    // **Phase 11 — macro expansion pre-pass.** Macros (`<macro
+    // Name>…</macro>` per §7.8) are pattern-and-expand rewrites that
+    // run *before* every other lowering pass. We harvest them off
+    // the raw document, run [`macros::expand_macros`] over the
+    // entire AST, then thread the rewritten nodes through the rest
+    // of the pipeline as if the author had written the expanded
+    // form directly. Documents without macros pay nothing — the
+    // empty-registry early-out in `expand_macros` makes the pass a
+    // no-op clone.
+    let macro_registry = macros::harvest_macros(&document.nodes, None);
+    let expanded_doc_owned;
+    let document: &AstDocument = if macro_registry.is_empty() {
+        document
+    } else {
+        let expanded_nodes = macros::expand_macros(&document.nodes, &macro_registry, 0);
+        expanded_doc_owned = AstDocument {
+            nodes: expanded_nodes,
+        };
+        &expanded_doc_owned
+    };
+
     // **Wave A (`prui-luau-fusion.md` §7.1)** — harvest every
     // top-level `<script>` block before the main walk.
     // The bodies run once in a per-document Lua state; the script's
@@ -1252,13 +1333,19 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
                 }
             }
         }
-        if declarations.components.is_empty() && declarations.traits.is_empty() {
+        if declarations.components.is_empty()
+            && declarations.traits.is_empty()
+            && declarations.mixins.is_empty()
+            && macro_registry.is_empty()
+        {
             scope
         } else {
             local_decls_owned = scope
                 .clone()
                 .with_local_components(Arc::new(declarations.components))
-                .with_local_traits(Arc::new(declarations.traits));
+                .with_local_traits(Arc::new(declarations.traits))
+                .with_local_mixins(Arc::new(declarations.mixins))
+                .with_local_macros(Arc::new(macro_registry.clone()));
             &local_decls_owned
         }
     };

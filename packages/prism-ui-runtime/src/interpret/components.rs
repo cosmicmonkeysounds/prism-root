@@ -33,11 +33,10 @@
 //!   component's body, bound props in scope. Honours `extends=` /
 //!   `use Parent` body statements (Phase 7's §7.3 inheritance slice).
 //!
-//! Mixins / capabilities are Phase 10+ and not resolved here —
-//! `<requires>` / `<style>` / `<on>` body statements round-trip
-//! through the AST untouched today. `<requires>` will be consumed by
-//! Phase 12's capability injection pipeline; `<on>` and `<style>` are
-//! inert until Phase 10's mixin pipeline lands.
+//! Phase 10 lands mixin splicing — see [`MixinDef`] and the
+//! parse-time `use Mixin` / `derive=` paths inside
+//! [`instantiate_component`]. Capabilities (`<requires>`) are still
+//! Phase 12+ and round-trip through the AST untouched today.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -83,6 +82,13 @@ pub struct ComponentDef {
     /// LSP) don't have to re-split. Empty when the component
     /// conforms to no traits (the common case).
     pub impls: Vec<String>,
+    /// Phase 10 — `derive=[A, B]` / `derives=[A, B]` header
+    /// attribute. Names listed here are spliced into the body
+    /// at parse time (equivalent to a body `use A, B` whose
+    /// names all resolve to mixins). Empty when no derive header
+    /// was present; mixin bodies are looked up against the active
+    /// [`LowerScope::local_mixins`] table at instantiation time.
+    pub derives: Vec<String>,
     /// Render-tree children — the body minus `<property>` /
     /// `<requires>` / `<use>` / `<style>` / `<on>` declarations.
     pub body: Vec<AstNode>,
@@ -109,6 +115,33 @@ pub struct TraitDef {
     pub recursive: bool,
 }
 
+/// Phase 10 — a registered mixin declaration. Each top-level
+/// `<mixin name="X">` (and each mixin re-imported via
+/// `<import component="…"/>`) lands here. A mixin is a behaviour
+/// bundle — `<let>` / `<on>` / `<style>` body statements spliced
+/// into whatever component `use`s it (parse-time) or runtime-
+/// composed onto an element via the `with=[…]` attribute.
+///
+/// Phase 10's runtime stores the splicable body as a flat list of
+/// AST nodes; semantics for reactive `<let>` state, event handler
+/// chaining (`super()`), and scoped `<style>` blocks are layered on
+/// in later phases. The Phase 10 splice is purely structural:
+/// mixin bodies are inserted into the host component's body where
+/// the `<use>` lived (or appended via `derive=` / `with=`).
+#[derive(Debug, Clone)]
+pub struct MixinDef {
+    pub name: String,
+    /// The mixin's body statements (`<let>`, `<on>`, `<style>`,
+    /// `<requires>`, `<expr>`). Spliced verbatim into the host at
+    /// `use` / `derive=` / `with=` sites. The mixin's `<property>`
+    /// elements are projected into `params` (mixins don't typically
+    /// declare params but the canonical parser allows them).
+    pub body: Vec<AstNode>,
+    /// Declared params, projected from the header `( … )` list.
+    /// Empty for the common case.
+    pub params: Vec<ParamDef>,
+}
+
 /// Phase 8 unified harvester output — every component + trait
 /// declaration in a single document or imported file, with the
 /// file's leading `<namespace name="X"/>` directive already
@@ -117,6 +150,11 @@ pub struct TraitDef {
 pub struct HarvestedDeclarations {
     pub components: HashMap<String, Arc<ComponentDef>>,
     pub traits: HashMap<String, Arc<TraitDef>>,
+    /// Phase 10 — mixin table. Distinct from `components` so the
+    /// PascalCase tag-dispatch path (which lives in
+    /// `interpret/elements.rs::lower_element_body`) doesn't
+    /// accidentally invoke a mixin as a component.
+    pub mixins: HashMap<String, Arc<MixinDef>>,
 }
 
 impl HarvestedDeclarations {
@@ -133,6 +171,9 @@ impl HarvestedDeclarations {
         }
         for (k, v) in other.traits {
             self.traits.entry(k).or_insert(v);
+        }
+        for (k, v) in other.mixins {
+            self.mixins.entry(k).or_insert(v);
         }
     }
 }
@@ -176,6 +217,15 @@ pub fn harvest_declarations(nodes: &[AstNode], alias: Option<&str>) -> Harvested
                     def.name = format!("{p}.{}", def.name);
                 }
                 out.traits.insert(def.name.clone(), Arc::new(def));
+            }
+            "mixin" => {
+                let Some(mut def) = element_to_mixin(el) else {
+                    continue;
+                };
+                if let Some(p) = &prefix {
+                    def.name = format!("{p}.{}", def.name);
+                }
+                out.mixins.insert(def.name.clone(), Arc::new(def));
             }
             _ => {}
         }
@@ -318,9 +368,15 @@ fn element_to_def(el: &Element) -> Option<ComponentDef> {
                     }
                 }
                 "use" => {
-                    // Body `use Parent [, Other …]` — take the first
-                    // name as the parent for Phase 7 inheritance.
-                    // Subsequent names are Phase 9 mixins; ignored.
+                    // Phase 7 / Phase 10 — body `use Name [, Name …]`.
+                    // The first name still records as Phase 7 extends
+                    // (a parent component); the `<use>` element itself
+                    // round-trips through the body so the Phase 10
+                    // splicer can re-walk it at instantiation time and
+                    // resolve each name against the active mixin /
+                    // component tables on the scope. A `use` whose only
+                    // name is a *mixin* contributes no `extends`; the
+                    // splicer treats it as a mixin reference.
                     if extends_from_body.is_none() {
                         if let Some(names) = bare_string_attr(child_el, "names") {
                             if let Some(first) = names.split(',').next() {
@@ -331,6 +387,7 @@ fn element_to_def(el: &Element) -> Option<ComponentDef> {
                             }
                         }
                     }
+                    body.push(child.clone());
                 }
                 // Phase 9+ body statements — round-tripped to the
                 // body so a Phase 9+ pass can find them once the
@@ -363,13 +420,68 @@ fn element_to_def(el: &Element) -> Option<ComponentDef> {
         })
         .unwrap_or_default();
 
+    // Phase 10 — `derive=` / `derives=` header attribute. Both
+    // shapes accepted: `derive="A, B"`, `derive="[A, B]"`. Square
+    // brackets and surrounding whitespace are trimmed before split.
+    let derives = bare_string_attr(el, "derive")
+        .or_else(|| bare_string_attr(el, "derives"))
+        .map(|raw| parse_name_list(&raw))
+        .unwrap_or_default();
+
     Some(ComponentDef {
         name,
         params,
         extends: extends_header.or(extends_from_body),
         impls,
+        derives,
         body,
     })
+}
+
+/// Public alias of [`parse_name_list`] for `interpret/elements.rs`
+/// (the `with=` attribute reader). Kept under a distinct name so
+/// the private surface inside this module stays untouched.
+pub fn parse_name_list_pub(raw: &str) -> Vec<String> {
+    parse_name_list(raw)
+}
+
+/// Phase 10 — parse a comma-separated name list as it appears in
+/// `derive="A, B"` / `with="A, B"` / `with="[A, B]"`. Strips one
+/// pair of surrounding square brackets and trims whitespace around
+/// each name; empty entries are skipped.
+pub(crate) fn parse_name_list(raw: &str) -> Vec<String> {
+    let trimmed = raw.trim();
+    let trimmed = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(trimmed);
+    trimmed
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Phase 10 — project one `<mixin name="…">` AST element into a
+/// [`MixinDef`]. The body is the mixin's spliceable statements
+/// (`<let>`, `<on>`, `<style>`, `<requires>`, `<expr>`, render-tree
+/// elements). Header `( … )` params become [`ParamDef`] rows. The
+/// element is dropped when its `name=` attribute is missing.
+fn element_to_mixin(el: &Element) -> Option<MixinDef> {
+    let name = bare_string_attr(el, "name")?;
+    let mut params = Vec::new();
+    let mut body = Vec::new();
+    for child in &el.children {
+        match child {
+            AstNode::Element(child_el) if child_el.tag == "property" => {
+                if let Some(p) = property_to_param(child_el) {
+                    params.push(p);
+                }
+            }
+            _ => body.push(child.clone()),
+        }
+    }
+    Some(MixinDef { name, body, params })
 }
 
 fn property_to_param(el: &Element) -> Option<ParamDef> {
@@ -422,7 +534,19 @@ pub fn instantiate_component(def: &ComponentDef, el: &Element, scope: &LowerScop
     // (child wins), parent's body is the fallback when the child
     // has no body of its own. Multi-level chains walk via recursion
     // through the scope's local-component table.
-    let resolved = flatten_extends(def, scope, &mut HashSet::new());
+    let mut resolved = flatten_extends(def, scope, &mut HashSet::new());
+
+    // Phase 10 — splice mixins. The `derive=[…]` header and every
+    // body `<use names="A, B">` whose names resolve to a mixin in
+    // the scope's local-mixin table contribute their body to the
+    // host component. Names that resolve to a component instead are
+    // skipped here (the first such name became the `extends` parent
+    // during harvest, and any subsequent component name in the same
+    // `use` list is ignored — multi-parent inheritance is rejected
+    // per §7.3). The splice is positional: a body `<use>` element is
+    // replaced in-place by the spliced mixin bodies, so authoring
+    // intent (e.g. a `<use>` between two `<let>`s) is preserved.
+    resolved.body = splice_mixins(&resolved, scope);
 
     // Bind props in the new scope. Walk the call element's bare /
     // identifier attributes; declared params win the type-coercion
@@ -536,23 +660,147 @@ fn flatten_extends(
         }
     }
 
+    // Phase 10 — derive list flattens the same way. The child's
+    // derives are appended to the parent's, deduped by name.
+    let mut derives: Vec<String> = parent_resolved.derives.clone();
+    for d in &def.derives {
+        if !derives.iter().any(|existing| existing == d) {
+            derives.push(d.clone());
+        }
+    }
+
     ComponentDef {
         name: def.name.clone(),
         params,
         extends: parent_resolved.extends.clone(),
         impls,
+        derives,
         body,
     }
 }
 
+/// Phase 10 — splice mixin bodies into a resolved [`ComponentDef`]'s
+/// body. Two splice sources contribute:
+///
+/// 1. **Body `<use names="A, B"/>` statements.** Each name resolves
+///    against the scope's local-mixin table. A name that resolves
+///    swaps its `<use>` element for the mixin's body (in declared
+///    order); names that don't resolve are dropped from the body
+///    along with the `<use>` element (they're either the
+///    extends-parent already consumed at harvest, or unknown).
+/// 2. **Header `derive=[…]`.** The list of mixin names is treated
+///    as if a synthetic `<use names="A, B"/>` were appended after
+///    every other body statement — derives apply last so a body
+///    `<use>` listing the same mixin can shadow them.
+///
+/// Returns the rewritten body. Mixins that the scope doesn't know
+/// are silently ignored (parse-time error surfacing is Phase 17).
+fn splice_mixins(def: &ComponentDef, scope: &LowerScope) -> Vec<AstNode> {
+    if scope.local_mixins.is_empty() && def.derives.is_empty() {
+        // Cheap path — strip any leftover `<use>` elements so they
+        // don't pollute the body (they only ever encoded extends /
+        // mixin intent, neither of which lowers visually).
+        return def
+            .body
+            .iter()
+            .filter(|n| !is_use_element(n))
+            .cloned()
+            .collect();
+    }
+    let mut out: Vec<AstNode> = Vec::with_capacity(def.body.len());
+    for node in &def.body {
+        match node {
+            AstNode::Element(el) if el.tag == "use" => {
+                let names = bare_string_attr(el, "names").unwrap_or_default();
+                for name in parse_use_names(&names) {
+                    // A `use Parent` whose first name resolved to a
+                    // component (the extends parent) is consumed
+                    // during harvest. We still process every name in
+                    // case authoring style mixed mixins after a
+                    // parent name (`use Base, Hoverable, Draggable`).
+                    if let Some(mixin) = scope.local_mixin(&name) {
+                        out.extend(mixin.body.iter().cloned());
+                    }
+                }
+            }
+            _ => out.push(node.clone()),
+        }
+    }
+    // Header `derive=[…]` — append last so body `<use>` order wins.
+    for name in &def.derives {
+        if let Some(mixin) = scope.local_mixin(name) {
+            out.extend(mixin.body.iter().cloned());
+        }
+    }
+    out
+}
+
+/// Names listed inside a body `<use names="A, B, C as Alias"/>`
+/// element. Mirrors [`parse_name_list`] but additionally trims a
+/// trailing `as <alias>` segment (the canonical parser captures
+/// the whole `use` line verbatim). The alias bound is recorded as
+/// the trailing segment for diagnostics only; Phase 10 doesn't yet
+/// rename spliced mixin state through the alias.
+fn parse_use_names(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|part| {
+            let part = part.trim();
+            // Strip an optional `as <alias>` tail.
+            if let Some((head, _)) = part.split_once(" as ") {
+                head.trim().to_string()
+            } else {
+                part.to_string()
+            }
+        })
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn is_use_element(node: &AstNode) -> bool {
+    matches!(node, AstNode::Element(el) if el.tag == "use")
+}
+
+/// Phase 10 — splice the bodies of every mixin listed in `with` into
+/// `children`. Used by the element lowerer when it sees a `with=…`
+/// attribute on any element (`<container with=[Hoverable, Draggable]>
+/// …</container>`). Each named mixin's body is appended *before* the
+/// element's own children so the mixin's `<let>` bindings can be
+/// referenced by interpolations in those children (the splice is
+/// positionally equivalent to the §7.3 "Body Tag Primitives" — the
+/// mixin contributes leading `let`/`on`/`style` siblings the host
+/// children read through document scope).
+///
+/// Names that don't resolve to a mixin on `scope` are silently
+/// skipped (consistent with the `use` body-statement splice).
+pub fn splice_mixin_into_children(
+    with_list: &[String],
+    children: &[AstNode],
+    scope: &LowerScope,
+) -> Vec<AstNode> {
+    if with_list.is_empty() || !scope.has_local_mixins() {
+        return children.to_vec();
+    }
+    let mut out: Vec<AstNode> = Vec::with_capacity(children.len() + with_list.len() * 2);
+    for name in with_list {
+        if let Some(mixin) = scope.local_mixin(name) {
+            out.extend(mixin.body.iter().cloned());
+        }
+    }
+    out.extend(children.iter().cloned());
+    out
+}
+
 /// A render-tree node is anything that lowers to a real UI node —
 /// container / text / heading / a registered tag etc. Internal
-/// declaration statements (`<requires>` / `<style>` / `<on>`) don't
-/// count, so a child whose only body is `<requires>` falls back to
-/// the parent's render tree.
+/// declaration statements (`<requires>` / `<style>` / `<on>` /
+/// `<use>` / `<let>`) don't count, so a child whose only body is
+/// `<requires>` falls back to the parent's render tree.
 fn is_render_tree_node(node: &AstNode) -> bool {
     match node {
-        AstNode::Element(el) => !matches!(el.tag.as_str(), "requires" | "style" | "on" | "expr"),
+        AstNode::Element(el) => !matches!(
+            el.tag.as_str(),
+            "requires" | "style" | "on" | "expr" | "use" | "let"
+        ),
         AstNode::Text { value, .. } => !value.trim().is_empty(),
         AstNode::Interpolation(_) => true,
         AstNode::Comment { .. } => false,
@@ -772,6 +1020,7 @@ component TextField(value: string) = <input value={value}/>"#,
                 params: Vec::new(),
                 extends: None,
                 impls: Vec::new(),
+                derives: Vec::new(),
                 body: Vec::new(),
             }),
         );
@@ -788,6 +1037,7 @@ component TextField(value: string) = <input value={value}/>"#,
                 }],
                 extends: None,
                 impls: Vec::new(),
+                derives: Vec::new(),
                 body: Vec::new(),
             }),
         );
@@ -820,5 +1070,219 @@ component Child(label: string) = {
         let child = map.get("Child").unwrap();
         // The child's body contains no render-tree elements.
         assert!(!child.body.iter().any(is_render_tree_node));
+    }
+
+    // ── Phase 10 — mixin harvest + splice ─────────────────────────
+
+    #[test]
+    fn harvests_mixin_declaration() {
+        let (doc, errs) = parse(
+            r#"mixin Hoverable {
+  let hovered = state(false)
+  on pointerenter { hovered <- true }
+  on pointerleave { hovered <- false }
+}"#,
+        );
+        assert!(errs.is_empty(), "parse errs: {errs:?}");
+        let out = harvest_declarations(&doc.nodes, None);
+        let m = out.mixins.get("Hoverable").expect("mixin missing");
+        // One `<let>` + two `<on>` body statements.
+        let let_count = m
+            .body
+            .iter()
+            .filter(|n| matches!(n, AstNode::Element(e) if e.tag == "let"))
+            .count();
+        let on_count = m
+            .body
+            .iter()
+            .filter(|n| matches!(n, AstNode::Element(e) if e.tag == "on"))
+            .count();
+        assert_eq!(let_count, 1);
+        assert_eq!(on_count, 2);
+    }
+
+    #[test]
+    fn harvests_mixin_under_namespace_prefix() {
+        let (doc, _) = parse(
+            r#"namespace Forms
+
+mixin Highlightable { style { background = accent } }"#,
+        );
+        let out = harvest_declarations(&doc.nodes, None);
+        assert!(out.mixins.contains_key("Forms.Highlightable"));
+        assert!(!out.mixins.contains_key("Highlightable"));
+    }
+
+    #[test]
+    fn parse_name_list_brackets_and_spaces() {
+        assert_eq!(parse_name_list("A, B"), vec!["A", "B"]);
+        assert_eq!(parse_name_list("[A, B]"), vec!["A", "B"]);
+        assert_eq!(parse_name_list(" [ A , B , C ] "), vec!["A", "B", "C"]);
+        let empty: Vec<String> = Vec::new();
+        assert_eq!(parse_name_list(""), empty);
+        assert_eq!(parse_name_list("[]"), empty);
+    }
+
+    #[test]
+    fn parse_use_names_strips_alias_tail() {
+        assert_eq!(parse_use_names("Hoverable as h"), vec!["Hoverable"]);
+        assert_eq!(
+            parse_use_names("Base, Hoverable as h, Draggable"),
+            vec!["Base", "Hoverable", "Draggable"]
+        );
+    }
+
+    #[test]
+    fn body_use_resolving_to_mixin_splices_into_body() {
+        // Build a scope carrying `Hoverable` as a mixin, then
+        // instantiate a component whose body says `use Hoverable`.
+        let (mixin_doc, _) = parse(
+            r#"mixin Hoverable {
+  let hovered = state(false)
+}"#,
+        );
+        let mixins = harvest_declarations(&mixin_doc.nodes, None).mixins;
+        let (comp_doc, _) = parse(
+            r#"component Card(title: string) = {
+  use Hoverable
+  <container><text>{title}</text></container>
+}"#,
+        );
+        let comps = harvest_components(&comp_doc.nodes);
+        let card = comps.get("Card").expect("card missing");
+
+        let scope = crate::interpret::LowerScope::new()
+            .with_local_mixins(std::sync::Arc::new(mixins))
+            .with_local_components(std::sync::Arc::new(comps.clone()));
+        let resolved = flatten_extends(card.as_ref(), &scope, &mut HashSet::new());
+        let body = splice_mixins(&resolved, &scope);
+        // The mixin's `<let>` body statement landed before the
+        // container in the spliced body.
+        let let_idx = body
+            .iter()
+            .position(|n| matches!(n, AstNode::Element(e) if e.tag == "let"));
+        let container_idx = body
+            .iter()
+            .position(|n| matches!(n, AstNode::Element(e) if e.tag == "container"));
+        assert!(let_idx.is_some(), "mixin let missing from spliced body");
+        assert!(container_idx.is_some(), "container missing from body");
+        assert!(
+            let_idx < container_idx,
+            "mixin must splice before render tree"
+        );
+    }
+
+    #[test]
+    fn header_derive_attribute_splices_mixin_into_body() {
+        let (mixin_doc, _) = parse(
+            r#"mixin Hoverable {
+  let hovered = state(false)
+}"#,
+        );
+        let mixins = harvest_declarations(&mixin_doc.nodes, None).mixins;
+        // Component with `derive=[Hoverable]` (XML-form attribute).
+        let xml = r#"<component name="Card" derive="Hoverable"><container/></component>"#;
+        let (comp_doc, _errs) = parse(xml);
+        let comps = harvest_components(&comp_doc.nodes);
+        let card = comps.get("Card").expect("card missing");
+        assert_eq!(card.derives, vec!["Hoverable".to_string()]);
+
+        let scope = crate::interpret::LowerScope::new()
+            .with_local_mixins(std::sync::Arc::new(mixins))
+            .with_local_components(std::sync::Arc::new(comps.clone()));
+        let resolved = flatten_extends(card.as_ref(), &scope, &mut HashSet::new());
+        let body = splice_mixins(&resolved, &scope);
+        assert!(body
+            .iter()
+            .any(|n| matches!(n, AstNode::Element(e) if e.tag == "let")));
+    }
+
+    #[test]
+    fn derive_list_brackets_accepted() {
+        let xml = r#"<component name="Card" derive="[A, B]"><container/></component>"#;
+        let (doc, _) = parse(xml);
+        let comps = harvest_components(&doc.nodes);
+        let card = comps.get("Card").unwrap();
+        assert_eq!(card.derives, vec!["A".to_string(), "B".to_string()]);
+    }
+
+    #[test]
+    fn derives_inherit_from_parent_then_dedupe() {
+        // Parent derives `A`; child derives `B`. Resolved chain
+        // should be `[A, B]`.
+        let xml = r#"<component name="Parent" derive="A"><container/></component>
+<component name="Child" extends="Parent" derive="B"><container/></component>"#;
+        let (doc, _) = parse(xml);
+        let comps = harvest_components(&doc.nodes);
+        let child = comps.get("Child").expect("child missing");
+        let scope = crate::interpret::LowerScope::new()
+            .with_local_components(std::sync::Arc::new(comps.clone()));
+        let resolved = flatten_extends(child.as_ref(), &scope, &mut HashSet::new());
+        assert_eq!(resolved.derives, vec!["A".to_string(), "B".to_string()]);
+
+        // Duplicate `B` in the child stays single after dedupe.
+        let xml2 = r#"<component name="P" derive="B"><container/></component>
+<component name="C" extends="P" derive="B"><container/></component>"#;
+        let (doc, _) = parse(xml2);
+        let comps = harvest_components(&doc.nodes);
+        let child = comps.get("C").unwrap();
+        let scope = crate::interpret::LowerScope::new()
+            .with_local_components(std::sync::Arc::new(comps.clone()));
+        let resolved = flatten_extends(child.as_ref(), &scope, &mut HashSet::new());
+        assert_eq!(resolved.derives, vec!["B".to_string()]);
+    }
+
+    #[test]
+    fn unknown_mixin_name_is_silently_dropped() {
+        let (comp_doc, _) = parse(
+            r#"component Card(title: string) = {
+  use UnknownMixin
+  <container><text>{title}</text></container>
+}"#,
+        );
+        let comps = harvest_components(&comp_doc.nodes);
+        let card = comps.get("Card").unwrap();
+        let scope = crate::interpret::LowerScope::new()
+            .with_local_components(std::sync::Arc::new(comps.clone()));
+        let resolved = flatten_extends(card.as_ref(), &scope, &mut HashSet::new());
+        let body = splice_mixins(&resolved, &scope);
+        // No mixin → no `<let>` in body; the `<use>` element is
+        // stripped (it carried only the mixin reference).
+        assert!(body
+            .iter()
+            .all(|n| !matches!(n, AstNode::Element(e) if e.tag == "use" || e.tag == "let")));
+    }
+
+    #[test]
+    fn splice_into_children_appends_mixin_body_first() {
+        let (mixin_doc, _) = parse(
+            r#"mixin Hoverable {
+  let hovered = state(false)
+}"#,
+        );
+        let mixins = harvest_declarations(&mixin_doc.nodes, None).mixins;
+        let scope =
+            crate::interpret::LowerScope::new().with_local_mixins(std::sync::Arc::new(mixins));
+        let (frag_doc, _) = parse("<text>hello</text>");
+        let result = splice_mixin_into_children(&["Hoverable".into()], &frag_doc.nodes, &scope);
+        // First node is the mixin's `<let>`, second is `<text>`.
+        let first_tag = match &result[0] {
+            AstNode::Element(e) => e.tag.as_str(),
+            _ => "",
+        };
+        let second_tag = match &result[1] {
+            AstNode::Element(e) => e.tag.as_str(),
+            _ => "",
+        };
+        assert_eq!(first_tag, "let");
+        assert_eq!(second_tag, "text");
+    }
+
+    #[test]
+    fn splice_into_children_skips_when_no_mixins() {
+        let scope = crate::interpret::LowerScope::new();
+        let (frag_doc, _) = parse("<text>hi</text>");
+        let result = splice_mixin_into_children(&["AnyName".into()], &frag_doc.nodes, &scope);
+        assert_eq!(result.len(), 1);
     }
 }

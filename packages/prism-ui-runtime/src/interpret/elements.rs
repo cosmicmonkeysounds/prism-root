@@ -263,6 +263,41 @@ fn eval_memo_deps(body: &str, scope: &LowerScope) -> Vec<serde_json::Value> {
 /// Every author-visible lowering still flows through this function;
 /// the memo gate is purely a cache layer.
 fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
+    // **Phase 10 — `with=[Mixin, Mixin]` runtime mixin splice.**
+    // Any element (container / component invocation / shell tag /
+    // unknown tag) may carry a `with="A, B"` attribute that names
+    // mixins on the local-mixin table. Their bodies splice in front
+    // of the element's own children; the element then lowers
+    // through its normal path with the merged child list. Mixin
+    // bodies are AST-level `<let>` / `<on>` / `<style>` / `<expr>`
+    // statements — inert in the visual tree but visible to any
+    // future pass that picks them up (e.g. Phase 12 capability
+    // injection reads `<requires>`; Phase 15 reactive lowering will
+    // surface `<let>` and `<on>`). The splice runs *before* the
+    // tag-dispatch and primitive-arm code below so every consumer
+    // sees the spliced children uniformly.
+    let synthesised: Option<Element>;
+    let el: &Element = if scope.has_local_mixins() {
+        if let Some(with_list) = read_with_attribute(el, scope) {
+            let spliced = super::splice_mixin_into_children(&with_list, &el.children, scope);
+            let mut copy = el.clone();
+            copy.children = spliced;
+            // Drop the `with=` attribute so the splice is one-shot
+            // (a nested `<container with=…>` keeps working but a
+            // re-entry through `lower_element_body` doesn't re-add
+            // the same mixin body).
+            copy.attributes.retain(|a| {
+                !(matches!(a.name.namespace, AttributeNamespace::Bare) && a.name.local == "with")
+            });
+            synthesised = Some(copy);
+            synthesised.as_ref().unwrap()
+        } else {
+            el
+        }
+    } else {
+        el
+    };
+
     // **`<dispatch tag="{expr}"/>` — runtime-tag dispatch.** When the
     // tag attribute resolves to a closed-set runtime primitive
     // (`container`, `text`, `heading`, `image`, `spacer`, `input`,
@@ -1435,6 +1470,16 @@ fn collect_text_content(children: &[AstNode], scope: &LowerScope) -> String {
         }
     }
     out
+}
+
+/// Phase 10 — read the `with="A, B"` (or `with="[A, B]"`) attribute
+/// off `el` and return the parsed mixin-name list. Returns `None`
+/// when no `with=` attribute is present; an empty `with=""` returns
+/// an empty list so the caller can detect "author wrote `with=`
+/// but listed no mixins" if it cares (currently it does not).
+fn read_with_attribute(el: &Element, scope: &LowerScope) -> Option<Vec<String>> {
+    let raw = bare_attr_value(el, "with", scope)?;
+    Some(super::components::parse_name_list_pub(&raw))
 }
 
 pub(super) fn bare_attr_value(el: &Element, name: &str, scope: &LowerScope) -> Option<String> {
