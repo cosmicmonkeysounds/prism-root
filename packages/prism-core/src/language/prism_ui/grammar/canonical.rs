@@ -647,18 +647,32 @@ impl<'s> CanonicalParser<'s> {
                 None
             };
 
-            // After the type, look for `= default` and / or
-            // trailing `required`. Both are optional.
+            // After the type, look for `= default` / `<= {expr}` and / or
+            // trailing `required`. All are optional. Phase 18 — the
+            // `<= {expr}` arrow distinguishes computed (derived at
+            // instantiation time from other declared props) from
+            // literal `= value` defaults.
             self.skip_inline_whitespace();
             let mut default = None;
+            let mut computed_default = None;
             let mut required = false;
 
-            // Handle trailing `required` token, which can appear
-            // either before or after a `= default`. Iterate.
             loop {
                 if self.peek_word("required") {
                     self.scan_keyword();
                     required = true;
+                    self.skip_inline_whitespace();
+                    continue;
+                }
+                // Phase 18 — `<= {expr}` computed default. Checked
+                // before the literal `=` form so `<=` doesn't get
+                // mistaken for two tokens (`<` + `=`).
+                if self.scanner.peek() == Some('<') && self.scanner.peek_ahead(1) == Some('=') {
+                    self.scanner.advance();
+                    self.scanner.advance();
+                    self.skip_inline_whitespace();
+                    let d = self.scan_param_default();
+                    computed_default = Some(d);
                     self.skip_inline_whitespace();
                     continue;
                 }
@@ -676,6 +690,7 @@ impl<'s> CanonicalParser<'s> {
                 name,
                 type_expr,
                 default,
+                computed_default,
                 required,
                 range: self.range_from(p_start),
             });
@@ -1274,6 +1289,14 @@ impl<'s> CanonicalParser<'s> {
                     self.scanner.restore(saved);
                 }
             }
+            // Phase 18 — `<=` at depth 0 is the computed-default
+            // arrow. Stop before it so the param parser can pick
+            // it up; without this guard, the `<` would increment
+            // depth and the type expression would over-eat past
+            // the arrow.
+            if c == '<' && depth == 0 && self.scanner.peek_ahead(1) == Some('=') {
+                break;
+            }
             if c == '<' || c == '(' || c == '[' || c == '{' {
                 depth += 1;
             }
@@ -1552,6 +1575,14 @@ impl<'s> CanonicalParser<'s> {
         if let Some(d) = &p.default {
             attrs.push(("default", d.clone(), p.range));
         }
+        // Phase 18 — surface computed defaults onto the projected
+        // `<property>` element as a `computed-default="<body>"`
+        // attribute. The runtime reader picks this up in
+        // `property_to_param` and routes through the topological
+        // resolution pass at instantiation time.
+        if let Some(d) = &p.computed_default {
+            attrs.push(("computed-default", d.clone(), p.range));
+        }
         if p.required {
             attrs.push(("required", "true".into(), p.range));
         }
@@ -1573,6 +1604,13 @@ struct DeclParam {
     name: String,
     type_expr: Option<String>,
     default: Option<String>,
+    /// Phase 18 — computed-default body. When set, the param's
+    /// default is an expression evaluated at instantiation time
+    /// against the call's other resolved props (topologically
+    /// resolved per §7.2's "Computed defaults" subsection).
+    /// Mutually exclusive with `default` in practice — the parser
+    /// distinguishes by the leading `=` vs `<=` arrow.
+    computed_default: Option<String>,
     required: bool,
     range: SourceRange,
 }

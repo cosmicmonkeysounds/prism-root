@@ -302,45 +302,133 @@ A slot key that no registry knows is a build error.
 
 ### 4.5 Knowledge
 
-What this character has learned. Declared as a closed enum, mutated
-by story:
+What this character has learned. Declared as a closed schema of typed
+slots; mutated by story.
 
 ```loom
 knowledge
   met_player       : bool = false
   knows_about_bell : { unknown, suspects, confirmed } = unknown
+  keeper_name      : string?                           # nilable
+  rumours_heard    : list<@rumour> = []
   saw_the_keeper   : bool = false
 ```
 
-In story, knowledge is a first-class condition target:
+Field types are restricted to a small set: `bool`, `int`, `float`,
+`string`, closed enums (`{ a, b, c }`), nilable forms (trailing `?`),
+and `list<T>`. Anything more complex belongs in `var` or a slot — the
+restriction is deliberate. Knowledge is the simple "what does this
+character know" map and stays parseable as a flat table.
+
+**Querying.** Inside expressions:
 
 ```loom
-if $elena.knows_about_bell is suspects
-  ELENA { cautious }
-    You've heard something, haven't you.
-
-~ $elena.knows_about_bell := confirmed
+if $elena.knows_about_bell is suspects        # enum equality
+if $elena.met_player                          # bool field
+if $elena.keeper_name?                        # nilable presence
+if $elena.rumours_heard has @rumour_singer    # list membership
+if $elena.rumours_heard.count > 2             # list shape
 ```
 
+Knowledge is read-only from outside the owning character; treating it
+as freely mutable from any conversation would let one NPC overwrite
+another's beliefs. The mutation surface is exactly:
+
+```loom
+~ $elena.knows_about_bell := suspects                 # bind/overwrite
+~ $elena.rumours_heard += @rumour_singer              # list-append
+~ $elena.rumours_heard -= @rumour_singer              # list-remove
+~ $elena.met_player := true
+~ $elena.keeper_name := nil                           # clear nilable
+```
+
+Only `:=`, `+=` (lists), and `-=` (lists). No `++`, no arithmetic on
+ints. If you need a counter, declare a `var` — not knowledge.
+
+**Ledger contract.** Every knowledge mutation writes one
+`KnowledgeChanged { character, key, before, after, at_ms }` entry
+through the same ledger as conversations. Hooks (§4.8) subscribe to
+this stream; save/load round-trips it byte-for-byte.
+
 Knowledge is per-character (Elena's beliefs aren't Alice's); the
-runtime maintains one knowledge map per `@character` instance.
+runtime maintains one knowledge map per `@character` instance. For
+shared world facts, use `var` at document scope.
 
 ### 4.6 Goals
 
 What this character is *trying to do*. A small declarative state
-machine:
+machine — every character can hold many goals; one is active at a
+time.
 
 ```loom
 goal find_keeper
-  priority    = 0.8
-  active_when = $time.hour > 6am and not $elena.exhausted
-  completes_when = saw_the_keeper
-  drives generator search_routine
+  priority       = 0.8                  # static; for runtime override see below
+  active_when    = $time.hour > 6am and not $elena.exhausted
+  completes_when = knowledge.saw_the_keeper
+  fails_when     = $elena.health < 20
+  drives generator search_routine       # what behavior runs while pursuing
+  on_complete    -> $elena.knows_about_bell := confirmed
+  on_fail        -> log "abandoned find_keeper"
 ```
 
-A character can hold multiple goals; the highest-priority active goal
-drives behavior. Goals are inspectable from story (`if
-$elena.pursuing(find_keeper)`).
+**Knobs.** Five declarative predicates + two effect hooks:
+
+| Knob | Re-evaluated when | Effect |
+|---|---|---|
+| `priority` | (constant) | tie-break ordering; higher wins |
+| `active_when` | any read variable changes | gates entry into the pursuing state |
+| `completes_when` | any read variable changes | transitions to `complete` |
+| `fails_when` | any read variable changes | transitions to `failed` |
+| `drives` | (constant) | which generator runs while pursuing |
+| `on_complete` | edge transition | action chain fired on success |
+| `on_fail` | edge transition | action chain fired on failure |
+
+The four predicates are reactive `let`-bound expressions (§9.1) and
+share the same `Memo<bool>` substrate as `let`. A predicate is
+evaluated once at goal-declaration time and re-checked only when a
+dependency invalidates.
+
+**State machine.** Each goal occupies one of four states per
+character: `dormant` → `pursuing` → (`complete` | `failed`).
+Transitions:
+
+- `dormant → pursuing`: `active_when` becomes true and this is the
+  highest-priority goal whose `active_when` is true.
+- `pursuing → complete`: `completes_when` becomes true.
+- `pursuing → failed`: `fails_when` becomes true.
+- `pursuing → dormant`: a higher-priority goal's `active_when` becomes
+  true (the lower goal *suspends*; its driver generator is paused
+  rather than cancelled).
+- `complete`, `failed`: terminal.
+
+**Priority resolution.** When two goals tie on `priority`, declaration
+order in the source decides. Studios that want runtime priority
+override register a Luau hook that emits a `priority_for(goal,
+character) -> float`; the resolver consults the hook before the static
+value.
+
+**Querying.** Goals are first-class condition atoms:
+
+```loom
+if $elena.pursuing(find_keeper)
+if $elena.completed(find_keeper)
+if $elena.failed(find_keeper)
+if $elena.active_goal == find_keeper
+if $elena.goals has find_keeper             # any state
+```
+
+**Imperative control.** Story can force the state machine when
+narrative demands it:
+
+```loom
+~ $elena.goal(find_keeper).start             # force into pursuing
+~ $elena.goal(find_keeper).complete          # short-circuit
+~ $elena.goal(find_keeper).fail
+~ $elena.goal(find_keeper).reset             # back to dormant; clears history
+```
+
+These bypass the reactive predicates — useful when the writer needs
+to override the simulation for a key story beat.
 
 ### 4.7 Generators on characters
 
@@ -365,23 +453,76 @@ inhabitant of an immersive show.
 
 ### 4.8 Hooks
 
-Event-driven character reactions, fired by the world:
+Event-driven character reactions, fired by the world. A hook is a
+declarative pattern matched against the ledger stream; when the
+pattern fires, the body runs.
 
 ```loom
-on meeting $PLAYER
+on meeting $PLAYER                           # one-shot pattern (encounter)
   if not knowledge.met_player
     knowledge.met_player := true
     -> introduce_self as $elena
 
-on $elena.disposition($PLAYER).trust passes 80
+on $elena.disposition($PLAYER).trust passes 80   # threshold-crossing
   -> reveal_secret as $elena
 
-on $time.hour == 22
+on $time.hour == 22                          # in-world clock predicate
   -> retire_for_night as $elena
+
+on cue bell_strike_loud                      # crew bus event
+  $elena.knowledge.heard_the_bell := true
+
+on $PARTICIPANT enters @lighthouse_interior  # location event
+  -> greet_visitor as $elena
 ```
 
-Hooks compile to ledger subscribers. They never block the world tick;
-they enqueue diverts that fire on the character's next turn.
+**Trigger vocabulary.** A hook's leading clause is matched against
+the built-in event registry. The core registry exposes:
+
+| Form | Fires when | Bindings inside body |
+|---|---|---|
+| `on meeting $X` | any character first comes into contact with `$X` | `$X` is the other party |
+| `on $expr passes N` | `$expr` crosses `N` upward | `$prev`, `$now` |
+| `on $expr drops below N` | `$expr` crosses `N` downward | `$prev`, `$now` |
+| `on $expr == V` | edge-triggered equality | `$prev`, `$now` |
+| `on $time.hour == H` | in-world clock at hour `H` | — |
+| `on cue X` | named cue (§8.2) fires | `$payload` |
+| `on $P enters @L` | participant `$P` enters location `@L` | `$P` |
+| `on $P exits @L` | participant `$P` exits location `@L` | `$P` |
+| `on event X` | a user-fired `fire X` event | `$payload` |
+
+Studios register additional hook predicates through the extension API
+(§10). A hook predicate that the registry doesn't recognize is a
+build error (`unknown-hook-pred`).
+
+**Scheduling.** Hooks are *queued*, not preemptive. When a ledger
+write matches a hook's pattern, the runtime appends a
+`HookFired { character, hook_id, payload }` envelope to the
+character's pending-actions queue. The queue drains on the
+character's next turn — which for a player-facing NPC is "when the
+camera/control returns to them," and for a background NPC is "next
+generator tick." This guarantees a hook cannot interrupt the active
+conversation playhead.
+
+**Ordering.** When multiple hooks on one character match the same
+event, their bodies execute in *source order* — the order they were
+declared in the character body. Across characters, hook order matches
+the character iteration order of the ledger subscriber list, which is
+declaration order in the project.
+
+**Idempotence.** Each hook tracks whether its leading predicate is
+*edge-triggered* (`passes`, `drops below`, `==`, `meeting`,
+`enters`, `exits`) or *level-triggered* (`>`, `<`, `is`). Edge
+triggers fire once per crossing; level triggers fire once and then
+require the predicate to become false before re-arming. There is no
+"fire every tick the condition is true" mode — that's what generators
+are for.
+
+**Lifecycle.** A hook is active while its host character is
+*instantiated* in the world. Despawning a character cancels its hooks
+(their pending entries in the action queue are dropped). Hot-reload
+re-installs hooks at the next ledger flush; in-flight hook bodies
+finish under the old definition.
 
 ---
 
@@ -585,7 +726,88 @@ across an entire section: `after $betrayed` / `otherwise`. Both
 exist; the right one is the one that reads more clearly for the
 shape of the branch.
 
-### 6.1 Quests, cutscenes, barks
+### 6.1 The playhead
+
+A `:conversation` (or any of its specializations) has one
+**playhead** at any given moment — the section currently executing.
+The playhead is the unit of state save/load: snapshotting a Loom
+runtime is fundamentally "snapshot the ledger + snapshot the playhead
+stack."
+
+The playhead moves through three kinds of step:
+
+| Step | Causes |
+|---|---|
+| **Fall-through** | end of a section reached → enter the textually-next section, unless one of the modifiers below applies |
+| **Divert** | `->` jumps to a named target; the previous section's playhead is discarded |
+| **Return** | `<-` pops one frame off the tunnel stack and resumes the caller |
+
+Section modifiers change fall-through behavior:
+
+- `.hub` — at fall-through end, jump back to the top of this section
+  rather than the next textual section. Hubs are how you express
+  conversation menus that "stay" until the player explicitly leaves.
+- `.return` — at fall-through end, behave as if the player executed
+  `<-`. Used inside tunnels and at the end of side-conversations.
+- `.once` — entering this section a second time is a no-op divert;
+  the playhead falls through immediately. Combine with `.hub` for
+  one-shot menus.
+
+**Tunnel stack.** A divert of the form `-> (target) ->` (a *tunnel
+call*) pushes the *caller's continuation* onto a tunnel stack before
+diverting. The matching `<-` (or end of a `.return` section) pops one
+frame. Tunnels nest; depth is bounded only by host memory. The stack
+is part of the playhead state and is snapshotted with it.
+
+### 6.2 Visit counter and ledger writes
+
+Every section carries a per-save **visit counter**. The counter
+increments on entry (after `Guard` evaluation, before body execution).
+It's the substrate that powers `visits(section_id)`, `played(...)`,
+and `each visit { first / then / finally }`.
+
+Every player-visible step also writes a ledger envelope:
+
+| Step | Ledger entry |
+|---|---|
+| Section entered | `SectionEntered { section, visit_n }` |
+| Choice taken | `ChoiceTaken { section, choice_id, label, at_ms }` |
+| Dialogue line played | `LinePlayed { speaker, text, section }` |
+| Divert fired | `Diverted { from, to, kind }` (kind ∈ hard/tunnel/return) |
+| Cue fired | `CueFired { name, payload }` |
+| Var/knowledge/disposition mutation | `Mutated { lvalue, before, after }` |
+| Hook fired | `HookFired { character, hook_id, payload }` |
+
+Ledger entries are the wire format for save/load, replay, multi-user
+playback in the booth, and `since(event)` / `last(event)` queries
+(§7's `LedgerPred` set, grammar §11.6). Studios that need analytics
+subscribe to the same stream — there is no parallel "telemetry"
+channel.
+
+### 6.3 Conversation engine state
+
+Beyond the playhead and the ledger, the per-conversation runtime
+holds:
+
+- **Once-flags.** Per-save, per-choice. A `*` choice in
+  `start.choice_5` is suppressed on subsequent entries to `start` once
+  taken. The flag set is part of the snapshot.
+- **Sticky-flags.** `+` choices are never suppressed; the absence of
+  their flag is informational only.
+- **Active threads.** Names of in-flight tunnels (the tunnel stack
+  serialized).
+- **Pending `each visit` index.** Per-section, the index into the
+  visit-branch list. Saved so reload doesn't restart the cycle.
+- **Reactive subscription handles.** `let`-bindings hold live
+  `Memo<T>` handles into `prism-core::reactive`. These do not
+  serialize — they're rebuilt on load by re-evaluating the binding's
+  source against the freshly hydrated ledger.
+
+The runtime exposes the snapshot as `serde`-derivable
+`ConversationState` so hosts can persist with whatever storage they
+already use.
+
+### 6.4 Quests, cutscenes, barks
 
 All three are document archetypes (`:quest`, `:cutscene`, `:barks`)
 with the same content language as conversations but specialized
@@ -897,6 +1119,17 @@ yields the body P fraction of the time, skipping otherwise.
 A **scene** is a labelled coroutine — a multi-step interaction with
 explicit state transitions. Where a generator yields ambient content,
 a scene drives a focused exchange.
+
+> **The word "scene" pulls double duty.** In `:script` and `:film`
+> documents, `##` introduces a *screenplay* scene header — a typeset
+> slugline like `## act_2.scene_3 "INT. HARBOR — DUSK"`. That's a
+> sub-section heading, parsed by [grammar §5.9](loom-grammar.md#59-scene-for-script-and-film-archetypes).
+> Here in §9.4 the keyword `scene` declares a *reactive* scene — a
+> coroutine. The two forms never collide: the screenplay form takes a
+> `##` slug; the coroutine form takes a parameter list (`|...|`) and a
+> body of labelled state blocks. The shared term reflects shared
+> intent — both are "a focused unit of action" — and disambiguation
+> falls out of position alone.
 
 ```loom
 scene patrol |character, route|

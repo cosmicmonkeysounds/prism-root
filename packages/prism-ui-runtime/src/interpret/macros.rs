@@ -191,6 +191,7 @@ fn property_to_param(el: &Element) -> Option<ParamDef> {
         name,
         ty,
         default,
+        computed_default: None,
         required,
     })
 }

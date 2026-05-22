@@ -58,6 +58,12 @@ pub struct ParamDef {
     pub name: String,
     pub ty: Option<String>,
     pub default: Option<String>,
+    /// Phase 18 — `<= {expr}` computed default. When set, the
+    /// param's default is the verbatim expression body, evaluated
+    /// at instantiation time against the call site's other resolved
+    /// props. The literal `default` and `computed_default` are
+    /// mutually exclusive — the parser sets at most one.
+    pub computed_default: Option<String>,
     pub required: bool,
 }
 
@@ -325,6 +331,7 @@ fn parse_trait_member_line(line: &str) -> Option<ParamDef> {
             Some(ty.to_string())
         },
         default,
+        computed_default: None,
         required: required_a || required_b,
     })
 }
@@ -488,6 +495,7 @@ fn property_to_param(el: &Element) -> Option<ParamDef> {
     let name = bare_string_attr(el, "name")?;
     let ty = bare_string_attr(el, "type");
     let default = bare_string_attr(el, "default");
+    let computed_default = bare_string_attr(el, "computed-default");
     let required = bare_string_attr(el, "required")
         .map(|v| v == "true" || v == "1")
         .unwrap_or(false);
@@ -495,6 +503,7 @@ fn property_to_param(el: &Element) -> Option<ParamDef> {
         name,
         ty,
         default,
+        computed_default,
         required,
     })
 }
@@ -589,9 +598,23 @@ pub fn instantiate_component(def: &ComponentDef, el: &Element, scope: &LowerScop
     // skip + diagnostic-bearing empty render). The map lands as
     // scope bindings so `{title}` interpolations inside the body
     // resolve.
+    //
+    // Phase 18 — computed defaults (`padding: int <= {depth * 4}`)
+    // are deferred to a second pass so they can read every literal-
+    // defaulted / call-provided prop the resolver lands. The pass
+    // iterates: each round, any unresolved computed whose expression
+    // resolves against the active scope binds. The loop terminates
+    // when a round makes no progress; remaining unresolved computeds
+    // signal a dependency cycle and bind to `Null` with a leading
+    // diagnostic text node.
     let mut child_scope = scope.clone();
+    let mut computed_pending: Vec<(String, String)> = Vec::new();
     for param in &resolved.params {
         if call_props.contains_key(&param.name) {
+            continue;
+        }
+        if let Some(computed) = &param.computed_default {
+            computed_pending.push((param.name.clone(), computed.clone()));
             continue;
         }
         if let Some(default) = &param.default {
@@ -607,6 +630,81 @@ pub fn instantiate_component(def: &ComponentDef, el: &Element, scope: &LowerScop
         child_scope = child_scope.with_binding(key, value);
     }
 
+    // Phase 18 — topological resolution loop for computed defaults.
+    // Round-based: each pass evaluates computeds whose identifier
+    // dependencies (extracted via `collect_identifiers`) are all
+    // bound on the scope. A round with zero progress means every
+    // remaining computed depends on another pending computed (a
+    // cycle), and the diagnostic path takes over.
+    //
+    // The dependency check is the loadbearing part — `evaluate_expression`
+    // doesn't distinguish "unknown identifier" from "Null", so
+    // relying on its return value would silently swallow cycles.
+    let mut computed_diagnostics: Vec<String> = Vec::new();
+    if !computed_pending.is_empty() {
+        let pending_names: std::collections::HashSet<String> = computed_pending
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+        let mut rounds = computed_pending.len() + 1;
+        while rounds > 0 && !computed_pending.is_empty() {
+            rounds -= 1;
+            let mut progress = false;
+            let mut next: Vec<(String, String)> = Vec::new();
+            let still_pending: std::collections::HashSet<String> = computed_pending
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect();
+            for (name, body) in &computed_pending {
+                let body_trimmed = body
+                    .trim()
+                    .trim_start_matches('{')
+                    .trim_end_matches('}')
+                    .trim();
+                // Defer when any extracted identifier is still
+                // pending — that's the cycle-safe ordering check.
+                let deps = collect_identifiers(body_trimmed);
+                let has_pending_dep = deps
+                    .iter()
+                    .any(|id| still_pending.contains(id) && id != name);
+                if has_pending_dep {
+                    next.push((name.clone(), body.clone()));
+                    continue;
+                }
+                let value =
+                    super::expression::lookup_path_owned_in_scope(body_trimmed, &child_scope)
+                        .or_else(|| {
+                            super::expression::evaluate_expression(body_trimmed, &child_scope)
+                        });
+                match value {
+                    Some(v) => {
+                        child_scope = child_scope.with_binding(name.clone(), v);
+                        progress = true;
+                    }
+                    None => next.push((name.clone(), body.clone())),
+                }
+            }
+            if !progress {
+                break;
+            }
+            computed_pending = next;
+        }
+        for (name, body) in &computed_pending {
+            // Only diagnose props that genuinely live in a cycle or
+            // depend on truly unknown names — a self-reference (an
+            // author-error captured by the cycle path) is part of
+            // this set too.
+            if pending_names.contains(name) {
+                computed_diagnostics.push(format!(
+                    "[prism] component `{}` computed default `{name} <= {body}` could not \
+                     resolve (cycle, unknown identifier, or unsupported expression)",
+                    resolved.name
+                ));
+            }
+            child_scope = child_scope.with_binding(name.clone(), serde_json::Value::Null);
+        }
+    }
+
     // Phase 12 — capability resolution. Harvest every body
     // `<requires names="…"/>` element off the resolved body,
     // resolve against the active scope's `CapabilityRegistry`,
@@ -618,6 +716,13 @@ pub fn instantiate_component(def: &ComponentDef, el: &Element, scope: &LowerScop
     // statements skip this entirely.
     let declared_caps = super::capabilities::harvest_requires(&resolved.body);
     let mut diagnostics: Vec<Node> = Vec::new();
+    for msg in &computed_diagnostics {
+        diagnostics.push(Node::Text {
+            id: String::new(),
+            content: msg.clone(),
+            props: crate::layout::TextProps::default(),
+        });
+    }
     if !declared_caps.is_empty() {
         let (bindings, missing) =
             super::capabilities::resolve_capabilities(&declared_caps, scope.capability_registry());
@@ -953,6 +1058,66 @@ fn strip_quotes(s: &str) -> Option<&str> {
     None
 }
 
+/// Phase 18 — extract every bare identifier prefix in `body`. An
+/// identifier is the leading run of letters / digits / `_` / `-`
+/// that doesn't follow a `.` (so `tokens.colors.accent` contributes
+/// only `tokens`). Reserved keyword-shape tokens (`true`, `false`,
+/// `null`, `nil`, `and`, `or`, `not`) and pure numbers are skipped.
+/// String-literal contents are skipped via quote tracking.
+fn collect_identifiers(body: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let bytes = body.as_bytes();
+    let mut quote: Option<u8> = None;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            } else if c == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if c == b'"' || c == b'\'' {
+            quote = Some(c);
+            i += 1;
+            continue;
+        }
+        if c == b'.' {
+            // Skip the segment following a `.` — it's a sub-path,
+            // not a fresh identifier.
+            i += 1;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'-')
+            {
+                i += 1;
+            }
+            continue;
+        }
+        if c.is_ascii_alphabetic() || c == b'_' {
+            let start = i;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'-')
+            {
+                i += 1;
+            }
+            let ident = &body[start..i];
+            if !matches!(
+                ident,
+                "true" | "false" | "null" | "nil" | "and" | "or" | "not" | "if" | "then" | "else"
+            ) {
+                out.push(ident.to_string());
+            }
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
 /// Phase 14 — bucket the children of a call site into the default-
 /// slot pile and a `name → AST` named-slot map. A child carrying a
 /// literal `slot="X"` attribute lands in `named[X]`; everything else
@@ -1248,6 +1413,7 @@ component TextField(value: string) = <input value={value}/>"#,
                     name: "shouldnt-show".into(),
                     ty: None,
                     default: None,
+                    computed_default: None,
                     required: false,
                 }],
                 extends: None,

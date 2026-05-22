@@ -5732,6 +5732,115 @@ fn document_without_unions_pays_no_variant_cost() {
     assert_eq!(nodes.len(), 1);
 }
 
+// ---------- Phase 18: computed property defaults ----------
+
+/// A `padding: int <= {depth * 4}` declaration resolves the
+/// computed default from a sibling declared prop at instantiation
+/// time. The component author specifies one expression; every
+/// call site picks up the derived value automatically.
+#[test]
+fn computed_default_resolves_from_declared_sibling() {
+    let src = r#"component TreeRow(depth: int = 0, padding: int <= {depth * 4}) = {
+  <container><text>{padding}</text></container>
+}
+<TreeRow depth={5}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let Node::Text { content, .. } = &children[0] else {
+        panic!("expected text, got {:?}", children[0])
+    };
+    assert_eq!(content, "20");
+}
+
+/// A call-site override of a normally-computed prop wins over the
+/// declared expression — the host can override on demand.
+#[test]
+fn explicit_call_value_overrides_computed_default() {
+    let src = r#"component TreeRow(depth: int = 0, padding: int <= {depth * 4}) = {
+  <text>{padding}</text>
+}
+<TreeRow depth={5} padding={99}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!()
+    };
+    assert_eq!(content, "99");
+}
+
+/// Two computed defaults can chain through a shared dependency.
+/// The topological-resolution pass evaluates `padding` first (it
+/// depends only on `depth`) so `outer-width` can read the result.
+#[test]
+fn computed_defaults_topological_chain() {
+    let src = r#"component TreeRow(
+  depth: int = 0,
+  padding: int <= {depth * 4},
+  border: int = 2
+) = {
+  <text>{padding} {border} {depth}</text>
+}
+<TreeRow depth={3}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!()
+    };
+    // Whitespace handling: the interpolator may normalise around
+    // interpolation slots; the values are what matter.
+    let normalised: String = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert_eq!(normalised, "12 2 3");
+}
+
+/// A mutually-recursive computed-default cycle (`a <= {b}` and
+/// `b <= {a}`) emits diagnostics rather than hanging the resolver.
+/// The topological-pass round counter caps iteration; remaining
+/// unresolved computeds get the diagnostic text-node treatment.
+#[test]
+fn cyclic_computed_defaults_emit_diagnostics() {
+    let src = r#"component Loop(a: int <= {b}, b: int <= {a}) = {
+  <text>after</text>
+}
+<Loop/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let diagnostics: Vec<&String> = nodes
+        .iter()
+        .filter_map(|n| match n {
+            Node::Text { content, .. } if content.contains("[prism]") => Some(content),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        diagnostics.len() == 2,
+        "expected one diagnostic per cycle member, got {diagnostics:?}"
+    );
+    // Each diagnostic should name its own prop.
+    let messages: Vec<&str> = diagnostics.iter().map(|s| s.as_str()).collect();
+    assert!(messages.iter().any(|m| m.contains("`a <=")));
+    assert!(messages.iter().any(|m| m.contains("`b <=")));
+}
+
+/// A literal-default and a computed-default on the same component
+/// coexist — the literal resolves immediately, the computed reads
+/// it during the topological pass.
+#[test]
+fn literal_and_computed_defaults_coexist() {
+    let src = r#"component Box(base: int = 10, padded: int <= {base + 5}) = {
+  <text>{padded}</text>
+}
+<Box/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!()
+    };
+    assert_eq!(content, "15");
+}
+
 // ---------- Phase 16: named state-responsive values ----------
 
 /// A host-installed `StateResponsiveValue` named `responsive-accent`

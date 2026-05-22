@@ -179,21 +179,46 @@ NL           ::= newline (after comments stripped)
 These identifiers cannot be used as user identifiers anywhere:
 
 ```
-if  and  or  not  is  has  in
+                                                       // logic / expressions
+if  and  or  not  is  has  in  of
+                                                       // bindings / definitions
 var  let  define  defn  defmacro
-fire  advance  trigger
+                                                       // story actions
+fire  advance  trigger  modify
+                                                       // story blocks
 each  visit  first  then  finally
 after  otherwise  when  match
+                                                       // module system
 import  export
+                                                       // literals
 true  false  nil
+                                                       // live performance
 cast  cue  cohort  location
 broadcast  improv  enroll  as  joins  leaves  enters  exits
 participant
+                                                       // characters (§7)
+type  extends  knowledge  goal  disposition
+mirror  on  meeting  passes  drops  below
+reacts  init  range
+                                                       // stats (§8)
+attribute  axis  pool  stat  node  ability  rank
+mode  curve  milestones  table  interpolate  lookup
+                                                       // axis modes
+xp_curve  use_tracking  point_buy  milestone
+narrative_trigger  sdk_controlled
+                                                       // reactivity / dynamics (§9)
+generator  scene  loop  wait  until  at  every
+yield  spawn  cancel  await  return  with_chance
+random  compose  pattern  bark  from
+                                                       // goal knobs
+priority  active_when  completes_when  fails_when
+drives  on_complete  on_fail
 ```
 
 `is not`, `has not`, `each visit`, `participant joins`,
-`participant leaves`, `participant enters`, `participant exits` are
-multi-word lexical tokens; the lexer joins them with look-ahead.
+`participant leaves`, `participant enters`, `participant exits`,
+`passes`, `drops below`, and `wait until` are multi-word lexical
+tokens; the lexer joins them with look-ahead.
 
 ### 3.2 Speaker vs identifier
 
@@ -237,9 +262,13 @@ determines which top-level items are legal in the body.
 | `:barks` | bark set | `BarkSection`, declarations, definitions |
 | `:quest` | quest | `QuestStage`, declarations |
 | `:cutscene` | cutscene | `TimecodeBlock`, declarations |
-| `:script` | stage / film script | `Section`, `Scene`, declarations (no choices) |
-| `:film` | film screenplay | `Section`, `Scene`, `TimecodeBlock`, declarations (no choices) |
+| `:script` | stage / film script | `Section`, `SluglineScene`, declarations (no choices) |
+| `:film` | film screenplay | `Section`, `SluglineScene`, `TimecodeBlock`, declarations (no choices) |
 | `:immersive` | live immersive theatre | every Body item including `ParticipantLifecycle`, `LocationEvent`, `Broadcast` |
+| `:character` | character archetype | `CharacterBody` items only (§7) |
+| `:type` | character-type definition | `TypeBody` items only (§7.1) |
+| `:stats` | stats sheet | `StatsBody` items only (§8) |
+| `:tree` | progression tree | `TreeNodeDecl`+ only (§8.4) |
 | `:typewriter` | typewriter profile | property-only (no body) |
 | `:module` | shared module | declarations only (no sections) |
 
@@ -257,7 +286,7 @@ stored as free-form metadata for tooling.
 ```
 TopLevelItem
   ::= Section
-    | Scene                                         // :script, :film, :immersive
+    | SluglineScene                                 // :script, :film, :immersive
     | BarkSection                                   // :barks
     | QuestStage                                    // :quest
     | TimecodeBlock                                 // :cutscene, :film
@@ -268,6 +297,13 @@ TopLevelItem
     | ParticipantLifecycle                          // :immersive
     | LocationEvent                                 // :immersive
     | BroadcastBlock                                // :immersive
+    | CharacterBodyItem                             // :character (§7)
+    | TypeBodyItem                                  // :type (§7.1)
+    | StatsBodyItem                                 // :stats (§8)
+    | TreeNodeDecl                                  // :tree (§8.4)
+    | GeneratorDecl                                 // any (§9.3)
+    | SceneCoroutineDecl                            // any (§9.4)
+    | ComposeDecl                                   // any (§9.6)
     | Declaration
     | Definition
     | Import
@@ -472,10 +508,10 @@ Scopes compose with `and` (intersection) and `but` (set difference).
 A bare `broadcast :all` block is identical in semantics to its body
 without the wrapper; it exists for readability.
 
-### 5.9 Scene (for :script and :film archetypes)
+### 5.9 Slugline scene (for :script and :film archetypes)
 
 ```
-Scene
+SluglineScene
   ::= '##' , SceneSlug , STRING? , Modifier* , NL
   , Docstring?
   , Content*
@@ -485,10 +521,18 @@ SceneSlug
     | IDENT , '.' , IDENT                           // act_2.scene_3
 ```
 
-A `Scene` is a sub-section under a `:script` or `:film` archetype. The
-slug carries the screenplay convention (act/scene numbering); the
-optional `STRING` is the slugline (`"INT. HARBOR — LATE AFTERNOON"`).
-Scenes accept the same `Content` items as sections except `Choice`.
+A `SluglineScene` is a sub-section under a `:script` or `:film`
+archetype. The slug carries the screenplay convention (act/scene
+numbering); the optional `STRING` is the slugline (`"INT. HARBOR — LATE
+AFTERNOON"`). Slugline scenes accept the same `Content` items as
+sections except `Choice`.
+
+> **Disambiguation.** The keyword `scene` is reserved for the
+> *reactive scene* coroutine — see [§18.2](#182-scene-coroutine) and
+> [design §9.4](loom-design.md#94-scenes). A slugline scene has no
+> keyword; it is introduced by `##` and lives only inside `:script` /
+> `:film` document bodies. The two never collide syntactically and
+> never share a non-terminal.
 
 ### 5.10 The `as <participant>` modifier
 
@@ -1343,7 +1387,7 @@ This table is the parser's source of truth for "what can come next".
 |---|---|
 | `Header` | `Property` (one level deeper) |
 | `Section` | `Content` (any kind) |
-| `Scene` | `Content` (no `Choice` under `:script` / `:film`) |
+| `SluglineScene` | `Content` (no `Choice` under `:script` / `:film`) |
 | `Dialogue` (speaker line) | `TextLine` (text only); or `FlavorLine` under `(improv …)` |
 | `Choice` | `Content` (any kind) |
 | `EachVisit` | `VisitBranch` only |
@@ -1356,6 +1400,26 @@ This table is the parser's source of truth for "what can come next".
 | `ParticipantLifecycle` (`when participant joins/leaves`) | `Content` |
 | `LocationEvent` (`when participant enters/exits @LOC`) | `Content` |
 | `BroadcastBlock` | `Content` |
+| `:character` document body | `CharacterBodyItem` (§16) |
+| `:type` document body | `TypeBodyItem` (§16) |
+| `:stats` document body | `StatsBodyItem` (§17) |
+| `:tree` document body | `TreeNodeDecl` (§17.5) |
+| `KnowledgeBlock` | `KnowledgeField` only |
+| `GoalDecl` | `GoalKnob` only |
+| `DispositionBlock` | `DispositionItem` only |
+| `HookDecl` (`on …`) | `Content` |
+| `SlotBlock` (named slot) | `SlotProperty` only |
+| `AxisDecl` | `AxisProperty` only |
+| `PoolDecl` | `PoolProperty` only |
+| `StatDecl` (lookup form) | `LookupProperty` only |
+| `TreeNodeDecl` | `TreeNodeProperty` only |
+| `GeneratorDecl` | `GeneratorItem` (§18.1) |
+| `SceneCoroutineDecl` | `SceneState` (§18.2) |
+| `SceneState` | `SceneStateItem` |
+| `LoopBlock` | `GeneratorItem` |
+| `ComposeDecl` | `PatternBlock` |
+| `PatternBlock` | `PatternArm` only |
+| `YieldStmt` (body form) | `Content` |
 
 A line whose indent says "I am a child of X" but whose class is not in
 that row is a parse error (`unexpected-child`) with a helpful message
@@ -1379,6 +1443,16 @@ rejects them as hard errors.
 | Speaker label that lowercases to a reserved KW | Same. `IF` as a speaker name parses, but is rejected. |
 | Tunnel call returning to a sticky hub | The hub already loops; the tunnel return is redundant and confusing. Warn, don't error. |
 | Mutation of a role (`~ $SPEAKER := …`) | Roles are read-only bindings; mutate fields, not the role. |
+| `yield` outside a generator/scene body | `yield` is a coroutine primitive. Use a story line instead. |
+| `wait` / `every` / `at` outside a coroutine | Same — they yield control to the scheduler. |
+| `return` outside a scene body | Only scenes return values. Use `<-` for conversation returns. |
+| Knowledge field of a non-closed type (e.g. `dict<…>`) | Knowledge stays scannable; use a `var` for richer payloads. |
+| Arithmetic on a knowledge field (`$c.<k> += 1`) | Knowledge isn't a counter — declare a `var`. |
+| `GoalDecl` without `priority` | Resolver needs a tie-break key; explicit is better than implicit. |
+| Disposition `mirror` cycle | A mirrors B mirrors A creates a feedback loop; resolver refuses. |
+| Tree node `requires` cycle | DAG required for topo-sort of unlocks. |
+| `stat X = expr` followed by indented body | Pick one form; mixed shape is `stat-form-ambiguous`. |
+| Reactive `let` rebind in the same scope | Reactive bindings are write-once. Use `var` + `:=`. |
 
 ---
 
@@ -1490,7 +1564,559 @@ when participant enters @BELL_TOWER          # LocationEvent
 
 ---
 
-## 16. What this grammar deliberately doesn't specify
+## 16. Character archetype
+
+A `:character` document declares one character. Its body is a sequence
+of `CharacterBodyItem`s — slot blocks, knowledge/goal/disposition
+blocks, hooks, char-scoped generators. A `:type` document declares a
+*type* (a subtype of `@character`, `@humanoid`, etc.) whose fields are
+inherited by characters that name it via `.type`. See
+[design §4](loom-design.md#4-characters).
+
+```
+CharacterBody
+  ::= CharacterBodyItem*
+
+CharacterBodyItem
+  ::= SlotBlock
+    | KnowledgeBlock
+    | GoalDecl
+    | DispositionBlock
+    | HookDecl
+    | GeneratorDecl                                   // §18.1
+    | SceneCoroutineDecl                              // §18.2
+    | LetBinding
+    | Property                                        // .label / .voice / .home / .unique / .type / .bio / .stats
+    | Comment
+```
+
+A `:type` document's body uses the same shape with the additional
+`FieldDecl` and `SlotRequirement` items, and forbids `KnowledgeBlock`
+/ `GoalDecl` / `HookDecl` (those belong on instances, not types):
+
+```
+TypeBody
+  ::= TypeBodyItem*
+
+TypeBodyItem
+  ::= FieldDecl
+    | SlotRequirement
+    | Property                                        // .extends @parent
+    | Comment
+
+FieldDecl
+  ::= '.field' , IDENT , ':' , TypeExpr , ('=' , Expr)? , 'required'? , NL
+
+SlotRequirement
+  ::= '.slot' , IDENT , (':' , 'required')? , NL
+
+TypeExpr
+  ::= IDENT                                          // int, float, bool, string
+    | 'enum' , '(' , StaticRef (',' , StaticRef)* , ')'
+    | 'list' , '<' , TypeExpr , '>'
+    | TypeExpr , '?'                                 // nilable
+```
+
+### 16.1 Slot block
+
+```
+SlotBlock
+  ::= IDENT , DictLiteral , NL                       // slot name + literal payload
+    | IDENT , NL                                     // slot name only (defaults)
+    , (INDENT , SlotProperty+ , DEDENT)?
+
+SlotProperty
+  ::= '.' , IDENT , PropertyValue? , NL              // shape per slot registry
+
+DictLiteral
+  ::= '{' , DictEntry (',' , DictEntry)* '}'
+
+DictEntry
+  ::= IDENT , ':' , (Expr | DictLiteral | ListLiteral)
+```
+
+Slot names are validated against the slot registry at parse time; an
+unknown slot is `unknown-slot` (error). The contributing layer
+(stats / voice / inventory / etc.) registers a slot schema, which
+parses the slot's `SlotProperty` set.
+
+### 16.2 Knowledge block
+
+```
+KnowledgeBlock
+  ::= 'knowledge' , NL
+  , INDENT , KnowledgeField+ , DEDENT
+
+KnowledgeField
+  ::= IDENT , ':' , KnowledgeType , ('=' , Expr)? , NL
+
+KnowledgeType
+  ::= 'bool'
+    | 'int'
+    | 'float'
+    | 'string'
+    | '{' , IDENT (',' , IDENT)* , '}'               // closed enum
+    | 'list' , '<' , KnowledgeType , '>'
+    | KnowledgeType , '?'                            // nilable
+```
+
+The narrow type set is intentional — knowledge is "what this character
+knows," not a general scratchpad. Anything richer goes in a `var` or
+a slot. See [design §4.5](loom-design.md#45-knowledge).
+
+### 16.3 Goal declaration
+
+```
+GoalDecl
+  ::= 'goal' , IDENT , NL
+  , INDENT , GoalKnob+ , DEDENT
+
+GoalKnob
+  ::= 'priority'       , '=' , NUMBER          , NL
+    | 'active_when'    , '=' , Expr            , NL
+    | 'completes_when' , '=' , Expr            , NL
+    | 'fails_when'     , '=' , Expr            , NL
+    | 'drives'         , 'generator' , IDENT   , NL
+    | 'on_complete'    , ActionChain           , NL
+    | 'on_fail'        , ActionChain           , NL
+
+ActionChain
+  ::= (Action | Divert) (';' , (Action | Divert))*
+```
+
+`priority` is required; everything else is optional. A goal with no
+`active_when` is always-eligible; a goal with no `completes_when` /
+`fails_when` is terminal-by-imperative-call only (see design §4.6
+"Imperative control"). See [design §4.6](loom-design.md#46-goals).
+
+### 16.4 Disposition block
+
+```
+DispositionBlock
+  ::= 'disposition' , DispositionTarget , NL
+  , INDENT , DispositionItem+ , DEDENT
+
+DispositionTarget
+  ::= ResolveRef                                     // $PLAYER, $alice
+    | StaticRef                                      // @everyone (bulk)
+
+DispositionItem
+  ::= DispositionAxis
+    | DispositionReact
+
+DispositionAxis
+  ::= IDENT , '=' , NumRange , (',' , 'init' , NUMBER)? , (',' , MirrorClause)? , NL
+
+NumRange
+  ::= NUMBER , '..' , NUMBER                         // 0..100, -1..1, etc.
+
+MirrorClause
+  ::= 'mirror' , ResolveRef                          // mirror $PLAYER.disposition.trust
+
+DispositionReact
+  ::= 'reacts' , Expr , '->' , IDENT , NL            // produces a runtime tag
+```
+
+A `DispositionAxis` declares a single numeric channel with bounds and
+init. A `DispositionReact` declares a tag the runtime emits when the
+expression is true; the tag is then queryable via
+`$X.disposition($Y).is(tag)`. See
+[design §4.3](loom-design.md#43-disposition).
+
+### 16.5 Hook declaration
+
+```
+HookDecl
+  ::= 'on' , HookPattern , NL
+  , INDENT , Content* , DEDENT
+
+HookPattern
+  ::= 'meeting' , ResolveRef                         // first-contact
+    | Expr , 'passes' , Expr                         // upward crossing
+    | Expr , 'drops' , 'below' , Expr                // downward crossing
+    | Expr , '==' , Expr                             // edge-triggered equality
+    | Expr , 'is' , IDENT                            // tag predicate
+    | 'cue' , IDENT                                  // crew bus
+    | 'event' , IDENT                                // user `fire X`
+    | ResolveRef , 'enters' , StaticRef              // location enter
+    | ResolveRef , 'exits' , StaticRef               // location exit
+    | RegisteredHookPattern                          // registry extension
+```
+
+A `HookPattern` whose head matches an extension-registered predicate
+is dispatched to the registry's parser for its tail. Unknown patterns
+are `unknown-hook-pred` (error). See
+[design §4.8](loom-design.md#48-hooks).
+
+---
+
+## 17. Stats archetype
+
+A `:stats` document is a stats sheet — a sharable bundle of
+attributes, axes, pools, and stats that characters reference via the
+`stats` slot. A `:tree` document declares a progression tree (DAG of
+unlockable nodes). See [design §5](loom-design.md#5-stats--progression).
+
+```
+StatsBody
+  ::= StatsBodyItem*
+
+StatsBodyItem
+  ::= AttributeDecl
+    | AxisDecl
+    | PoolDecl
+    | StatDecl
+    | LetBinding
+    | Comment
+```
+
+### 17.1 Attribute declaration
+
+```
+AttributeDecl
+  ::= 'attribute' , IDENT , '=' , NUMBER , (',' , AttributeMod)* , NL
+
+AttributeMod
+  ::= 'range' , NumRange
+    | 'min'   , NUMBER
+    | 'max'   , NUMBER
+```
+
+### 17.2 Axis declaration
+
+```
+AxisDecl
+  ::= 'axis' , IDENT , NL
+  , INDENT , AxisProperty+ , DEDENT
+
+AxisProperty
+  ::= 'mode'        , AxisMode                      , NL
+    | 'curve'       , Expr                           , NL
+    | 'on'          , 'use' , StaticRef              , NL   // use_tracking
+    | 'on'          , 'advance' , ActionChain        , NL
+    | 'buy'         , 'from' , IDENT                 , NL   // point_buy
+    | 'milestones'  , NL , INDENT , MilestoneEntry+ , DEDENT
+    | 'advance'     , 'on' , 'event' , IDENT         , NL   // narrative_trigger
+    | 'handler'     , StaticRef                      , NL   // sdk_controlled
+
+AxisMode
+  ::= 'xp_curve' | 'use_tracking' | 'point_buy'
+    | 'milestone' | 'narrative_trigger' | 'sdk_controlled'
+    | IDENT                                          // open extension
+
+MilestoneEntry
+  ::= NUMBER , ':' , Expr , NL                       // 1: played(intro)
+```
+
+### 17.3 Pool declaration
+
+```
+PoolDecl
+  ::= 'pool' , IDENT , NL
+  , INDENT , PoolProperty+ , DEDENT
+
+PoolProperty
+  ::= 'max'    , '=' , Expr                          , NL
+    | 'min'    , '=' , Expr                          , NL
+    | 'regen'  , Expr , ('/' , Duration)? , ('when' , Expr)? , NL
+    | 'init'   , '=' , Expr                          , NL
+```
+
+### 17.4 Stat declaration
+
+```
+StatDecl
+  ::= 'stat' , IDENT , '=' , Expr                    , NL   // expression stat
+    | 'stat' , IDENT , NL                                   // lookup stat (body follows)
+      , INDENT , LookupProperty+ , DEDENT
+    | 'stat' , IDENT , 'pool' , PoolPropertyInline+  , NL   // pool sugar
+    | 'stat' , IDENT , 'derived' , 'from' , DerivedFrom , NL
+      , INDENT , 'formula' , Expr , NL , DEDENT
+
+LookupProperty
+  ::= 'lookup'     , Expr                            , NL
+    | 'table'      , DictLiteral                     , NL
+    | 'interpolate', IDENT                           , NL   // linear, step, cubic
+
+PoolPropertyInline
+  ::= 'max=' , Expr
+    | 'regen' , Expr , ('/' , Duration)?
+    | 'when' , 'not' , Expr
+
+DerivedFrom
+  ::= ResolveRef (',' , ResolveRef)*
+```
+
+The four `stat` forms are distinguished by the token after the name:
+literal `=` → expression form; bare NL → lookup form; `pool` → pool
+sugar; `derived` → derived form. See
+[design §5.3](loom-design.md#53-stats--four-types).
+
+### 17.5 Tree node declaration
+
+A `:tree` document body is a sequence of `TreeNodeDecl`s.
+
+```
+TreeNodeDecl
+  ::= 'node' , IDENT , NL
+  , INDENT , TreeNodeProperty+ , DEDENT
+
+TreeNodeProperty
+  ::= 'cost'     , DictLiteral                        , NL
+    | 'requires' , Expr                               , NL
+    | 'effect'   , TreeEffect                         , NL
+    | 'rank'     , NUMBER                             , NL
+
+TreeEffect
+  ::= 'stat'      , '(' , IDENT , ')' , StatEffectOp , NUMBER
+    | 'attribute' , '(' , IDENT , ')' , StatEffectOp , NUMBER
+    | 'var'       , '(' , IDENT , ')' , ':=' , Expr
+    | 'pool'      , '(' , IDENT , ')' , 'grant'
+    | 'ability'   , StaticRef
+    | 'luau'      , StaticRef                          // user-registered
+
+StatEffectOp
+  ::= '+' | '-'                                       // add/subtract by NUMBER
+    | '*' | '/'                                       // multiply/divide by NUMBER
+```
+
+A `TreeNodeDecl`'s `requires` may reference other nodes by bare name
+(resolved within the same `:tree` document) or `@`-ref nodes in
+sibling trees.
+
+### 17.6 Modify action
+
+The runtime stat-adjustment action, usable in any `ActionLine`:
+
+```
+ModifyAction
+  ::= 'modify' , ModifyTarget , ModifyOp , NUMBER , ModifyClause* , NL
+
+ModifyTarget
+  ::= ResolveRef                                      // $player.damage
+
+ModifyOp
+  ::= '+' | '-' | '*' | '/'                           // add, subtract, multiply, divide
+    | 'add' | 'multiply'                              // explicit form
+
+ModifyClause
+  ::= 'for'    , Duration                             // bounded duration
+    | 'while'  , Expr                                 // condition-bound
+    | 'until'  , Expr                                 // until predicate true
+    | 'stack'  , 'unique' | 'add' | 'replace'         // stack policy
+```
+
+Modifiers compose; the runtime resolves the effective value on read.
+See [design §5.5](loom-design.md#55-modifiers).
+
+---
+
+## 18. Reactivity declarations
+
+The constructs that turn Loom from a static branching tree into a
+living system. See [design §9](loom-design.md#9-reactivity--dynamics).
+
+### 18.1 Generator declaration
+
+```
+GeneratorDecl
+  ::= 'generator' , IDENT , ParamList? , NL
+  , INDENT , GeneratorBody , DEDENT
+
+GeneratorBody
+  ::= GeneratorItem+
+
+GeneratorItem
+  ::= LoopBlock
+    | TimeStmt
+    | YieldStmt
+    | WaitStmt
+    | When                                           // event-driven (§7.7)
+    | After                                          // condition-gated (§7.7)
+    | Otherwise                                      // (§7.7)
+    | Match                                          // (§7.7)
+    | ActionLine
+    | LetBinding
+    | Content                                        // dialogue/choice from inside the loop body
+
+LoopBlock
+  ::= 'loop' , LoopBound? , NL
+  , INDENT , GeneratorItem+ , DEDENT
+
+LoopBound
+  ::= NUMBER                                         // loop 5
+    | 'forever'                                      // explicit form; absence implies forever
+
+TimeStmt
+  ::= 'at'    , TimeSpec                             , NL    // at 6am
+    | 'every' , Duration                             , NL    // every 15m
+    | 'every' , 'random' , '(' , Duration , ',' , Duration , ')' , NL
+
+WaitStmt
+  ::= 'wait'  , Duration                             , NL    // wait 30s
+    | 'wait'  , 'until' , Expr                       , NL    // gate on condition
+
+YieldStmt
+  ::= 'yield' , YieldBody                            , NL
+    | 'yield' , YieldBody , NL , INDENT , Content* , DEDENT
+
+YieldBody
+  ::= 'bark' , 'from' , StaticRef                    // pick from a bark set
+    | 'with_chance' , '(' , NUMBER , ')'             // probabilistic yield
+    | (-NL)*                                         // free content (see body indent form)
+
+TimeSpec
+  ::= NUMBER , ('am' | 'pm')                         // 6am, 11pm
+    | NUMBER , ':' , NUMBER                          // 14:30 (24-hour)
+```
+
+`If` lives inside the existing block grammar as a `Guard` clause on
+sections, diverts, and choices (§6.1, §7.3, §7.4) — generator items
+gate via `When` / `After` / `Match` rather than a bare `if`, which
+keeps the control flow visually obvious at scan time.
+
+Generators live at the top level or inside a `:character` body.
+Generators are started by `spawn <name>` (§18.5) or by the runtime at
+world boot.
+
+### 18.2 Scene coroutine
+
+```
+SceneCoroutineDecl
+  ::= 'scene' , IDENT , ParamList? , NL
+  , INDENT , SceneState+ , DEDENT
+
+SceneState
+  ::= IDENT , NL                                     // state label
+  , INDENT , SceneStateItem+ , DEDENT
+
+SceneStateItem
+  ::= GeneratorItem                                  // reuse the generator vocabulary
+    | ReturnStmt
+
+ReturnStmt
+  ::= 'return' , Expr?                               , NL
+```
+
+The first `SceneState` is the entry state. Transitions are via
+`-> <state_label>` diverts inside the body — they reuse the existing
+`Divert` rule (§7.4 / future §10.4).
+
+A scene compiles to a coroutine; one scene runs at a time per scene
+invocation. See [design §9.4](loom-design.md#94-scenes).
+
+> **Naming.** Yes, `scene` is also the screenplay slugline (§5.9). The
+> two never share syntactic context — sluglines are sub-section
+> headers introduced by `##`, scene coroutines are top-level
+> declarations introduced by the `scene` keyword. The disambiguation
+> falls out of position.
+
+### 18.3 Compose declaration
+
+A named context-free grammar with conditional patterns. The output is
+a string suitable for splicing into dialogue.
+
+```
+ComposeDecl
+  ::= 'compose' , IDENT , NL
+  , INDENT , ComposeBody , DEDENT
+
+ComposeBody
+  ::= PatternBlock+
+
+PatternBlock
+  ::= 'pattern' , ResolveRef? , NL
+  , INDENT , PatternArm+ , DEDENT
+
+PatternArm
+  ::= ArmDiscriminant , ':' , STRING                 , NL
+    | ArmDiscriminant , ':' , STRING , (',' , 'weight' , ':' , NUMBER)? , NL
+
+ArmDiscriminant
+  ::= IDENT
+    | NUMBER
+    | NumRange                                        // e.g. 1..5
+    | '_'                                             // wildcard
+```
+
+A `compose <name>` is invoked from text via `${compose <name> <args>}`
+inline eval; the grammar is the existing `InlineEval` form
+(§12 / future §15). See
+[design §9.6](loom-design.md#96-procedural-text).
+
+### 18.4 List comprehension
+
+Added to the expression atom grammar (§10):
+
+```
+ListComprehension
+  ::= '[' , Expr , 'for' , IDENT , 'in' , Expr , ('where' , Expr)? , ']'
+```
+
+The comprehension expression is iterated lazily by the resolver until
+materialized (by an aggregate call like `count(...)` / `any(...)` / a
+field access on the result, or by `let`-binding). See
+[design §9.5](loom-design.md#95-list-comprehensions).
+
+Aggregate built-ins added to the resolve registry:
+
+```
+Aggregate
+  ::= ('any' | 'all' | 'count' | 'min' | 'max' | 'closest' | 'first' | 'last')
+    , '(' , Expr , ')'
+```
+
+### 18.5 Spawn / cancel / await actions
+
+```
+SpawnAction
+  ::= 'spawn' , SpawnTarget                          , NL
+    | 'let' , IDENT , '=' , 'spawn' , SpawnTarget    , NL    // capture handle
+
+SpawnTarget
+  ::= IDENT , '(' , ArgList? , ')'                   // generator or scene call
+    | IDENT                                          // shorthand for no-arg
+
+CancelAction
+  ::= 'cancel' , CancelTarget                        , NL
+
+CancelTarget
+  ::= ResolveRef                                     // $handle
+    | StaticRef                                      // @scene_id
+    | IDENT                                          // bare generator/scene name
+
+AwaitExpr
+  ::= 'await' , Expr                                 // expression form
+    | 'run'   , IDENT , '(' , ArgList? , ')'         // await-shorthand: `let r = run foo()`
+```
+
+`spawn` returns a *handle* (assignable via `let h = spawn ...`).
+`cancel <h>` halts the spawned coroutine and runs no `on_complete` /
+`on_fail`. `await` blocks the current generator/scene until the
+target's `return` value resolves. See
+[design §9.7](loom-design.md#97-spawning-and-joining).
+
+### 18.6 Reactive `let` (clarification)
+
+`let` is already in the expression grammar as `LetBinding`. The
+reactive substrate clarifies the runtime contract:
+
+- `let x = $expr` creates a `Memo<T>` keyed on the binding name.
+- Re-binding (`let x = ...` twice in the same scope) is a parse
+  error (`let-rebind`); use `var x ; ~ x := ...` if you want
+  mutability.
+- A `let` inside a generator / scene body re-runs the binding's RHS
+  whenever any of its `$`-references are mutated.
+- A `let` at module scope behaves identically — Loom does not
+  distinguish "global reactive" from "local reactive."
+
+The compiler lowers reactive `let` to
+`prism-core::reactive::Memo<T>`. See
+[design §9.1](loom-design.md#91-reactive-let).
+
+---
+
+## 19. What this grammar deliberately doesn't specify
 
 - **Whitespace inside expression operators.** Spaces around `>=`, `:=`,
   `==`, etc. are always legal and stripped. The lexer normalizes.
@@ -1507,7 +2133,7 @@ when participant enters @BELL_TOWER          # LocationEvent
 
 ---
 
-## 17. Diagnostics & lint catalog
+## 20. Diagnostics & lint catalog
 
 The parser emits diagnostics with these IDs. Lint rules (warnings)
 above the line; hard errors below.
@@ -1546,12 +2172,48 @@ above the line; hard errors below.
 | `participant-scope-leaked` | warning | `as participant` section diverts to a show-global section without explicit rescoping. |
 | `broadcast-empty-scope` | warning | `broadcast :cohort(...) but :all` resolves to no participants at parse time. |
 | `improv-without-duration` | info | `(improv …)` with no `.duration` will hold indefinitely until manually advanced. |
+| `unknown-slot` | error | Slot name on a character is not in the slot registry. |
+| `unknown-hook-pred` | error | `on <pattern>` head not in the hook-pattern registry. |
+| `unknown-axis` | error | `$x.<axis>` resolves to no declared axis on the entity's stats sheet. |
+| `unknown-pool` | error | `$x.<pool>` resolves to no declared pool. |
+| `unknown-stat` | error | `$x.<stat>` resolves to no declared stat. |
+| `unknown-attribute` | error | `$x.<attr>` resolves to no declared attribute. |
+| `unknown-goal` | error | `$x.pursuing(<g>)` / `$x.goal(<g>)` references an undeclared goal. |
+| `unknown-generator` | error | `spawn <g>` / `cancel <g>` references an undeclared generator. |
+| `unknown-scene` | error | `spawn <s>` / `run <s>` / `cancel <s>` references an undeclared scene. |
+| `unknown-tree-node` | error | `node(<n>)` predicate or `requires` clause references an undeclared tree node. |
+| `unknown-compose` | error | `${compose <name> …}` invokes an undeclared compose. |
+| `goal-no-priority` | error | `GoalDecl` body has no `priority` knob. |
+| `goal-conflicting-knobs` | warning | Both `completes_when` and `on_complete` reference the same expression — likely a copy-paste typo. |
+| `disposition-axis-bounds` | error | `init N` falls outside the declared `range`. |
+| `disposition-mirror-cycle` | error | Two dispositions `mirror` each other in a cycle. |
+| `axis-mode-missing` | error | `AxisDecl` body has no `mode` knob. |
+| `axis-curve-required` | error | `mode xp_curve` / `mode use_tracking` decl has no `curve` expression. |
+| `pool-max-required` | error | `PoolDecl` body has no `max` knob. |
+| `stat-form-ambiguous` | error | A `stat` decl mixes expression and body forms in one declaration. |
+| `tree-cycle` | error | Tree node `requires` chain forms a cycle. |
+| `tree-rank-overflow` | warning | `rank N` exceeds the declared `max_rank` on the node template. |
+| `modify-stack-conflict` | warning | Two `modify` actions on the same target with conflicting `stack` policies. |
+| `generator-yield-outside` | error | `yield` appears outside a `GeneratorDecl` body. |
+| `wait-outside-coroutine` | error | `wait` / `every` / `at` appears outside a generator or scene. |
+| `scene-no-states` | error | `SceneCoroutineDecl` body has no `SceneState`. |
+| `scene-unreachable-state` | warning | A `SceneState` is declared but never reached by any `->` divert. |
+| `scene-return-outside` | error | `return` appears outside a scene body. |
+| `spawn-handle-discarded` | info | `spawn …` result is not bound to a `let` and the target has a non-nil `return` type. |
+| `cancel-unknown-handle` | error | `cancel $h` references an unbound resolve. |
+| `compose-arm-overlap` | warning | Two `pattern` arms match the same discriminant. |
+| `compose-no-default` | info | A `compose` has no `_` arm and a non-exhaustive arm set. |
+| `let-rebind` | error | `let x = …` declared twice in the same scope. |
+| `knowledge-bad-type` | error | `KnowledgeField` uses a type outside the closed set (`bool` / `int` / `float` / `string` / closed enum / `list<T>` / nilable). |
+| `knowledge-arithmetic` | error | Arithmetic op on a knowledge field (only `:=` / `+=` / `-=` on lists are legal). |
+| `hook-trigger-unmatched` | warning | `passes` / `drops below` predicate has no upper expression (e.g. `on $x passes` missing the threshold). |
+| `list-comprehension-bad-var` | error | List comprehension variable shadows an outer `let` binding. |
 
 These are stable IDs — tooling can suppress them by ID.
 
 ---
 
-## 18. Conformance
+## 21. Conformance
 
 A Loom parser is **conformant** if, for every `.loom` file in
 `tests/golden/`:
