@@ -5378,3 +5378,788 @@ fn macroless_document_still_lowers_unchanged() {
     };
     assert_eq!(content, "plain");
 }
+
+// ─── Phase 12 — capabilities integration tests ────────────────────
+
+/// A component declaring `requires clipboard: Clipboard` reads a
+/// provided capability through the same `{clipboard.kind}` dotted
+/// interpolation that any other binding would use. The host
+/// installs the capability via `LowerScope::with_capability`.
+#[test]
+fn component_requires_capability_binds_for_interpolation() {
+    let src = r#"component Reader() = {
+  requires clipboard: Clipboard
+  <text>{clipboard.kind}</text>
+}
+
+<Reader/>"#;
+    let (document, errs) = parse(src);
+    assert!(errs.is_empty(), "parse errs: {errs:?}");
+    let scope = LowerScope::new()
+        .with_capability("clipboard", serde_json::json!({ "kind": "system-mock" }));
+    let nodes = lower_document_with_scope(&document, &scope);
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text, got {:?}", nodes[0])
+    };
+    assert_eq!(content, "system-mock");
+}
+
+/// A missing **required** capability surfaces a leading
+/// diagnostic text node so the author sees the omission. The
+/// component body still lowers (graceful — Phase 17 upgrades to
+/// hard parse-time failure once `prism-cli` lint ships).
+#[test]
+fn component_missing_required_capability_emits_diagnostic() {
+    let src = r#"component Reader() = {
+  requires clipboard: Clipboard
+  <text>body</text>
+}
+
+<Reader/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    // First node is the diagnostic; second is the body.
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected diagnostic text, got {:?}", nodes[0])
+    };
+    assert!(
+        content.contains("clipboard"),
+        "diagnostic missing name: {content}"
+    );
+    assert!(content.contains("not provided"));
+}
+
+/// An optional capability (`name: Type?`) that the host didn't
+/// provide binds to `null` rather than firing a diagnostic. The
+/// body can guard with `{name == nil}` / `?.` (resolution shapes
+/// arrive in later phases).
+#[test]
+fn component_optional_capability_binds_null_when_missing() {
+    let src = r#"component Sharer() = {
+  requires network: Network?
+  <text>{network}</text>
+}
+
+<Sharer/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    // No diagnostic should fire; the `{network}` interpolation
+    // resolves to `null` which stringifies to empty text.
+    // The body emits exactly the `<text>` child even though
+    // it's empty content.
+    assert!(
+        nodes.iter().all(|n| match n {
+            Node::Text { content, .. } => !content.contains("not provided"),
+            _ => true,
+        }),
+        "expected no diagnostic; got {nodes:?}"
+    );
+}
+
+/// A test can install a fake capability that exercises the same
+/// scope-binding path the production host uses — the canonical
+/// motivation for capabilities. Mocking is as cheap as calling
+/// `with_capability` again.
+#[test]
+fn capability_mock_overrides_system_capability() {
+    let src = r#"component Reader() = {
+  requires clipboard: Clipboard
+  <text>{clipboard.kind}</text>
+}
+
+<Reader/>"#;
+    let (document, _) = parse(src);
+    let scope = LowerScope::new()
+        .with_capability("clipboard", serde_json::json!({ "kind": "system" }))
+        .with_capability("clipboard", serde_json::json!({ "kind": "mock" }));
+    let nodes = lower_document_with_scope(&document, &scope);
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!()
+    };
+    assert_eq!(content, "mock");
+}
+
+/// A component that doesn't declare any `requires` body
+/// statements is unaffected by the capability pipeline and pays
+/// no cost (no scope binding mutation, no harvest walk overhead
+/// past the cheap empty-vec check).
+#[test]
+fn component_without_requires_skips_capability_pass() {
+    let src = r#"component Plain() = <text>hi</text>
+
+<Plain/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!()
+    };
+    assert_eq!(content, "hi");
+}
+
+// ---------- Phase 13: discriminated unions + <case Variant(fields)> ----------
+
+/// A `type X = a | b | c` declaration with field-less variants
+/// produces a registered union. Variant references in expressions
+/// evaluate to `{tag: "<name>"}` JSON.
+#[test]
+fn bare_variant_evaluates_to_tag_object() {
+    let src = r#"type Tone = info | success | error
+<text>{tone}</text>"#;
+    let (document, _errs) = parse(src);
+    let scope = LowerScope::new();
+    // Bare interpolation `{tone}` won't resolve because `tone` isn't
+    // bound — the union name doesn't bind `tone` automatically. Test
+    // the registry shape directly.
+    let unions = harvest_type_decls(&document.nodes, None);
+    let tone = unions.get("Tone").expect("Tone missing");
+    assert_eq!(tone.variants.len(), 3);
+    let _ = lower_document_with_scope(&document, &scope);
+}
+
+/// `{info}` interpolation resolves to a variant value when a union
+/// declared `info` as a field-less variant.
+#[test]
+fn variant_constructor_with_no_fields_via_bareword() {
+    let src = r#"type Tone = info | success
+component Toast(t: Tone) = <text>{t.tag}</text>
+<Toast t={info}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text, got {nodes:?}")
+    };
+    assert_eq!(content, "info");
+}
+
+/// `{success(duration=3000)}` builds a variant value with named
+/// kwargs binding into declared fields.
+#[test]
+fn variant_constructor_named_kwargs() {
+    let src = r#"type Tone = info | success(duration: int = 2000)
+component Toast(t: Tone) = <text>{t.duration}</text>
+<Toast t={success(duration=3000)}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text, got {nodes:?}")
+    };
+    assert_eq!(content, "3000");
+}
+
+/// `{success(3000)}` with positional arg binds into the first
+/// declared field. The variant value's `tag` and field both surface.
+#[test]
+fn variant_constructor_positional_args() {
+    let src = r#"type Tone = success(duration: int = 2000)
+component Toast(t: Tone) = <text>{t.duration}</text>
+<Toast t={success(5000)}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text, got {nodes:?}")
+    };
+    assert_eq!(content, "5000");
+}
+
+/// A `<match on={tone}>` with `<case is="success">` arms over a
+/// variant value (constructed via the kwargs ctor) routes to the
+/// matching branch.
+#[test]
+fn match_on_variant_tag() {
+    let src = r#"type Tone = info | success | error
+component Toast(t: Tone) = {
+  <match on={t.tag}>
+    <case is="info"><text>i</text></case>
+    <case is="success"><text>s</text></case>
+    <case is="error"><text>e</text></case>
+  </match>
+}
+<Toast t={success}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text, got {nodes:?}")
+    };
+    assert_eq!(content, "s");
+}
+
+/// `<case error>` (variant-tag form) — no `is=` prefix, the case's
+/// bare attribute names the variant directly. The runtime detects
+/// it via the registered union.
+#[test]
+fn match_on_variant_bare_case() {
+    let src = r#"type Tone = info | error
+component Toast(t: Tone) = {
+  <match on={t}>
+    <case info><text>i</text></case>
+    <case error><text>e</text></case>
+  </match>
+}
+<Toast t={error}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text, got {nodes:?}")
+    };
+    assert_eq!(content, "e");
+}
+
+/// `<case success bind="d">` destructures the first variant field
+/// into the local `d` for the case body's scope.
+#[test]
+fn match_destructures_variant_field_positional() {
+    let src = r#"type Tone = info | success(duration: int = 2000)
+component Toast(t: Tone) = {
+  <match on={t}>
+    <case info><text>none</text></case>
+    <case success bind="d"><text>{d}</text></case>
+  </match>
+}
+<Toast t={success(duration=4000)}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text, got {nodes:?}")
+    };
+    assert_eq!(content, "4000");
+}
+
+/// Positional `bind` with skipped fields (`bind="_, r"`) ignores
+/// the first field and binds the second to `r`.
+#[test]
+fn match_destructures_variant_field_with_skip() {
+    let src = r#"type Tone = error(dismissable: bool = true, retry: int = 0)
+component Toast(t: Tone) = {
+  <match on={t}>
+    <case error bind="_, r"><text>{r}</text></case>
+  </match>
+}
+<Toast t={error(dismissable=false, retry=42)}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text, got {nodes:?}")
+    };
+    assert_eq!(content, "42");
+}
+
+/// Named-form `bind` (`bind="dismissable=d"`) maps a specific field
+/// name to a local binding without depending on field order.
+#[test]
+fn match_destructures_variant_field_named() {
+    let src = r#"type Tone = error(dismissable: bool = true, retry: int = 0)
+component Toast(t: Tone) = {
+  <match on={t}>
+    <case error bind="retry=r"><text>{r}</text></case>
+  </match>
+}
+<Toast t={error(retry=99)}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text, got {nodes:?}")
+    };
+    assert_eq!(content, "99");
+}
+
+/// When `bind=` is absent, every declared field name binds 1:1 as
+/// a local — the magic-naming default. This is the shortest case
+/// shape for a single-field variant.
+#[test]
+fn match_field_names_bind_by_default() {
+    let src = r#"type Tone = success(duration: int = 2000)
+component Toast(t: Tone) = {
+  <match on={t}>
+    <case success><text>{duration}</text></case>
+  </match>
+}
+<Toast t={success(duration=7000)}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text, got {nodes:?}")
+    };
+    assert_eq!(content, "7000");
+}
+
+/// Multiple unions in the same document; variant-name collisions
+/// resolve first-wins (deterministic order). The bare `error`
+/// variant binds to whichever union owns it.
+#[test]
+fn multiple_unions_in_same_document() {
+    let src = r#"type Tone = info | success
+type Severity = warn | critical
+component A(t: Tone) = <text>{t.tag}</text>
+component B(s: Severity) = <text>{s.tag}</text>
+<A t={info}/>
+<B s={warn}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let texts: Vec<String> = nodes
+        .iter()
+        .filter_map(|n| match n {
+            Node::Text { content, .. } => Some(content.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, vec!["info".to_string(), "warn".to_string()]);
+}
+
+/// A variant value carries its field defaults when the call site
+/// omits them — `success` with no args binds `duration` to the
+/// declared default `2000`.
+#[test]
+fn variant_default_fields_fill_when_omitted() {
+    let src = r#"type Tone = success(duration: int = 2000)
+component Toast(t: Tone) = <text>{t.duration}</text>
+<Toast t={success}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text, got {nodes:?}")
+    };
+    assert_eq!(content, "2000");
+}
+
+/// A document with no union declarations leaves the variant
+/// registry empty and pays nothing on the dispatch path. The plain
+/// `<text>` example still renders.
+#[test]
+fn document_without_unions_pays_no_variant_cost() {
+    let src = r#"<text>hello</text>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    assert_eq!(nodes.len(), 1);
+}
+
+// ---------- Phase 16: named state-responsive values ----------
+
+/// A host-installed `StateResponsiveValue` named `responsive-accent`
+/// is fanned out into base + state deltas when a container references
+/// the name through a `style:` attribute.
+#[test]
+fn host_installed_state_responsive_value_expands() {
+    let src = r##"<container style:background="responsive-accent"/>"##;
+    let scope = LowerScope::new().with_state_responsive_value(
+        "responsive-accent",
+        StateResponsiveValue::new("#112233ff")
+            .with_state("hovered", "#445566ff")
+            .with_state("pressed", "#778899ff"),
+    );
+    let nodes = interpret_with_scope(src, &scope).unwrap();
+    let Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    let bg = props.background.expect("bg");
+    assert_eq!(bg.r, 0x11);
+    let hover = props.hover.as_ref().and_then(|h| h.background).unwrap();
+    assert_eq!(hover.r, 0x44);
+    let pressed = props.pressed.as_ref().and_then(|p| p.background).unwrap();
+    assert_eq!(pressed.r, 0x77);
+}
+
+/// A `@color` directive at the top of the source string is harvested
+/// during `interpret_with_scope` and made available to subsequent
+/// `style:` attribute references.
+#[test]
+fn at_directive_in_source_registers_named_value() {
+    let src = r##"@color brand = #ff0000ff | :hovered -> #aa0000ff
+<container style:background="brand"/>"##;
+    let nodes = interpret(src).unwrap();
+    let container = nodes
+        .iter()
+        .find(|n| matches!(n, Node::Container { .. }))
+        .expect("expected a container in the document, got {nodes:?}");
+    let Node::Container { props, .. } = container else {
+        unreachable!()
+    };
+    let bg = props.background.expect("bg");
+    assert_eq!((bg.r, bg.g, bg.b), (0xff, 0x00, 0x00));
+    let hover = props.hover.as_ref().and_then(|h| h.background).unwrap();
+    assert_eq!((hover.r, hover.g, hover.b), (0xaa, 0x00, 0x00));
+}
+
+/// Two containers referencing the same named value share the
+/// expansion — the workspace-reuse motivation in §7.6.
+#[test]
+fn multiple_containers_share_same_named_value() {
+    let src = r##"@color shared = #aabbccff | :hovered -> #ddee00ff
+<container>
+  <container style:background="shared"/>
+  <container style:background="shared"/>
+</container>"##;
+    let nodes = interpret(src).unwrap();
+    let outer = nodes
+        .iter()
+        .find(|n| matches!(n, Node::Container { .. }))
+        .expect("expected outer container");
+    let Node::Container { children, .. } = outer else {
+        unreachable!()
+    };
+    assert_eq!(children.len(), 2);
+    for child in children {
+        let Node::Container { props, .. } = child else {
+            panic!()
+        };
+        let bg = props.background.unwrap();
+        assert_eq!((bg.r, bg.g, bg.b), (0xaa, 0xbb, 0xcc));
+        let hover = props.hover.as_ref().and_then(|h| h.background).unwrap();
+        assert_eq!(hover.g, 0xee);
+    }
+}
+
+/// A `style:background` value that doesn't match any registered
+/// named value falls through to the existing token / hex parser.
+#[test]
+fn unregistered_name_falls_through_to_existing_parser() {
+    let src = r##"<container style:background="#112233ff"/>"##;
+    let scope = LowerScope::new()
+        .with_state_responsive_value("responsive-accent", StateResponsiveValue::new("#aabbccff"));
+    let nodes = interpret_with_scope(src, &scope).unwrap();
+    let Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    // The hex literal won the dispatch — the registry probe missed.
+    let bg = props.background.unwrap();
+    assert_eq!((bg.r, bg.g, bg.b), (0x11, 0x22, 0x33));
+}
+
+/// A document without any state-responsive declarations pays no
+/// cost on the dispatch path — the cheap pre-flight check
+/// (`has_state_responsive_values`) skips the registry probe.
+#[test]
+fn document_without_responsive_values_skips_probe() {
+    let src = r##"<container style:background="#aabbccff"/>"##;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    let bg = props.background.unwrap();
+    assert_eq!((bg.r, bg.g, bg.b), (0xaa, 0xbb, 0xcc));
+}
+
+// ---------- Phase 15: nested-record + pipeline style sugar ----------
+
+/// A `style={ background = #..., radius = 8 }` attribute lowers
+/// both keys onto the container's props via the record fan-out.
+#[test]
+fn style_record_applies_base_properties() {
+    let src = r#"<container style={ background = #112233ff, radius = 8 }/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    let bg = props.background.expect("bg");
+    assert_eq!((bg.r, bg.g, bg.b, bg.a), (0x11, 0x22, 0x33, 0xff));
+    assert_eq!(props.radius.tl, 8.0);
+}
+
+/// A nested `:hovered = { … }` block lands the inner properties on
+/// the matching state-override bucket (here `props.hover`).
+#[test]
+fn style_record_applies_state_overrides() {
+    let src = r#"<container style={
+  background = #112233ff,
+  :hovered = { background = #aabbccff }
+}/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    let hover_bg = props
+        .hover
+        .as_ref()
+        .and_then(|h| h.background)
+        .expect("hover bg");
+    assert_eq!((hover_bg.r, hover_bg.g, hover_bg.b), (0xaa, 0xbb, 0xcc));
+}
+
+/// Three states layered onto one container via the nested record
+/// produce three populated state buckets.
+#[test]
+fn style_record_layers_three_states() {
+    let src = r#"<container style={
+  background = #111111ff,
+  :hovered  = { background = #222222ff },
+  :pressed  = { background = #333333ff },
+  :disabled = { background = #444444ff }
+}/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    assert!(props.background.is_some());
+    assert!(props.hover.as_ref().and_then(|h| h.background).is_some());
+    assert!(props.pressed.as_ref().and_then(|p| p.background).is_some());
+    assert!(props.disabled.as_ref().and_then(|d| d.background).is_some());
+}
+
+/// `style.background={...}` pipeline form lands base + state deltas
+/// for one property in a single attribute.
+#[test]
+fn style_pipeline_form_layers_states_on_one_key() {
+    let src = r#"<container style.background={
+  #111111ff | :hovered -> #222222ff | :pressed -> #333333ff
+}/>"#;
+    let nodes = interpret(src).unwrap();
+    let Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    let bg = props.background.expect("bg");
+    assert_eq!(bg.r, 0x11);
+    let hover = props.hover.as_ref().and_then(|h| h.background).unwrap();
+    assert_eq!(hover.r, 0x22);
+    let pressed = props.pressed.as_ref().and_then(|p| p.background).unwrap();
+    assert_eq!(pressed.r, 0x33);
+}
+
+/// Unicode arrow `→` parses identically to the ASCII `->`.
+#[test]
+fn style_pipeline_unicode_arrow_round_trips() {
+    let src = "<container style.background={\n  #111111ff | :hovered → #222222ff\n}/>";
+    let nodes = interpret(src).unwrap();
+    let Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    let hover = props.hover.as_ref().and_then(|h| h.background).unwrap();
+    assert_eq!(hover.r, 0x22);
+}
+
+/// A pipeline value with no `|` delimiter falls through to the
+/// existing flat `style:<key>="literal"` apply — backwards
+/// compatibility for the historic string-form values.
+#[test]
+fn style_pipeline_with_no_state_falls_through_to_flat_form() {
+    // String-form values keep the existing Wave 9.2 lowering path
+    // intact; the Phase 15 pipeline sugar only activates when an
+    // expression body contains pipe segments.
+    let src = "<container style:background=\"#abcdefff\"/>";
+    let nodes = interpret(src).unwrap();
+    let Node::Container { props, .. } = &nodes[0] else {
+        panic!()
+    };
+    let bg = props.background.expect("bg");
+    assert_eq!((bg.r, bg.g, bg.b), (0xab, 0xcd, 0xef));
+}
+
+// ---------- Phase 14: typed slot signatures + <invoke> ----------
+
+/// A call-site child carrying `slot="X"` lands in a named-slot
+/// bucket; the component body's `<slot name="X"/>` consumer reads
+/// it back.
+#[test]
+fn named_slot_provider_from_call_site() {
+    let src = r#"component Card(title: string) = {
+  <container>
+    <slot name="header"><text>fallback</text></slot>
+    <text>{title}</text>
+  </container>
+}
+<Card title="hi"><text slot="header">my header</text></Card>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    // The container's first child is the named-slot content
+    // (`my header`), and its second is the title (`hi`).
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!("expected container, got {nodes:?}")
+    };
+    assert_eq!(children.len(), 2);
+    let Node::Text { content, .. } = &children[0] else {
+        panic!("expected text, got {:?}", children[0])
+    };
+    assert_eq!(content, "my header");
+    let Node::Text { content, .. } = &children[1] else {
+        panic!("expected text, got {:?}", children[1])
+    };
+    assert_eq!(content, "hi");
+}
+
+/// When no provider is given for a named slot, the consumer's own
+/// fallback children render. The fallback path is unchanged from
+/// Phase 5 — Phase 14 layers on without breaking it.
+#[test]
+fn named_slot_falls_back_when_provider_missing() {
+    let src = r#"component Card(title: string) = {
+  <container>
+    <slot name="header"><text>fallback</text></slot>
+  </container>
+}
+<Card title="hi"/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let Node::Text { content, .. } = &children[0] else {
+        panic!()
+    };
+    assert_eq!(content, "fallback");
+}
+
+/// Children without `slot=` flow into the default slot — they
+/// reach the unnamed `<slot/>` via `host_children_ui` exactly as
+/// the Phase-5 default-slot collapse does.
+#[test]
+fn unmarked_children_route_to_default_slot() {
+    let src = r#"component Card() = {
+  <container>
+    <slot/>
+  </container>
+}
+<Card><text>body</text></Card>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let Node::Text { content, .. } = &children[0] else {
+        panic!()
+    };
+    assert_eq!(content, "body");
+}
+
+/// `<invoke slot="row" item={...} index={...}/>` re-lowers a
+/// named-slot's AST in a fresh scope carrying per-call bindings.
+/// The slot body's `{item.title}` resolves against each invocation
+/// independently.
+#[test]
+fn invoke_calls_slot_with_per_call_bindings() {
+    let src = r#"component List(row: ui) = {
+  <container>
+    <invoke slot="row" item={first}/>
+    <invoke slot="row" item={second}/>
+  </container>
+}
+<List>
+  <text slot="row">{item.title}</text>
+</List>"#;
+    let scope = LowerScope::new()
+        .with_binding("first", json!({"title": "Alpha"}))
+        .with_binding("second", json!({"title": "Beta"}));
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &scope);
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    assert_eq!(children.len(), 2);
+    let Node::Text { content, .. } = &children[0] else {
+        panic!()
+    };
+    assert_eq!(content, "Alpha");
+    let Node::Text { content, .. } = &children[1] else {
+        panic!()
+    };
+    assert_eq!(content, "Beta");
+}
+
+/// `<invoke slot="row"/>` with a missing slot returns no nodes —
+/// graceful (Phase 17's lint surfaces the missing slot).
+#[test]
+fn invoke_with_missing_slot_emits_nothing() {
+    let src = r#"component List() = {
+  <container>
+    <invoke slot="row"/>
+  </container>
+}
+<List/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    assert_eq!(children.len(), 0);
+}
+
+/// Multiple `<invoke>` calls on the same slot bind different args
+/// per call — the render-prop pattern.
+#[test]
+fn invoke_each_call_isolates_bindings() {
+    let src = r#"component Each() = {
+  <container>
+    <invoke slot="row" n={1}/>
+    <invoke slot="row" n={2}/>
+    <invoke slot="row" n={3}/>
+  </container>
+}
+<Each>
+  <text slot="row">{n}</text>
+</Each>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let contents: Vec<String> = children
+        .iter()
+        .filter_map(|n| match n {
+            Node::Text { content, .. } => Some(content.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(contents, vec!["1", "2", "3"]);
+}
+
+/// A slot param declared with a `ui` default supplies that default
+/// at consumer time when the call site didn't provide a same-named
+/// slot. The default is re-lowered (not pre-baked) so any captured
+/// bindings inside still resolve.
+#[test]
+fn slot_default_lowers_when_provider_missing() {
+    let src = r#"component Card(header: ui = <text>Default Header</text>) = {
+  <container>
+    <slot name="header"/>
+  </container>
+}
+<Card/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let Node::Text { content, .. } = &children[0] else {
+        panic!("expected text from default; got {:?}", children[0])
+    };
+    assert_eq!(content, "Default Header");
+}
+
+/// A slot param's call-site override takes precedence over the
+/// declared default.
+#[test]
+fn slot_provider_overrides_default() {
+    let src = r#"component Card(header: ui = <text>Default</text>) = {
+  <container>
+    <slot name="header"/>
+  </container>
+}
+<Card><text slot="header">Override</text></Card>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let Node::Text { content, .. } = &children[0] else {
+        panic!()
+    };
+    assert_eq!(content, "Override");
+}
+
+/// Default case after variant cases still falls through when no
+/// variant matched — the chained `if`/`else-if` form preserves the
+/// terminal `else` arm.
+#[test]
+fn match_falls_through_to_default_case() {
+    let src = r#"type Tone = info | success | error
+component Toast(t: Tone) = {
+  <match on={t}>
+    <case info><text>i</text></case>
+    <case default><text>x</text></case>
+  </match>
+}
+<Toast t={error}/>"#;
+    let (document, _) = parse(src);
+    let nodes = lower_document_with_scope(&document, &LowerScope::new());
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!("expected text, got {nodes:?}")
+    };
+    assert_eq!(content, "x");
+}

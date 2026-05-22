@@ -160,11 +160,46 @@ pub(super) fn expand_match(el: &Element, scope: &LowerScope) -> Vec<Node> {
                 .to_string()
         });
 
-        let cf = if is_default {
+        // **Phase 13** — detect a variant-shape `<case>`. The
+        // canonical / XML reader writes a variant pattern as either:
+        //
+        // - `<case is="error" bind="_, retry"/>` — `is=` carries the
+        //   variant tag; `bind=` is an optional positional bind list
+        //   of identifiers (or `_` to skip) matching the union's
+        //   declared field order.
+        // - `<case error>` / `<case success>` — bare attribute whose
+        //   local name matches a registered variant; treated as a
+        //   variant case with no bindings.
+        //
+        // For variant cases, the predicate is `bind.tag == 'Variant'`
+        // and the case body is wrapped in `<let>` bindings for each
+        // destructured field. Falls through to the existing string-
+        // literal `is=` semantics when the variant lookup misses.
+        let variant_name = detect_variant_case(case, scope);
+        let bind_spec = bare_attr_value(case, "bind", scope);
+
+        let (cf, body_prelude) = if is_default {
             seen_default = true;
-            cf_attr("else", None, range)
+            (cf_attr("else", None, range), Vec::new())
+        } else if let Some(variant) = variant_name {
+            let pred_core = format!("{bind}.tag == '{}'", variant.name);
+            let mut pred = pred_core;
+            if let Some(extra) = &extra {
+                if !extra.is_empty() {
+                    pred = format!("({pred}) and ({extra})");
+                }
+            }
+            let prelude = build_variant_bindings(&bind, &variant, bind_spec.as_deref(), range);
+            (
+                if first {
+                    cf_attr("if", Some(&pred), range)
+                } else {
+                    cf_attr("else-if", Some(&pred), range)
+                },
+                prelude,
+            )
         } else {
-            // `is=` literal vs expression.
+            // `is=` literal vs expression — original behaviour.
             let rhs = case.attributes.iter().find_map(|a| {
                 if a.name.local != "is" {
                     return None;
@@ -184,17 +219,160 @@ pub(super) fn expand_match(el: &Element, scope: &LowerScope) -> Vec<Node> {
                     pred = format!("({pred}) and ({extra})");
                 }
             }
-            if first {
-                cf_attr("if", Some(&pred), range)
-            } else {
-                cf_attr("else-if", Some(&pred), range)
-            }
+            (
+                if first {
+                    cf_attr("if", Some(&pred), range)
+                } else {
+                    cf_attr("else-if", Some(&pred), range)
+                },
+                Vec::new(),
+            )
         };
         first = false;
-        synthetic.push(cf_fragment(cf, case.children.clone(), range));
+        let mut children = body_prelude;
+        children.extend(case.children.iter().cloned());
+        synthetic.push(cf_fragment(cf, children, range));
     }
 
     lower_children(&synthetic, scope)
+}
+
+/// Phase 13 — detect a variant-form `<case>` element. Returns the
+/// resolved [`super::unions::VariantDef`] when one of the case's
+/// attributes names a registered variant. The canonical reader
+/// emits the variant tag either via `is="Variant"` (preferred) or
+/// via a bare attribute whose local name is the variant. A
+/// `default` flag stops the variant probe — defaults are handled by
+/// the caller.
+fn detect_variant_case(
+    case: &Element,
+    scope: &LowerScope,
+) -> Option<std::sync::Arc<super::unions::VariantDef>> {
+    if !scope.has_variants() {
+        return None;
+    }
+    // Variant-shape `<case>` always uses the bare-attribute form
+    // (`<case error>` / `<case success>`); the older `<case is="…">`
+    // shape is reserved for literal-string compare and must not be
+    // promoted to variant matching even when the string happens to
+    // name a registered variant. That keeps the `<match on={t.tag}>
+    // <case is="error">` pattern working as the string-compare it
+    // always was.
+    for attr in &case.attributes {
+        if !matches!(attr.name.namespace, AttributeNamespace::Bare) {
+            continue;
+        }
+        if matches!(
+            attr.name.local.as_str(),
+            "is" | "default" | "bind" | "if" | "else-if" | "else"
+        ) {
+            continue;
+        }
+        if !matches!(attr.value, AttributeValue::Empty) {
+            continue;
+        }
+        if let Some(v) = scope.variant_def(&attr.name.local) {
+            return Some(std::sync::Arc::clone(v));
+        }
+    }
+    None
+}
+
+/// Build the `<let>` siblings that destructure a matched variant's
+/// fields into the case body's scope. Two binding forms accepted:
+///
+/// - Positional: `bind="d"` for the first field, `bind="_, r"` to
+///   skip the first and bind the second to `r`. `_` is a skip.
+/// - Named: `bind="dismissable=d, retry=r"` — each segment maps a
+///   declared field name to a local binding.
+///
+/// When `bind=` is absent, the field names themselves bind 1:1
+/// (a `<case success>` over `success { duration }` makes `duration`
+/// available inside the body). Empty spec or unmapped fields are
+/// silently skipped.
+fn build_variant_bindings(
+    match_bind: &str,
+    variant: &super::unions::VariantDef,
+    spec: Option<&str>,
+    range: SourceRange,
+) -> Vec<AstNode> {
+    let mut out: Vec<AstNode> = Vec::new();
+    let pairs: Vec<(String, String)> = match spec {
+        Some(s) if !s.trim().is_empty() => parse_bind_spec(s, variant),
+        _ => variant
+            .fields
+            .iter()
+            .map(|f| (f.name.clone(), f.name.clone()))
+            .collect(),
+    };
+    for (field_name, local_name) in pairs {
+        if local_name == "_" || local_name.is_empty() {
+            continue;
+        }
+        // `<let name="<local>" value="{match.field}"/>`
+        let value_expr = format!("{match_bind}.{field_name}");
+        out.push(AstNode::Element(Element {
+            tag: "let".to_string(),
+            attributes: vec![
+                Attribute {
+                    name: AttributeName {
+                        raw: "name".into(),
+                        local: "name".into(),
+                        namespace: AttributeNamespace::Bare,
+                        range,
+                    },
+                    value: AttributeValue::String {
+                        value: local_name.clone(),
+                        range,
+                    },
+                    range,
+                },
+                Attribute {
+                    name: AttributeName {
+                        raw: "value".into(),
+                        local: "value".into(),
+                        namespace: AttributeNamespace::Bare,
+                        range,
+                    },
+                    value: AttributeValue::Expression(Expression {
+                        body: value_expr,
+                        range,
+                    }),
+                    range,
+                },
+            ],
+            children: Vec::new(),
+            self_closing: true,
+            range,
+            tag_range: range,
+        }));
+    }
+    out
+}
+
+fn parse_bind_spec(spec: &str, variant: &super::unions::VariantDef) -> Vec<(String, String)> {
+    let parts: Vec<&str> = spec.split(',').map(|s| s.trim()).collect();
+    let has_named = parts.iter().any(|p| p.contains('='));
+    if has_named {
+        // Each segment is `<field>=<local>`. Unrecognised fields are
+        // skipped — Phase 17 lint promotes those into a hard error.
+        parts
+            .iter()
+            .filter_map(|p| {
+                let (field, local) = p.split_once('=')?;
+                Some((field.trim().to_string(), local.trim().to_string()))
+            })
+            .collect()
+    } else {
+        // Positional — pair against the variant's declared field
+        // order. Extra positional names beyond the field count are
+        // ignored.
+        parts
+            .iter()
+            .zip(variant.fields.iter())
+            .map(|(local, field)| (field.name.clone(), (*local).to_string()))
+            .collect()
+    }
 }
 
 /// **Wave D (§7.6)** — `<suspense>` lowering. The first

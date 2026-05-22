@@ -145,6 +145,16 @@ pub(super) fn lookup_path_owned(body: &str, scope: &LowerScope) -> Option<serde_
     if let Some(v) = try_call_owned(body, scope) {
         return Some(v);
     }
+    // **Phase 13** — bare-identifier variant reference. `<Toast
+    // tone={info}/>` evaluates `info` to a field-less variant
+    // value `{"tag": "info"}`. Only fires when the binding lookup
+    // missed (above) AND the document declared at least one union.
+    if scope.has_variants() {
+        if let Some(variant) = scope.variant_def(body).cloned() {
+            let value = super::unions::build_variant_value(&variant, &[], &[]);
+            return Some(value);
+        }
+    }
     // **Wave A** — script-block scope. A `<script>`
     // block's top-level `local`s resolve here after the JSON binding
     // map and functional builtins miss (the §5.6 resolution stack:
@@ -537,6 +547,32 @@ fn try_call_owned(body: &str, scope: &LowerScope) -> Option<serde_json::Value> {
         };
     }
     if !ARRAY_CALL_NAMES.contains(&name) {
+        // **Phase 13** — variant constructor. `<Toast tone={error(
+        // dismissable=true, retry=$retry)}/>` evaluates as a call
+        // whose name is a registered variant; we synthesise the
+        // `{"tag": name, …}` JSON shape directly. Checked before the
+        // Luau-function path so an inline union declared in PRUI
+        // shadows a same-named Luau helper (most documents won't
+        // collide; the deterministic order matters).
+        if scope.has_variants() {
+            if let Some(variant) = scope.variant_def(name).cloned() {
+                let close = matching_close_paren(body, open)?;
+                let (positional, kw_raw) = parse_call_args(&body[open + 1..close], scope)?;
+                let mut kwargs: Vec<(String, serde_json::Value)> = Vec::new();
+                for (k, raw_val) in kw_raw {
+                    let v = eval_call_arg(&raw_val, scope)
+                        .unwrap_or_else(|| serde_json::Value::String(raw_val.clone()));
+                    kwargs.push((k, v));
+                }
+                let value = super::unions::build_variant_value(&variant, &positional, &kwargs);
+                let tail = body[close + 1..].trim_start();
+                if tail.is_empty() {
+                    return Some(value);
+                }
+                let rest = tail.strip_prefix('.')?;
+                return walk_dotted_path(&value, rest);
+            }
+        }
         // **Wave A** — a `<script>` helper call
         // (`{priority_color(task.priority)}`). The call resolver
         // already parses args + the trailing dotted chain; we only

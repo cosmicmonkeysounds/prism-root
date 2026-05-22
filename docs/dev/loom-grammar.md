@@ -3,10 +3,8 @@
 > The grammar of `.loom` source. Precise enough to drive a parser; loose
 > enough to read.
 
-**Status:** initial draft (2026-05-21). Companion to
-[`loom-design.md`](loom-design.md). This doc supersedes
-`LEGACY-CODEBASE/loom-lang/grammar.md`, which was a quick reference, not
-a true formal grammar.
+**Status:** initial draft (2026-05-22). Companion to
+[`loom-design.md`](loom-design.md).
 
 **Audience:** anyone writing the parser, an LSP, a Lezer/tree-sitter
 grammar, a syntax highlighter, or a third-party tool that reads `.loom`.
@@ -181,17 +179,21 @@ NL           ::= newline (after comments stripped)
 These identifiers cannot be used as user identifiers anywhere:
 
 ```
-if  and  or  not  is  has
+if  and  or  not  is  has  in
 var  let  define  defn  defmacro
 fire  advance  trigger
 each  visit  first  then  finally
-after  otherwise  when  match  weave
+after  otherwise  when  match
 import  export
 true  false  nil
+cast  cue  cohort  location
+broadcast  improv  enroll  as  joins  leaves  enters  exits
+participant
 ```
 
-`is not` and `has not` are two-word operators (lexer joins them with
-look-ahead). `each visit` is a two-word block keyword (same).
+`is not`, `has not`, `each visit`, `participant joins`,
+`participant leaves`, `participant enters`, `participant exits` are
+multi-word lexical tokens; the lexer joins them with look-ahead.
 
 ### 3.2 Speaker vs identifier
 
@@ -202,7 +204,7 @@ block (`{ ... }`) or a `^` (for dual dialogue). Anywhere else,
 
 A `$UPPER` form (`$NARRATOR`, `$SPEAKER`) is a **resolve reference**,
 not a literal speaker — its value is resolved at runtime and used as
-the speaker label. See §10.1.
+the speaker label. See §11.1.
 
 ---
 
@@ -235,8 +237,17 @@ determines which top-level items are legal in the body.
 | `:barks` | bark set | `BarkSection`, declarations, definitions |
 | `:quest` | quest | `QuestStage`, declarations |
 | `:cutscene` | cutscene | `TimecodeBlock`, declarations |
+| `:script` | stage / film script | `Section`, `Scene`, declarations (no choices) |
+| `:film` | film screenplay | `Section`, `Scene`, `TimecodeBlock`, declarations (no choices) |
+| `:immersive` | live immersive theatre | every Body item including `ParticipantLifecycle`, `LocationEvent`, `Broadcast` |
 | `:typewriter` | typewriter profile | property-only (no body) |
 | `:module` | shared module | declarations only (no sections) |
+
+A `:script` document is a linear screenplay — choices (`*`, `+`) are a
+parse error, but cues, cast, beats, and (optionally) `improv` blocks
+are allowed. A `:film` document is the same plus `TimecodeBlock`s for
+shot-list-style sequences. A `:immersive` document opens every
+construct.
 
 Unknown tags are a warning (`doc-type-unknown`), not an error — they're
 stored as free-form metadata for tooling.
@@ -246,25 +257,308 @@ stored as free-form metadata for tooling.
 ```
 TopLevelItem
   ::= Section
-    | BarkSection                                   // only when archetype = bark_set
-    | QuestStage                                    // only when archetype = quest
-    | TimecodeBlock                                 // only when archetype = cutscene
+    | Scene                                         // :script, :film, :immersive
+    | BarkSection                                   // :barks
+    | QuestStage                                    // :quest
+    | TimecodeBlock                                 // :cutscene, :film
+    | CastDecl                                      // any archetype
+    | CueDecl                                       // any archetype
+    | LocationDecl                                  // :immersive
+    | CohortDecl                                    // :immersive
+    | ParticipantLifecycle                          // :immersive
+    | LocationEvent                                 // :immersive
+    | BroadcastBlock                                // :immersive
     | Declaration
     | Definition
     | Import
-    | Binding                                       // let, define at top level
+    | Binding
     | Comment
 ```
 
 ---
 
-## 5. Sections
+## 5. Performance-model declarations
 
-### 5.1 Conversation sections
+The constructs that make Loom a language for performed media — cast,
+cue, location, cohort, participant lifecycle, broadcast — share a
+declarative shape: a keyword, an identifier, optional indented
+properties, optional body. They live at the document top level (not
+inside a section). The runtime engine reads them once at bundle load
+and never again.
+
+### 5.1 Cast declaration
+
+```
+CastDecl
+  ::= 'cast' , CastId , STRING? , NL
+  , (INDENT , CastProperty+ , DEDENT)?
+
+CastId
+  ::= SPEAKER                                       // ALICE, BELLKEEPER
+    | '@' , IDENT                                   // @entity reference (for game variants)
+
+CastProperty
+  ::= '.label' , STRING , NL
+    | '.voice' , IDENT , NL
+    | '.bio' , DOCSTRING , NL
+    | '.open' , NL                                  // any performer may bind at runtime
+    | '.voiceover' , NL                             // disembodied (no physical performer)
+    | '.improv' , ImprovSpec , NL
+    | '.' , IDENT , PropertyValue? , NL             // open extension, registry-validated
+
+ImprovSpec
+  ::= '.latitude' , '(' , NUMBER , ')'              // 0..1
+    | '.topic' , '(' , STRING , ')'
+    | '.duration' , '(' , Duration , ')'
+
+Duration
+  ::= NUMBER , ('s' | 'ms' | 'm')                   // 60s, 250ms, 5m
+```
+
+A `CastDecl` introduces a `SPEAKER` slot the parser will accept on
+dialogue lines. A SPEAKER appearing in dialogue without a prior
+`CastDecl` is a hard error (`unknown-cast`); the slot must be declared
+somewhere reachable (current file or imported module).
+
+### 5.2 Cue declaration
+
+```
+CueDecl
+  ::= 'cue' , IDENT , NL
+  , INDENT , CueProperty+ , DEDENT
+
+CueProperty
+  ::= '.target' , IDENT , NL                        // crew-bus channel
+    | '.preset' , IDENT , NL                        // bus-specific preset name
+    | '.fade' , Duration , NL
+    | '.level' , NUMBER , NL                        // 0..1
+    | '.fires' , CueRef (',' , CueRef)* , NL        // group cue (composite)
+    | '.group' , IDENT , NL                         // cue-list group
+    | '.' , IDENT , PropertyValue? , NL             // open extension
+
+CueRef
+  ::= IDENT                                         // sibling cue
+    | IDENT , ':' , (-NL)*                          // inline trigger form (sfx:bell)
+```
+
+Cue invocation, two equivalent forms (one action-line, one inline
+trigger):
+
+```
+CueAction
+  ::= '~'? , 'cue' , CueTarget , NL
+    | '~'? , 'cue' , CueTarget , CueOverrides? , NL
+
+CueTarget
+  ::= IDENT                                         // bare cue name
+    | '@' , IDENT                                   // explicit static ref
+
+CueOverrides
+  ::= '{' , CueProperty (',' CueProperty)* , '}'    // ad-hoc property overrides
+```
+
+Inline cue dispatch uses the existing trigger syntax: `<cue:name>`
+inside text. The grammar for inline triggers (§12.2) recognizes
+`cue` as a built-in trigger type whose argument is a `CueRef`.
+
+### 5.3 Location declaration
+
+```
+LocationDecl
+  ::= 'location' , LocationId , STRING? , NL
+  , INDENT , LocationProperty+ , DEDENT
+
+LocationId
+  ::= SPEAKER                                       // UPPERCASE: BELL_TOWER, HARBOR_OFFICE
+    | '@' , IDENT                                   // when re-exposing an existing @scene
+
+LocationProperty
+  ::= '.label' , STRING , NL
+    | '.capacity' , NUMBER , NL
+    | '.threshold' , STRING , NL                    // sensor/RFID description
+    | '.connects' , LocationId (',' , LocationId)* , NL
+    | '.' , IDENT , PropertyValue? , NL
+```
+
+### 5.4 Cohort declaration
+
+```
+CohortDecl
+  ::= 'cohort' , IDENT , NL
+  , INDENT , CohortProperty+ , DEDENT
+
+CohortProperty
+  ::= '.label' , STRING , NL
+    | '.capacity' , NUMBER , NL
+    | '.secret' , STRING , NL                       // designer note, not shown to participants
+    | '.' , IDENT , PropertyValue? , NL
+```
+
+Cohorts are referenced by bare identifier in expressions:
+`if $PARTICIPANT in singers`, `if count(singers) >= 6`. They are
+**not** SPEAKER-eligible; a cohort is a set of participants, not a
+voice.
+
+### 5.5 Participant lifecycle
+
+```
+ParticipantLifecycle
+  ::= 'when' , 'participant' , LifecycleVerb , LifecycleGuard? , NL
+  , INDENT , Content* , DEDENT
+
+LifecycleVerb
+  ::= 'joins'  | 'leaves'
+
+LifecycleGuard
+  ::= ':' , IDENT                                   // cohort filter — joins :audience, leaves :singers
+```
+
+The synthetic variable `$PARTICIPANT` is bound to the joining/leaving
+participant inside the body. Lifecycle blocks may fire `enroll`
+actions (§5.7).
+
+### 5.6 Location event
+
+```
+LocationEvent
+  ::= 'when' , 'participant' , LocationVerb , StaticRef , NL
+  , INDENT , Content* , DEDENT
+
+LocationVerb
+  ::= 'enters' | 'exits'
+```
+
+`$PARTICIPANT` is bound inside the body to the participant whose
+movement triggered the event. The `StaticRef` must resolve to a
+`LocationDecl`; unknown locations are build errors.
+
+### 5.7 Enrollment action
+
+```
+EnrollAction
+  ::= 'enroll' , EnrollSubject , 'into' , IDENT , NL
+
+EnrollSubject
+  ::= ResolveRef                                    // $PARTICIPANT, $alice
+    | IDENT                                         // bare cohort name (move all)
+```
+
+`enroll <participant> into <cohort>` adds the participant to a cohort.
+`enroll <cohort_a> into <cohort_b>` moves every member.
+
+### 5.8 Broadcast block
+
+```
+BroadcastBlock
+  ::= 'broadcast' , BroadcastScope , NL
+  , INDENT , Content* , DEDENT
+
+BroadcastScope
+  ::= ':' , 'all'
+    | ':' , ScopeAtom
+    | BroadcastScope , 'and' , ':' , ScopeAtom
+    | BroadcastScope , 'but' , ':' , ScopeAtom
+
+ScopeAtom
+  ::= 'cohort'      , '(' , IDENT , ')'
+    | 'location'    , '(' , StaticRef , ')'
+    | 'participant' , '(' , ResolveRef , ')'
+    | 'cast'        , '(' , SPEAKER , ')'
+```
+
+A broadcast wraps content with a runtime audience filter — only
+participants matching the scope receive entries from inside the block.
+Scopes compose with `and` (intersection) and `but` (set difference).
+A bare `broadcast :all` block is identical in semantics to its body
+without the wrapper; it exists for readability.
+
+### 5.9 Scene (for :script and :film archetypes)
+
+```
+Scene
+  ::= '##' , SceneSlug , STRING? , Modifier* , NL
+  , Docstring?
+  , Content*
+
+SceneSlug
+  ::= IDENT                                         // scene_3
+    | IDENT , '.' , IDENT                           // act_2.scene_3
+```
+
+A `Scene` is a sub-section under a `:script` or `:film` archetype. The
+slug carries the screenplay convention (act/scene numbering); the
+optional `STRING` is the slugline (`"INT. HARBOR — LATE AFTERNOON"`).
+Scenes accept the same `Content` items as sections except `Choice`.
+
+### 5.10 The `as <participant>` modifier
+
+```
+ParticipantScope
+  ::= 'as' , ('participant' | ResolveRef)
+```
+
+The `as participant` modifier appears on `Section` headers, `Divert`
+targets, and the `LocationEvent` body to scope state to a single
+participant:
+
+```
+-- bell_revelation as participant
+  ...
+
+-> bell_revelation as $PARTICIPANT
+```
+
+Inside a `ParticipantScope`d region, unqualified `$name` lookups
+resolve to `$PARTICIPANT.<name>` first, then fall back to show-global.
+A section without `as` is **show-global**; a section with `as
+participant` is **per-participant** and may be entered concurrently by
+many participants without interference.
+
+The bare keyword `participant` (no `$`) inside a scope marker means
+"the current participant, whoever they are at runtime" — equivalent to
+`$PARTICIPANT` but emphasizes the scope is structural, not a
+reference.
+
+### 5.11 Improv parenthetical
+
+```
+ImprovParenthetical
+  ::= '(' , 'improv' , ImprovSpec* , (' about:' , STRING)? , ')'
+```
+
+Appears in two positions:
+
+1. **On a Speaker line** between the speaker and the line break:
+   ```
+   BELLKEEPER (improv .duration(45s))
+     > Greet warmly. Find out why they came.
+     -> next_beat
+   ```
+   The indented body is a directive to the performer, not literal
+   dialogue (the leading `>` makes it a `FlavorLine`).
+
+2. **As a standalone line** between two dialogue lines, scoping a beat
+   of improv between scripted lines:
+   ```
+   BELLKEEPER
+     Why are you here?
+     (improv ~30s about: "what you might do about it")
+     And what will you do about it?
+   ```
+
+The runtime treats both forms as an `ImprovBeat` — see
+[`loom-design.md` §5.3](loom-design.md#53-improvisation) for the
+playback semantics.
+
+---
+
+## 6. Sections
+
+### 6.1 Conversation sections
 
 ```
 Section
-  ::= '--' , IDENT? , Modifier* , Guard? , NL
+  ::= '--' , IDENT? , Modifier* , ParticipantScope? , Guard? , NL
   , Docstring?
   , Content*
 
@@ -288,7 +582,7 @@ Section modifiers (built-in):
   rather than falling through.
 - `.return` — leaving this section pops the tunnel stack.
 
-### 5.2 Bark sections
+### 6.2 Bark sections
 
 In a `:barks` document, sections take a compact form:
 
@@ -307,7 +601,7 @@ BarkBody
 A bark section has no ID — barks are addressed by speaker + condition,
 not by name.
 
-### 5.3 Quest stages
+### 6.3 Quest stages
 
 ```
 QuestStage
@@ -329,7 +623,7 @@ ObjectiveSpec
 Built-in objective types: `talk`, `search`, `collect`, `kill`,
 `reach`, `custom`. Studios register more via `IObjectiveTypePlugin`.
 
-### 5.4 Cutscene timecode blocks
+### 6.4 Cutscene timecode blocks
 
 ```
 TimecodeBlock
@@ -346,7 +640,7 @@ simultaneously.
 
 ---
 
-## 6. Content (inside sections)
+## 7. Content (inside sections)
 
 ```
 Content
@@ -363,7 +657,7 @@ Content
     | Comment
 ```
 
-### 6.1 Dialogue
+### 7.1 Dialogue
 
 ```
 Dialogue
@@ -393,7 +687,7 @@ TextLine
   ::= TextContent , NL
 ```
 
-### 6.2 Stage direction & flavor
+### 7.2 Stage direction & flavor
 
 ```
 StageDirection
@@ -408,7 +702,7 @@ FlavorLine
 former is typeset as block prose, the latter as narration). They share
 the same parser.
 
-### 6.3 Choice
+### 7.3 Choice
 
 ```
 Choice
@@ -427,7 +721,7 @@ ChoiceModifiers (built-in):
 (remains). `.once` on `+` and `.sticky` on `*` are both legal — they
 make intent explicit at the cost of redundancy.
 
-### 6.4 Divert & return
+### 7.4 Divert & return
 
 ```
 Divert
@@ -455,7 +749,7 @@ A `TunnelCall` ends with `->` — the trailing arrow distinguishes it
 from a regular `Divert` whose target happens to be parenthesized for
 grouping. `(foo)` is grouping; `(foo)->` is a tunnel.
 
-### 6.5 Action line
+### 7.5 Action line
 
 ```
 ActionLine
@@ -492,7 +786,7 @@ with a registered keyword; include only when ambiguity with a speaker
 name might arise (`~ ALICE := …` reads more naturally than
 `ALICE := …` which looks like a speaker line).
 
-### 6.6 Annotation
+### 7.6 Annotation
 
 ```
 Annotation
@@ -506,7 +800,7 @@ Built-in annotations: `@vo`, `@director`, `@status`, `@note`, `@hint`,
 `@loc`. Open extension namespace: `@<vendor>:<name>` (e.g.
 `@studio:rating teen`).
 
-### 6.7 Blocks (each visit / after / when / match)
+### 7.7 Blocks (each visit / after / when / match)
 
 ```
 Block
@@ -556,7 +850,7 @@ block body.
 
 ---
 
-## 7. Declarations & definitions
+## 8. Declarations & definitions
 
 ```
 Declaration
@@ -622,7 +916,7 @@ runtime. Both compile to Luau closures in v2.
 
 ---
 
-## 8. S-expressions
+## 9. S-expressions
 
 S-expressions are the **explicit code** form. Anything in s-expression
 position must be wrapped in `( ... )`. The s-expression grammar is
@@ -652,7 +946,7 @@ text interpolation (`$(...)`).
 
 ---
 
-## 9. Expression grammar
+## 10. Expression grammar
 
 Expressions appear in: `Guard` lines, `MutationExpr` right-hand sides,
 `Match` discriminants, `When` discriminants, `${...}` inline eval,
@@ -704,15 +998,15 @@ Atom
   ::= NUMBER
     | STRING
     | 'true' | 'false' | 'nil'
-    | IDENT                                          // identifier (resolved by §10)
+    | IDENT                                          // identifier (resolved by §11)
     | ResolveRef
     | StaticRef
-    | LedgerPred                                     // §10.5
+    | LedgerPred                                     // §11.6
     | '(' , Expr , ')'                               // grouping
     | SExpr                                          // (op args...) lisp form
 ```
 
-### 9.1 Method calls don't chain
+### 10.1 Method calls don't chain
 
 `Postfix '(' ArgList? ')'` is legal **only at the end of a postfix
 chain** — i.e. `$elena.faction.getStanding($PLAYER)` parses, but
@@ -720,7 +1014,7 @@ chain** — i.e. `$elena.faction.getStanding($PLAYER)` parses, but
 break it apart. (Rationale: registered method calls are typed against
 their return; chained calls explode the type lattice.)
 
-### 9.2 Implicit grouping in `if`
+### 10.2 Implicit grouping in `if`
 
 After the `if` keyword (at the start of a `Guard`), an unwrapped
 expression is parsed as a single `Expr` ending at the first newline.
@@ -733,9 +1027,33 @@ if (trust > 50 and met_wren)         // identical
 
 ---
 
-## 10. Names, references, sigils
+## 11. Names, references, sigils
 
-### 10.1 Resolve reference (`$`)
+Loom has three reference sigils. They look similar and answer related
+questions, but they commit at three different moments and fail in
+three different ways. The grammar makes the distinction
+non-negotiable: each sigil has its own non-terminal, its own validation
+pass, and its own diagnostic family.
+
+| Sigil | Question | Resolves at | Failure mode | Grammar |
+|---|---|---|---|---|
+| `$` | "What is this **right now**?" | Runtime | Build error if undeclared; runtime nil/error if missing | §11.1 |
+| `@` | "Does this **exist** in the project?" | Build time | Build error if not in any registry | §11.2 |
+| `[[ ]]` | "What is this **related to**?" | Author time | Build warning only — show plays correctly | §11.3 |
+
+A practical test for which sigil to use: **delete the codepoint and
+re-read the line.**
+
+- If the meaning changes immediately and the line behaves differently:
+  it's `$` (load-bearing at runtime).
+- If the build now fails to validate: it's `@` (load-bearing at
+  build).
+- If the text reads identically and the show plays correctly: it's
+  `[[ ]]` (decoration; informational only).
+
+The remainder of this section defines each form precisely.
+
+### 11.1 Resolve reference (`$`)
 
 ```
 ResolveRef
@@ -752,12 +1070,18 @@ FieldChain
 
 Resolution order (scope chain), first match wins:
 
-1. Conversation roles (`$SPEAKER`, `$LISTENER`, `$PLAYER`, `$SELF`,
-   `$PARTICIPANT[n]`, and any role registered via
-   `Loom.Language.registerResolveRole`).
-2. Local `let` bindings in the enclosing scope.
-3. Vars in the operand registry.
-4. Entities in the entity registry.
+1. **Participant scope** (when current section / divert is
+   `as participant`): a bare `$name` lookup tries
+   `$PARTICIPANT.<name>` first, then falls back to step 2.
+2. **Conversation roles** — `$SPEAKER`, `$LISTENER`, `$PLAYER`,
+   `$SELF`, `$PARTICIPANT`, `$PARTICIPANT[n]`, and any role registered
+   via `Loom.Language.registerResolveRole`.
+3. **Local `let` bindings** in the enclosing scope.
+4. **Vars** in the operand registry.
+5. **Entities** in the entity registry.
+6. **Cohorts** (for membership queries like `if $PARTICIPANT in
+   singers`; the cohort name `singers` here resolves as a special
+   form).
 
 UPPERCASE → looks like a role. Lowercase → looks like a var/entity.
 Explicit qualifiers exist but are rarely needed:
@@ -765,37 +1089,103 @@ Explicit qualifiers exist but are rarely needed:
 $var:trust        // force var lookup
 $entity:elena     // force entity lookup
 $role:SPEAKER     // force role lookup
+$cohort:singers   // force cohort lookup
 ```
 
-### 10.2 Static reference (`@`)
+**`$` is load-bearing.** Deleting the sigil changes a runtime lookup
+into a bare identifier, which usually parses as something but does
+something different. Unknown `$`-references are **build errors**
+(typo protection); undeclared variables can't sneak through.
+
+### 11.2 Static reference (`@`)
 
 ```
 StaticRef
   ::= '@' , IDENT , ('.' , IDENT)*                  // @lighthouse, @sfx.bell
 ```
 
-`@`-refs are validated at build time against the project's asset / scene
-/ sound / location registries. Unknown refs are hard errors.
+`@`-refs are validated at build time against the project's static
+registries. The single sigil covers everything declarable in the
+project:
 
-### 10.3 Content link (`[[ ]]`)
+| `@`-ref shape | Registry checked | Example |
+|---|---|---|
+| `@<section>` | section IDs (current document) | `-> @harbor_intro` |
+| `@<doc>.<section>` | section IDs (named document) | `-> @lighthouse.entry` |
+| `@<asset>.<path>` | asset registry | `<sfx:@bell>` |
+| `@<entity>` | entity registry | `cast @WREN`, `if $SPEAKER == @elena` |
+| `@<location>` | location declarations (§5.3) | `when participant enters @BELL_TOWER` |
+| `@<cue>` | cue declarations (§5.2) | `~ cue @lights_warm` |
+
+A name appearing as the target of a divert, cast slot, asset
+reference, location event, or cue invocation is **implicitly** an
+`@`-ref — the leading `@` is recommended for clarity but optional
+in those positions. In ambiguous contexts (an expression body, a
+condition), `@` is required.
+
+**`@` is load-bearing at build.** Deleting the sigil in `-> @harbor`
+gives `-> harbor` which usually still works (positional context tells
+the parser to look for a section), but in
+`if $faction == @elena.faction` deleting the `@` would make
+`elena.faction` look like a runtime entity field — different
+semantics. Unknown `@`-references are **build errors**: the validator
+checks every registry before parse completes.
+
+### 11.3 Backlink (`[[ ]]`)
 
 ```
-ContentLink
-  ::= '[[' , LinkBody , ']]'
+Backlink
+  ::= '[[' , BacklinkBody , ']]'
 
-LinkBody
-  ::= LinkType? , IDENT , ('|' , LinkDisplay)?
+BacklinkBody
+  ::= BacklinkType? , BacklinkTarget , ('|' , BacklinkDisplay)?
 
-LinkType  ::= IDENT , ':'                           // object:elena, codex:tower_lore
-LinkDisplay ::= TextContent                          // free text up to closing ]]
+BacklinkType    ::= IDENT , ':'                     // object:elena, codex:tower_lore
+BacklinkTarget  ::= IDENT
+                  | TextContent                     // free-form when type='codex' or absent
+BacklinkDisplay ::= TextContent                     // free text up to closing ]]
 ```
 
-Content links never affect runtime control flow. They are stripped (or
-rendered as hyperlinks) by the display layer. The build extracts a
-manifest of links per document for editor navigation and dead-link
-detection.
+Backlinks are **decoration on prose**. They appear only inside
+`TextContent` (dialogue, choice labels, flavor lines,
+parentheticals). They never affect runtime control flow, never
+contribute to conditions, never gate diverts, never bind cast.
 
-### 10.4 Inline assign (`< ... >`)
+The build extracts a backlink manifest per document for editor
+navigation and "dead link" warnings, but a dangling backlink **does
+not fail the build**. This is intentional — writers create backlinks
+to *aspirational* codex entries during drafting, and the codex
+follows.
+
+A `[[name]]` without a type prefix defaults to the project's primary
+backlink registry (typically the codex). `[[type:name]]` qualifies:
+`[[object:elena]]`, `[[event:bell_rings]]`, `[[codex:tower_lore]]`.
+Studios can register additional types.
+
+**`[[ ]]` is decoration.** Deleting the sigil and its content removes
+a hyperlink hint from rendered text; the surrounding prose continues
+to read correctly. This is the test: if removing the codepoint leaves
+the show playing identically, `[[ ]]` is the right sigil.
+
+### 11.4 Why not unify `@` and `[[ ]]`?
+
+The temptation is real — both look up names against project-wide
+registries. The reason they stay separate is the **failure
+contract**:
+
+- `@elena` declares: "this script *needs* Elena to exist; if Elena is
+  removed, this script is broken."
+- `[[elena|Elena]]` declares: "this prose *mentions* Elena; hyperlink
+  her if she exists, otherwise just render the text."
+
+Both can resolve to the same target. The sigil declares the
+**coupling strength**, not the destination. Unifying them would force
+a single failure mode — either every backlink becomes a build error
+(which kills the drafting workflow) or every static reference becomes
+a soft warning (which lets typos through to runtime). Neither
+trade-off is acceptable. Two sigils, two contracts, both small.
+
+### 11.5 Inline assign (`< ... >`)
 
 ```
 InlineAssign
@@ -807,7 +1197,7 @@ AssignOp
 
 Fires at the exact character position during typewriter reveal.
 
-### 10.5 Ledger predicates
+### 11.6 Ledger predicates
 
 Built-in identifiers that resolve to ledger queries. They are
 expression atoms (parse like function calls) but **only** legal in
@@ -835,7 +1225,7 @@ if last(speaker) == @wren
 
 ---
 
-## 11. Inline text grammar
+## 12. Inline text grammar
 
 Once the parser has decided a region of source is **text** (a
 `TextContent` inside `Dialogue`, `Choice` label, `FlavorLine`,
@@ -865,7 +1255,7 @@ SpecialStart ::= '$' | '@' | '[' | '<' | '\\' | '/' (only when followed by '*' o
 EscapedChar  ::= '\\' , [<\[{$@/\\]
 ```
 
-### 11.1 Text variation
+### 12.1 Text variation
 
 ```
 TextVariation
@@ -882,7 +1272,7 @@ The mode defaults to `.stopping` (advance through variants on
 successive visits, stick on the last). All other modes must be
 explicit.
 
-### 11.2 Inline trigger
+### 12.2 Inline trigger
 
 ```
 InlineTrigger
@@ -904,7 +1294,7 @@ trigger opens until a matching `</>` (innermost) or `</%name>` (named)
 closes it. A `for:N` spec closes automatically after N characters /
 seconds (type-dependent).
 
-### 11.3 Chain trigger
+### 12.3 Chain trigger
 
 A short-hand for firing multiple co-located triggers:
 
@@ -919,7 +1309,7 @@ TriggerHead
 E.g. `<sfx:bell+camera:shake>` is equivalent to
 `<sfx:bell><camera:shake>` with identical character offsets.
 
-### 11.4 Conditional trigger
+### 12.4 Conditional trigger
 
 ```
 CondTrigger
@@ -929,7 +1319,7 @@ CondTrigger
 The trigger fires only if the expression is true at the moment the
 typewriter reaches it.
 
-### 11.5 Inline rich span (registry-driven)
+### 12.5 Inline rich span (registry-driven)
 
 Studios register paired delimiters that wrap a span of text with a
 named visual style:
@@ -945,7 +1335,7 @@ core sigils are registration-time errors.
 
 ---
 
-## 12. Indent semantics by line class
+## 13. Indent semantics by line class
 
 This table is the parser's source of truth for "what can come next".
 
@@ -953,7 +1343,8 @@ This table is the parser's source of truth for "what can come next".
 |---|---|
 | `Header` | `Property` (one level deeper) |
 | `Section` | `Content` (any kind) |
-| `Dialogue` (speaker line) | `TextLine` (text only) |
+| `Scene` | `Content` (no `Choice` under `:script` / `:film`) |
+| `Dialogue` (speaker line) | `TextLine` (text only); or `FlavorLine` under `(improv …)` |
 | `Choice` | `Content` (any kind) |
 | `EachVisit` | `VisitBranch` only |
 | `After` / `Otherwise` | `Content` |
@@ -961,6 +1352,10 @@ This table is the parser's source of truth for "what can come next".
 | `BarkSection` | `Dialogue` only |
 | `QuestStage` | `FlavorLine`, `ObjectiveLine`, `LifecycleLine` |
 | `TimecodeBlock` (`at` line) | `TrackCommand`, `Dialogue` |
+| `CastDecl` / `CueDecl` / `LocationDecl` / `CohortDecl` | `CastProperty` / `CueProperty` / `LocationProperty` / `CohortProperty` |
+| `ParticipantLifecycle` (`when participant joins/leaves`) | `Content` |
+| `LocationEvent` (`when participant enters/exits @LOC`) | `Content` |
+| `BroadcastBlock` | `Content` |
 
 A line whose indent says "I am a child of X" but whose class is not in
 that row is a parse error (`unexpected-child`) with a helpful message
@@ -968,7 +1363,7 @@ naming the legal children.
 
 ---
 
-## 13. Reserved space (forbidden combinations)
+## 14. Reserved space (forbidden combinations)
 
 These combinations are syntactically expressible but semantically
 forbidden. The parser accepts them with a diagnostic; the validator
@@ -979,7 +1374,7 @@ rejects them as hard errors.
 | `=` in `~` action line or `<>` inline assign | `=` is binding, not mutation. Use `:=`. |
 | `:=` in `let` / `define` / `defn` | `:=` is mutation, not binding. Use `=`. |
 | `==` on the left of any assignment | `==` is comparison only. |
-| Two chained method calls (`$a.f().g()`) | See §9.1. |
+| Two chained method calls (`$a.f().g()`) | See §10.1. |
 | Section ID collides with KW | Section IDs are user-scoped; a name like `if` makes diverts ambiguous. |
 | Speaker label that lowercases to a reserved KW | Same. `IF` as a speaker name parses, but is rejected. |
 | Tunnel call returning to a sticky hub | The hub already loops; the tunnel return is redundant and confusing. Warn, don't error. |
@@ -987,7 +1382,9 @@ rejects them as hard errors.
 
 ---
 
-## 14. Worked example
+## 15. Worked examples
+
+### 15.1 Game / branching dialogue
 
 A minimal but feature-dense fragment. The parse tree is sketched in
 comments to the right.
@@ -1000,6 +1397,10 @@ comments to the right.
 '''
 Opening scene at the dock.
 '''                                          # Docstring
+
+cast WREN                                    # CastDecl
+  .label "Wren the Fisher"
+  .voice female_mezzo
 
 (define met_wren = false)                    # ConstantDef
 let trusted = $wren_trust > 30 and $met_wren # LetBinding (reactive)
@@ -1022,7 +1423,7 @@ WREN { worried }                             # Dialogue, CharBlock { emotion: wo
 
 after $trusted                               # Block: After
   WREN { warm }                              #   Dialogue
-    [[object:maren|Maren]] taught me to      #     ContentLink
+    [[object:maren|Maren]] taught me to      #     Backlink
     listen to <speed:0.7>the water</>.       #     RangedTrigger + Closer
 
 otherwise                                    # Block: Otherwise (paired with After)
@@ -1030,9 +1431,66 @@ otherwise                                    # Block: Otherwise (paired with Aft
     She just... stopped.                     #     TextLine
 ```
 
+### 15.2 Live immersive theatre
+
+The same harbor scene as an immersive piece: shared cues, per-
+participant private scenes, an improv beat, and a location-triggered
+broadcast.
+
+```loom
+# bell_tower :immersive                      # Header :immersive archetype
+  .cohort initiate, singers                  # Properties
+
+cast BELLKEEPER                              # CastDecl
+  .label "The Bellkeeper"
+  .open                                      # any performer may bind
+  .improv .latitude(0.5)
+
+cue bell_strike_loud                         # CueDecl
+  .target sound_console
+  .preset bell_main
+  .level 0.9
+
+location BELL_TOWER                          # LocationDecl
+  .label "The Bell Tower"
+  .capacity 12
+
+when participant joins                       # ParticipantLifecycle
+  enroll $PARTICIPANT into initiate          #   EnrollAction
+  -> orientation as $PARTICIPANT             #   Divert with ParticipantScope
+
+when participant enters @BELL_TOWER          # LocationEvent
+  -> bell_first_visit as $PARTICIPANT        #   per-participant section
+
+-- bell_first_visit as participant           # Section with ParticipantScope
+
+  BELLKEEPER (improv .duration(45s))         # ImprovParenthetical on Speaker
+    > Greet warmly. Don't reveal what you    #   FlavorLine (directive, not dialogue)
+    > actually do here.
+
+  * I came for the bell.                     # Choice
+      var $PARTICIPANT.intent = "bell"       #   per-participant mutation
+      -> private_revelation as $PARTICIPANT
+
+-- private_revelation as participant
+
+  ~ cue bell_strike_loud                     # CueAction — fires to ALL audience
+
+  broadcast :participant($PARTICIPANT)       # BroadcastBlock with scope
+    NARRATOR { whispering }                  #   only this participant hears
+      You hear it differently.
+
+  broadcast :location(@BELL_TOWER) but :participant($PARTICIPANT)
+    NARRATOR
+      The other visitors look up.            # everyone in the tower EXCEPT us
+
+  enroll $PARTICIPANT into singers           # cohort move
+  -> rejoin_main
+```
+
 ---
 
-## 15. What this grammar deliberately doesn't specify
+## 16. What this grammar deliberately doesn't specify
 
 - **Whitespace inside expression operators.** Spaces around `>=`, `:=`,
   `==`, etc. are always legal and stripped. The lexer normalizes.
@@ -1049,7 +1507,7 @@ otherwise                                    # Block: Otherwise (paired with Aft
 
 ---
 
-## 16. Diagnostics & lint catalog
+## 17. Diagnostics & lint catalog
 
 The parser emits diagnostics with these IDs. Lint rules (warnings)
 above the line; hard errors below.
@@ -1079,12 +1537,21 @@ above the line; hard errors below.
 | `stacked-conditions` | warning | Multiple `?` / `if` lines back-to-back. |
 | `orphaned-condition` | warning | `if` / `?` with no entry below it. |
 | `pin-action-implicit` | warning | `NextLink` with a condition but no `.skip` / `.block` modifier. |
+| `backlink-dead` | warning | `[[name]]` resolves to no codex entry. Never an error. |
+| `unknown-cast` | error | SPEAKER appears in dialogue without a `CastDecl` (current or imported). |
+| `unknown-cue` | error | `~ cue <name>` or `<cue:name>` references an undeclared cue. |
+| `unknown-location` | error | `when participant enters @X` references an undeclared location. |
+| `unknown-cohort` | error | `enroll … into <c>` or `:cohort(<c>)` references an undeclared cohort. |
+| `choice-in-script` | error | `*` / `+` choice inside a `:script` or `:film` document. |
+| `participant-scope-leaked` | warning | `as participant` section diverts to a show-global section without explicit rescoping. |
+| `broadcast-empty-scope` | warning | `broadcast :cohort(...) but :all` resolves to no participants at parse time. |
+| `improv-without-duration` | info | `(improv …)` with no `.duration` will hold indefinitely until manually advanced. |
 
 These are stable IDs — tooling can suppress them by ID.
 
 ---
 
-## 17. Conformance
+## 18. Conformance
 
 A Loom parser is **conformant** if, for every `.loom` file in
 `tests/golden/`:

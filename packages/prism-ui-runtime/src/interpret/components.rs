@@ -560,8 +560,22 @@ pub fn instantiate_component(def: &ComponentDef, el: &Element, scope: &LowerScop
         ) {
             continue;
         }
+        // Phase 13 — preserve the typed JSON shape when an attribute
+        // value is an `{expression}`. The expression evaluator
+        // surfaces typed objects (variant constructors land here as
+        // `{tag: …, …}`); a plain string-coercing path would
+        // stringify the variant and lose its tag field.
         let value = match &attr.value {
             AttributeValue::Empty => serde_json::Value::Bool(true),
+            prism_core::language::prism_ui::AttributeValue::Expression(e) => {
+                super::expression::lookup_path_owned_in_scope(&e.body, scope)
+                    .or_else(|| super::expression::evaluate_expression(&e.body, scope))
+                    .unwrap_or_else(|| {
+                        resolved_attribute_string(&attr.value, scope)
+                            .map(serde_json::Value::String)
+                            .unwrap_or(serde_json::Value::Null)
+                    })
+            }
             other => match resolved_attribute_string(other, scope) {
                 Some(s) => serde_json::Value::String(s),
                 None => serde_json::Value::Null,
@@ -593,19 +607,101 @@ pub fn instantiate_component(def: &ComponentDef, el: &Element, scope: &LowerScop
         child_scope = child_scope.with_binding(key, value);
     }
 
-    // Caller's children become the default slot — the magic
-    // `children: ui` parameter per §7.5. We seed them as already-
-    // lowered UI children via the existing host_children_ui seam
-    // so a `<slot/>` inside the body or a `{children}` interpolation
-    // both pick them up.
-    if !el.children.is_empty() {
-        let lowered_children = lower_ast_children(&el.children, scope);
-        if !lowered_children.is_empty() {
-            child_scope = child_scope.with_host_children_ui(lowered_children);
+    // Phase 12 — capability resolution. Harvest every body
+    // `<requires names="…"/>` element off the resolved body,
+    // resolve against the active scope's `CapabilityRegistry`,
+    // bind every present (or optional-missing) cap into the child
+    // scope. Missing required caps lower as a leading text node
+    // diagnostic so the author sees an actionable message rather
+    // than a silent omission (parse-time hard-failure is Phase 17
+    // lint territory). Components without any `<requires>` body
+    // statements skip this entirely.
+    let declared_caps = super::capabilities::harvest_requires(&resolved.body);
+    let mut diagnostics: Vec<Node> = Vec::new();
+    if !declared_caps.is_empty() {
+        let (bindings, missing) =
+            super::capabilities::resolve_capabilities(&declared_caps, scope.capability_registry());
+        for (name, value) in bindings {
+            child_scope = child_scope.with_binding(name, value);
+        }
+        for name in &missing {
+            diagnostics.push(Node::Text {
+                id: String::new(),
+                content: format!(
+                    "[prism] component `{}` requires capability `{name}` (not provided by host)",
+                    resolved.name
+                ),
+                props: crate::layout::TextProps::default(),
+            });
         }
     }
 
-    lower_ast_children(&resolved.body, &child_scope)
+    // Phase 14 — partition the call site's children into named slots
+    // and the default-slot bucket. Any child carrying a literal
+    // `slot="X"` attribute lands in the named bucket under `X`;
+    // siblings without `slot=` flow into the default slot. The §7.5
+    // canonical form authors slot props as attributes, but the body-
+    // shape lets a call site pass tree literals without coining a
+    // new grammar (`<List items={tasks}><heading slot="header">My
+    // Tasks</heading></List>`). The default bucket still feeds the
+    // unnamed `<slot/>` via `host_children_ui` so the Phase-5 default-
+    // slot collapse stays intact.
+    if !el.children.is_empty() {
+        let (default_children, named_buckets) = partition_call_site_slots(&el.children);
+        if !default_children.is_empty() {
+            let lowered_default = lower_ast_children(&default_children, scope);
+            if !lowered_default.is_empty() {
+                child_scope = child_scope.with_host_children_ui(lowered_default);
+            }
+        }
+        if !named_buckets.is_empty() {
+            let mut named_lowered: HashMap<String, Vec<crate::layout::Node>> = HashMap::new();
+            // Stash the raw AST under named-slot scope bindings so an
+            // `<invoke slot="X">` reader can re-lower the slot's body
+            // with per-call arg bindings (the §7.5 render-prop form).
+            // The pre-lowered map mirrors the AST so the simple
+            // `<slot name="X"/>` consumer still gets cached children.
+            let mut named_ast_param: HashMap<String, Vec<AstNode>> = HashMap::new();
+            for (name, nodes) in named_buckets {
+                let lowered = lower_ast_children(&nodes, scope);
+                named_lowered.insert(name.clone(), lowered);
+                named_ast_param.insert(name.clone(), nodes);
+            }
+            child_scope = child_scope.with_host_children_by_slot(Arc::new(named_lowered));
+            child_scope = child_scope.with_named_slot_ast(Arc::new(named_ast_param));
+        }
+    }
+
+    // Phase 14 — slot prop defaults. For every declared param whose
+    // type is `ui` or a `|…| → ui` callable, when the call site
+    // didn't provide a same-named slot binding, project the
+    // declared default as the AST for that slot. The default's AST
+    // lowers at consumer time (`<slot name="X"/>` or `<invoke>`) so
+    // the per-call argument scope still applies.
+    for param in &resolved.params {
+        if !is_slot_type(param.ty.as_deref()) {
+            continue;
+        }
+        if child_scope.has_named_slot_ast(&param.name) {
+            continue;
+        }
+        let Some(default) = &param.default else {
+            continue;
+        };
+        if let Some(ast) = parse_slot_default(default) {
+            child_scope = child_scope.with_named_slot_ast_one(param.name.clone(), ast);
+        }
+    }
+
+    // Prepend any cap-missing diagnostics so they're visible above
+    // the (possibly broken) component body.
+    let body_nodes = lower_ast_children(&resolved.body, &child_scope);
+    if diagnostics.is_empty() {
+        body_nodes
+    } else {
+        diagnostics.extend(body_nodes);
+        diagnostics
+    }
 }
 
 /// Merge the resolved view of a component along its `extends`
@@ -855,6 +951,125 @@ fn strip_quotes(s: &str) -> Option<&str> {
         return Some(&s[1..s.len() - 1]);
     }
     None
+}
+
+/// Phase 14 — bucket the children of a call site into the default-
+/// slot pile and a `name → AST` named-slot map. A child carrying a
+/// literal `slot="X"` attribute lands in `named[X]`; everything else
+/// stays in the default bucket. The `slot=` attribute is stripped
+/// before the child enters the named bucket so the rendered tree
+/// doesn't carry the marker into runtime nodes.
+fn partition_call_site_slots(
+    children: &[AstNode],
+) -> (Vec<AstNode>, HashMap<String, Vec<AstNode>>) {
+    let mut default: Vec<AstNode> = Vec::new();
+    let mut named: HashMap<String, Vec<AstNode>> = HashMap::new();
+    for child in children {
+        match child {
+            AstNode::Element(el) => {
+                if let Some((slot_name, stripped)) = take_slot_marker(el) {
+                    named
+                        .entry(slot_name)
+                        .or_default()
+                        .push(AstNode::Element(stripped));
+                } else {
+                    default.push(child.clone());
+                }
+            }
+            other => default.push(other.clone()),
+        }
+    }
+    (default, named)
+}
+
+/// If `el` carries a literal `slot="X"` attribute, return the slot
+/// name plus a clone of `el` with that attribute removed. Returns
+/// `None` when `slot=` is missing or non-string-shaped (an expression-
+/// valued `slot={…}` falls through as a default-slot child — the
+/// dynamic-slot-routing path is Phase-17+ polish).
+fn take_slot_marker(el: &Element) -> Option<(String, Element)> {
+    let idx = el.attributes.iter().position(|a| {
+        matches!(a.name.namespace, AttributeNamespace::Bare) && a.name.local == "slot"
+    })?;
+    let name = match &el.attributes[idx].value {
+        AttributeValue::String { value, .. } => value.clone(),
+        _ => return None,
+    };
+    let mut clone = el.clone();
+    clone.attributes.remove(idx);
+    Some((name, clone))
+}
+
+/// Phase 14 — slot type detector. Any prop declared as `ui`,
+/// `slot`, `slot<…>`, or a `|…| → ui` / `|…| -> ui` lambda type
+/// triggers the default-resolution path. The matcher is intentionally
+/// loose: types are stored as raw textual fragments by the canonical
+/// reader, so we don't tokenise — a substring + prefix check is
+/// enough for the surface declared in §7.5.
+fn is_slot_type(ty: Option<&str>) -> bool {
+    let Some(t) = ty else { return false };
+    let t = t.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if t == "ui" || t == "slot" {
+        return true;
+    }
+    if t.starts_with("slot<") {
+        return true;
+    }
+    // Lambda-return-ui: `|...| → ui` or `|...| -> ui`. The unicode
+    // arrow is what the docs show; the ASCII form rounds out the
+    // surface so editors that auto-convert don't break it.
+    let normalised = t.replace('→', "->");
+    if normalised.contains("->") && normalised.trim_end().ends_with("ui") {
+        return true;
+    }
+    false
+}
+
+/// Parse a default expression for a slot-typed param into the AST
+/// nodes the runtime should lower at consumer time. The default text
+/// is what the canonical reader captured (e.g. `<heading>Tasks</heading>`,
+/// `|t, i| <text>{t.title}</text>`); we hand it back to the parser
+/// and return the resulting top-level nodes.
+fn parse_slot_default(raw: &str) -> Option<Vec<AstNode>> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    // Strip a surrounding `{…}` brace pair — the canonical reader
+    // wraps tree-literal defaults that way (`= <heading>…</heading>`
+    // comes in unbraced; `= {<heading>…</heading>}` keeps the braces).
+    let body = if raw.starts_with('{') && raw.ends_with('}') && raw.len() >= 2 {
+        &raw[1..raw.len() - 1]
+    } else {
+        raw
+    };
+    let body = body.trim();
+    // For lambda-shaped defaults (`|t, i| <text>…</text>`), peel the
+    // parameter list off the front; the body after `|` is the AST.
+    // The parameter names aren't stored on the slot binding here —
+    // they're invoke-time arguments and the `<invoke>` shape names
+    // them itself. (A future-phase capture-form (`<slot
+    // name="row" captures="item, index">`) would surface them; that
+    // remains roadmap polish.)
+    let body = if let Some(after_open) = body.strip_prefix('|') {
+        match after_open.find('|') {
+            Some(end) => after_open[end + 1..].trim(),
+            None => body,
+        }
+    } else {
+        body
+    };
+    let (doc, errs) = prism_core::language::prism_ui::parse(body);
+    if !errs.is_empty() {
+        return None;
+    }
+    if doc.nodes.is_empty() {
+        return None;
+    }
+    Some(doc.nodes)
 }
 
 #[cfg(test)]

@@ -42,6 +42,20 @@ mod control_flow;
 mod style;
 pub use style::apply_style_override;
 
+mod style_sugar;
+pub use style_sugar::{
+    expand_style_pipeline, expand_style_record, looks_like_pipeline, looks_like_record,
+};
+
+mod named_state;
+pub use named_state::{
+    harvest_at_directives_from_source, parse_at_directive, parse_state_responsive_pipeline,
+    StateResponsiveValue,
+};
+
+mod lint;
+pub use lint::{lint_document, lint_source, Lint};
+
 mod expression;
 #[cfg(test)]
 use expression::rewrite_pipes;
@@ -73,6 +87,17 @@ pub use trait_registry::{TraitRegistry, TraitTarget};
 
 mod macros;
 pub use macros::{expand_macros, harvest_macros, MacroDef, MAX_EXPANSION_DEPTH};
+
+mod capabilities;
+pub use capabilities::{
+    harvest_requires, parse_requires_line, resolve_capabilities, CapabilityDef, CapabilityRegistry,
+};
+
+mod unions;
+pub use unions::{
+    build_variant_value, harvest_type_decls, parse_inline_union, parse_union_body, variant_lookup,
+    UnionDef, VariantDef,
+};
 
 // ---------------------------------------------------------------------------
 // Tag resolver — DI hook for unknown tags
@@ -309,6 +334,15 @@ pub struct LowerScope {
     /// lowering paths below never see a macro invocation directly.
     /// Empty for documents that declare none (the common case).
     pub(crate) local_macros: Arc<HashMap<String, Arc<MacroDef>>>,
+    /// **Phase 12 — host-provided capabilities.** Map of declared
+    /// capability name → JSON-shaped instance. Components that
+    /// declare `requires foo: Foo` body statements consult this
+    /// registry at instantiation time; resolved capabilities bind
+    /// as ordinary scope values so `{foo.method(...)}` interpolations
+    /// reach them through the existing expression-lookup path. Empty
+    /// on every host that doesn't install one (and zero-cost when
+    /// no component declares `<requires>` either).
+    pub(crate) capability_registry: CapabilityRegistry,
     /// **Phase 9 — trait registry.** Open registry of trait names
     /// to attribute method sets, consulted at parse / lowering time
     /// by `trait.method=value` attribute dispatch (§7.4). Seeded
@@ -318,6 +352,36 @@ pub struct LowerScope {
     /// document-author-declared `<trait>` shapes; this is the
     /// runtime's attribute-dispatch registry.
     trait_registry: Arc<TraitRegistry>,
+    /// **Phase 13 — discriminated unions.** Map of union name →
+    /// `Arc<UnionDef>` for every top-level `type X = …` declaration
+    /// whose body parses as a union (`info | success(…) | error(…)`)
+    /// and every inline `union<…>` lifted from a property type.
+    /// Empty on documents that declare none.
+    pub(crate) local_unions: Arc<HashMap<String, Arc<UnionDef>>>,
+    /// **Phase 13 — variant lookup table.** Flat
+    /// `variant_name → Arc<VariantDef>` shortcut into the union
+    /// registry above. Built once when the unions are installed so
+    /// the expression evaluator (variant constructor call) and the
+    /// match-expander (variant destructure) can skip the
+    /// nested-walk-per-call. Empty when no unions are loaded.
+    pub(crate) variant_table: Arc<HashMap<String, Arc<VariantDef>>>,
+    /// **Phase 14 — AST-shape named-slot map.** Sibling to
+    /// [`Self::host_children_by_slot`] (which holds pre-lowered
+    /// runtime nodes). The AST shape feeds the §7.5 render-prop
+    /// path — `<invoke slot="row" item={…}/>` re-lowers the slot's
+    /// AST in a fresh scope carrying the invoke-time arg bindings,
+    /// so a `{i}. {item.title}` body re-resolves per call. Empty on
+    /// every path that doesn't install one (the AST-free SSR /
+    /// resolver path stays untouched).
+    pub(crate) named_slot_ast: Arc<HashMap<String, Vec<AstNode>>>,
+    /// **Phase 16 — named state-responsive values** (`@color
+    /// responsive-accent = accent | :hovered → lighten(0.1) | …`).
+    /// A flat `value name → base + state deltas` table; the
+    /// per-attribute walker probes it before falling through to the
+    /// token / literal vocabulary so `style:background="responsive-accent"`
+    /// applies the entire base+state curve from one declaration.
+    /// Empty on every document that doesn't declare or install one.
+    pub(crate) state_responsive_values: Arc<HashMap<String, StateResponsiveValue>>,
 }
 
 /// **Wave 14.3** — per-element memo cache keyed by `id`. Hosts that
@@ -799,6 +863,35 @@ impl LowerScope {
         !self.local_macros.is_empty()
     }
 
+    /// **Phase 12** — install a single capability `name → value`,
+    /// chained builder-style so a host can write
+    /// `scope.with_capability("clipboard", json!({…}))`
+    ///     `.with_capability("network", json!({…}))`. The existing
+    /// registry is preserved; a colliding name is replaced (tests
+    /// routinely override a system cap with a mock).
+    pub fn with_capability(mut self, name: impl Into<String>, value: serde_json::Value) -> Self {
+        self.capability_registry = self.capability_registry.with_capability(name, value);
+        self
+    }
+
+    /// **Phase 12** — install an entire capability registry,
+    /// wholesale-replacing whatever was previously bound. Used by
+    /// tests that prepare a fresh registry table outside the scope.
+    pub fn with_capability_registry(mut self, registry: CapabilityRegistry) -> Self {
+        self.capability_registry = registry;
+        self
+    }
+
+    /// **Phase 12** — borrow the active capability registry.
+    pub fn capability_registry(&self) -> &CapabilityRegistry {
+        &self.capability_registry
+    }
+
+    /// **Phase 12** — look up a specific capability by name.
+    pub fn capability(&self, name: &str) -> Option<&serde_json::Value> {
+        self.capability_registry.get(name)
+    }
+
     /// **Phase 9** — install the trait registry (the four built-in
     /// `layout` / `style` / `pointer` / `a11y` traits plus any
     /// user-registered traits). The default is
@@ -815,6 +908,112 @@ impl LowerScope {
     /// `trait.method=` syntax against the open registry.
     pub fn trait_registry(&self) -> &TraitRegistry {
         &self.trait_registry
+    }
+
+    /// **Phase 13** — install the union (`type` declaration) table.
+    /// The flat variant lookup is computed from it eagerly so the
+    /// expression evaluator + match expander hit a single hash probe
+    /// instead of walking every union per call.
+    pub fn with_local_unions(mut self, unions: Arc<HashMap<String, Arc<UnionDef>>>) -> Self {
+        self.variant_table = Arc::new(variant_lookup(&unions));
+        self.local_unions = unions;
+        self
+    }
+
+    /// **Phase 13** — look up a declared union by name. Returns
+    /// `None` when no union of that name is registered (the common
+    /// case — most documents declare none).
+    pub fn local_union(&self, name: &str) -> Option<&Arc<UnionDef>> {
+        self.local_unions.get(name)
+    }
+
+    /// **Phase 13** — look up a variant definition by its variant
+    /// name (e.g. `error`, `success`, `info`). Two unions that share
+    /// a variant name resolve to whichever was harvested first; a
+    /// future-phase lint surfaces the collision.
+    pub fn variant_def(&self, name: &str) -> Option<&Arc<VariantDef>> {
+        self.variant_table.get(name)
+    }
+
+    /// **Phase 13** — is there at least one variant registered? Cheap
+    /// pre-flight check the expression evaluator uses to skip the
+    /// variant-constructor probe on documents that declared none.
+    pub fn has_variants(&self) -> bool {
+        !self.variant_table.is_empty()
+    }
+
+    /// **Phase 14** — install the AST-shape named-slot map (wholesale
+    /// replace). Used by [`instantiate_component`] when bucketing a
+    /// call site's children: each `slot="X"` group lands as an AST
+    /// fragment under name `X`.
+    pub fn with_named_slot_ast(mut self, slots: Arc<HashMap<String, Vec<AstNode>>>) -> Self {
+        self.named_slot_ast = slots;
+        self
+    }
+
+    /// **Phase 14** — install (or override) one named-slot AST entry.
+    /// Used to seed slot defaults from a component declaration's
+    /// param defaults without rebuilding the whole map.
+    pub fn with_named_slot_ast_one(mut self, name: String, nodes: Vec<AstNode>) -> Self {
+        let mut next = (*self.named_slot_ast).clone();
+        next.insert(name, nodes);
+        self.named_slot_ast = Arc::new(next);
+        self
+    }
+
+    /// **Phase 14** — borrow the AST for a named slot, if any. The
+    /// `<invoke>` element handler uses this to re-lower a slot's
+    /// body in a fresh scope.
+    pub fn named_slot_ast(&self, name: &str) -> Option<&[AstNode]> {
+        self.named_slot_ast.get(name).map(|v| v.as_slice())
+    }
+
+    /// **Phase 14** — does the scope carry an AST for `name`? Cheap
+    /// pre-flight check used during slot-default resolution to
+    /// decide whether to install the default.
+    pub fn has_named_slot_ast(&self, name: &str) -> bool {
+        self.named_slot_ast.contains_key(name)
+    }
+
+    /// **Phase 16** — install one named state-responsive value
+    /// (chained builder). Lets a host bind responsive tokens
+    /// programmatically without parsing PRSS text.
+    pub fn with_state_responsive_value(
+        mut self,
+        name: impl Into<String>,
+        value: StateResponsiveValue,
+    ) -> Self {
+        let mut next = (*self.state_responsive_values).clone();
+        next.insert(name.into(), value);
+        self.state_responsive_values = Arc::new(next);
+        self
+    }
+
+    /// **Phase 16** — install an entire named state-responsive value
+    /// table (wholesale replace). Used by the document pre-pass that
+    /// harvests `@color` / `@spacing` / `@radius` directives from
+    /// PRUI source.
+    pub fn with_state_responsive_values(
+        mut self,
+        values: Arc<HashMap<String, StateResponsiveValue>>,
+    ) -> Self {
+        self.state_responsive_values = values;
+        self
+    }
+
+    /// **Phase 16** — look up a state-responsive value by its
+    /// declared name. The per-attribute walker consults this before
+    /// the token-literal fallback. Returns `None` for the common
+    /// case (no declarations on the scope).
+    pub fn state_responsive_value(&self, name: &str) -> Option<&StateResponsiveValue> {
+        self.state_responsive_values.get(name)
+    }
+
+    /// **Phase 16** — does the scope carry at least one named
+    /// state-responsive value? Cheap pre-flight check the per-attr
+    /// walker uses to skip the lookup on undecorated documents.
+    pub fn has_state_responsive_values(&self) -> bool {
+        !self.state_responsive_values.is_empty()
     }
 
     /// **Wave 14.1** — seed the design-token table as a `tokens`
@@ -1118,7 +1317,33 @@ pub fn interpret_with_scope(
     if !errors.is_empty() {
         return Err(errors);
     }
-    Ok(lower_document_with_scope(&document, scope))
+    // Phase 16 — harvest any top-level `@color` / `@spacing` /
+    // `@radius` declarations from the verbatim source text and
+    // install them on the document scope before lowering. Cheap
+    // (one O(n) line walk) and skipped entirely when no directives
+    // are present.
+    let directives = named_state::harvest_at_directives_from_source(source);
+    if directives.is_empty() {
+        return Ok(lower_document_with_scope(&document, scope));
+    }
+    let scope_with = scope
+        .clone()
+        .with_state_responsive_values(Arc::new(merge_state_responsive(
+            &scope.state_responsive_values,
+            directives,
+        )));
+    Ok(lower_document_with_scope(&document, &scope_with))
+}
+
+fn merge_state_responsive(
+    existing: &Arc<HashMap<String, StateResponsiveValue>>,
+    directives: HashMap<String, StateResponsiveValue>,
+) -> HashMap<String, StateResponsiveValue> {
+    let mut out: HashMap<String, StateResponsiveValue> = (**existing).clone();
+    for (k, v) in directives {
+        out.entry(k).or_insert(v);
+    }
+    out
 }
 
 /// Lower an already-parsed AST document into a flat sequence of
@@ -1309,18 +1534,19 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
         }
     };
 
-    // **Phase 7 + 8** — harvest top-level `<component name="X">` and
-    // `<trait name="X">` declarations from the active document, then
-    // resolve every `<import component="./path.prui"/>` projection
-    // (Phase 8 §7.11) by re-parsing the imported source through the
-    // host's `ImportResolver` and merging its declarations into the
-    // local tables. The file-declared `<namespace name="Ns"/>` of
-    // each imported file is honoured automatically; an `as=` alias
+    // **Phase 7 + 8 + 13** — harvest top-level `<component name="X">`,
+    // `<trait name="X">`, and `<type name="X">` declarations from the
+    // active document, then resolve every `<import component="./path.prui"/>`
+    // projection (Phase 8 §7.11) by re-parsing the imported source
+    // through the host's `ImportResolver` and merging its declarations
+    // into the local tables. The file-declared `<namespace name="Ns"/>`
+    // of each imported file is honoured automatically; an `as=` alias
     // on the import overrides it (Q11). Documents that declare no
-    // components AND have no `component` imports skip both clones.
+    // components AND have no `component` imports skip the scope fork.
     let local_decls_owned;
     let scope: &LowerScope = {
         let mut declarations = harvest_declarations(&document.nodes, None);
+        let mut unions = unions::harvest_type_decls(&document.nodes, None);
         if let Some(res) = scope.import_resolver() {
             for imp in collect_imports(&document.nodes) {
                 if imp.kind != "component" {
@@ -1330,6 +1556,14 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
                     let (imported_doc, _errs) = parse(&src);
                     let imported = harvest_declarations(&imported_doc.nodes, imp.alias.as_deref());
                     declarations.merge(imported);
+                    // Phase 13 — pull union declarations from the same
+                    // import path (the file's namespace prefix or the
+                    // call site's `as=` override apply uniformly).
+                    let imported_unions =
+                        unions::harvest_type_decls(&imported_doc.nodes, imp.alias.as_deref());
+                    for (name, def) in imported_unions {
+                        unions.entry(name).or_insert(def);
+                    }
                 }
             }
         }
@@ -1337,6 +1571,7 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
             && declarations.traits.is_empty()
             && declarations.mixins.is_empty()
             && macro_registry.is_empty()
+            && unions.is_empty()
         {
             scope
         } else {
@@ -1345,7 +1580,8 @@ pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> 
                 .with_local_components(Arc::new(declarations.components))
                 .with_local_traits(Arc::new(declarations.traits))
                 .with_local_mixins(Arc::new(declarations.mixins))
-                .with_local_macros(Arc::new(macro_registry.clone()));
+                .with_local_macros(Arc::new(macro_registry.clone()))
+                .with_local_unions(Arc::new(unions));
             &local_decls_owned
         }
     };

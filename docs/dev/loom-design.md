@@ -1,903 +1,1109 @@
-# Loom — Narrative Scripting Language & Runtime
+# Loom — A Narrative Engine
 
-> **It reads like a screenplay. It thinks like a programming language.
-> It runs on Prism.**
+> **Reads like a screenplay. Thinks like a programming language.
+> Runs anywhere people perform.**
 
-Loom is a screenplay-inspired narrative scripting language for branching
-dialogue, ambient barks, quests, cutscenes, and interactive prose. It is
-the **first smoke test of Prism** — a single language whose
-implementation exercises every load-bearing subsystem of the framework:
-the `Scanner`, the codegen pipeline, the Luau VM, the reactive
-substrate, the CRDT store, the builder, the daemon, and the SSR relay.
-If Loom can be built cleanly on top of these pieces, Prism is fit for
-purpose. If it can't, the friction tells us where to fix Prism first.
+Loom is one language for the three things every narrative system
+needs: **characters** (who exists), **stats** (what state they're in),
+and **story** (what happens). It compiles a single `.loom` source to
+runtimes for branching game dialogue, traditional theatre and film
+scripts, ambient barks, quests, cutscenes, and live immersive shows
+where the audience moves through a shared world and actors improvise
+around prepared beats.
 
-**Status:** initial design (2026-05-21). Greenfield Rust
-reimplementation of the legacy TypeScript Loom at
-`LEGACY-CODEBASE/loom-lang/`. Target crate: `packages/prism-loom/`.
+The legacy companion packages — Simulacra (characters) and Meridian
+(stats) — are absorbed. There is no `.sim`, no `.mdn`. Each is a
+`.loom` document archetype: `# elena :character`, `# combat :stats`,
+`# barbarian_path :tree`. One language, one source tree, one bundle.
 
-**Related docs:** [`loom-grammar.md`](loom-grammar.md) (the formal
-grammar this doc references), `luau-integration-plan.md` (the Luau
-substrate Loom expressions compile to), `prui-reference.md` /
-`prss-reference.md` (sibling DSLs sharing Prism's `Scanner`),
-`dsl-self-bootstrap.md` (the registry pattern Loom's language extensions
-follow).
+**Status:** initial design (2026-05-22). Target crate:
+`packages/prism-loom/`.
 
-**Legacy reference:** the v1 TypeScript implementation, with its docs,
-lives at `LEGACY-CODEBASE/loom-lang/`. It is the design parent. This
-doc calls out — section by section — what it kept, what it cut, and
-why.
+**Companion docs:** [`loom-grammar.md`](loom-grammar.md) — the formal
+grammar. Implementation notes (crate layout, phased roadmap, test
+strategy) live in `loom-impl.md` once the work starts; this doc is
+intentionally about *what the language is*, not how to build it.
 
 ---
 
-## 1. Why Loom, why now
+## 1. What Loom is
 
-Prism needs a real workload, not a synthetic benchmark. A workload
-that:
+Four media, four runtimes, one language:
 
-1. **Parses a non-trivial surface syntax** — pushes the `Scanner` and
-   recursive-descent patterns of `prism-core::language::syntax` past
-   their current users (PRUI tags, PRSS TOML, Luau via full-moon).
-2. **Generates multi-target output** — exercises the
-   `SymbolDef` / `CodegenPipeline` DSL with Rust, Luau type stubs, and
-   later TS/C# for editor/game integrations.
-3. **Drives a stateful, reactive runtime** — exercises `Signal<T>`,
-   `Memo<T>`, `Effect`, and the Loro-backed `Store` as the substrate for
-   live "this variable changed → that bark fires" wiring.
-4. **Embeds a sandboxed scripting VM** — exercises the Luau host
-   surface (`prism-daemon::modules::luau_module`) under realistic
-   conditions: thousands of small condition expressions, many short
-   action chains, occasional larger handler scripts.
-5. **Plugs into the builder** — exercises
-   `prism_builder::ComponentRegistry` as a registry for *narrative*
-   blocks alongside visual ones, validating the "everything is a
-   builder component" memory note.
-6. **Renders to both native and HTML** — exercises
-   `prism-ui-runtime`'s two backends with a non-form-shaped surface
-   (typewriter reveal, inline triggers, ranged styling).
-7. **Hot-reloads** — exercises the `.prui` Phase 10 fingerprint-cache
-   substrate generalized to a third DSL.
+| Medium | What changes | What Loom provides |
+|---|---|---|
+| **Game** | Branching reactive playback, full agency, save/load. | Dialogue trees, barks, quests, reactive state, per-player ledger. |
+| **Film** | Linear playback, no runtime branching, alt-takes as production variants. | Timecode blocks, scene/shot headers, branches as variants. |
+| **Traditional theatre** | One-pass performance, named cues for crew, prompter for performers. | Cue declarations, beat tracking, prompter rendering. |
+| **Immersive theatre** | Many participants, shared world, improv around beats, live director patching. | First-class participants, locations, broadcast scopes, improv directives, hot patching from the booth. |
 
-Loom v1 (the TypeScript implementation) gave us a working spec, a tuned
-language design, and a ledger of which features matter. v2 is what
-happens when that design lands on Prism's substrate instead of an
-ad-hoc TS+Lua stack.
+The four share more than they differ. All four have a **cast**
+(performers / NPCs / animation rigs), a **crew** (technical channels —
+lights, sound, camera, particles, haptics), an **audience** (player /
+viewers / attendees / participants), and a **story** (the entries,
+sections, and flow). Loom makes each first-class.
+
+Loom is also the first non-trivial workload on Prism. Every load-
+bearing subsystem — the `Scanner`, the codegen pipeline, the Luau VM,
+the reactive substrate, the Loro CRDT store, the builder, the daemon,
+the SSR relay — has to hold up under it. That's the smoke test. It is
+not the headline; the headline is shipping a great narrative
+engine.
 
 ---
 
-## 2. Design philosophy (carried from v1, sharpened)
+## 2. Design philosophy
 
-These are the load-bearing claims. They are not negotiable in v2 — when
-later sections look like they violate one, that's a bug in the section.
+These are the load-bearing claims.
 
-### 2.1 Human text has no brackets
+### Human text has no brackets
 
 If a character says it, it is plain text — no quoting, no escaping, no
-sigils. A reader who has never seen Loom should be able to read a
-`.loom` file as a screenplay and understand 90% of it.
+sigils. A reader who has never seen Loom should read a `.loom` file
+like a screenplay and understand 90% of it.
 
-### 2.2 Each bracket has exactly one job
+### Each bracket has exactly one job
 
-| Bracket | Job | Mnemonic |
-|---|---|---|
-| `$`, `${ }`, `$( )` | **Resolve** — runtime value lookup / evaluation | "dollar = data value" |
-| `@` | **Static ref** — compile-time package-validated reference | "at = asset" |
-| `[[ ]]` | **Content link** — design-time soft ref (codex, hypertext) | "double-bracket = wiki-link" |
-| `< >` | **Effect** — triggers, mutations, active links | "angles = actions" |
-| `[ ]` | **Variation** — text selection patterns | "brackets = alternatives" |
-| `( )` | **Computation** — s-expressions, grouping | "parens = math/logic" |
-| `{ }` | **Dictionary** — speaker blocks, data literals | "braces = data" |
-| `''' '''` | **Metadata** — structural docstrings | "triple-quote = documentation" |
-
-No bracket pulls double duty. v1 occasionally muddled this (e.g. `{ }`
-both as character block and as text interpolation); v2 resolves all such
-overlap below.
-
-### 2.3 Three sigils, three time horizons
-
-| Sigil | Resolves at | Question it answers |
-|---|---|---|
-| `$` | Runtime | What is this value **right now**? |
-| `@` | Build time | Does this named thing **exist** in the project? |
-| `[[ ]]` | Design time | What is this **related to**? (codex/hypertext) |
-
-### 2.4 Three operators, three meanings, zero overlap
-
-| Operator | Meaning | Valid contexts |
-|---|---|---|
-| `=` | Binding ("this **is** that") | `let`, `define`, `defn`, initial `var` set |
-| `:=` | Mutation ("set this **to** that") | `~` action lines, `<>` inline assigns |
-| `==` | Comparison ("**is** this equal?") | conditions, expressions |
-
-`? $trust = 50` is a parse error, not a runtime footgun. C-style
-`if (x = 50)` bugs are unrepresentable.
-
-### 2.5 Keywords for logic, sigils for structure
-
-Sigils (`#`, `--`, `*`, `+`, `->`, `<-`, `>`, `@`, `//`) carry
-**structure** — you can scan the shape of a `.loom` file in seconds
-without reading a word. Keywords (`if`, `and`, `not`, `var`, `let`,
-`fire`, `each visit`, `after`, `match`) carry **logic** — you read them
-left-to-right and they read like English.
-
-The two layers never overlap. A line begins with a sigil **or** a
-keyword **or** a SPEAKER name **or** plain prose. There is no fifth
-case.
-
-### 2.6 Progressive enhancement: four layers
-
-A writer who never needs computation never sees a paren. The language
-scales by layers; each layer is optional:
-
-```
-Layer 0  pure screenplay      SPEAKER, indented text, --section, * choice, -> divert
-Layer 1  + branching state    if / var / fire / has
-Layer 2  + reactivity         let / each visit / after / otherwise / match
-Layer 3  + computation        ( ... s-expressions ... ) / defn / defmacro / Luau handlers
-```
-
-Delete every `$`, `<>`, `[]`, and `if` from a Loom file. If what's left
-still reads as a coherent script, the language is doing its job. Strip
-the codepoint, keep the meaning.
-
-### 2.7 The language is **defined in Rust**, **extended in Luau**
-
-This is the single biggest change from v1.
-
-v1's headline was *"the language is defined in Lua"* — every keyword
-came from a Lua module, the parser was a generic engine. In practice
-this was aspirational: the parser hardcoded document-type dispatch, the
-"Lua-driven keyword registry" had a parallel TypeScript fallback, and
-the spec/implementation gap widened with every release.
-
-v2 inverts this. The **core language** — every sigil, every bracket,
-every keyword in this spec, every built-in trigger — is **defined in
-Rust**, in a single registry initialized at crate-init time. The parser
-is closed over the core grammar.
-
-**Luau remains the extension surface.** Studios can add new actions,
-guards, triggers, blocks, inline delimiters, structural variation modes,
-and resolve roles by registering them with the `LoomRegistry` from Luau
-at workspace-init time. Extensions are *additive*, never overriding
-core. The escape valve from v1 (`override = true`) is gone — if you need
-to change `if`, fork the crate.
-
-This trade is deliberate. We lose total runtime malleability and gain:
-- Build-time grammar validation that actually validates the grammar.
-- A formal grammar (see `loom-grammar.md`) that fully describes what
-  parses.
-- IDE support that doesn't need to boot a Luau VM to highlight
-  keywords.
-- Hot-reload safety: a Luau extension can't break a `.loom` file that
-  was working five seconds ago.
-
----
-
-## 3. What v2 keeps from v1
-
-Direct lifts. These designs paid off in v1 and survive intact.
-
-- **Speaker detection by ALLCAPS or `$UPPER`.** Cheap, unambiguous,
-  reads like a screenplay.
-- **Character block inference chain.** `ELENA { worried }` resolves
-  `worried` against ordered registries (emotion → dynamic → profile →
-  studio-registered). Bare words for the common case, explicit
-  `emotion: worried` when inference isn't enough.
-- **Choice modifiers via `.keyword`** — `* .once`, `+ .sticky`,
-  `* .show("[Insight]")`.
-- **Tunnels with parameters.** `-> (ask_wren "the bell" "…") ->` —
-  parametric subroutines with a real return. Recursion permitted.
-- **Each-visit modes.** `each visit .stopping / .cycle / .shuffle /
-  .once`, with a sub-block grammar (`first` / `then` / `finally` /
-  `/`-separated alternates).
-- **State morphing.** `after $trust > 50` … `otherwise` for
-  conversation-wide branching without rewriting every entry.
-- **Match blocks.** `match $quest_stage` with literal/`_` arms — flat
-  alternative to cascading `if` chains.
-- **Saliency scoring** (the Left 4 Dead model). More conditions = more
-  specific = wins. No manual priority numbering. Studios can register
-  a custom scorer to add domain heuristics.
-- **Resolve sigil with safe nav, presence check, indexing, single
-  trailing method call.** Reads naturally, fails closed (`$elena?` is
-  `false` if elena isn't present, `$elena?.trust > 50` is `false` not
-  a crash).
-- **VO + director annotations.** `@vo`, `@director`, `@status`,
-  `@note`, `@hint`. These feed the recording script and the runtime
-  audio bank with no duplicate documentation step.
-- **Localization with per-variant keys.** Each text variation gets its
-  own stable `locId` so translators see `conv.entry#0`,
-  `conv.entry#1`, … independently.
-- **Append-only narrative ledger.** Every entry display, every choice,
-  every quest event. Reversals, not deletions. Time-travel falls out
-  for free.
-- **Inline ranged triggers with named anchors.**
-  `<speed:0.7 %tension> … </%tension>` — overlapping effects without
-  ambiguity.
-
----
-
-## 4. What v2 cuts from v1
-
-Each of these complicated the spec, the parser, or the runtime out of
-proportion to its payoff. Cut with prejudice.
-
-| Cut | Why |
+| Bracket | Job |
 |---|---|
-| **`.loom.yaml` data-only format** | Two formats for one language. v1 needed it because its parser couldn't reach a stable AST; v2's `Scanner`-based parser doesn't have that excuse. All Loom content lives in `.loom`. |
-| **`weave` keyword** | Conceptually overlaps with `<- target` (thread pull). v2 keeps only `<-` for return-to-caller and thread-pull-by-id. |
-| **`->>` soft divert** | A `.return` modifier on `->` covers the same semantics with one less sigil to memorize. |
-| **`do` as optional prefix for namespace calls** | Either always or never. v2 picks never: `Camera.pan(@lighthouse, 2)` is a bare expression line; if you need to be explicit it's `~ Camera.pan(...)`. |
-| **Macro parameters via `{name}` string substitution** | Untyped, brittle, no checking. v2 macros are real parametric blocks compiled to Luau closures. Call-site arg checking is a build-time error. |
-| **`override = true` on language extensions** | The single most dangerous knob in v1. Removed. Extensions are additive only; conflicts are build errors. |
-| **Multiple "side-quest" sigil forms** (`>>` dispatcher, `<-` thread pull, `<- name` thread pull-by-id, soft divert) | Collapsed to: `->` divert (with optional `.return` / `.dispatch` modifiers), `<-` return, `<- name` pull-by-id. Three constructs, three sigils. |
-| **Built-in typewriter profiles hardcoded in compiler** | v2 ships them as `.loom` typewriter docs in `prism-loom/builtin/`. Studios subclass via `extends`, no recompile of Prism required. |
-| **Implicit / unspecified pin-condition `false_action`** | All `NextLink` conditions declare `.skip` or `.block` explicitly. The historical default (`skip`) becomes a parse-time warning prompting the writer to make intent explicit. |
+| `$`, `${ }`, `$( )` | **Resolve** — runtime value lookup / evaluation |
+| `@` | **Static ref** — build-time validated reference |
+| `[[ ]]` | **Backlink** — author-time soft reference (codex, hypertext) |
+| `< >` | **Effect** — triggers, cues, mutations, active links |
+| `[ ]` | **Variation** — text selection patterns |
+| `( )` | **Computation** — s-expressions, grouping, parentheticals |
+| `{ }` | **Dictionary** — speaker blocks, data literals |
+| `''' '''` | **Metadata** — structural docstrings |
+
+No bracket pulls double duty. The three reference sigils get §7.
+
+### Three operators, three meanings
+
+| Op | Meaning | Valid contexts |
+|---|---|---|
+| `=` | Bind ("this **is** that") | `let`, `define`, initial `var` set, properties |
+| `:=` | Mutate ("set this **to** that") | actions, `<>` inline assigns |
+| `==` | Compare ("**is** this equal?") | conditions, expressions |
+
+`? $trust = 50` is a parse error. Footguns don't lex.
+
+### Keywords for logic, sigils for structure
+
+Sigils carry shape — you scan a `.loom` file in seconds. Keywords
+carry meaning — they read like English. A line begins with a sigil,
+*or* a keyword, *or* a SPEAKER, *or* prose. There is no fifth case.
+
+### Progressive enhancement
+
+```
+Layer 0  pure screenplay      SPEAKER, indented text, --section
+Layer 1  + characters & cues  cast, cue, named cue dispatch
+Layer 2  + branching & state  * / + choices, ->, if, var, fire
+Layer 3  + reactivity         let, each visit, after, when, match
+Layer 4  + live performance   participants, broadcast, improv, locations
+Layer 5  + dynamics           generators, scenes, every, wait, list comprehensions
+Layer 6  + computation        ( ... s-expr ... ), defn, defmacro, Luau handlers
+```
+
+Delete every sigil and keyword. If the remaining text reads as a
+script, the language is doing its job.
+
+### Rust core, Luau extension
+
+The core language — every sigil, every keyword, every built-in trigger
+type — is defined in Rust, in a registry initialized at crate init.
+The parser is closed over the core grammar; the grammar in
+`loom-grammar.md` is enforceable.
+
+Studios extend by registering new actions, guards, triggers, blocks,
+inline delimiters, variation modes, scene templates, cue targets,
+generators, and resolve roles via Luau at workspace boot. Extensions
+are **additive only**. They cannot override core. There is no
+`override = true` knob.
 
 ---
 
-## 5. What v2 adds
+## 3. The trinity — characters, stats, story
 
-### 5.1 Reactive `let`, for real
+A Loom project is one tree of `.loom` files. Every document opens
+with a header tag declaring its **archetype**:
 
-In v1, `let trust_ready = $trust > 50 and $met_wren` was *spec'd* as a
-"live formula" but *implemented* as a re-evaluated expression on each
-read. v2 makes `let` a real reactive binding backed by
-`prism-core::reactive::Memo<Value>`. A condition that depends on
-`$trust_ready` registers as a subscriber; mutating `$trust` schedules a
-single re-evaluation; downstream effects fire once.
-
-This matters because barks listen on `let` bindings constantly
-(`if ready_to_enter`). Without memoization, every bark filter on every
-tick re-evaluates the full expression chain. With memoization, it's a
-flag lookup.
-
-### 5.2 Snapshots & time travel from day one
-
-Loro CRDT is Prism's source of truth for mutable state. The narrative
-ledger is *already* an append-only log of CRDT ops. Combining the two,
-the runtime exposes:
-
-```rust
-let snapshot = engine.snapshot();         // O(1) — Loro version vector
-engine.advance(/* play through some choices */);
-engine.restore(snapshot);                 // rewind exactly
+```
+# elena            :character        ← who exists
+# combat           :stats            ← what state
+# harbor_intro     :conversation     ← what happens
 ```
 
-This lights up debug scrubbing in the editor, deterministic playback
-for tests, and "rewind to the last choice" as a UX primitive without
-the engine having to model its own undo stack.
+Three archetypes, three layers of the same world. They cross-
+reference by `@id`: a story line names a `@character`; a character
+slot binds a `@stats` profile; a stats expression reads a character's
+`$attributes`. The dependency graph is one-way:
 
-### 5.3 Strongly-typed pin conditions
+```
+story  ──reads──▶  characters  ──reads──▶  stats
+                       ▲
+                       │
+   live performance ───┘   (cast slots, participants, cohorts)
+```
 
-Every condition expression — on a guard line (`if …`), on a `NextLink`
-(`* … if …`), on an inline trigger (`<? sane <heartbeat:60>>`) — is
-parsed into a typed `LoomExpr` (see grammar §10). Free identifiers must
-resolve at build time to a var, a stat, an entity, a quest-flag, or an
-event name. Unknown identifiers are hard errors, not warnings.
+The runtime composes the three. A `LoomDatabase` is built once from
+all three archetypes; at runtime, the conversation engine, the
+character lifecycle manager, and the stat system share one Loro
+store and one ledger.
 
-v1 already aspired to this through the operand registry; v2 *enforces*
-it because the parser owns the expression AST end-to-end (no Luau
-round-trip required to validate).
-
-### 5.4 Ledger query expressions
-
-The narrative ledger is queryable from any condition context:
+What goes in which archetype is a content-organization decision, not
+a language decision — a tiny game can put everything in one file:
 
 ```loom
-? played(harbor_intro) and visits(wren_talk) >= 2
-? last(speaker) == @wren
-? since(bell_rung) < 30s
+# tiny_game
+
+cast WREN
+  .label "Wren the Fisher"
+  .stats { attack: 8, perception: 14 }
+  disposition $PLAYER
+    trust = 30
+
+# intro :conversation
+
+WREN { wary }
+  Who are you?
 ```
 
-These compile to bounded ledger scans, not full table scans. The
-expression grammar reserves `played`, `visits`, `last`, `since`,
-`count`, and `chose` as ledger predicates (see grammar §10.5).
-
-### 5.5 Hot reload, fingerprinted
-
-Each `.loom` document gets two hashes during codegen: a
-`STRUCTURAL_HASH` (entry IDs, flow topology, declared names) and a
-`FULL_HASH` (everything, including dialogue text). Edits that change
-only `FULL_HASH` patch the live runtime without resetting conversation
-state. Edits that change `STRUCTURAL_HASH` trigger a controlled
-reload — the active conversation is unwound to its last hub or `START`
-and resumed.
-
-Same substrate as `.prui` Phase 10. Generalized to a third DSL is the
-proof.
-
-### 5.6 Builder-native authoring
-
-A `.loom` document compiles to a `prism_builder::Component` impl
-(`lower_ui` returns a `Surface` tree representing a conversation
-playhead, a choice list, a bark queue, etc.). This means a Loom
-conversation drops into a PRUI scene like any other widget:
-
-```prui
-<scene>
-  <stage class="bg-tide">
-    <loom-conversation src="@harbor_arrival" />
-  </stage>
-  <hud>
-    <loom-bark-feed channel="ambient" />
-  </hud>
-</scene>
-```
-
-No bespoke "narrative renderer" pipeline. Loom rides on the same
-`Surface` → femtovg/HTML lowering everything else uses.
-
-### 5.7 Single-source codegen
-
-Loom's `LoomDatabase` lowers to `SymbolDef[]` and runs through
-`prism-core::language::codegen::CodegenPipeline`. The emitters
-(`SymbolTypeScriptEmitter`, `SymbolCSharpEmitter`,
-`SymbolEmmyDocEmitter`, `SymbolGDScriptEmitter`) are already in
-`prism-core` — Loom just calls them. No bespoke per-target emission
-code.
+A large game splits along the archetype seams.
 
 ---
 
-## 6. The runtime model
+## 4. Characters
 
-A Loom runtime is four engines sharing one resolver, one ledger, and one
-state store.
+> **The Simulacra layer.** Characters are first-class — typed,
+> declarable, extendable, addressable. Every speaker is a character;
+> every cast slot resolves to one.
 
-```
-        ┌──────────────────────────────────────────┐
-        │            LoomDatabase (IR)             │
-        │  entries, conversations, barks, quests,  │
-        │  cutscenes, typewriter profiles, locids  │
-        └──────────────────────────────────────────┘
-                            │
-        ┌───────────┬───────┴───────┬───────────┐
-        ▼           ▼               ▼           ▼
-   Conversation   Bark           Quest      Cutscene
-     Engine      Engine          Engine      Engine
-        │           │               │           │
-        └───────────┴───────┬───────┴───────────┘
-                            ▼
-                  ┌───────────────────┐
-                  │   EntryResolver   │  filter → score → select
-                  └───────────────────┘
-                            │
-            ┌───────────────┼───────────────┐
-            ▼               ▼               ▼
-       Luau VM       NarrativeLedger    Loro Store
-     (conditions /    (append-only      (vars, stats,
-      action body)     event log)        entities)
+### Declaration
+
+```loom
+# elena :character
+  .type humanoid                       # extends a registered type
+  .label "Elena Voss"
+  .voice female_alto
+  .home @lighthouse_interior
+  .bio """
+  Lifelong keeper's apprentice. Reads the tides and the brass.
+  """
 ```
 
-### 6.1 Engines
+A character declaration extends the type hierarchy (see §4.1) and
+hosts any number of **slots** (§4.4) — units of state and behavior
+that other layers contribute. The body is a sequence of slot blocks.
 
-| Engine | Drives | Notable behaviors |
+### 4.1 Type hierarchy
+
+Loom ships one base hierarchy out of the box, with `extends` for
+project-specific subtypes:
+
+```
+@character                              (abstract base)
+├── @humanoid
+├── @creature
+├── @prop                               (carriable / placeable)
+└── @trigger                            (invisible volume)
+```
+
+Project subtypes:
+
+```loom
+# demonic_creature :type extends @creature
+  .field corruption  : int = 0
+  .field affinity    : enum(@void, @flame, @rot)
+  .slot horror       : required
+```
+
+Subtype fields are inherited; a `# X :character .type demonic_creature`
+must supply `affinity` (required), may supply `corruption` (defaulted),
+and is auto-fitted with a `horror` slot.
+
+### 4.2 Identity
+
+Every character has:
+
+- `@id` — kebab-case, globally unique.
+- `.label` — display name shown to the audience.
+- `.type` — dot-path into the type hierarchy.
+- `.home` — `@location` of origin (optional).
+- `.unique` — `true` if exactly-one (the player character is always
+  unique).
+
+These are the universal fields. Everything else is a slot.
+
+### 4.3 Disposition
+
+The single most-asked-for "character depth" feature: **how does this
+character feel about that one?** A first-class declaration:
+
+```loom
+disposition $PLAYER
+  trust   = 0..100, init 30
+  respect = 0..100, init 50
+  fear    = 0..100, init 0
+  
+  reacts trust > 60  -> warm
+  reacts fear  > 40  -> guarded
+  reacts trust < 10 and respect < 30  -> hostile
+```
+
+A disposition declares numeric axes specific to a relationship, an
+initial value, optional bounds, and **reactions** — patterns whose
+match produces a runtime tag readable in conditions:
+
+```loom
+ELENA
+  if $elena.disposition($PLAYER).is(warm)
+    Come in. Stay a while.
+```
+
+Disposition is symmetric by default (Elena's view of Alice and Alice's
+view of Elena are independent variables on independent axes), but
+**mirror** binds two sides:
+
+```loom
+disposition $PLAYER
+  trust = 0..100, init 30 mirror $PLAYER.disposition.trust
+```
+
+Now mutating one half updates the other. Mirrors are the right tool
+for symmetric relationships (friendship, marriage); independent
+dispositions for asymmetric ones (admiration, fear).
+
+### 4.4 Slots
+
+Slots are how *other layers* contribute state to a character. The
+stats layer adds a `stats` slot; live theatre adds a `performer` slot;
+audio adds a `voice` slot. Slots are declared by the contributing
+layer's registry; on a character they are populated by name:
+
+```loom
+# elena :character
+  stats { profile: @scholar, attributes: { perception: 14 } }
+  voice { profile: female_alto, room: @lighthouse }
+  inventory { starting: [@journal, @brass_key] }
+```
+
+Built-in slots:
+
+| Slot | Provided by | Purpose |
 |---|---|---|
-| `ConversationEngine` | branching dialogue trees | tunnels (call stack), threads (`<-`), hub resumption, `each visit` / `after` morphing |
-| `BarkEngine` | ambient one-shot lines | cooldowns, priority bands, saliency scoring, per-speaker queues |
-| `QuestEngine` | objective tracking | pluggable objective types via `IObjectiveTypePlugin`-style registry |
-| `CutsceneEngine` | timecode-driven sequences | track lanes (audio/camera/event), `at TIMECODE` headers, skippable / non-skippable |
+| `stats` | the stats layer | axes / pools / attributes attached |
+| `voice` | the audio layer | typewriter profile + TTS hints |
+| `inventory` | the items layer | what they're carrying |
+| `performer` | the live layer | actor-binding metadata |
+| `dialogue` | the story layer | default greeting entry, hub section |
 
-All four are pure Rust. None of them call into Luau **except** to:
-1. evaluate a condition expression that exceeded the build-time
-   compilable subset (rare; see §10);
-2. dispatch a user-registered action handler;
-3. resolve a user-registered variation mode.
+A slot key that no registry knows is a build error.
 
-### 6.2 EntryResolver
+### 4.5 Knowledge
 
-Single algorithm, used by every engine that has to pick one entry from a
-candidate set:
+What this character has learned. Declared as a closed enum, mutated
+by story:
 
-1. **Gather** — produce a slice of `&Entry` candidates by context.
-2. **Filter** — drop entries failing `once`, cooldown, or condition
-   checks. Conditions failing with a runtime error fail-closed (drop
-   the entry, log a warning) — same as v1.
-3. **Score** — `specificity * 10 + explicit_weight + priority_band`
-   where `specificity = #(condition operators)`. Custom scorer can
-   add any signed delta.
-4. **Select** — by mode: `first_valid` (conversations), `priority`
-   (barks default), `weighted_random`, `sequential`.
-
-### 6.3 NarrativeLedger
-
-Append-only event log over an adapter:
-
-```rust
-trait NarrativeLedgerAdapter {
-    fn append(&mut self, event: LedgerEvent) -> LedgerSeq;
-    fn query(&self, filter: LedgerFilter) -> Vec<LedgerEvent>;
-    fn snapshot(&self) -> LedgerSnapshot;
-    fn restore(&mut self, snap: LedgerSnapshot);
-}
+```loom
+knowledge
+  met_player       : bool = false
+  knows_about_bell : { unknown, suspects, confirmed } = unknown
+  saw_the_keeper   : bool = false
 ```
 
-Production adapter: SQLite via `@core/db` analogue (or its Rust
-equivalent inside Prism). In-memory adapter for tests + simulator.
+In story, knowledge is a first-class condition target:
 
-### 6.4 TypewriterEngine
+```loom
+if $elena.knows_about_bell is suspects
+  ELENA { cautious }
+    You've heard something, haven't you.
 
-Character-by-character reveal driven by a `TypewriterProfile` (per-char
-delay, punctuation pause table, emphasis speed multipliers, skip
-behavior). Rich-text spans (`<speed:>`, `<shake:>`, `<emotion:>`)
-register lifecycle callbacks: `on_char`, `on_pause`, `on_span_enter`,
-`on_span_exit`. The shell renders these into a `Surface` via
-`prism-ui-runtime`.
+~ $elena.knows_about_bell := confirmed
+```
 
-Inline triggers fire at exact character offsets — same as v1, but the
-character-position tracker is now part of the Rust parser's output, not
-recomputed in the runtime.
+Knowledge is per-character (Elena's beliefs aren't Alice's); the
+runtime maintains one knowledge map per `@character` instance.
+
+### 4.6 Goals
+
+What this character is *trying to do*. A small declarative state
+machine:
+
+```loom
+goal find_keeper
+  priority    = 0.8
+  active_when = $time.hour > 6am and not $elena.exhausted
+  completes_when = saw_the_keeper
+  drives generator search_routine
+```
+
+A character can hold multiple goals; the highest-priority active goal
+drives behavior. Goals are inspectable from story (`if
+$elena.pursuing(find_keeper)`).
+
+### 4.7 Generators on characters
+
+Inline generators (§9.3) tied to the character — the most direct way
+to express "what this character does when nobody is talking to them":
+
+```loom
+generator daily_routine
+  at 6am   go_to @home
+  at 8am   go_to @harbor
+  at noon  go_to @market
+  at 6pm   go_to @home
+
+  every random(20m, 45m)
+    if at @harbor and $weather.fog
+      yield bark from harbor_fog_chatter
+```
+
+A character with no generators is a static prop; one with a few is a
+small village inhabitant; one with a dozen is a routine-driven
+inhabitant of an immersive show.
+
+### 4.8 Hooks
+
+Event-driven character reactions, fired by the world:
+
+```loom
+on meeting $PLAYER
+  if not knowledge.met_player
+    knowledge.met_player := true
+    -> introduce_self as $elena
+
+on $elena.disposition($PLAYER).trust passes 80
+  -> reveal_secret as $elena
+
+on $time.hour == 22
+  -> retire_for_night as $elena
+```
+
+Hooks compile to ledger subscribers. They never block the world tick;
+they enqueue diverts that fire on the character's next turn.
 
 ---
 
-## 7. Crate layout
+## 5. Stats & progression
 
-```
-packages/prism-loom/
-├── Cargo.toml
-├── builtin/                        # ships with the crate
-│   ├── core-language.loom.toml     # built-in registrations (declarative)
-│   ├── typewriter.default.loom     # default typewriter profile
-│   └── typewriter.fast_chat.loom
-├── lua-types/                      # generated by codegen
-│   └── Loom.d.luau
-└── src/
-    ├── lib.rs
-    ├── syntax/                     # parsing
-    │   ├── mod.rs
-    │   ├── line.rs                 # line classification (sigil/keyword/speaker/text)
-    │   ├── inline.rs               # inline token stream within text
-    │   ├── expr.rs                 # expression sublanguage (Pratt over Scanner)
-    │   ├── parser.rs               # recursive descent → ast::Document
-    │   └── tokens.rs
-    ├── ast/
-    │   ├── mod.rs
-    │   ├── document.rs             # Document, Section, Entry, Annotation
-    │   ├── entry.rs                # Dialogue, Choice, Divert, Action, Block
-    │   └── expr.rs                 # LoomExpr enum
-    ├── registry/
-    │   ├── mod.rs                  # LoomRegistry struct
-    │   ├── core.rs                 # built-in guards/actions/blocks/triggers
-    │   └── luau_extend.rs          # Luau-facing registration verbs
-    ├── sema/
-    │   ├── mod.rs
-    │   ├── resolver.rs             # name resolution against operand registry
-    │   ├── validator.rs            # cross-document checks
-    │   └── lint.rs                 # style/structure lints
-    ├── ir/
-    │   ├── mod.rs
-    │   ├── bundle.rs               # LoomDatabase: compiled artifact
-    │   └── fingerprint.rs          # STRUCTURAL_HASH / FULL_HASH
-    ├── codegen/
-    │   ├── mod.rs
-    │   ├── symbols.rs              # build SymbolDef[] from LoomDatabase
-    │   └── vo.rs                   # vo_script.csv + manifest
-    ├── runtime/
-    │   ├── mod.rs
-    │   ├── engine/
-    │   │   ├── conversation.rs
-    │   │   ├── bark.rs
-    │   │   ├── quest.rs
-    │   │   └── cutscene.rs
-    │   ├── ledger.rs
-    │   ├── typewriter.rs
-    │   ├── resolver.rs             # EntryResolver
-    │   └── luau_eval.rs            # bridge to prism-daemon Luau VM
-    ├── luau/
-    │   ├── mod.rs
-    │   ├── bindings.rs             # Loom.*, Var.*, Resolve.*, Ledger.*
-    │   └── extension.rs            # registration verbs callable from Luau
-    └── component.rs                # prism_builder::Component impls
+> **The Meridian layer.** Five primitives — Axes, Pools, Attributes,
+> Stats, Trees — cover every RPG progression model from D&D 5e to
+> Skyrim to Path of Exile, plus "no stats at all" for narrative-only
+> shows.
+
+Stats can be declared on a character directly or in a shared
+`# foo :stats` document that characters reference.
+
+```loom
+# combat :stats
+
+attribute strength = 10, range 1..30
+attribute agility  = 10, range 1..30
+
+axis level
+  mode xp_curve
+  curve $level * $level * 50
+  on advance fire level_up
+
+pool health
+  max = $max_health
+  regen 2/s when not $in_combat
+
+stat max_health = 50 + $strength * 5 + lookup(@combat:level, $level)
+stat damage     = 8 + $strength * 0.5 + (equipped?.bonus or 0)
 ```
 
-**Dependencies:**
+### 5.1 The five primitives
 
-```toml
-[dependencies]
-prism-core      = { path = "../prism-core",   features = ["syntax", "codegen", "reactive", "luau"] }
-prism-builder   = { path = "../prism-builder" }
-prism-daemon    = { path = "../prism-daemon" }   # for the Luau VM
-prism-luau-derive = { path = "../prism-luau-derive" }
-loro            = { workspace = true }            # CRDT store
-serde           = { workspace = true }
-serde_json      = { workspace = true }
-thiserror       = { workspace = true }
-```
-
----
-
-## 8. Pipeline: source → bundle → runtime
-
-```
-.loom source
-    │
-    │  syntax::parse_document(scanner)
-    ▼
-ast::Document
-    │
-    │  sema::resolve  +  sema::validate
-    ▼
-ast::Document  (annotated, name-resolved)
-    │
-    │  ir::lower(docs[])
-    ▼
-LoomDatabase
-    │
-    ├──► codegen::emit_symbols → SymbolDef[]
-    │                       │
-    │                       │  CodegenPipeline (prism-core)
-    │                       ▼
-    │                  Loom.g.rs, Loom.d.luau, Loom.g.ts, Loom.g.cs, …
-    │
-    └──► serialized .loom.bundle.postcard (runtime input)
-                                │
-                                ▼
-                       runtime::LoomRuntime
-                                │
-                                ▼
-                       conversation engine + bark engine + …
-                                │
-                                ▼
-                     prism_builder::Component  ──►  Surface  ──►  femtovg / HTML
-```
-
-**Important:** the `LoomDatabase` is the IR boundary. Anything that
-wants to consume Loom — the editor, a remote relay, a saved-game
-loader — reads `LoomDatabase` (or the codegen artifacts derived from
-it), never raw `.loom` source. Source is for humans.
-
-The bundle is serialized with `postcard` (not JSON) for binary size and
-load speed — matches Prism's daemon IPC choice. A JSON debug form is
-available on `--debug-bundle`.
-
----
-
-## 9. Lua → Luau, and what changes
-
-### 9.1 Why Luau
-
-v1 used Lua 5.4 via Wasmoon. Prism uses Luau via `mlua`. Luau is a
-superset: it adds gradual typing, sandboxing-first design, and
-performance work that Roblox shipped at scale. v2 inherits all of that
-for free.
-
-For Loom this means:
-- **Condition expressions can be typed.** A `?` line is parsed to a
-  `LoomExpr`, lowered to Luau, and *type-checked* against the operand
-  registry. Most condition errors become build errors.
-- **Sandboxing is the default.** Studio extensions get a restricted
-  global table — no `os`, no `io`, no `require` of arbitrary paths.
-- **Coroutines are first-class** (Luau preserves them). The yield/resume
-  pattern from v1 (`-> YIELD ... resume(vars)`) maps directly.
-
-### 9.2 The Luau surface
-
-Three globals, each scoped to a context (from `prism-core`'s context
-model: `runtime`, `workspace`, `build`).
-
-| Global | Context | Purpose |
+| Primitive | "What is it?" | Example |
 |---|---|---|
-| `Loom` | runtime + workspace | playback control: `Loom.start("conv_id")`, `Loom.resume(...)`, `Loom.fire("event")` |
-| `Var` | runtime | `Var.get("trust")`, `Var.set("trust", 50)` — the operand store |
-| `Resolve` | runtime | `Resolve.role("SPEAKER")`, `Resolve.safe("elena", "trust")` — `$`-sigil semantics |
-| `Ledger` | runtime | `Ledger.played("intro")`, `Ledger.visits("hub")` — the ledger query API |
-| `Entity` | runtime | `Entity.getField("elena", "trust")` — entity-namespaced state |
-| `Loom.Language` | workspace | extension registration (`registerAction`, `registerTrigger`, …) — see §11 |
+| **Attribute** | A static per-character number set at creation. | `strength = 10` |
+| **Axis** | A dimension that advances at runtime. | `axis level (mode xp_curve)` |
+| **Pool** | A spendable supply with max / regen / cost. | `pool health (max=$max_health regen 2/s)` |
+| **Stat** | A computed or tracked value. | `stat damage = ...` |
+| **Tree** | A DAG of unlockable nodes. | `# warrior_path :tree` |
 
-EmmyDoc stubs (`Loom.d.luau`) emitted by codegen give IDE autocomplete
-for every conversation ID, entry ID, var name, trigger type, and
-registered role.
+### 5.2 Axes — six advancement modes
 
-### 9.3 What runs in Luau vs Rust
+```loom
+axis level
+  mode xp_curve              # earn XP, spend automatically
+  curve $level * 100
 
-A Luau VM call is **never** on the inner loop of the resolver. The
-resolver is a hot path; every iteration calls it once per candidate
-entry, and a bark filter may have dozens of candidates per tick. Going
-through Luau for each would be a perf catastrophe and a sandboxing
-boundary crossing for nothing.
+axis one_handed
+  mode use_tracking          # advance from using it
+  on use $weapon
+  curve $level * $level * 10
 
-Instead:
+axis attribute_points
+  mode point_buy             # spend a pool
+  buy from pool_attribute_points
 
+axis approval_act_1
+  mode milestone             # gate by narrative
+  milestones
+    1: played(intro)
+    2: chose("help_wren")
+    3: knowledge has_truth
+
+axis quest_progress
+  mode narrative_trigger     # advanced only by story
+  advance on event quest_step_done
+
+axis enemy_difficulty
+  mode sdk_controlled        # Luau handler decides
+  handler @enemy.scaling
 ```
-Condition compilation:
 
-   parse "if $trust > 50 and met_wren"
-       │
-       ▼
-   LoomExpr (Rust AST, fully typed)
-       │
-       ├─ subset compilable in Rust?
-       │     ├─ yes  → emit Rust eval closure  ── used by resolver
-       │     └─ no   → emit Luau source       ── invoked when filter reaches this entry
+### 5.3 Stats — four types
+
+```loom
+stat damage = 8 + $strength + (equipped?.bonus or 0)    # expression
+
+stat carry_capacity                                      # lookup table
+  lookup $strength
+  table { 1: 20, 5: 35, 10: 60, 20: 120 }
+  interpolate linear
+
+stat health pool max=$max_health regen 2/s              # pool
+stat shield pool max=$max_shield regen $reflux/s when not $in_combat
+
+stat threat_score derived from $damage, $position, $aggression
+  formula $damage * 0.5 + $position.exposure + $aggression * 10
 ```
 
-The **build-time compilable subset** covers:
-- Numeric / string / boolean literals.
-- Var reads (`$trust`).
-- Entity field reads with up to one safe nav (`$elena?.trust`).
-- Role reads (`$SPEAKER.trust`).
-- Built-in operators (`and / or / not / is / is not / has / has not /
-  > >= < <= == !=`).
-- Built-in ledger predicates (`played`, `visits`, `last`, `since`,
-  `count`, `chose`).
+### 5.4 Trees — progression DAGs
 
-This subset is intentionally large enough to cover ~95% of `.loom`
-conditions in the legacy corpus.
+A separate archetype because they're often large and shared across
+characters:
 
-Anything outside the subset — user-defined `defn`-bound helpers,
-inline `${ ... }` expressions in text, action chains with arbitrary
-side effects — compiles to Luau. The Luau VM is invoked **once per
-evaluation, batched per conversation tick**.
+```loom
+# warrior_path :tree
+
+node armsman_1
+  cost { skill_points: 1 }
+  requires axis(one_handed) >= 20
+  effect stat(damage) +5
+  effect var(unlocked_armsman_1) := true
+
+node armsman_2
+  cost { skill_points: 1 }
+  requires node(armsman_1)
+  effect stat(damage) +5
+  effect ability @power_attack
+```
+
+Tree nodes have cost, prerequisites, unlock conditions, and effects
+(stat modifier, attribute change, var set, pool grant, ability
+unlock, Luau hook). Multi-rank nodes use `rank N` modifier.
+
+### 5.5 Modifiers
+
+Runtime stat adjustments with operation, optional duration, optional
+condition:
+
+```loom
+~ modify $player.damage +2 add for 30s
+~ modify $elena.fear -10 multiply 0.5 while @lantern.lit
+```
+
+Modifiers compose. The runtime resolves to a single effective value
+per (entity, stat) tuple on read.
+
+### 5.6 The unified namespace
+
+Every stat-system primitive — attributes, axes, pools, stats — is
+exposed under `$`:
+
+```loom
+$elena.strength            # attribute
+$elena.level               # axis
+$elena.health              # pool, current value
+$elena.health.max          # pool, max
+$elena.damage              # stat
+$elena.tree.armsman_1?     # tree-node presence test
+```
+
+Loom doesn't distinguish bracketed prefixes (`[stat:X]`, `[axis:X]`,
+`[pool:X]`) at the surface — the resolver knows which registry owns
+the name. Disambiguation qualifiers exist for the rare collision (see
+[grammar §11.1](loom-grammar.md#111-resolve-reference-)).
 
 ---
 
-## 10. State, persistence, hot reload
+## 6. Story
 
-### 10.1 State store
+The familiar narrative parts. Conversations, choices, diverts,
+dialogue, evolution.
 
-All mutable runtime state lives in a `loro::LoroDoc` (Prism's standard
-choice). Top-level shape:
+```loom
+# harbor_intro :conversation
 
-```
-loom.vars        : Map<String, LoroValue>     // $trust, $met_wren, …
-loom.stats       : Map<String, LoroValue>     // $health, $max_health, …  (Meridian-equivalent)
-loom.entities    : Map<EntityId, Map<…>>      // $elena.trust, $wren.mood, …
-loom.ledger      : List<LedgerEvent>          // append-only
-loom.flags       : Map<String, bool>          // event-fired flags
-loom.session     : Map<String, LoroValue>     // ephemeral, cleared per session
-```
+-- start
 
-Because the store is a `LoroDoc`, every mutation is an op with a
-version vector. `snapshot()` captures the version; `restore(snap)` is a
-diff-and-apply, **O(ops since snapshot)** not O(total ops).
+WREN { worried }
+  The bell went silent three days ago.
 
-### 10.2 Save/load
+  * I'll help.  -> investigate
+  * Not my problem.  -> leave  if not $trusted
 
-A save file is the `LoroDoc` serialized to its native binary format
-plus the current playhead (`(conversation_id, entry_id, tunnel_stack)`).
-That's it. The bundle is content-addressed by `STRUCTURAL_HASH` so a
-save written against bundle v1.2 will refuse to load against v1.3 if
-the structure changed.
+-- investigate
 
-### 10.3 Hot reload
+after $trusted
+  WREN { warm }
+    [[object:maren|Maren]] taught me to listen to <speed:0.7>the water</>.
 
-When a `.loom` file changes during dev:
-
-```
-fingerprint old vs new:
-  STRUCTURAL_HASH unchanged  ── full-hash differs only in text
-     ─► patch live: swap entry text, typewriter retriggers from
-        current char offset if mid-reveal
-  STRUCTURAL_HASH changed
-     ─► soft reset: unwind the conversation to its last hub or
-        SECTION boundary, replay no events from the ledger, resume
+otherwise
+  WREN
+    She just... stopped.
 ```
 
-Bark queues are always rebuilt from the new bundle — there's no notion
-of "the bark mid-play" because barks are one-shot.
+`--` declares a section; `*` / `+` are once-only / sticky choices;
+`->` is a hard divert; `<-` is a return; `<- target` pulls a thread
+by name. Diverts take modifiers: `-> @harbor .return`,
+`-> notify_wren .dispatch`. Tunnels with parameters:
+`-> (ask_wren "the bell" "...") ->`.
 
-Same fingerprint substrate as `.prui` literal-only updates (Phase 10).
+Sections evolve:
+
+```loom
+each visit
+  first
+    WREN
+      Morning. New face.
+  then
+    WREN
+      Back again.
+  finally
+    WREN
+      You're practically furniture now.
+```
+
+Multi-way branching: `match $quest_stage` with arms. State-morphing
+across an entire section: `after $betrayed` / `otherwise`. Both
+exist; the right one is the one that reads more clearly for the
+shape of the branch.
+
+### 6.1 Quests, cutscenes, barks
+
+All three are document archetypes (`:quest`, `:cutscene`, `:barks`)
+with the same content language as conversations but specialized
+top-level shapes — see grammar §6.
+
+Quests have stages with objectives:
+
+```loom
+# find_maren :quest
+
+-- investigate "Investigate the Lighthouse"
+  > The bell at Saltmere has gone silent.
+  .objective talk : talk @WREN
+  .objective enter : reach @lighthouse_interior
+  .on-complete -> choose_approach
+```
+
+Cutscenes are timecode-driven:
+
+```loom
+# bell_rings :cutscene .skippable
+
+at 0.0  :audio @ambience.wind .fade-out 2.0
+at 2.0  The first strike shakes dust from the rafters.
+at 2.0  :audio @sfx.bell_strike_first
+at 5.0  WREN { wonder, whispering }
+          The bell.
+```
+
+Barks — historically a separate archetype — are now just **generators**
+that yield dialogue (§9.3). The `:barks` tag still exists as sugar
+for "this file is a generator collection".
 
 ---
 
-## 11. Extension model
+## 7. The three sigils
 
-Studios extend Loom **only by registration** — never by modifying the
-parser, never by overriding core keywords.
+Loom's most-asked clarification, in one table:
 
-### 11.1 Registerable elements
+| Sigil | Question | Resolves at | If undefined |
+|---|---|---|---|
+| `$x` | "What is this **right now**?" | Runtime | Build error: unknown var/role/entity |
+| `@x` | "Does this **exist** in the project?" | Build time | Build error: unknown asset / scene / character / cue |
+| `[[x]]` | "What is this **related to**?" | Author time | Warning: dead link (build still succeeds) |
 
-| Kind | Registered shape | Example |
-|---|---|---|
-| Action | `LoomAction { keyword, parse_args, handler_name }` | `remember journal_entry_X` |
-| Guard | `LoomGuard { keyword, negate }` | `unless betrayed` (just `if not betrayed`, so this is illustrative — most studios won't add guards) |
-| Block | `LoomBlock { keyword, sub_keywords, group, apply_to_children }` | `flashback "three days ago"` |
-| Trigger | `LoomTrigger { name, rangeable, category, parse_args }` | `<vfx:sparkle,0.5>` |
-| Inline delimiter | `LoomInlineDelim { open, close, name, visible }` | `<<stage whisper>>` |
-| Variation mode | `LoomVariationMode { name, select_fn }` | `[a / b / c].weighted(0.7, 0.2, 0.1)` |
-| Resolve role | `LoomRole { name, readonly, indexed }` | `$NARRATOR`, `$COMPANION[0]` |
-| Char-block category | `LoomCharCategory { name, values, aliases, priority }` | `{ aggressive }` matches a `stance` category |
-| Annotation | `LoomAnnotation { keyword, body_shape }` | `@status final` |
+Three commitment levels. **The test: delete the codepoint.** If the
+build now fails, it was `@`. If the script behaves differently at
+runtime, it was `$`. If the show plays correctly, it was `[[ ]]`.
 
-### 11.2 What is *not* registerable
+`@` and `[[ ]]` are kept separate because the **failure contracts
+differ**: `@elena` declares *this script needs Elena*; `[[elena]]`
+declares *this prose mentions Elena*. Unifying would force one
+failure mode and break either the build (too brittle for `[[ ]]`'s
+drafting use case) or the safety (too loose for `@`'s execution use
+case). Two sigils, two contracts.
 
-These are invariant. Modifying them would change what a `.loom` file
-*is*.
+Inside text, `@` typically appears where a script-level reference is
+needed (`<sfx:@bell>`), and `[[ ]]` where a hyperlink should
+render:
 
-- Structural sigils: `#`, `--`, `*`, `+`, `->`, `<-`, `>`, `@`, `//`.
-- Bracket families: `{}`, `<>`, `[]`, `[[]]`, `()`, `${…}`, `$(…)`.
+```loom
+WREN
+  $LISTENER.name, you should ask [[elena|Elena]] about the keeper.
+  She was at @lighthouse_interior the night it happened.
+  The [[Bell of Tides]] hasn't rung since.
+```
+
+Resolution chain for `$x` (first match wins):
+1. Participant scope (`as participant` sections — `$x` tries
+   `$PARTICIPANT.x` first)
+2. Conversation roles (`$SPEAKER`, `$LISTENER`, `$PLAYER`,
+   `$PARTICIPANT`, …)
+3. Local `let` bindings
+4. Vars / stats / character fields
+5. Cohort membership
+
+---
+
+## 8. Live performance
+
+> Live immersive theatre is what falls out of the rest of the language
+> when you make **participants** first-class. The pieces in this
+> section are all that's needed; everything else (cast, story, stats)
+> works the same on stage as it does on a controller.
+
+### 8.1 Cast
+
+```loom
+cast BELLKEEPER
+  .label "The Bellkeeper"
+  .open                      # any performer can be bound at runtime
+  .improv .latitude(0.5)     # 0=strict, 1=fully improvised
+```
+
+`SPEAKER` in dialogue refers to a cast slot, not a performer. Binding
+is a runtime op via `Cast.assign(slot, performer)`.
+
+In a game variant, performers are entity references
+(`Cast.assign("WREN", @elena)`). In theatre, they're actor IDs. In an
+immersive show with floating ensembles, `.open` cast slots accept
+whoever the booth assigns.
+
+### 8.2 Cues
+
+Two ways to address the crew bus:
+
+```loom
+# inline (one-shot, anonymous)
+WREN
+  The bell.<sfx:distant_bell>
+
+# named (declared once, fired anywhere)
+cue lights_warm
+  .target lighting
+  .preset warm_amber
+  .fade 2.5s
+
+# elsewhere:
+~ cue lights_warm
+WREN
+  Listen.<cue:lights_warm> The light changes.
+```
+
+Inline triggers for moment-of-juice. Named cues for show-flow. Both
+land on the same `CueFired { name, payload }` event on the crew bus.
+
+### 8.3 Participants, cohorts, locations
+
+```loom
+cohort initiate
+  .label "The Initiates"
+  .capacity 24
+
+location BELL_TOWER
+  .label "The Bell Tower"
+  .capacity 12
+
+when participant joins
+  enroll $PARTICIPANT into initiate
+  -> orientation as $PARTICIPANT
+
+when participant enters @BELL_TOWER
+  -> bell_first_visit as $PARTICIPANT
+```
+
+The `as participant` modifier scopes a section's state to one
+audience member. Inside such a section, `$trust` means
+`$PARTICIPANT.trust`, not a show-global var. Many participants can be
+in the same `as participant` section simultaneously without
+interfering.
+
+### 8.4 Broadcast scopes
+
+```loom
+broadcast :participant($PARTICIPANT)
+  NARRATOR { whispering }
+    You hear it differently. You always have.
+
+broadcast :location(@BELL_TOWER) but :participant($PARTICIPANT)
+  NARRATOR
+    The others look up.
+
+broadcast :cohort(singers) and :location(@BELL_TOWER)
+  ~ cue private_choir
+```
+
+Scope atoms compose with `and` (intersection) and `but` (set
+difference). The runtime applies the scope filter to the broadcast's
+content stream.
+
+### 8.5 Improv
+
+```loom
+BELLKEEPER (improv .duration(45s))
+  > Greet warmly. Find out why they came. Don't reveal the singing —
+  > that's act two.
+
+  -> next_beat
+```
+
+The indented body is a directive to the performer (the leading `>`
+makes it a flavor line, never spoken aloud). The runtime:
+
+- displays the directive on the performer's prompter (a Luau-driven
+  PRUI surface served by `prism-relay` to their device);
+- holds the playhead until the stage manager / performer advances it
+  (foot pedal, tap, speech-recognition trigger), *or* until
+  `.duration` elapses;
+- writes `ImprovBeatStarted` / `ImprovBeatAdvanced` to the ledger.
+
+Mid-line improv between scripted lines:
+
+```loom
+BELLKEEPER
+  Why are you here?
+  (improv ~30s about: "what you might do")
+  And what will you do about it?
+```
+
+### 8.6 Live patching
+
+The booth UI — a Prism app driven by the same `LoomRuntime` — can:
+- skip a participant past a beat;
+- force-fire a cue;
+- re-cast a role;
+- retire a participant who left;
+- hot-reload a `.loom` patch without stopping the show.
+
+Every booth action is a Loro CRDT op on the same store the rest of the
+runtime reads. The booth is just another client.
+
+---
+
+## 9. Reactivity & dynamics
+
+> The goodies that turn Loom from a static branching tree into a
+> living system. Reactive bindings, coroutine-based generators,
+> scene state machines, and time-based scheduling — all built from
+> three primitives: `let`, `wait`, `yield`.
+
+### 9.1 Reactive `let`
+
+`let` is a **reactive binding** — a live formula whose value updates
+whenever its dependencies change.
+
+```loom
+let trusted    = $elena.disposition($PLAYER).trust > 50
+let in_danger  = $health < $max_health * 0.3
+let crowd_size = count(@all_participants in @bell_tower)
+```
+
+Backed by `prism-core::reactive::Memo<T>`. Conditions that read
+`$trusted` subscribe to it. Mutating `$elena.disposition.trust`
+schedules a single re-evaluation; downstream effects fire once.
+
+### 9.2 Time primitives
+
+```loom
+wait 30s                       # pause
+wait until $bell_rung          # gate on condition
+wait until $weather is storm   # gate on equality
+at 6am                         # schedule absolute (in-world clock)
+every 15m                      # schedule periodic
+every random(20s, 60s)         # randomised interval
+```
+
+These are statements that yield control to the scheduler. They appear
+inside generators (§9.3) and scenes (§9.4); outside them they're
+parse errors.
+
+### 9.3 Generators
+
+A **generator** is a long-running coroutine that yields content to
+the runtime. Generators replace the legacy bark-set archetype with
+something far more expressive.
+
+```loom
+generator harbor_chorus
+
+  loop
+    wait random(20s, 60s)
+
+    if $storm_active
+      [DOCKHAND / FISHER] { worried }
+        [Storm's close. / Sky's wrong. / Time to tie down.].shuffle
+
+    if $bell_ringing
+      VILLAGER { surprised }
+        The bell! It's ringing!
+
+    otherwise
+      [FISHER / VILLAGER]
+        [Quiet night. / Stars are out. / Tide's calm.].cycle
+```
+
+A generator runs until explicitly cancelled. The runtime starts named
+generators on world boot or via `~ start <generator>`. Multiple
+generators run concurrently. They are character-bound (declared
+inside a `# X :character` body) or world-bound (top-level).
+
+Inline generators inside characters are how routines and idle
+behaviors are expressed:
+
+```loom
+# elena :character
+
+  generator daily_routine
+    at 6am   go_to @home
+    at 8am   go_to @bakery
+    at noon  go_to @harbor
+    every random(15m, 45m)
+      if at @harbor and $weather.fog
+        yield bark from @harbor_fog_chatter
+
+  generator stress_reactions
+    when $elena.stress > 70
+      yield with_chance(0.3)
+        ELENA { exhausted }
+          I need a moment.
+```
+
+`yield` produces content (a dialogue line, a bark, an event) and
+hands control back to the scheduler. `yield bark from @set` picks
+from a named bark set with saliency scoring. `yield with_chance(P)`
+yields the body P fraction of the time, skipping otherwise.
+
+### 9.4 Scenes
+
+A **scene** is a labelled coroutine — a multi-step interaction with
+explicit state transitions. Where a generator yields ambient content,
+a scene drives a focused exchange.
+
+```loom
+scene patrol |character, route|
+
+  for waypoint in route
+    $character.go_to(waypoint)
+    wait until $character.at(waypoint)
+    wait random(3s, 8s)
+
+    if $character.spotted_intruder
+      -> investigate as $character
+      return
+
+scene investigate |character|
+  approach
+    $character.disposition($PLAYER).suspicion += 5
+    wait until $character.at($PLAYER.position)
+    -> examine
+
+  examine
+    $character { focused }
+      Hmm. Something's not right.
+    wait random(2s, 4s)
+    if $character.deduction > 60  -> confront
+    -> withdraw
+
+  confront
+    fire $character.investigated($PLAYER, found_clue)
+    return found_clue
+
+  withdraw
+    fire $character.investigated($PLAYER, none)
+    return none
+```
+
+Scenes have parameters, labelled states (the inner bare-name
+sections), `wait`, `yield`, `return`. They're invoked from story or
+other scenes: `-> investigate as $elena` (fire-and-forget) or `let
+result = run investigate($elena)` (await return value).
+
+A scene compiles to a Luau coroutine; the runtime schedules it.
+Cancellation is explicit (`cancel @scene_id`) or implicit (cancelling
+the owner — when Elena despawns, all her scenes cancel).
+
+### 9.5 List comprehensions
+
+```loom
+let allies   = [x for x in @characters where x.faction == @PLAYER.faction]
+let nearby   = [x for x in @characters where x.distance($PLAYER) < 10]
+let hostile  = [x for x in nearby where x.disposition($PLAYER).is(hostile)]
+
+if any(hostile)
+  -> retreat
+```
+
+The comprehension grammar (`[expr for x in iter where pred]`) covers
+the queries narrative writers actually run. Aggregate functions —
+`any`, `all`, `count`, `min`, `max`, `closest`, `first`, `last` — are
+the ledger-predicate family extended to live collections.
+
+### 9.6 Procedural text
+
+For text that varies more than `[a / b / c].mode` can express,
+**compose** invokes a grammar:
+
+```loom
+compose harbor_threat
+
+  pattern $intensity
+    low    : "[A whisper / A murmur / A trace] of trouble [at / by] [the docks / the breakwater]"
+    high   : "[Hell / Chaos / Ruin] is breaking loose [at / by] [the docks / the breakwater]"
+
+DOCKHAND { afraid }
+  ${compose harbor_threat intensity:$storm.intensity}
+```
+
+`compose` is a named context-free grammar with conditional patterns.
+The output is a string suitable for splicing into dialogue. Useful
+for procedural quest descriptions, headlines, rumours, system
+messages.
+
+### 9.7 Spawning and joining
+
+```loom
+let scene = spawn investigate($elena)        # start a scene, don't wait
+let result = await scene                     # join later
+
+spawn harbor_chorus                          # generator
+spawn daily_routine($wren)
+
+cancel @scene_id                             # stop a running scene/generator
+```
+
+The runtime's scheduler is fair-share across concurrent generators
+and scenes. Per-character generators have a single-process invariant
+(only one routine generator active per character at a time) — others
+queue.
+
+---
+
+## 10. Extension model
+
+Studios extend Loom by **registering** new constructs through Luau at
+workspace boot. Extensions are **additive only**.
+
+Registerable:
+
+| Kind | Example |
+|---|---|
+| Action | `remember journal_X` |
+| Guard | `unless betrayed` |
+| Block | `flashback "three days ago"` |
+| Trigger type | `<vfx:sparkle,0.5>` |
+| Inline delimiter | `<<stage whisper>>`, `~~corrupted~~` |
+| Variation mode | `[a / b / c].weighted(0.7, 0.2, 0.1)` |
+| Scene template | a horror-game `investigation` scene |
+| Cue target | a new lighting protocol (sACN, OSC, MIDI) |
+| Resolve role | `$NARRATOR`, `$COMPANION[0]`, `$STAGE_MANAGER` |
+| Char-block category | `{ aggressive }` matches a `stance` category |
+| Annotation | `@status final`, `@vendor:rating teen` |
+| Character type | a custom subtype of `@humanoid` |
+| Slot | a new component slot (`@studio:psychology`) |
+| Stat advancement mode | beyond the built-in five |
+
+Not registerable (invariants):
+
+- Structural sigils, bracket families, the three reference sigils,
+  the three operators.
 - Speaker detection (ALLCAPS or `$UPPER`).
 - Indentation semantics.
-- The three sigils `$ @ [[…]]` and the three operators `= := ==`.
-- The four engine types (conversation / bark / quest / cutscene).
+- The trinity (character / stats / story) and the live constructs.
 
-### 11.3 The Rust ↔ Luau extension dance
-
-Registration verbs are exposed as Luau bindings on the workspace
-context. A studio writes:
-
-```luau
--- workspace/loom/extensions/horror.luau
-local L = Loom.Language
-
-L.registerGuard("if sane", { negate = false, body = "$sanity > 0" })
-
-L.registerAction("drain", {
-  parse = function(line)
-    local resource, amount = line:match("(%S+)%s+(%d+)")
-    return { handler = "Horror.drain", args = { resource, tonumber(amount) } }
-  end,
-})
-
-L.registerTrigger("heartbeat", { rangeable = true, category = "internal" })
-
-L.registerInlineDelim("~~", "~~", { name = "corrupted", visible = true })
-```
-
-At workspace boot, the Luau VM runs every `*.luau` file in
-`workspace/loom/extensions/` against a *staging registry*. After all
-extensions run, the staging registry is **frozen**, diff'd against the
-core registry, and merged. Conflicts are build errors with the offending
-file:line.
-
-The frozen registry is then handed to the parser. The parser is closed
-over the merged registry for that workspace session. There is no
-mid-session registration. Extensions reload only with the workspace.
+At workspace boot every `*.luau` in `workspace/loom/extensions/` runs
+against a staging registry. After all extensions execute, the staging
+registry is frozen, diffed against the core, and merged. Conflicts
+are build errors. There is no mid-session registration.
 
 ---
 
-## 12. Integration with the rest of Prism
+## 11. Implementation notes
 
-### 12.1 As a builder component
+> Brief — full implementation plan in `loom-impl.md` once the work
+> starts.
 
-```rust
-impl prism_builder::Component for LoomConversationPlayhead {
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::reference("src", "@conv").required(),
-            FieldSpec::reference("typewriter", "@typewriter").optional(),
-        ]
-    }
+**State store.** All mutable runtime state lives in a
+`loro::LoroDoc`. Top-level maps for show, participants, cohorts,
+cast, characters, ledger, locations. Per-participant scoping resolves
+via the `participants[id]` namespace transparently. Every mutation
+is a CRDT op with a version vector — `snapshot()` captures, `restore`
+applies a diff in O(ops since).
 
-    fn signals(&self) -> Vec<SignalDef> {
-        vec![
-            SignalDef::new("on_choice", &["choice_id: string"]),
-            SignalDef::new("on_complete", &[]),
-        ]
-    }
+**Save / load.** Serialize the `LoroDoc` plus playheads. Content-
+addressed by `STRUCTURAL_HASH`.
 
-    fn lower_ui(&self, ctx: RenderContext, node: &Node, style: StyleProperties)
-        -> Result<prism_ui_runtime::layout::Node>
-    {
-        let conv_id = ctx.resolve_ref(&node.props["src"])?;
-        let handle = ctx.loom_runtime().start(conv_id)?;
-        ctx.subscribe(&handle, "on_choice", node.signals["on_choice"]);
-        Ok(self.render_playhead(handle, style))
-    }
-}
-```
+**Hot reload.** Two fingerprints per document: structural
+(IDs, topology, declared names) and full (text). Text-only edits
+patch live. Structural edits resync at the next section boundary.
+Same substrate as `.prui` literal-only updates.
 
-Three blocks ship: `loom-conversation` (playhead),
-`loom-bark-feed` (ambient queue), `loom-quest-tracker`
-(active-objective HUD). Studios register more.
+**Rust ↔ Luau split.** The resolver, all engines, and the build-time
+compilable subset of expressions run in Rust. Luau handles: condition
+expressions outside the subset, user-registered action handlers,
+generator / scene bodies, improv prompter UI, extension registration.
+A Luau VM call is never on the resolver inner loop.
 
-### 12.2 As a daemon module
+**Codegen.** `LoomDatabase` lowers to `SymbolDef[]` and runs through
+Prism's `CodegenPipeline`. Out: `Loom.g.rs`, `Loom.d.luau`,
+`Loom.g.ts`, `Loom.g.cs`, `Loom.g.gd`. IDE autocomplete for every
+character / cue / section / slot / axis / stat / pool / tree node.
 
-`prism-daemon` exposes `loom.start`, `loom.choose`,
-`loom.fire_event`, `loom.snapshot`, `loom.restore` as IPC verbs.
-The desktop Studio shell drives a `LoomRuntime` through this surface;
-the SSR relay drives the same surface remotely for the Sovereign
-Portal.
-
-### 12.3 As an SSR target
-
-`prism-ui-runtime`'s `lower_semantic_html` already serializes a
-`Surface` to semantic HTML. A Loom conversation lowering to a
-`Surface` lowers to HTML for free. The HTML form uses CSS animations
-for typewriter reveal and inline triggers map to `<span>` classes with
-data attributes — graceful degradation for non-JS clients.
-
-### 12.4 As a CLI subcommand
-
-```
-prism loom check   <path>     # parse + validate, no codegen
-prism loom build   [--target rust|luau|all]
-prism loom run     <path>     # spawn a CLI playthrough simulator
-prism loom export  --format csv  # vo script + loc bundle
-prism loom fmt     <path>
-prism loom lint    <path>
-```
-
-Wired into `prism-cli` alongside `dev`, `build`, `test`. Inherits
-sccache + lld + GC.
+**Builder integration.** `.loom` compiles to
+`prism_builder::Component` impls. Drop a `<loom-conversation
+src="@harbor_arrival"/>` into a PRUI scene like any other widget.
 
 ---
 
-## 13. Testing strategy
+## 12. Open questions
 
-Loom is the smoke test for Prism; Loom itself needs tests. Layered:
-
-1. **Unit (in-crate)** — every parser nonterminal has at least one
-   positive and one negative test. Every IR lowering has a snapshot.
-   Every runtime engine has a deterministic playthrough.
-2. **Golden files** — `tests/golden/*.loom` paired with
-   `tests/golden/*.expected.bundle.postcard`. CI fails if either side
-   drifts.
-3. **Property tests** — round-trip: parse → ast::print → parse →
-   compare. Idempotent.
-4. **Playthrough simulator** — drives every conversation in
-   `tests/corpus/` to completion via every choice combination,
-   asserting the ledger is well-formed.
-5. **Cross-DSL** — a PRUI scene that embeds a Loom conversation, that
-   triggers a PRSS state variant, that mutates a signal — proves the
-   substrate is real.
-
-All run under `cargo prism test`.
+1. **Generator scheduling fairness.** Many characters with many
+   routines + ambient generators — what's the scheduling policy?
+   Round-robin per character is the obvious start; whether that
+   holds under 100+ NPCs is empirical.
+2. **Improv input modality.** Foot pedal, body-mic speech detection,
+   stage-manager tap. Probably all of the above; the priority and
+   failure modes need a real workshop.
+3. **Cue-list interchange.** Theatre crews live in ETC Eos, QLab,
+   ChamSys. Loom should export to their cue-list formats and ideally
+   re-import after the crew edits in their own UI. Spec the
+   round-trip.
+4. **Per-character ledger vs single ledger.** Per-character is
+   cleaner for immersive (each participant's ledger drives their
+   barks) but storage cost is linear in participant count. A single
+   ledger with participant-tagged events may be simpler. Benchmark
+   before committing.
 
 ---
 
-## 14. Roadmap
+## 13. References
 
-Phased, each phase ends with `cargo prism test` green and one demo
-narrative played end-to-end.
-
-| Phase | Scope | Demo |
-|---|---|---|
-| **0** | Crate skeleton, dependency wiring, `prism loom check` parses empty files. | `prism loom check /dev/null` returns 0. |
-| **1** | Lexer + line classifier + speaker/text + `--section` + `->` divert. No conditions, no actions. | A linear screenplay plays to completion. |
-| **2** | Choices (`*`, `+`), modifiers, hubs, returns. Still no state. | A branching conversation with hubs works. |
-| **3** | Vars (`var`, `=`, `:=`), `if` guards, expression grammar §10. | "Tide Bell" intro plays with branching by `$trust`. |
-| **4** | `let` reactive bindings (Memo-backed). `each visit`, `after`/`otherwise`. | Conversations evolve across visits. |
-| **5** | Barks + BarkEngine + saliency scoring. | Ambient harbor chatter responds to state. |
-| **6** | Inline tokens: `${…}`, `<sfx:>`, `<speed:>`, ranged triggers, named anchors. | Typewriter renders a full Tide Bell scene with juice. |
-| **7** | Quests + cutscenes. | The full Tide Bell scenario from `LEGACY-CODEBASE/loom-lang/example.md` plays end-to-end. |
-| **8** | Codegen (SymbolDef → Rust/Luau/TS), `Loom.d.luau` stubs. | IDE autocomplete on conversation IDs. |
-| **9** | Luau extension surface (`Loom.Language.*`). | Horror dialect from v1 extensibility.md ports verbatim. |
-| **10** | Hot reload, snapshots, time travel. | Editor scrubber rewinds a playthrough. |
-| **11** | Builder integration. SSR via relay. | Loom conversation in a PRUI scene, served by `prism-relay`. |
-| **12** | CLI polish, lint rules, fmt, perf. | Bench gates: 10k entries parse < 200ms, 1k-tick bark filter < 1ms. |
-
----
-
-## 15. Open questions
-
-These are unresolved as of 2026-05-21. Each is parked here, not in
-implementation, until we have a reason to pick.
-
-1. **Conversation history as a queryable view.** The ledger answers
-   `played(X)` cheaply, but "every line $elena has said this session"
-   needs an index. Build one eagerly, or compute lazily and cache?
-2. **Stat-vs-var precedence under conflict.** v1 said vars win; v2
-   inherits that, but Meridian-equivalent stat registration in Prism
-   isn't designed yet. The collision rule may want revision.
-3. **Streaming bundle load.** A `LoomDatabase` for a large game is
-   tens of MB. Should the runtime mmap a postcard bundle and lazy-load
-   conversations, or accept the up-front load?
-4. **Multi-author conflict resolution.** Loro merges CRDT ops
-   trivially, but Loom *content* edits are line-grained text edits.
-   What does "two writers edited the same dialogue" look like in the
-   editor? Defer until co-edit is a real concern.
-5. **GDScript / Unity-C# emitter parity.** v1 emitted both for the
-   game-engine bridge. v2 inherits the emitters from Prism, but the
-   downstream Godot/Unity integrations are out of scope for the smoke
-   test. Re-evaluate when the first non-Prism consumer asks.
-
----
-
-## 16. References
-
-- Legacy v1 spec (the design parent): `LEGACY-CODEBASE/loom-lang/`,
-  in particular `README.md`, `reference.md`, `resolve-sigil.md`,
-  `extensibility.md`, `IMPLEMENTATION.md`.
 - The formal grammar: [`loom-grammar.md`](loom-grammar.md).
-- Prism's `Scanner`: `packages/prism-core/src/language/syntax/`.
-- Prism's codegen DSL: `packages/prism-core/src/language/codegen/`.
-- Luau bindings substrate:
-  `packages/prism-daemon/src/modules/luau_module.rs`,
-  `packages/prism-core/src/language/luau/`.
-- Reactive substrate: `packages/prism-core/src/reactive/`,
-  `packages/prism-core/src/kernel/atom.rs`.
-- Builder registry: `packages/prism-builder/src/registry.rs`,
-  `packages/prism-builder/src/component.rs`.
+- Legacy spec parents (read for context, not parity):
+  `LEGACY-CODEBASE/loom-lang/` — the v1 TypeScript Loom and the
+  Simulacra / Meridian companion specs.
 - Sibling DSL docs: [`prui-reference.md`](prui-reference.md),
   [`prss-reference.md`](prss-reference.md),
   [`luau-integration-plan.md`](luau-integration-plan.md).
+- Prism substrate: `prism-core::language::syntax`,
+  `prism-core::language::codegen`, `prism-core::reactive`,
+  `prism-daemon::modules::luau_module`,
+  `prism-builder::ComponentRegistry`.

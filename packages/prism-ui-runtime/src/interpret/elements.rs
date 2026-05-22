@@ -486,12 +486,70 @@ fn lower_element_body(el: &Element, scope: &LowerScope) -> Vec<Node> {
             if let Some(injected) = scope.host_children_for_slot(key) {
                 return injected.to_vec();
             }
+            // Phase 14 — fall through to the AST-shape named-slot map.
+            // The `<invoke>` consumer prefers this path (it re-lowers
+            // with per-call bindings); the plain `<slot name="X"/>`
+            // consumer also reaches in so a slot default's AST gets
+            // lowered at consumer time when no pre-lowered runtime
+            // children exist.
+            if !key.is_empty() {
+                if let Some(ast) = scope.named_slot_ast(key) {
+                    return lower_children(ast, scope);
+                }
+            }
             if name.is_none() {
                 if let Some(injected) = scope.host_children_ui() {
                     return injected.to_vec();
                 }
             }
             lower_children(&el.children, scope)
+        }
+        // **Phase 14** — `<invoke slot="row" item={t} index={i}/>`.
+        // Render-prop call form: re-lower the named slot's AST in a
+        // fresh scope carrying every bare/identifier attribute as a
+        // local binding. The slot's body resolves `{item.title}` /
+        // `{index}` against those per-call bindings, so a single
+        // declared slot body renders once per call site. The `slot=`
+        // attribute names the slot; everything else flows in as
+        // bindings. Missing slot → empty render (graceful, with a
+        // Phase 17 lint).
+        "invoke" => {
+            let Some(slot_name) = bare_attr_value(el, "slot", scope) else {
+                return Vec::new();
+            };
+            let Some(slot_ast) = scope.named_slot_ast(&slot_name).map(|s| s.to_vec()) else {
+                return Vec::new();
+            };
+            let mut call_scope = scope.clone();
+            for attr in &el.attributes {
+                if !matches!(
+                    attr.name.namespace,
+                    AttributeNamespace::Bare | AttributeNamespace::Identifier
+                ) {
+                    continue;
+                }
+                if attr.name.local == "slot" {
+                    continue;
+                }
+                let value = match &attr.value {
+                    AttributeValue::Empty => serde_json::Value::Bool(true),
+                    prism_core::language::prism_ui::AttributeValue::Expression(e) => {
+                        super::expression::lookup_path_owned_in_scope(&e.body, scope)
+                            .or_else(|| super::expression::evaluate_expression(&e.body, scope))
+                            .unwrap_or_else(|| {
+                                resolved_attribute_string(&attr.value, scope)
+                                    .map(serde_json::Value::String)
+                                    .unwrap_or(serde_json::Value::Null)
+                            })
+                    }
+                    other => match resolved_attribute_string(other, scope) {
+                        Some(s) => serde_json::Value::String(s),
+                        None => serde_json::Value::Null,
+                    },
+                };
+                call_scope = call_scope.with_binding(attr.name.local.clone(), value);
+            }
+            lower_children(&slot_ast, &call_scope)
         }
         // **Fragment** — `<fragment>…</fragment>` (also `<></>`-shape
         // counterpart). React `<>…</>` / Vue `<template>` /
@@ -1057,6 +1115,27 @@ fn apply_container_attributes(
     }
     for attr in &el.attributes {
         let local = attr.name.local.as_str();
+        // Phase 15 — intercept the new sugar shapes before the
+        // generic expression-evaluation path runs. The pipeline /
+        // record bodies contain `|` and `→` characters that the
+        // expression scanner can't safely tokenise; the dedicated
+        // record / pipeline parsers handle them directly.
+        if matches!(attr.name.namespace, AttributeNamespace::Bare) && local == "style" {
+            if let AttributeValue::Expression(e) = &attr.value {
+                if super::style_sugar::looks_like_record(&e.body) {
+                    super::style_sugar::expand_style_record(&e.body, props, scope);
+                    continue;
+                }
+            }
+        }
+        if matches!(attr.name.namespace, AttributeNamespace::Style) {
+            if let AttributeValue::Expression(e) = &attr.value {
+                if super::style_sugar::looks_like_pipeline(&e.body) {
+                    super::style_sugar::expand_style_pipeline(local, &e.body, props, scope);
+                    continue;
+                }
+            }
+        }
         let raw = resolved_attribute_string(&attr.value, scope).map(|v| {
             // **Short-name token references** — `padding="md"` /
             // `style:background="accent"` resolve to
@@ -1181,6 +1260,17 @@ fn apply_container_attributes(
             // grammar.
             AttributeNamespace::Style => {
                 if let Some(value) = raw.as_deref() {
+                    // Phase 16 — named state-responsive value
+                    // expansion. When the value text is the name of
+                    // a registered `@color` / `@spacing` / `@radius`
+                    // declaration, fan out base + state deltas onto
+                    // `local` through the same flat-form seam.
+                    if scope.has_state_responsive_values() {
+                        if let Some(srv) = scope.state_responsive_value(value) {
+                            apply_state_responsive(props, local, srv);
+                            continue;
+                        }
+                    }
                     apply_style_override(props, local, value);
                 }
             }
@@ -1364,6 +1454,24 @@ fn apply_container_attributes(
                 a: 0x14,
             });
         }
+    }
+}
+
+/// Phase 16 — fan a named state-responsive value out onto `props`.
+/// The base value applies to `key` (no state suffix); each
+/// `(state, delta)` entry applies to `key:state` through the same
+/// `apply_style_override` seam the Phase 15 pipeline form uses.
+fn apply_state_responsive(
+    props: &mut crate::layout::ContainerProps,
+    key: &str,
+    value: &super::named_state::StateResponsiveValue,
+) {
+    if !value.base.is_empty() {
+        apply_style_override(props, key, &value.base);
+    }
+    for (state, delta) in &value.states {
+        let suffixed = format!("{}:{}", key, state);
+        apply_style_override(props, &suffixed, delta);
     }
 }
 
