@@ -1,0 +1,138 @@
+# saltmere "Saltmere" :conversation
+
+cast WREN
+  .label "Wren the Fisher"
+  .voice female_alto
+cast ALEX
+  .label "Alex"
+  .voice male_tenor
+cast MAREN
+  .label "Maren the Keeper"
+
+let trusted = $trust > 50
+let well_known = visits(hub) >= 2
+
+-- setup
+
+~ var $trust := 30
+~ var $weather := "fog"
+~ var $bells_struck := 0
+
+-> harbor
+
+-- harbor
+
+> INT. HARBOR -- DAWN
+
+> The dock smells of rope and salt. [[bell_of_tides|The Bell of Tides]]
+> hasn't rung in three days.
+
+WREN
+  You came after all.
+
+ALEX
+  You wrote that the bell went silent.
+
+WREN { quiet }
+  Three mornings ago.
+
+~ $trust += 5
+
+-> hub
+
+-- hub
+
+each visit
+  first
+    WREN
+      Where do you want to look?
+  then
+    WREN
+      Anywhere else worth trying?
+  finally
+    WREN
+      Last sweep, then we go in.
+
+-> hub_menu
+
+-- hub_menu
+
+WREN
+  Pick a heading.
+
+  * The lighthouse.
+    -> lighthouse
+  * The bell tower.
+    -> tower
+  * Ask about Maren. if $trusted
+    -> maren_question
+  + Head back to town.
+    -> ending
+
+-- lighthouse
+
+> The stairs are damp under bare feet. Wren leads with the lantern.
+
+WREN
+  Maren kept this lamp lit even when the bell was quiet.
+
+~ $trust += 5
+~ fire searched_lighthouse
+
+-> hub
+
+-- tower
+
+> The rope is heavy and stiff with cold.
+
+WREN
+  Pull it. Just once.
+
+~ $bells_struck++
+~ fire bell_struck
+
+WREN
+  The bell has rung $bells_struck time.
+
+-> hub
+
+-- maren_question
+
+after $well_known
+  WREN { warm }
+    She would be proud you stayed.
+otherwise
+  WREN { wary }
+    She would not tell a stranger anything.
+
+WREN
+  She lives behind the tower. Or did.
+
+-> hub
+
+-- ending
+
+> EXT. HARBOR -- LATER
+
+match $weather
+  storm
+    > Lightning. The rope slaps the side of the tower.
+  fog
+    > The grey hasn't lifted. Visibility a stone's throw.
+  clear
+    > The horizon is clean. Boats out on the bank.
+  _
+    > Some weather. Hard to say.
+
+after chose(maren_question)
+  WREN
+    Thank you for asking after her.
+otherwise
+  WREN
+    Travel safe.
+
+after played(tower)
+  > The bell rings again -- one, low and clear, just before they part.
+
+WREN { soft }
+  Final trust: $trust.

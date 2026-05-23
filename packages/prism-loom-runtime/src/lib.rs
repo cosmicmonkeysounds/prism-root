@@ -26,11 +26,16 @@
 //! once-only filtering, sections fall through to the next entry in
 //! source order.
 //!
-//! **Phase 2 (next):** wiring the parser's expression tree into
-//! [`resolver::Expr`] so guards (`if $trust > 50`), inline assigns,
-//! and reactive `let` bindings light up; lifecycle of mutating
-//! actions (`var $x := value`); inline-text rendering with real
-//! interpolation.
+//! **Phase 2 ships:** parser expressions lowered to [`resolver::Expr`]
+//! ([`expr::compile_expr`]); `if`-guards on choices / sections /
+//! after-blocks filter visibility through a Show-time evaluator;
+//! [`bundle::Mutation`] captures `~ var $x := v` / `$x := v` / `$x += v`
+//! / `~ fire <event>` action lines and applies them through the
+//! playhead's mutation lane; top-level `let name = <expr>` bindings
+//! evaluate at boot (and re-evaluate after every var write); `each
+//! visit` / `after`/`otherwise` / `match` blocks compile to dispatchable
+//! [`Item`] variants the playhead resolves at frame time; inline-text
+//! `$name` / `${expr}` interpolation resolves through the live context.
 //!
 //! **Phase 3+ (later):** generators / scenes / scheduler tiers
 //! (§9), faction simulator + believed-stance layer (§10), live
@@ -38,6 +43,7 @@
 //! state store + hot reload (§12).
 
 pub mod bundle;
+pub mod expr;
 pub mod ledger;
 pub mod playhead;
 pub mod resolver;
@@ -45,8 +51,10 @@ pub mod show;
 pub mod value;
 
 pub use bundle::{
-    compile, CastSlot, CohortDef, CueDef, Document, Item, LocationDef, LoomDatabase, Section,
+    compile, AssignOp, CastSlot, CohortDef, CueDef, Document, Item, LetBinding, LocationDef,
+    LoomDatabase, Mutation, Section, VisitBranch,
 };
+pub use expr::compile_expr;
 pub use ledger::{Ledger, LedgerEntry, LedgerField};
 pub use playhead::{ChoiceFrame, Frame, Playhead};
 pub use resolver::{

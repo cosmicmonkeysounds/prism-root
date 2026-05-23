@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lesson 15 — after / otherwise</title>
+  <style>
+    body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           max-width: 760px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
+    h1, h2 { line-height: 1.2; }
+    h2 { margin-top: 2.2rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+    code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+    code { background: #f4f4f6; padding: 0.1em 0.35em; border-radius: 3px; }
+    pre { background: #f4f4f6; padding: 1rem; border-radius: 6px; overflow-x: auto;
+          font-size: 14px; line-height: 1.45; }
+    .crumbs { color: #777; font-size: 0.92rem; margin-bottom: 0.3rem; }
+    .crumbs a { color: #0066cc; text-decoration: none; }
+    .nav { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee;
+           display: flex; justify-content: space-between; color: #777; }
+    .nav a { color: #0066cc; text-decoration: none; }
+    .try { border-left: 3px solid #e6c4c4; background: #fdf7f7;
+           padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+    .callout { border-left: 3px solid #c4d2e6; background: #f7fafd;
+               padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+
+<p class="crumbs"><a href="../README.html">← back to the tour</a></p>
+<h1>Lesson 15 — <code>after</code> / <code>otherwise</code></h1>
+
+<p>
+  Guards (lesson 11) hide a single line. <code>after</code> blocks hide a
+  whole <em>chunk</em> of script — and let you pair it with an
+  <code>otherwise</code> chunk that plays when the condition is false. They're
+  Loom's "if / else" for narrative.
+</p>
+
+<h2>The shape</h2>
+
+<pre>after $trusted
+  WREN { warm }
+    Come in. Stay a while.
+otherwise
+  WREN { wary }
+    State your business.</pre>
+
+<p>How it runs:</p>
+
+<ol>
+  <li>The playhead reaches <code>after $trusted</code>.</li>
+  <li>It evaluates the condition.</li>
+  <li>If true, the indented block under <code>after</code> plays.</li>
+  <li>If false, the indented block under <code>otherwise</code> plays
+    instead.</li>
+  <li>Either way, the playhead resumes after the whole pair.</li>
+</ol>
+
+<p>The <code>otherwise</code> is optional. <code>after</code> alone is just
+"play this block only if true; skip otherwise."</p>
+
+<h2>When to use it vs a guarded section</h2>
+
+<table style="width:100%; border-collapse:collapse; margin:0.8rem 0;">
+  <tr><th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;">Pattern</th>
+      <th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;">Use for</th></tr>
+  <tr><td style="padding:0.4rem;"><code>after</code> / <code>otherwise</code></td>
+      <td style="padding:0.4rem;">A two-way fork inside a single scene.</td></tr>
+  <tr><td style="padding:0.4rem;">Guarded section (<code>-- foo if ...</code>)</td>
+      <td style="padding:0.4rem;">Whole scenes you want to skip entirely.</td></tr>
+  <tr><td style="padding:0.4rem;">Guarded choice (<code>* foo if ...</code>)</td>
+      <td style="padding:0.4rem;">One option in a menu.</td></tr>
+</table>
+
+<h2>Several blocks in a row</h2>
+
+<p>You can stack <code>after</code> blocks for cascading conditions —
+write them as separate pairs, not as a single chain:</p>
+
+<pre>after $morning
+  WREN
+    Tea's still warm.
+
+after $afternoon
+  WREN
+    Sun's pleasant.
+
+after $evening
+  WREN
+    Time to head in.</pre>
+
+<p>Each pair stands on its own. If two are simultaneously true, both play.
+For one-out-of-many, see <code>match</code> in lesson 17.</p>
+
+<h2>What you just learned</h2>
+
+<ul>
+  <li><code>after &lt;expression&gt;</code> introduces a conditional block.</li>
+  <li><code>otherwise</code> after an <code>after</code> is its else half.</li>
+  <li>Both bodies are indented under their keyword.</li>
+  <li>Use <code>after</code> for inside-the-scene forks; use guarded sections
+    for skip-the-whole-scene forks.</li>
+</ul>
+
+<div class="callout">
+  <strong>The reading rule.</strong> If you can sketch the scene's two
+  versions on the same imaginary page, use <code>after</code> /
+  <code>otherwise</code> — the alternative bodies sit right next to each
+  other in the source, which makes the contrast easy to see.
+</div>
+
+<div class="try">
+  <strong>Try this.</strong> Open <code>lesson.loom</code>. Add a second
+  <code>after</code> pair below the first that varies on a different
+  variable — say <code>after $night</code> with an alternate
+  <code>otherwise</code>. Run the story twice with different starting var
+  values to see each branch.
+</div>
+
+<p class="nav">
+  <a href="../14-fire-events-test/readme.html">← events</a>
+  <a href="../16-each-visit-test/readme.html">Next: each visit →</a>
+</p>
+
+</body>
+</html>

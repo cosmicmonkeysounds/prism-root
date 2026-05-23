@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lesson 13 — the ledger</title>
+  <style>
+    body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           max-width: 760px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
+    h1, h2 { line-height: 1.2; }
+    h2 { margin-top: 2.2rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+    code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+    code { background: #f4f4f6; padding: 0.1em 0.35em; border-radius: 3px; }
+    pre { background: #f4f4f6; padding: 1rem; border-radius: 6px; overflow-x: auto;
+          font-size: 14px; line-height: 1.45; }
+    .crumbs { color: #777; font-size: 0.92rem; margin-bottom: 0.3rem; }
+    .crumbs a { color: #0066cc; text-decoration: none; }
+    .nav { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee;
+           display: flex; justify-content: space-between; color: #777; }
+    .nav a { color: #0066cc; text-decoration: none; }
+    .try { border-left: 3px solid #e6c4c4; background: #fdf7f7;
+           padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+    .callout { border-left: 3px solid #c4d2e6; background: #f7fafd;
+               padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+
+<p class="crumbs"><a href="../README.html">← back to the tour</a></p>
+<h1>Lesson 13 — the ledger</h1>
+
+<p>
+  Loom keeps an automatic diary of everything that happens — every section
+  the player visited, every choice they took, every event the story fired.
+  That diary is called the <em>ledger</em>, and you can ask it questions
+  from inside any condition.
+</p>
+
+<h2>The four most useful questions</h2>
+
+<table style="width:100%; border-collapse:collapse; margin:0.8rem 0;">
+  <tr><th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;">Question</th>
+      <th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;">Answers</th></tr>
+  <tr><td style="padding:0.4rem;"><code>played(section)</code></td>
+      <td style="padding:0.4rem;">Has the player been to this section at least once?</td></tr>
+  <tr><td style="padding:0.4rem;"><code>visits(section)</code></td>
+      <td style="padding:0.4rem;">How many times have they been there?</td></tr>
+  <tr><td style="padding:0.4rem;"><code>chose(label_or_section)</code></td>
+      <td style="padding:0.4rem;">Did they ever pick a choice with that label, or from that section?</td></tr>
+  <tr><td style="padding:0.4rem;"><code>since(event)</code></td>
+      <td style="padding:0.4rem;">How long since the named event last fired? (next lesson)</td></tr>
+</table>
+
+<h2>Using them</h2>
+
+<p>Each predicate plugs into a condition. They're just expressions:</p>
+
+<pre>* Try again. if played(intro) and not chose("help me")
+
+-- meeting if visits(meeting) &lt; 3
+
+after played(harbor)
+  WREN
+    We met at the harbor, didn't we?</pre>
+
+<div class="callout">
+  <strong>Note on guards.</strong> Loom puts <code>if</code> guards on
+  <em>sections</em> and <em>choices</em>, not on individual dialogue lines.
+  To gate a single line, wrap it in an <code>after &lt;cond&gt;</code> block
+  (lesson 15) or move it to its own guarded section.
+</div>
+
+<h2>A small worked example</h2>
+
+<p>Open <code>lesson.loom</code>. It uses <code>visits(...)</code> to detect a
+returning visitor and <code>chose(...)</code> to remember a previous answer.
+The whole point: <em>the writer never has to set a variable</em>. The
+ledger remembers automatically.</p>
+
+<h2>Variables vs the ledger</h2>
+
+<table style="width:100%; border-collapse:collapse; margin:0.8rem 0;">
+  <tr><th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;"></th>
+      <th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;">When to use</th></tr>
+  <tr><td style="padding:0.4rem;"><strong>variable (<code>$trust</code>)</strong></td>
+      <td style="padding:0.4rem;">A value that needs to be set, raised, lowered, and read.</td></tr>
+  <tr><td style="padding:0.4rem;"><strong>ledger query</strong></td>
+      <td style="padding:0.4rem;">"Did this <em>happen</em>?" — anywhere you'd otherwise add a boolean variable that you only ever set to true.</td></tr>
+</table>
+
+<p>A common beginner mistake is writing <code>~ var $met_wren := true</code>
+in the meeting scene and then later checking <code>if $met_wren</code>. The
+ledger already knows you were in <code>meeting</code> — use
+<code>if played(meeting)</code> instead.</p>
+
+<h2>What you just learned</h2>
+
+<ul>
+  <li>The runtime keeps an append-only ledger of every visit, choice, and
+    event.</li>
+  <li><code>played(X)</code>, <code>visits(X)</code>, <code>chose(X)</code>
+    are queries against that ledger.</li>
+  <li>Prefer the ledger to a boolean variable when the question is just
+    "did this happen?"</li>
+</ul>
+
+<div class="callout">
+  <strong>The label match.</strong> <code>chose("help me")</code> matches the
+  exact text the player saw. It's case-sensitive. If your menu used the
+  capitalisation <code>"Help me"</code>, write that. Whitespace is collapsed
+  on both sides, so a stray space is forgiven.
+</div>
+
+<div class="try">
+  <strong>Try this.</strong> Add a fourth section that runs <em>only</em> if
+  the player has visited <code>meeting</code> at least twice — guard it with
+  <code>-- repeat_only if visits(meeting) &gt;= 2</code>. The story already
+  visits <code>meeting</code> exactly twice through the divert pattern, so
+  the section will fire on the second pass.
+</div>
+
+<p class="nav">
+  <a href="../12-let-bindings-test/readme.html">← let bindings</a>
+  <a href="../14-fire-events-test/readme.html">Next: events →</a>
+</p>
+
+</body>
+</html>

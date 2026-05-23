@@ -5,7 +5,7 @@
   <title>Loom v3 — design</title>
   <style>
     body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-           max-width: 840px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
+           max-width: 860px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
     h1, h2, h3, h4 { line-height: 1.2; }
     h1 { font-size: 2.2rem; margin-bottom: 0.25rem; }
     h2 { margin-top: 2.6rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
@@ -43,170 +43,318 @@
     a { color: #0066cc; text-decoration: none; }
     a:hover { text-decoration: underline; }
     em.term { font-style: italic; color: #334; }
+    .tree { font-family: SF Mono, Menlo, monospace; background: #fafafa; padding: 1rem 1.2rem;
+            border: 1px solid #eee; border-radius: 6px; font-size: 13.5px; line-height: 1.55; }
   </style>
 </head>
 <body>
 
 <h1>Loom v3 <span class="pill">design</span></h1>
 <p class="lede">
-  Loom is not a programming language. It is a <strong>format</strong> —
-  a way of writing down a story, its production, and the systems that
-  weave them together, all in one local-first plain-text file.
-  Writers read it as a screenplay. Stage managers read it as a prompt
-  book. Producers read it as a breakdown. The runtime reads it as a
-  program. v3 commits to that promise.
+  Loom looks like a screenplay. It is not one. Underneath the
+  capitalised speakers and indented dialogue is a non-linear narrative
+  scripting language with reactive bindings, character simulation
+  (Simulacra), stat systems (Meridian), live-theatre participants,
+  improv coroutines, and a tiered scheduler. v3 keeps the screenplay
+  skin — because writers, stage managers, and directors can read it
+  cold — and brings the engine fully back from v2, organised under one
+  bracket discipline.
 </p>
 
 <div class="callout big good">
   <strong>The three claims.</strong>
   <ol style="margin:0.5rem 0 0 1.2rem; padding:0;">
-    <li><strong>The format is a screenplay.</strong> Position,
+    <li><strong>Screenplay on the outside.</strong> Position,
       capitalisation, and indentation carry meaning. Quotes,
-      apostrophes, and most punctuation belong to the writer. We
-      borrow the 1920s screenplay convention, Fountain's
-      plain-text-with-escapes discipline, and Ink's branching
-      vocabulary — wholesale.</li>
-    <li><strong>Five brackets, five audiences.</strong> The
-      performer, the reader, the choice-list, the runtime, the
-      production team. Each has its own bracket; none share. (See §4.)</li>
-    <li><strong>Generics are typed slots.</strong> One mechanism
-      covers cast members, parameters, iteration variables, and
-      object properties. There is no <code>trait</code>, no
-      <code>template</code>, no <code>macro</code>, no
-      <code>extends</code>. There is one composition verb,
-      <code>is</code>, and one execution model, top-down with
-      branches.</li>
+      apostrophes, and most punctuation belong to the writer. A
+      <code>.loom</code> file printed and handed to a director is
+      directable.</li>
+    <li><strong>Narrative VM on the inside.</strong> The same file is
+      a program — reactive <code>let</code>, hooks that fire on ledger
+      events, character goals as small state machines, generators
+      that drive ambient life, scenes that coordinate multi-step
+      coroutines, factions that hold collective state. Simulacra and
+      Meridian are folded in as first-class declaration kinds, not
+      bolted on.</li>
+    <li><strong>A project is a folder of <code>.loom</code> files,
+      rooted at <code>main.loom</code>.</strong> Beats live wherever
+      they're easiest to write, characters live in their own files,
+      and diverts cross files at will. The runtime resolves names
+      across the whole project, the way Obsidian resolves wiki-links
+      across a vault.</li>
   </ol>
 </div>
 
 <div class="toc">
   <h3 style="margin-top:0">Contents</h3>
   <ol>
-    <li><a href="#lineage">The lineage — six formats v3 descends from</a></li>
+    <li><a href="#lineage">Lineage — the formats v3 descends from</a></li>
     <li><a href="#format">Loom as a format, not a syntax</a></li>
+    <li><a href="#project">A Loom project — folders, files, <code>main.loom</code></a></li>
     <li><a href="#imperative">The imperative weave</a></li>
     <li><a href="#brackets">Five brackets, five audiences</a></li>
-    <li><a href="#shape">A <code>.loom</code> file</a></li>
+    <li><a href="#shape">The shape of a <code>.loom</code> file</a></li>
+    <li><a href="#diverts">Diverts across files</a></li>
     <li><a href="#slots">Typed slots — the one generic mechanism</a></li>
     <li><a href="#composition">Composition: <code>is</code></a></li>
+    <li><a href="#simulacra">Simulacra — characters as small simulations</a></li>
+    <li><a href="#meridian">Meridian — stats, axes, pools, trees</a></li>
+    <li><a href="#reactive">Reactive bindings: <code>let</code>, hooks, generators, scenes</a></li>
+    <li><a href="#live">Live performance — participants, cohorts, improv, broadcasts</a></li>
     <li><a href="#directives">Runtime directives — <code>&lt;…&gt;</code></a></li>
     <li><a href="#metadata">Production metadata — <code>&lt;&lt;…&gt;&gt;</code></a></li>
-    <li><a href="#prism">Prism + Obsidian: local-first, linked</a></li>
-    <li><a href="#cleanup">What v2 had that v3 doesn't</a></li>
-    <li><a href="#example">A full example</a></li>
-    <li><a href="#migration">Migration</a></li>
+    <li><a href="#example">Worked example: a small project across files</a></li>
+    <li><a href="#migration">Migration from v2</a></li>
   </ol>
 </div>
 
-<h2 id="lineage">1. The lineage — six formats v3 descends from</h2>
+<h2 id="lineage">1. Lineage — the formats v3 descends from</h2>
 
 <p>
-  Every choice below is an inheritance from a tradition older than this
-  document. Knowing which is which is the cheat sheet for understanding
-  v3.
+  Every choice below is borrowed. Knowing which is which is the cheat
+  sheet for the rest of the document.
 </p>
 
 <table>
   <tr><th>Tradition</th><th>What v3 takes</th></tr>
   <tr>
-    <td><strong>Stage scripts</strong> (Samuel French / Dramatists, BBC radio, prompt books)</td>
-    <td>The <em>parallel cue column</em>. Production metadata lives next to text, not inside it.
-      v3's <code>&lt;&lt;…&gt;&gt;</code> bracket is that column, lifted into the same file.</td>
-  </tr>
-  <tr>
-    <td><strong>Hollywood screenplay</strong> (Academy/WGA, ~1920s)</td>
+    <td><strong>Hollywood screenplay</strong> (~1920s)</td>
     <td>Position-is-syntax: ALL CAPS speaker cues, indented dialogue, parenthetical
       directions in <code>(parens)</code>, action lines flush left, scene headings
       <code>INT./EXT.</code></td>
   </tr>
   <tr>
-    <td><strong>Fountain</strong> (Maschwitz/August, 2012)</td>
-    <td>Plain-text screenplay with <em>inference and escape</em>: defaults are
-      positional; sigils (<code>.</code>, <code>@</code>, <code>!</code>,
-      <code>&gt;</code>) only appear when the writer needs to override the
-      inference. v3 follows the same discipline — a writer who knows screenplay
-      formatting knows v3 prose.</td>
+    <td><strong>Stage prompt book</strong> (Samuel French, BBC radio)</td>
+    <td>The <em>parallel cue column</em>. Production metadata sits next to text, not inside it.
+      v3's <code>&lt;&lt;…&gt;&gt;</code> bracket is that column.</td>
   </tr>
   <tr>
-    <td><strong>Ink</strong> (inkle Studios, 2016 — used in <em>80 Days</em>, <em>Heaven's Vault</em>)</td>
-    <td>Knots (<code>==</code>), choices (<code>*</code> once, <code>+</code> sticky),
-      diverts (<code>-&gt;</code>), gathers (<code>-</code>), and the
-      <em>choice-suppress trick</em> <code>[…]</code> — the same line serves the
-      choice list and the narration output. All four are imported verbatim.</td>
+    <td><strong>Fountain</strong> (Maschwitz/August, 2012)</td>
+    <td>Plain-text screenplay with <em>inference and escape</em>. Defaults are positional;
+      sigils only appear when the writer needs to override the inference.</td>
+  </tr>
+  <tr>
+    <td><strong>Ink</strong> (inkle, 2016 — <em>80 Days</em>, <em>Heaven's Vault</em>)</td>
+    <td>Knots (<code>==</code>), once-only choices (<code>*</code>), sticky choices
+      (<code>+</code>), diverts (<code>-&gt;</code>), gathers (<code>-</code>), tunnels
+      (<code>-&gt; (…) -&gt;</code>), the <code>[…]</code> choice-suppress trick, and the
+      mental model of a playhead.</td>
   </tr>
   <tr>
     <td><strong>Twine</strong> (Klimas, 2009)</td>
-    <td>The <em>passage as a file unit AND a graph node</em>. A beat in v3 can
-      live as its own <code>.loom</code> file, identified by name, addressable
-      by any other file — the Twine/Obsidian "everything is a file" instinct.</td>
+    <td>A passage is both a file unit and a graph node. A beat in v3 lives wherever the
+      writer puts it — its own file, a folder of siblings, or jammed into <code>main.loom</code>.</td>
   </tr>
   <tr>
-    <td><strong>Obsidian / Logseq</strong> (local-first plain-text notes, 2020+)</td>
-    <td>Identity by filename, emergent backlinks from bare
-      <code>[[wiki links]]</code> (in v3: bare Capitalised names auto-link),
-      inline <code>key: value</code> properties (no YAML frontmatter required).
-      Prism's parent inspiration; Loom inherits it.</td>
+    <td><strong>Obsidian / Logseq</strong> (local-first plain-text notes)</td>
+    <td>Identity by filename. Emergent backlinks from bare capitalised names. Inline
+      <code>key: value</code> properties. No YAML frontmatter required.</td>
+  </tr>
+  <tr>
+    <td><strong>SolidJS / Reaktiv / S.js</strong> (fine-grained reactivity)</td>
+    <td>Reactive <code>let</code> as a live memo. Predicates re-evaluate when their
+      dependencies change, not on a tick. The model behind hooks, goal predicates, and
+      condition-gated dialogue.</td>
   </tr>
 </table>
 
 <p>
-  v3 contributes one new thing: the <strong>five-bracket discipline</strong>
-  (§4). Everything else is recombination of patterns that have already shipped
-  somewhere.
+  v3 contributes one new thing on the surface: the
+  <strong>five-bracket discipline</strong> (§5). Underneath, it
+  contributes the integration — Simulacra, Meridian, the weave, the
+  live layer, the prompt book, and the multi-file project all share
+  one parser and one ledger.
 </p>
 
 <h2 id="format">2. Loom as a format, not a syntax</h2>
 
 <p>
-  A <em>syntax</em> requires you to think in tokens, delimiters, escapes.
-  A <em>format</em> is something a human reads and understands without
-  parsing. Markdown is a format. Fountain is a format. Loom v3 is a
+  A <em>syntax</em> requires you to think in tokens, delimiters,
+  escapes. A <em>format</em> is something a human reads and understands
+  without parsing. Markdown is a format. Fountain is a format. v3 is a
   format with one extra promise: the same file is the writer's
   screenplay, the stage manager's prompt book, the producer's
-  breakdown, and the runtime's program.
+  breakdown, the simulationist's character sheet, <em>and</em> the
+  runtime's program.
 </p>
 
-<p>Concretely, this commits us to four rules:</p>
+<p>Concretely:</p>
 
 <ol>
   <li><strong>Quotes belong to the writer.</strong> <code>"</code>,
-    <code>'</code>, <code>«</code>, <code>"</code> never appear in the
-    grammar. A writer can paste any dialogue verbatim, including
-    contractions and quoted speech, and it parses.</li>
+    <code>'</code>, <code>«</code>, <code>"</code> never appear in
+    the grammar. A writer can paste any dialogue verbatim and it
+    parses.</li>
   <li><strong>Position over delimiters where position works.</strong>
-    A name on its own line is a speaker. An indented line under a
-    speaker is dialogue. A paragraph at the left margin is action.
-    A line starting with <code>*</code> or <code>+</code> is a choice.
-    These are all positional — exactly as screenplay has done for a
-    century.</li>
+    A name on its own line is a speaker. An indented line under it is
+    dialogue. A paragraph flush-left is action. A line starting with
+    <code>*</code> or <code>+</code> is a choice. These are positional
+    — exactly as screenplay has done for a century.</li>
   <li><strong>Brackets, when used, mean one thing each.</strong> Five
-    bracket shapes, five distinct jobs, no overlap. §4.</li>
-  <li><strong>Printable on paper.</strong> A <code>.loom</code> file
-    printed and handed to a director should be directable. Any line
-    that exists for the machine alone is in <code>&lt;&lt;…&gt;&gt;</code>
-    (sidecar metadata) so a producer can mark it as "ignore at the
-    table read".</li>
+    shapes, five distinct jobs, no overlap. §5.</li>
+  <li><strong>Printable on paper.</strong> Anything the runtime alone
+    cares about lives in <code>&lt;&lt;…&gt;&gt;</code> so a producer
+    can mark it as "ignore at the table read."</li>
 </ol>
 
-<h2 id="imperative">3. The imperative weave</h2>
+<div class="callout">
+  <strong>The skin is not the engine.</strong> Loom looks like a
+  screenplay because writers, actors, and directors can read
+  screenplays. But underneath, every <code>.loom</code> file compiles
+  to a node in a reactive graph, a small set of state machines, and a
+  weave of coroutines. The screenplay is a delivery format for a
+  non-linear narrative VM — not a description of it.
+</div>
+
+<h2 id="project">3. A Loom project — folders, files, <code>main.loom</code></h2>
 
 <p>
-  Loom is an <strong>imperative</strong> language. A beat is read
-  top-to-bottom; the playhead advances through prose, dialogue, and
-  cues; branches fork at choices and diverts. State (variables,
-  disposition, knowledge) is mutated by explicit actions. There is no
-  reactive graph, no declarative truth-maintenance.
+  <strong>A project is a folder.</strong> Anywhere in that folder, a
+  file ending in <code>.loom</code> is part of the project. The runtime
+  loads them all, resolves names across them, and starts at
+  <code>main.loom</code>'s entry beat.
+</p>
+
+<div class="tree">
+my-show/
+├── main.loom                       ← the entry point
+├── cast/
+│   ├── Wren.loom                   ← one character per file (optional)
+│   ├── Player.loom
+│   └── Bellkeeper.loom
+├── locations/
+│   ├── Lighthouse.loom
+│   └── Harbor.loom
+├── stats/
+│   └── combat.loom                 ← Meridian: shared stats profile
+├── factions/
+│   └── KeepersGuild.loom
+├── beats/
+│   ├── opening.loom
+│   ├── ringing.loom                ← a single beat, on its own
+│   └── act_two/
+│       ├── confrontation.loom
+│       └── revelation.loom
+└── generators/
+    └── HarborChorus.loom           ← ambient life
+</div>
+
+<p>The discipline:</p>
+
+<ul>
+  <li><strong><code>main.loom</code> is the entry.</strong> Its
+    <code>entry:</code> property names the first beat to play. If
+    <code>entry:</code> is absent, the first <code>==</code> in
+    <code>main.loom</code> wins.</li>
+  <li><strong>The folder tree is for humans, not the resolver.</strong>
+    Names are flat across the project; Obsidian/Twine convention. A
+    beat in <code>beats/act_two/revelation.loom</code> is addressable
+    as <code>revelation</code>, or — when disambiguation is needed —
+    as <code>act_two/revelation</code>.</li>
+  <li><strong>Any declaration may live in any file.</strong> A character
+    can sit in <code>cast/Wren.loom</code>, or be declared inline at
+    the top of <code>main.loom</code>. The resolver doesn't care; the
+    writer optimises for legibility.</li>
+  <li><strong>Beats can divert into other files.</strong> A divert is
+    a <code>-&gt;</code> followed by a beat name. The beat may live
+    anywhere in the project. See §7.</li>
+  <li><strong>Each file declares its own header.</strong>
+    <code>loom: 3</code> sets the parser version;
+    <code>tags:</code> are file-scoped; everything else is project-wide.</li>
+</ul>
+
+<p>A minimal project — two files:</p>
+
+<pre><strong>main.loom</strong>
+# Saltmere
+loom: 3
+entry: opening
+
+CHARACTER Player is Visitor
+
+== opening
+  cast: Wren, Player
+  setting: Lighthouse
+
+INT. LIGHTHOUSE - DAWN
+
+A bell rope swings in the gloom.
+
+WREN
+  (quietly)
+  It hasn't rung in three days.
+
+* Ring the bell.
+  -&gt; Lighthouse/ringing
+* Ask about the keepers.
+  -&gt; ask_about with topic: keepers, NPC: Wren
+</pre>
+
+<pre><strong>cast/Wren.loom</strong>
+CHARACTER Wren is Keeper, Combatant
+  voice:      female_alto
+  home:       Lighthouse
+  reputation: 60
+  hp:         80
+  attack:     4
+  has:        brass_lantern
+  knows:      bell_origin
+
+  trusts Player:   30 of 100
+  respects Player: 50 of 100
+
+  on trust passes 60     -&gt; reveal_secret
+  on meeting Player      -&gt; greet
+</pre>
+
+<pre><strong>beats/Lighthouse/ringing.loom</strong>
+== ringing
+  cast: Wren, Player
+  setting: Lighthouse
+
+&lt;sfx: bell_toll&gt;
+&lt;anchor: the_bell_rings&gt;
+
+The sound carries across the rocks.
+
+WREN
+  (stunned)
+  You... rang it.
+  &lt;set: Wren.trusts.Player += 20&gt;
+  &lt;fire: bell_acknowledged&gt;
+
+&lt;if: Wren.trusts.Player &gt; 40&gt;
+  WREN
+    Then you should know what I know.
+  -&gt; ask_about with topic: bell, NPC: Wren
+&lt;else&gt;
+  WREN
+    Leave. Now.
+  -&gt; END
+</pre>
+
+<h2 id="imperative">4. The imperative weave</h2>
+
+<p>
+  Loom is imperative on the outside, reactive on the inside. A beat
+  reads top-to-bottom; the playhead advances through prose, dialogue,
+  cues; branches fork at choices and diverts. <em>Around</em> the
+  playhead, a reactive graph holds derived state (<code>let</code>),
+  predicates (goals, hooks), and live collections (factions, cohorts).
+  When a mutation invalidates a predicate, the affected hooks queue —
+  they do not preempt the playhead. The next time the playhead yields
+  (end of line, end of beat, choice prompt, <code>wait</code>), the
+  scheduler drains the queue.
 </p>
 
 <p>
-  A "weave" is the branching graph traced by all possible playheads
-  through the document. The writer authors moments in order; the
-  runtime weaves them into a thread for each playthrough. This is the
-  same execution model as Ink, Twine, and most screenplay-shaped
-  narrative engines.
+  This is the same execution model as Ink with Solid grafted on. The
+  weave is the branching graph traced by all possible playheads
+  through the document; the reactive graph is the dependency graph
+  among <code>let</code>s, predicates, and stats.
 </p>
 
-<h2 id="brackets">4. Five brackets, five audiences</h2>
+<h2 id="brackets">5. Five brackets, five audiences</h2>
 
 <p>
   Every bracket in v3 maps to one audience and one job. If you can
@@ -229,233 +377,118 @@
   <div><code>[ … ]</code></div>
   <div>the reader (hidden)</div>
   <div>Ink-style choice-only suppression</div>
-  <div><code>* &quot;Yes.&quot;[ I said firmly.]</code><br>→ choice shows <em>"Yes."</em>, narration plays <em>"Yes. I said firmly."</em></div>
+  <div><code>* "Yes."[ I said firmly.]</code><br>→ choice shows <em>"Yes."</em>, narration plays <em>"Yes. I said firmly."</em></div>
 
   <div><code>&lt; … &gt;</code></div>
   <div>the runtime</div>
-  <div>side effect, control flow, anchor</div>
-  <div><code>&lt;sfx: bell-toll&gt;</code><br><code>&lt;set: trust += 10&gt;</code><br><code>&lt;anchor: opening&gt;</code><br><code>&lt;if: trust &gt; 50&gt;</code></div>
+  <div>side effect, control flow, anchor, query</div>
+  <div><code>&lt;sfx: bell-toll&gt;</code><br><code>&lt;set: trust += 10&gt;</code><br><code>&lt;if: since(bell) &lt; 30s&gt;</code><br><code>&lt;broadcast: location(BellTower)&gt;</code></div>
 
   <div><code>&lt;&lt; … &gt;&gt;</code></div>
   <div>the production team</div>
   <div>sidecar metadata, ignored at runtime</div>
-  <div><code>&lt;&lt;warn lx14&gt;&gt;</code><br><code>&lt;&lt;blocking: cross DSR on &quot;rang&quot;&gt;&gt;</code><br><code>&lt;&lt;note: revisit in act 3&gt;&gt;</code></div>
+  <div><code>&lt;&lt;warn lx14&gt;&gt;</code><br><code>&lt;&lt;blocking: cross DSR on "rang"&gt;&gt;</code><br><code>&lt;&lt;todo: revisit in act 3&gt;&gt;</code></div>
 </div>
 
-<h3 id="parens">4.1 <code>( … )</code> — the performer</h3>
-
 <p>
-  Parens are reserved for what an actor performs. The 1920s screenplay
-  convention: a parenthetical sits indented under a speaker, in lowercase,
-  describing manner or action.
+  The single-vs-double angle bracket split is the load-bearing
+  distinction. <em>Does the runtime do something with it?</em>
+  <code>&lt;sfx: bell&gt;</code> fires at the booth. <code>&lt;&lt;warn
+  lx14&gt;</code> is a note for the stage manager four lines ahead of
+  the cue. An author note about pacing is purely
+  <code>&lt;&lt;…&gt;&gt;</code>.
 </p>
 
-<pre>WREN
-  (quietly)
-  It hasn't rung in three days.
-  (she turns the lantern up)
-</pre>
+<h2 id="shape">6. The shape of a <code>.loom</code> file</h2>
 
-<p>
-  Outside a speaker block, parens describe a stage action that any
-  performer in scene executes — the "she crosses DSR" of a stage script.
-  Inside prose narration parens are <em>literal text</em>; a writer
-  uses them freely. The parser knows the difference by position: a
-  <code>(lowercased phrase)</code> on a line by itself, indented under
-  a speaker or at action depth, is a directive. A paragraph that
-  happens to contain "(an aside)" mid-sentence is just prose.
-</p>
-
-<h3 id="interp">4.2 <code>{ … }</code> — the reader (value)</h3>
-
-<p>
-  Curly braces always evaluate to a value substituted into the
-  surrounding text. Nothing else lives here.
-</p>
-
-<pre>PLAYER
-  I have {coins} coins and {Player.inventory.length} items.
-
-WREN
-  Welcome back, {Player.name}.
-</pre>
-
-<h3 id="suppress">4.3 <code>[ … ]</code> — the reader (hidden)</h3>
-
-<p>
-  Lifted verbatim from Ink. Text inside square brackets appears in the
-  choice list only; text after the brackets appears in the narration
-  output only; text before appears in both.
-</p>
-
-<pre>* "There is not a moment to lose!"[] I declared.
-  -&gt; hurry_outside
-
-* "Monsieur, let us savour this moment."[] I declared.
-  -&gt; dragged_outside
-</pre>
-
-<p>
-  This earns its own bracket because no other tradition has solved the
-  "the same utterance reads differently in the menu vs. the playback"
-  problem so compactly.
-</p>
-
-<h3 id="runtime-bracket">4.4 <code>&lt; … &gt;</code> — the runtime</h3>
-
-<p>
-  Single angle brackets fire something at the runtime. Side effects,
-  state mutation, control flow blocks, testing anchors. All inline or
-  on their own line. The directive's first token names its kind; a
-  colon separates the kind from its arguments.
-</p>
-
-<pre>WREN
-  The bell... &lt;sfx: ding&gt; it's ringing.
-
-&lt;set: trust += 10&gt;
-&lt;fire: bell_acknowledged&gt;
-&lt;anchor: bell_moment&gt;          ← bookmark for testing / replay / linking
-
-&lt;if: Player.has key&gt;
-  Player unlocks the door.
-&lt;else&gt;
-  WREN
-    You'll need a key.
-
-&lt;shuffle: Hi | Hello | Hey&gt; there.
-</pre>
-
-<p>
-  Inline directives in dialogue (<code>&lt;sfx: ding&gt;</code>,
-  <code>&lt;pause: 1s&gt;</code>, <code>&lt;set: x += 1&gt;</code>) fire
-  at the typewriter reveal point — useful for syncing sound with a
-  line, mutating state mid-sentence, or planting a named
-  <code>&lt;anchor: …&gt;</code> for tests to jump to.
-</p>
-
-<p>The full set of directive kinds is enumerated in §8.</p>
-
-<h3 id="meta-bracket">4.5 <code>&lt;&lt; … &gt;&gt;</code> — the production team</h3>
-
-<p>
-  Doubled angle brackets are <em>passive metadata</em>. The runtime
-  ignores them. They exist for stage managers, producers, debuggers,
-  and the author's own notes. The prompt-book convention, brought
-  inline.
-</p>
-
-<pre>&lt;&lt;warn lx14&gt;&gt;
-WREN
-  (quietly)
-  It hasn't rung in three days.
-  &lt;&lt;blocking: cross DSR on "rang"&gt;&gt;
-&lt;&lt;lx14 go&gt;&gt;
-
-&lt;&lt;note: this scene felt long at the table read — try cutting the lantern beat&gt;&gt;
-
-She turns the lantern up.
-</pre>
-
-<p>
-  The split between <code>&lt;…&gt;</code> and
-  <code>&lt;&lt;…&gt;&gt;</code> is <em>does the runtime do something
-  with it?</em> A sound cue fires at production — that's
-  <code>&lt;sfx:&gt;</code>. A warning to the lighting board four lines
-  before the actual cue — that's <code>&lt;&lt;warn lx14&gt;&gt;</code>.
-  An author note about pacing is purely <code>&lt;&lt;…&gt;&gt;</code>.
-</p>
-
-<h2 id="shape">5. A <code>.loom</code> file</h2>
-
-<p>Two zones, mixed freely.</p>
-
-<pre># Lighthouse Dawn
-loom: 3
-entry: opening
-
-#  Declarations  ─────────────────────────────────
-
-CHARACTER Wren is Keeper, Combatant
-  voice: female_alto
-  home:  Lighthouse
-  hp:    80
-  attack: 4
-  has:   brass_lantern
-  knows: bell_origin
-
-  trusts Player:  30 of 100
-  respects Player: 50 of 100
-
-CHARACTER Player is Visitor
-
-ITEM brass_lantern
-  weight: 2
-  fuel:   75 of 100
-
-LOCATION Lighthouse
-  ambient:  wind_low
-  contains: bell_rope, brass_lantern
-
-#  Beats  ─────────────────────────────────────────
-
-== opening
-  cast: Wren, Player
-  setting: Lighthouse
-
-INT. LIGHTHOUSE - DAWN
-
-A bell rope swings in the gloom. Wren watches it from the doorway.
-
-WREN
-  (quietly)
-  It hasn't rung in three days.
-
-She turns the lantern up.
-
-* Ring the bell.
-  -&gt; ring_bell
-+ Ask about the keepers.
-  -&gt; ask_about with topic: keepers, NPC: Wren
-</pre>
-
-<p>The structural conventions:</p>
+<p>Three zones, mixed freely:</p>
 
 <ul>
   <li><strong>Header</strong> — a Markdown-style <code># Title</code>
-    plus a few <code>key: value</code> properties (<code>loom: 3</code>,
-    <code>entry: knot_name</code>, <code>tags: …</code>).</li>
+    plus <code>key: value</code> properties.</li>
   <li><strong>Declarations</strong> — <code>CHARACTER</code>,
     <code>ITEM</code>, <code>LOCATION</code>, <code>FACTION</code>,
-    <code>ENTITY</code> (the unopinionated base). Each is a named block
-    of <code>key: value</code> properties plus optional composition
-    (<code>is X, Y</code>).</li>
-  <li><strong>Beats</strong> — <code>== knot_name</code> introduces an
-    imperative beat. Contract follows (<code>cast:</code>,
-    <code>setting:</code>, <code>uses:</code>), then the woven body
-    (prose, dialogue, choices, diverts, directives).</li>
-  <li><strong>Scene headings</strong> — Fountain-style
-    <code>INT. LOCATION - TIME</code> lines. Pure atmosphere — they tell
-    a director and a reader where we are. They do <em>not</em> define
-    structure; <code>==</code> does that.</li>
+    <code>STATS</code>, <code>TREE</code>, <code>GENERATOR</code>,
+    <code>SCENE</code>, <code>COHORT</code>, plus top-level
+    <code>let</code> bindings.</li>
+  <li><strong>Beats</strong> — <code>== knot_name</code> followed by a
+    contract (<code>cast:</code>, <code>setting:</code>) and a woven
+    body.</li>
 </ul>
 
-<h2 id="slots">6. Typed slots — the one generic mechanism</h2>
-
 <p>
-  Generics in non-linear narrative happen at every scale. A
-  <em>merchant</em> beat works for any merchant. A <em>guard</em>
-  character template instantiates any guard. A <em>recognition</em>
-  scene needs a mentor and a mentee. All of these are the same
-  shape: <strong>a typed slot, filled at the call site.</strong>
+  <strong>Scene headings</strong> (Fountain-style <code>INT. LOCATION -
+  TIME</code>) sit anywhere in a beat body. They tell a director and a
+  reader where they are; they do <em>not</em> define structure —
+  <code>==</code> does that.
 </p>
 
-<h3 id="slot-pattern">6.1 The pattern</h3>
+<h2 id="diverts">7. Diverts across files</h2>
+
+<p>A divert is <code>-&gt;</code> followed by a beat reference.</p>
+
+<table>
+  <tr><th>Form</th><th>Meaning</th></tr>
+  <tr><td><code>-&gt; ringing</code></td>
+      <td>jump to beat <code>ringing</code>, found anywhere in the project</td></tr>
+  <tr><td><code>-&gt; Lighthouse/ringing</code></td>
+      <td>jump to beat <code>ringing</code>, disambiguated by folder path (when two beats share a name)</td></tr>
+  <tr><td><code>-&gt; Wren</code></td>
+      <td>jump to the entry beat of the file declaring <code>Wren</code> (typically a character file with a single beat)</td></tr>
+  <tr><td><code>-&gt; ask_about with topic: bell, NPC: Wren</code></td>
+      <td>parameterised divert — fills slots at the call site</td></tr>
+  <tr><td><code>-&gt; (ask_about with topic: bell) -&gt;</code></td>
+      <td>tunnel call: push continuation, jump, resume on <code>&lt;-</code></td></tr>
+  <tr><td><code>&lt;-</code></td>
+      <td>return from the current tunnel</td></tr>
+  <tr><td><code>-&gt; END</code></td>
+      <td>terminate the playhead</td></tr>
+</table>
 
 <p>
-  A typed slot is a property declaration with no default. The
-  declaration is <em>abstract</em> until every required slot is filled;
-  concrete the moment the last one resolves.
+  Cross-file diverts are the heart of the multi-file model. A
+  conversation in <code>main.loom</code> can divert into
+  <code>beats/Lighthouse/ringing.loom</code> mid-line; the playhead
+  doesn't notice the file boundary. <strong>Diverts at any indentation
+  level work the same way</strong> — inside choices, inside
+  <code>&lt;if:&gt;</code> arms, inside <code>&lt;match:&gt;</code>
+  arms, even inside an indented dialogue block as the line that ends
+  the speaker's turn.
+</p>
+
+<div class="callout">
+  <strong>Diverts at any time, from anywhere.</strong> A character's
+  dialogue can end with a divert that hands the playhead to a beat in
+  another file. A hook fired by a stat threshold can divert into a
+  reaction beat. A generator can yield a divert. The playhead is a
+  cursor over the whole project, not over one file.
+</div>
+
+<pre>WREN
+  The bell hasn't rung in three days.
+  -&gt; Lighthouse/ringing             ← divert ends Wren's turn
+
+* Tell me about the keepers.
+  -&gt; cast/Wren#backstory            ← cross-file with explicit knot
+
+* Maybe later.
+  -&gt; END
+</pre>
+
+<p>
+  The <code>#</code> form addresses a specific knot inside a target
+  file (used when a file has more than one beat and the divert needs
+  to pick). When omitted, the file's entry beat is the target.
+</p>
+
+<h2 id="slots">8. Typed slots — the one generic mechanism</h2>
+
+<p>
+  Generics in narrative happen at every scale. A <em>merchant</em>
+  beat works for any merchant. A <em>guard</em> character template
+  instantiates any guard. A <em>recognition</em> scene needs a mentor
+  and a mentee. All of these are the same shape: <strong>a typed slot,
+  filled at the call site.</strong>
 </p>
 
 <pre>CHARACTER Keeper                       ← abstract: voice has no default
@@ -470,69 +503,30 @@ CHARACTER Wren is Keeper               ← fills the slots, now concrete
 </pre>
 
 <p>
-  No <code>trait</code> keyword. No <code>abstract</code> keyword.
-  Abstractness is a consequence of unfilled slots — the same way
-  arithmetic on undefined values is a consequence, not a separate
-  feature. The compiler refuses to instantiate
-  <code>Keeper</code> directly because <code>voice</code> has no value;
-  it instantiates <code>Wren</code> happily.
+  No <code>trait</code>, no <code>abstract</code>. Abstractness is a
+  consequence of unfilled slots. The same mechanism is used for:
 </p>
-
-<h3 id="slot-everywhere">6.2 The same pattern, four places</h3>
 
 <table>
   <tr><th>Where</th><th>Looks like</th><th>Filled by</th></tr>
-  <tr>
-    <td>Object property</td>
-    <td><code>voice: any</code></td>
-    <td>a child declaration (via <code>is</code>) or instantiation override</td>
-  </tr>
-  <tr>
-    <td>Beat cast member</td>
-    <td><code>cast: NPC, Player</code></td>
-    <td>the caller, at the divert</td>
-  </tr>
-  <tr>
-    <td>Beat parameter</td>
-    <td><code>== ask_about(topic)</code></td>
-    <td>the caller (<code>with topic: keepers</code>)</td>
-  </tr>
-  <tr>
-    <td>Iteration variable</td>
-    <td><code>&lt;for: item in Player.inventory&gt;</code></td>
-    <td>each pass of the loop binds <code>item</code></td>
-  </tr>
+  <tr><td>Object property</td><td><code>voice: any</code></td>
+      <td>a child declaration (via <code>is</code>) or instantiation override</td></tr>
+  <tr><td>Beat cast member</td><td><code>cast: NPC, Player</code></td>
+      <td>the caller, at the divert</td></tr>
+  <tr><td>Beat parameter</td><td><code>== ask_about(topic)</code></td>
+      <td>the caller (<code>with topic: bell</code>)</td></tr>
+  <tr><td>Scene parameter</td><td><code>SCENE patrol(character, route)</code></td>
+      <td>the spawn site (<code>spawn patrol with character: Wren, route: harbor</code>)</td></tr>
+  <tr><td>Iteration variable</td><td><code>&lt;for: item in Player.inventory&gt;</code></td>
+      <td>each pass of the loop</td></tr>
 </table>
 
-<p>
-  All four are "a name introduced in a header, used bare in the body".
-  Resolution is lexical: the parser knows what
-  <code>topic</code> means inside a beat declared with
-  <code>(topic)</code>; it knows what <code>item</code> means inside
-  the <code>&lt;for:&gt;</code> block; it knows what <code>Wren</code>
-  means after <code>cast: Wren</code>.
-</p>
-
-<h3 id="slot-types">6.3 What goes in a slot type</h3>
-
-<table>
-  <tr><th>Type</th><th>Meaning</th></tr>
-  <tr><td><code>int</code>, <code>number</code>, <code>text</code>, <code>bool</code></td><td>primitives</td></tr>
-  <tr><td><code>0 to 100</code></td><td>bounded numeric range (replaces v2's <code>0..100</code>)</td></tr>
-  <tr><td><code>red | green | blue</code></td><td>closed enum of atoms</td></tr>
-  <tr><td><code>any</code></td><td>any value</td></tr>
-  <tr><td><code>any of CHARACTER</code></td><td>any value that is a CHARACTER (or descendant via <code>is</code>)</td></tr>
-  <tr><td><code>any of Keeper with reputation &gt; 50</code></td><td>constrained slot — only Keepers with rep above 50 satisfy it</td></tr>
-  <tr><td><code>list of T</code>, <code>map of K to V</code></td><td>collections</td></tr>
-</table>
-
-<h2 id="composition">7. Composition: <code>is</code></h2>
+<h2 id="composition">9. Composition: <code>is</code></h2>
 
 <p>
   One verb. <code>is X, Y</code> pulls in the property declarations of
-  X and Y. When a slot in X has a default, that default flows into the
-  child unless overridden. When a slot has no default, the child must
-  provide one (or remain abstract itself).
+  X and Y. Defaults flow into the child unless overridden; required
+  slots must be satisfied or the child stays abstract.
 </p>
 
 <pre>CHARACTER Humanoid
@@ -544,80 +538,507 @@ CHARACTER Combatant                    ← abstract: hp and attack required
   attack: int
 
 CHARACTER Bandit is Humanoid, Combatant
-  hp:     30                           ← satisfies Combatant.hp + overrides Humanoid.hp
-  attack: 8                            ← satisfies Combatant.attack
+  hp:     30                           ← overrides Humanoid.hp; satisfies Combatant.hp
+  attack: 8
                                        ← speed inherited from Humanoid (5)
 </pre>
 
+<p>Beats compose the same way; so do stats profiles, scenes, and factions.</p>
+
+<h2 id="simulacra">10. Simulacra — characters as small simulations</h2>
+
 <p>
-  Conflicts between two parents (both declare <code>hp</code> with
-  different defaults) are resolved by the child providing an explicit
-  value. Without one, the compiler emits an "ambiguous slot" error.
-  There is no method resolution order to memorise; there is no
-  inheritance chain to walk; <code>is</code> is set union with override.
+  A <code>CHARACTER</code> declaration is the v2 Simulacra package,
+  collapsed into the same syntax as everything else. It carries
+  properties, disposition toward other characters, knowledge,
+  goals, hooks, and generators. None of these need a new bracket;
+  they're indented blocks under the character.
 </p>
 
-<p>Beats compose the same way:</p>
+<h3 id="disposition">10.1 Disposition</h3>
 
-<pre>== greeting
-  cast: NPC, Player
-  setting: any
-  NPC
-    Hello.
+<p>The most-asked-for character depth feature: <em>how does this character feel about that one?</em></p>
 
-== formal_greeting is greeting
-  NPC
-    Good day to you.                   ← inherits cast/setting, replaces body
+<pre>CHARACTER Wren is Keeper
+  trusts Player:   30 of 100
+  respects Player: 50 of 100
+  fears Player:     0 of 100
+
+  reacts trust &gt; 60                          → warm
+  reacts fear &gt; 40                           → guarded
+  reacts trust &lt; 10 and respect &lt; 30         → hostile
 </pre>
 
-<h2 id="directives">8. Runtime directives — <code>&lt;…&gt;</code></h2>
+<p>
+  Each <code>X target: N of M</code> line declares a numeric axis
+  bounded <code>0..M</code>. <code>reacts &lt;cond&gt; → &lt;tag&gt;</code>
+  emits a runtime tag readable in conditions. Mirrors for symmetric
+  relationships:
+</p>
+
+<pre>  trusts Player: 30 of 100 mirror Player.trusts.Wren
+</pre>
+
+<h3 id="knowledge">10.2 Knowledge</h3>
+
+<p>What this character has learned. A closed schema of typed slots.</p>
+
+<pre>CHARACTER Wren
+  knows:
+    met_player:        bool = false
+    bell_origin:       unknown | suspects | confirmed = unknown
+    keeper_name:       text?
+    rumours:           list of RUMOUR = []
+    saw_the_keeper:    bool = false
+</pre>
+
+<p>Mutation surface (only these three):</p>
+
+<pre>&lt;set: Wren.knows.bell_origin := suspects&gt;
+&lt;set: Wren.knows.rumours += SingingRumour&gt;
+&lt;set: Wren.knows.rumours -= SingingRumour&gt;
+</pre>
+
+<p>
+  Knowledge is read-only from outside its character. Every mutation
+  writes a <code>KnowledgeChanged</code> envelope to the ledger; saves
+  round-trip byte-for-byte.
+</p>
+
+<h3 id="goals">10.3 Goals</h3>
+
+<p>What this character is trying to do. Small declarative state machines.</p>
+
+<pre>CHARACTER Wren
+  goal find_keeper
+    priority:       0.8
+    active when:    Time.hour &gt; 6 and not Wren.exhausted
+    completes when: Wren.knows.saw_the_keeper
+    fails when:     Wren.hp &lt; 20
+    drives:         search_routine             ← a generator
+    on complete:    -&gt; Wren.knows.bell_origin := confirmed
+    on fail:        -&gt; log abandoned_find_keeper
+</pre>
+
+<p>
+  Each predicate (<code>active when</code>, <code>completes when</code>,
+  <code>fails when</code>) is reactive — it re-evaluates when its
+  dependencies change, never on a tick. States are
+  <code>dormant → pursuing → (complete | failed)</code>; the
+  highest-priority active goal wins. Story can force the machine when
+  it has to: <code>&lt;goal: Wren/find_keeper start&gt;</code>,
+  <code>… complete&gt;</code>, <code>… reset&gt;</code>.
+</p>
+
+<h3 id="hooks">10.4 Hooks — <code>on …</code></h3>
+
+<p>Event-driven character reactions, fired by the ledger.</p>
+
+<pre>CHARACTER Wren
+  on meeting Player                          ← one-shot encounter
+    &lt;if: not Wren.knows.met_player&gt;
+      &lt;set: Wren.knows.met_player := true&gt;
+      -&gt; introduce_self as Wren
+
+  on trust passes 80                         ← threshold-cross
+    -&gt; reveal_secret as Wren
+
+  on Time.hour == 22                         ← in-world clock
+    -&gt; retire_for_night as Wren
+
+  on cue bell_strike_loud                    ← crew-bus event
+    &lt;set: Wren.knows.heard_the_bell := true&gt;
+
+  on Participant enters Lighthouse           ← location event
+    -&gt; greet_visitor as Wren
+
+  on event bell_acknowledged                 ← user-fired event
+    &lt;set: Wren.trusts.Player += 10&gt;
+</pre>
+
+<p>
+  The leading clause is matched against the built-in event registry
+  (table identical to v2; the kinds — <code>meeting</code>,
+  <code>passes</code>, <code>drops below</code>, <code>==</code>,
+  <code>enters</code>, <code>exits</code>, <code>cue</code>,
+  <code>event</code>) carry the same semantics. Edge-triggered
+  predicates fire once per crossing; level-triggered predicates fire
+  once and re-arm only when the predicate becomes false. <em>Hooks
+  never preempt the playhead</em>; they queue and drain at the next
+  yield point.
+</p>
+
+<h3 id="generators-on-character">10.5 Generators on a character</h3>
+
+<p>The most direct way to express "what this character does when nobody is talking to them."</p>
+
+<pre>CHARACTER Elena
+  generator daily_routine
+    at 6am   go_to Home
+    at 8am   go_to Bakery
+    at noon  go_to Harbor
+
+    every random(15m, 45m)
+      &lt;if: at Harbor and Weather.fog&gt;
+        yield bark from HarborFogChatter
+
+  generator stress_reactions
+    when stress &gt; 70
+      yield with_chance(0.3)
+        ELENA
+          (exhausted)
+          I need a moment.
+</pre>
+
+<p>
+  A character with no generators is a static prop; one with a few is a
+  village inhabitant; one with a dozen drives an immersive show.
+</p>
+
+<h2 id="meridian">11. Meridian — stats, axes, pools, trees</h2>
+
+<p>
+  Stats live on characters or in shared <code>STATS</code>
+  declarations. Five primitives cover every progression model from
+  D&amp;D 5e to Skyrim to Path of Exile, plus "no stats at all" for
+  narrative-only shows.
+</p>
+
+<pre>STATS Combat
+  attribute strength = 10, range 1 to 30
+  attribute agility  = 10, range 1 to 30
+
+  axis level
+    mode: xp_curve
+    curve: level * level * 50
+    on advance: &lt;fire: level_up&gt;
+
+  pool health
+    max: max_health
+    regen: 2/s when not in_combat
+
+  stat max_health = 50 + strength * 5 + Level.lookup(level)
+  stat damage     = 8 + strength * 0.5 + (equipped?.bonus or 0)
+
+CHARACTER Wren is Keeper, Combatant
+  stats: Combat                              ← include the profile
+  strength: 12
+</pre>
+
+<table>
+  <tr><th>Primitive</th><th>Meaning</th></tr>
+  <tr><td><code>attribute</code></td><td>static per-character number set at creation</td></tr>
+  <tr><td><code>axis</code></td><td>dimension that advances at runtime (six modes: <code>xp_curve</code>, <code>use_tracking</code>, <code>point_buy</code>, <code>milestone</code>, <code>narrative_trigger</code>, <code>sdk_controlled</code>)</td></tr>
+  <tr><td><code>pool</code></td><td>spendable supply with max / regen / cost</td></tr>
+  <tr><td><code>stat</code></td><td>computed or tracked value (expression, lookup table, pool, derived)</td></tr>
+  <tr><td><code>TREE</code></td><td>DAG of unlockable nodes (own declaration kind, often own file)</td></tr>
+</table>
+
+<p>Trees as their own file:</p>
+
+<pre><strong>stats/WarriorPath.loom</strong>
+TREE WarriorPath
+  node armsman_1
+    cost:     { skill_points: 1 }
+    requires: axis(one_handed) &gt;= 20
+    effect:   stat(damage) += 5
+
+  node armsman_2
+    cost:     { skill_points: 1 }
+    requires: node(armsman_1)
+    effect:   stat(damage) += 5
+    effect:   ability PowerAttack
+</pre>
+
+<p>
+  Every Meridian primitive is exposed under dot-path on the character:
+  <code>Wren.strength</code> (attribute), <code>Wren.level</code>
+  (axis), <code>Wren.health</code> (pool current),
+  <code>Wren.health.max</code> (pool max), <code>Wren.damage</code>
+  (stat), <code>Wren.tree.armsman_1?</code> (node presence test). The
+  resolver knows which registry owns the name; no bracket prefixes.
+</p>
+
+<h2 id="reactive">12. Reactive bindings: <code>let</code>, hooks, generators, scenes</h2>
+
+<p>
+  The functional layer. None of these need a new bracket — they're
+  declarations or directives — but they're the reason Loom is a
+  scripting language and not a markup format.
+</p>
+
+<h3 id="let">12.1 Reactive <code>let</code></h3>
+
+<p>
+  A <code>let</code> is a live formula. Its value updates whenever a
+  dependency changes; conditions that read it subscribe automatically.
+  Backed by <code>prism-core::reactive::Memo&lt;T&gt;</code>.
+</p>
+
+<pre>let trusted    = Wren.trusts.Player &gt; 50
+let in_danger  = Player.health &lt; Player.max_health * 0.3
+let crowd_size = count(Participants in BellTower)
+let allies     = [c for c in Characters where c.faction == Player.faction]
+let nearby     = [c for c in Characters where c.distance(Player) &lt; 10]
+let hostile    = [c for c in nearby where c.disposition(Player) is hostile]
+</pre>
+
+<p>
+  Conditions are bare names — <code>&lt;if: trusted&gt;</code>. The
+  same form is allowed at any scope: top of file (project-global),
+  inside a beat (beat-local), inside a scene (scene-local).
+</p>
+
+<h3 id="ledger-queries">12.2 Ledger queries</h3>
+
+<p>
+  Time and history are expressions. The ledger is one append-only
+  stream; queries are read against per-entity views materialised over
+  it.
+</p>
+
+<pre>&lt;if: since(bell_rung) &lt; 30s&gt;          ← show-global
+&lt;if: since(Participant, bell_rung) &lt; 30s&gt;  ← scoped to one participant
+&lt;if: last(Wren, speaker) == Player&gt;       ← Wren's view
+&lt;if: visits(opening) == 1&gt;                ← visit counter
+&lt;if: played(intro)&gt;                       ← any-time predicate
+</pre>
+
+<h3 id="scenes">12.3 Scenes</h3>
+
+<p>
+  A <code>SCENE</code> is a labelled coroutine — a multi-step
+  interaction with explicit state transitions. Where a generator
+  yields ambient content, a scene drives a focused exchange.
+</p>
+
+<pre>SCENE patrol(character, route)
+  for waypoint in route
+    &lt;goto: character → waypoint&gt;
+    wait until character.at(waypoint)
+    wait random(3s, 8s)
+
+    &lt;if: character.spotted_intruder&gt;
+      -&gt; investigate as character
+      return
+
+SCENE investigate(character)
+  approach
+    &lt;set: character.disposition(Player).suspicion += 5&gt;
+    wait until character.at(Player.position)
+    -&gt; examine
+
+  examine
+    NPC
+      (focused)
+      Hmm. Something's not right.
+    wait random(2s, 4s)
+    &lt;if: character.deduction &gt; 60&gt;
+      -&gt; confront
+    -&gt; withdraw
+
+  confront
+    &lt;fire: character.investigated with target: Player, result: clue&gt;
+    return clue
+
+  withdraw
+    &lt;fire: character.investigated with target: Player, result: none&gt;
+    return none
+</pre>
+
+<p>
+  Scenes have parameters, labelled states (the inner bare-name
+  blocks), <code>wait</code>, <code>yield</code>, <code>return</code>.
+  Invoked via <code>spawn patrol with character: Wren, route: harbor</code>
+  (fire-and-forget) or <code>let r = run investigate(character: Wren)</code>
+  (await return value).
+</p>
+
+<h3 id="generators">12.4 Generators</h3>
+
+<p>Long-running coroutines that yield content to the runtime.</p>
+
+<pre>GENERATOR HarborChorus
+  tier:     ambient
+  priority: 0.3
+
+  loop
+    wait random(20s, 60s)
+
+    &lt;if: Storm.active&gt;
+      DOCKHAND | FISHER
+        (worried)
+        &lt;shuffle: Storm's close. | Sky's wrong. | Time to tie down.&gt;
+
+    &lt;else if: Bell.ringing&gt;
+      VILLAGER
+        (surprised)
+        The bell! It's ringing!
+
+    &lt;else&gt;
+      FISHER | VILLAGER
+        &lt;cycle: Quiet night. | Stars are out. | Tide's calm.&gt;
+</pre>
+
+<p>
+  Generators run until cancelled. The runtime starts named generators
+  on boot or via <code>&lt;spawn: HarborChorus&gt;</code>. Multiple
+  generators run concurrently. They are character-bound (declared
+  inside a <code>CHARACTER</code>) or world-bound (top-level).
+</p>
+
+<h3 id="scheduling">12.5 Tiered scheduling</h3>
+
+<p>
+  Round-robin breaks at scale. Every generator and scene runs in one
+  of three tiers:
+</p>
+
+<table>
+  <tr><th>Tier</th><th>When it ticks</th><th>Default population</th></tr>
+  <tr><td><code>focal</code></td><td>every frame</td><td>active conversation; scenes the camera/PoV is in</td></tr>
+  <tr><td><code>active</code></td><td>every ~100ms</td><td>nearby NPCs; characters the player has spoken with recently</td></tr>
+  <tr><td><code>ambient</code></td><td>every ~2s</td><td>distant NPCs; world generators; village background</td></tr>
+</table>
+
+<p>
+  Each tier has a per-tick budget. Author override is always explicit
+  on the declaration (<code>tier:</code>, <code>priority:</code>). A
+  scene marked <code>tier: focal</code> is never deferred — the
+  scheduler steals from <code>active</code> and <code>ambient</code>
+  before dropping a focal frame.
+</p>
+
+<h2 id="live">13. Live performance — participants, cohorts, improv, broadcasts</h2>
+
+<p>
+  Live immersive theatre is what falls out of the rest of the
+  language when <em>participants</em> are first-class. The pieces
+  here are all that's needed; cast, story, stats, hooks all work the
+  same on stage as on a controller.
+</p>
+
+<h3 id="participants">13.1 Participants &amp; cohorts</h3>
+
+<pre>COHORT Initiates
+  label:    The Initiates
+  capacity: 24
+
+LOCATION BellTower
+  label:    The Bell Tower
+  capacity: 12
+
+on participant joins
+  &lt;enroll: Participant → Initiates&gt;
+  -&gt; orientation as Participant
+
+on participant enters BellTower
+  -&gt; bell_first_visit as Participant
+</pre>
+
+<p>
+  The <code>as Participant</code> modifier scopes a beat to one
+  audience member — inside such a beat, <code>trust</code> resolves to
+  <code>Participant.trust</code>, not a show-global. Many participants
+  can play the same beat simultaneously without interfering.
+</p>
+
+<h3 id="broadcast">13.2 Broadcast scopes</h3>
+
+<pre>&lt;broadcast: participant(Participant)&gt;
+  NARRATOR
+    (whispering)
+    You hear it differently. You always have.
+
+&lt;broadcast: location(BellTower) but participant(Participant)&gt;
+  NARRATOR
+    The others look up.
+
+&lt;broadcast: cohort(Singers) and location(BellTower)&gt;
+  &lt;cue: private_choir&gt;
+</pre>
+
+<p>
+  Scope atoms compose with <code>and</code> (intersection) and
+  <code>but</code> (difference). The runtime applies the filter to the
+  broadcast's content stream.
+</p>
+
+<h3 id="improv">13.3 Improv with pluggable advancement</h3>
+
+<pre>BELLKEEPER
+  (improv duration: 45s, advance on: any [pedal, speech(anchor phrase), gesture(Bow)])
+  (Greet warmly. Find out why they came. Don't reveal the singing —
+   that's act two.)
+
+  -&gt; next_beat
+</pre>
+
+<p>
+  The parenthetical body is a directive to the performer (the parens
+  keep it out of the spoken line). The runtime displays it on the
+  performer's prompter, holds the playhead until any configured
+  signal arrives or <code>duration</code> elapses, and writes
+  <code>ImprovBeatStarted</code> / <code>Advanced</code> envelopes to
+  the ledger. Quorum operators (<code>all</code>,
+  <code>any</code>, <code>quorum(N)</code>) match v2.
+</p>
+
+<h3 id="live-patching">13.4 Live patching from the booth</h3>
+
+<p>
+  The booth UI — a Prism app on the same <code>LoomRuntime</code> —
+  can skip a participant past a beat, force-fire a cue, re-cast a
+  role, retire a participant who left, hot-reload a <code>.loom</code>
+  patch without stopping the show. Every booth action is a Loro CRDT
+  op on the same store. The booth is just another client.
+</p>
+
+<h2 id="directives">14. Runtime directives — <code>&lt;…&gt;</code></h2>
 
 <p>
   Every directive is <code>&lt;kind: args&gt;</code> (or
-  <code>&lt;kind&gt;</code> for nullary). The kind names the operation;
-  args follow a colon. Block-opening directives have an indented body
-  and end at dedent.
+  <code>&lt;kind&gt;</code> for nullary). Block-opening directives
+  have an indented body and end at dedent.
 </p>
 
 <table>
   <tr><th>Kind</th><th>Form</th><th>Effect</th></tr>
-  <tr><td><code>sfx</code></td><td><code>&lt;sfx: bell-toll&gt;</code></td><td>fire a sound effect (inline or block-level)</td></tr>
+  <tr><td><code>sfx</code></td><td><code>&lt;sfx: bell-toll&gt;</code></td><td>fire a sound effect</td></tr>
   <tr><td><code>cue</code></td><td><code>&lt;cue: lights_up&gt;</code></td><td>fire a named crew cue (lighting, projection, machine)</td></tr>
-  <tr><td><code>set</code></td><td><code>&lt;set: trust += 10&gt;</code></td><td>mutate a variable or property</td></tr>
+  <tr><td><code>set</code></td><td><code>&lt;set: trust += 10&gt;</code></td><td>mutate a var, knowledge, disposition, stat</td></tr>
   <tr><td><code>fire</code></td><td><code>&lt;fire: bell_acknowledged&gt;</code></td><td>fire a named event onto the bus</td></tr>
-  <tr><td><code>anchor</code></td><td><code>&lt;anchor: bell_moment&gt;</code></td><td>name this point in the weave — tests jump here, replays bookmark here, linkbacks point here</td></tr>
+  <tr><td><code>anchor</code></td><td><code>&lt;anchor: bell_moment&gt;</code></td><td>name this point in the weave (tests, replays, links)</td></tr>
   <tr><td><code>pause</code></td><td><code>&lt;pause: 2s&gt;</code></td><td>delay the next reveal</td></tr>
-  <tr><td><code>shuffle</code> / <code>cycle</code> / <code>once</code> / <code>random</code></td><td><code>&lt;shuffle: a | b | c&gt;</code> or block form</td><td>runtime selects from alternatives (Ink-flavoured)</td></tr>
-  <tr><td><code>if</code> / <code>else</code></td><td><code>&lt;if: cond&gt;</code> ... <code>&lt;else&gt;</code></td><td>conditional block</td></tr>
-  <tr><td><code>match</code></td><td><code>&lt;match: expr&gt;</code></td><td>multi-arm block</td></tr>
-  <tr><td><code>for</code></td><td><code>&lt;for: item in xs&gt;</code></td><td>iteration block</td></tr>
-  <tr><td><code>spawn</code></td><td><code>&lt;spawn: Bandit with rank: 2&gt;</code></td><td>create a runtime instance of a template</td></tr>
+  <tr><td><code>shuffle</code> / <code>cycle</code> / <code>once</code> / <code>random</code></td><td><code>&lt;shuffle: a | b | c&gt;</code></td><td>runtime selects from alternatives</td></tr>
+  <tr><td><code>if</code> / <code>else if</code> / <code>else</code></td><td>block</td><td>conditional branch</td></tr>
+  <tr><td><code>match</code></td><td>block</td><td>multi-arm switch over expression</td></tr>
+  <tr><td><code>for</code></td><td><code>&lt;for: x in xs&gt;</code></td><td>iteration block</td></tr>
+  <tr><td><code>each visit</code></td><td>block with <code>first</code> / <code>then</code> / <code>finally</code> arms</td><td>visit-counter-driven variation</td></tr>
+  <tr><td><code>after</code> / <code>otherwise</code></td><td>state-morphing block over a beat</td><td>once <code>cond</code> turns true, the <code>after</code> body replaces the section</td></tr>
+  <tr><td><code>spawn</code> / <code>cancel</code></td><td><code>&lt;spawn: HarborChorus&gt;</code></td><td>start / stop a generator or scene</td></tr>
+  <tr><td><code>goal</code></td><td><code>&lt;goal: Wren/find_keeper start&gt;</code></td><td>force a goal-machine transition</td></tr>
+  <tr><td><code>broadcast</code></td><td>block over scope expression</td><td>narrow the audience for a content block</td></tr>
+  <tr><td><code>enroll</code></td><td><code>&lt;enroll: Participant → Initiates&gt;</code></td><td>cohort membership</td></tr>
+  <tr><td><code>compose</code></td><td><code>&lt;compose: HarborThreat intensity: high&gt;</code></td><td>invoke a procedural-text grammar</td></tr>
 </table>
 
 <div class="callout">
   <strong>Anchors are first-class.</strong> <code>&lt;anchor: name&gt;</code>
-  is the v3 testing primitive. Any anchor is addressable from tests
-  (<code>play_to(@bell_moment)</code>), from analytics (count how many
-  players reach this point), from linkbacks (other documents
-  cross-referencing <code>@bell_moment</code>), and from authoring
-  (the editor's "skip to here" affordance). Lift anchors liberally —
-  they're cheap and they pay off everywhere.
+  is the v3 testing primitive. Tests jump to anchors, analytics count
+  how many players reach them, links cross-reference them, the
+  authoring tool's "skip to here" affordance uses them. Lift anchors
+  liberally — they're cheap.
 </div>
 
-<h2 id="metadata">9. Production metadata — <code>&lt;&lt;…&gt;&gt;</code></h2>
+<h2 id="metadata">15. Production metadata — <code>&lt;&lt;…&gt;&gt;</code></h2>
 
 <p>
-  <code>&lt;&lt;…&gt;&gt;</code> is the prompt-book column, lifted into
-  the file. The runtime parses it but does nothing at production. It
-  exists so that:
+  The prompt-book column, lifted inline. The runtime parses it and
+  does nothing at production. It exists for stage managers, producers,
+  authors, and debuggers. The first token names the kind; tooling
+  filters on it.
 </p>
-
-<ul>
-  <li><strong>Stage managers</strong> can mark blocking, warns, cues, and standbys without polluting the spoken text.</li>
-  <li><strong>Producers</strong> can break the script down — flag props, set pieces, costume changes — using filterable tags.</li>
-  <li><strong>Authors</strong> can leave notes-to-self, todos, table-read feedback, structural reminders.</li>
-  <li><strong>Debugging</strong> can drop conditional breakpoints, watches, and trace markers that the runtime can opt into at debug-time but ignores in production.</li>
-</ul>
 
 <pre>&lt;&lt;warn lx14&gt;&gt;
 &lt;&lt;warn sq7&gt;&gt;
@@ -633,146 +1054,23 @@ WREN
 &lt;&lt;note: this scene felt long at the table read — try cutting the lantern beat&gt;&gt;
 &lt;&lt;todo: confirm with director that the silence after the bell holds&gt;&gt;
 &lt;&lt;break: trust &gt;= 80&gt;&gt;     ← debugger conditional breakpoint
+&lt;&lt;related: Wren/backstory&gt;&gt;
 </pre>
 
-<p>
-  The first token inside <code>&lt;&lt;…&gt;&gt;</code> is the
-  metadata kind. Tooling can filter on it: "show me all
-  <code>blocking:</code> notes for act 1", "list every
-  <code>todo:</code>", "highlight every <code>warn:</code> in the
-  prompt view". The runtime itself reads them only to forward to
-  consumers (debug protocol, prompt-book view, breakdown report).
-</p>
-
-<h2 id="prism">10. Prism + Obsidian: local-first, linked</h2>
-
-<p>Loom files live inside a Prism workspace. Three integration points matter.</p>
-
-<h3 id="files">10.1 Files are the identity</h3>
+<h2 id="example">16. Worked example: a small project across files</h2>
 
 <p>
-  Each <code>CHARACTER</code> or <code>ITEM</code> or <code>LOCATION</code>
-  <em>may</em> live in its own file — <code>cast/Wren.loom</code>,
-  <code>items/brass_lantern.loom</code>, <code>locations/Lighthouse.loom</code>.
-  Or many declarations can sit in one file. The bare name in
-  another file resolves the same way either way; the resolver walks
-  the workspace tree and picks the declaration with the matching name.
-  Twine and Obsidian both work this way; v3 follows.
+  A five-file project. One <code>main.loom</code>, one character file,
+  one location file, one stats profile, one scene. Cross-file diverts,
+  a reactive <code>let</code>, a hook, a generator, and an improv beat.
 </p>
 
-<h3 id="backlinks">10.2 Backlinks are emergent</h3>
-
-<p>
-  When a beat mentions <code>Wren</code> in prose, that's a backlink.
-  When a beat diverts to <code>-&gt; ring_bell</code>, that's a
-  backlink. When metadata mentions <code>&lt;&lt;related: Wren's
-  Backstory&gt;&gt;</code>, that's a backlink. Prism harvests them all
-  and shows the inverse — "every place that mentions Wren" — without
-  the writer having to maintain it.
-</p>
-
-<h3 id="runtime-integration">10.3 The Prism runtime</h3>
-
-<p>
-  <code>packages/prism-loom-runtime/</code> already exists. v3 lands
-  as a new parser path behind a <code>loom: 3</code> header property;
-  v2 files continue to compile through the v2 path. Both lower to a
-  shared bundle IR, so the playhead, ledger, hook system, and
-  disposition machinery are reused unchanged. The new modules are
-  <code>objects.rs</code> (unified declaration registry),
-  <code>directives.rs</code> (one dispatcher for every
-  <code>&lt;kind:&gt;</code>), and <code>metadata.rs</code> (read-only
-  sidecar parsing). Loom's LSP
-  (<code>packages/prism-loom-lsp/</code>) follows the same split.
-</p>
-
-<h2 id="cleanup">11. What v2 had that v3 doesn't</h2>
-
-<table>
-  <tr><th>v2</th><th>v3</th><th>Why</th></tr>
-  <tr><td>Sigils <code>$</code>, <code>@</code>, <code>[[ ]]</code></td>
-      <td>None. Bare capitalised names link; lexical scope resolves.</td>
-      <td>Position and capitalisation carry the same information.</td></tr>
-  <tr><td>Quote-delimited strings <code>"…"</code> / <code>'…'</code></td>
-      <td>None. Tail-of-<code>:</code> for properties; indented prose for dialogue.</td>
-      <td>Quote characters belong to the writer.</td></tr>
-  <tr><td><code>{quietly}</code> as a speaker emotion bracket</td>
-      <td><code>(quietly)</code> on its own line — screenplay convention.</td>
-      <td>Curly braces are reserved for value substitution. Performer notes are parens, as they have been for a century.</td></tr>
-  <tr><td><code>match</code> + <code>after</code>/<code>otherwise</code></td>
-      <td><code>&lt;if:&gt;</code> + <code>&lt;match:&gt;</code>. Two forms.</td>
-      <td>Two control verbs cover every case.</td></tr>
-  <tr><td><code>~ action</code> action lines</td>
-      <td><code>&lt;set:&gt;</code>, <code>&lt;fire:&gt;</code>, <code>&lt;cue:&gt;</code> directives.</td>
-      <td>One bracket discipline for everything the runtime executes.</td></tr>
-  <tr><td>Inline <code>$(s-expr)</code></td>
-      <td>Gone. Use <code>{expr}</code> for values.</td>
-      <td>One value-substitution form.</td></tr>
-  <tr><td>Generators (barks, routines, improv)</td>
-      <td><code>&lt;shuffle:&gt;</code>, <code>&lt;cycle:&gt;</code>, <code>&lt;random:&gt;</code>, <code>&lt;weave:&gt;</code> directives.</td>
-      <td>One directive set, one parsing rule, applicable inline or block-level.</td></tr>
-  <tr><td><code>each visit { first / then / finally }</code></td>
-      <td><code>&lt;cycle&gt;</code> block with arms.</td>
-      <td>Same idea, one keyword.</td></tr>
-  <tr><td>v2 archetypes (eleven of them)</td>
-      <td>Four: <code>story</code>, <code>module</code>, <code>character</code>, <code>beat</code>. Plus declaration keywords <code>CHARACTER</code>, <code>ITEM</code>, <code>LOCATION</code>, <code>FACTION</code>, <code>ENTITY</code>.</td>
-      <td>The retired archetypes are idioms inside a <code>story</code>, not separate languages.</td></tr>
-  <tr><td><code>extends</code>, <code>derives</code>, <code>impls</code>, <code>mixin</code>, <code>template</code>, <code>macro</code>, <code>takes</code>, <code>trait</code></td>
-      <td><code>is</code>, plus typed slots with no defaults.</td>
-      <td>Eight forms collapsed to two ideas: composition (<code>is</code>) and abstractness (unfilled slots).</td></tr>
-  <tr><td>Goals, disposition, hooks, ledger</td>
-      <td><strong>Kept as-is.</strong></td>
-      <td>They were already orthogonal and well-typed.</td></tr>
-</table>
-
-<h2 id="example">12. A full example</h2>
-
-<p>
-  Six declarations, two beats, one parameterised beat, prompt-book
-  metadata, and a testing anchor. No quotes anywhere. Five bracket
-  shapes, used precisely.
-</p>
-
-<pre># The Lighthouse at Dawn
+<pre><strong>main.loom</strong>
+# Saltmere
 loom: 3
 entry: opening
-tags: tutorial, single-act
 
-#  Declarations  ─────────────────────────────────
-
-CHARACTER Keeper                       ← abstract; voice has no default
-  voice:      any
-  home:       any of LOCATION
-  reputation: 0 to 100 = 50
-
-CHARACTER Combatant
-  hp:     int
-  attack: int
-
-CHARACTER Wren is Keeper, Combatant
-  voice:      female_alto
-  home:       Lighthouse
-  reputation: 60
-  hp:         80
-  attack:     4
-  has:        brass_lantern
-  knows:      bell_origin
-
-  trusts Player:   30 of 100
-  respects Player: 50 of 100
-
-CHARACTER Player is Visitor
-
-ITEM brass_lantern
-  weight: 2
-  fuel:   75 of 100
-  etched: true
-
-LOCATION Lighthouse
-  ambient:  wind_low
-  contains: bell_rope, brass_lantern
-
-#  Beats  ─────────────────────────────────────────
+let trusted = Wren.trusts.Player &gt; 50
 
 == opening
   cast: Wren, Player
@@ -795,15 +1093,74 @@ WREN
 She turns the lantern up.
 
 * Ring the bell.[ I shouldn't, but I do.]
-  -&gt; ring_bell
-
-+ Ask about the keepers.
+  -&gt; ringing
+* Ask about the keepers.
   -&gt; ask_about with topic: keepers, NPC: Wren
-
-+ Leave quietly.
+* Leave quietly.
   -&gt; END
+</pre>
 
-== ring_bell
+<pre><strong>cast/Wren.loom</strong>
+CHARACTER Wren is Keeper, Combatant
+  stats:      Combat
+  voice:      female_alto
+  home:       Lighthouse
+  reputation: 60
+  hp:         80
+  attack:     4
+  has:        brass_lantern
+  knows:
+    met_player:    bool = false
+    bell_origin:   unknown | suspects | confirmed = unknown
+
+  trusts Player:   30 of 100
+  respects Player: 50 of 100
+
+  reacts trust &gt; 60  → warm
+  reacts trust &lt; 10  → cold
+
+  goal find_keeper
+    priority:       0.8
+    active when:    Time.hour &gt; 6
+    completes when: Wren.knows.bell_origin == confirmed
+
+  on trust passes 80
+    -&gt; reveal_secret as Wren
+
+  on meeting Player
+    &lt;set: Wren.knows.met_player := true&gt;
+
+  generator daily_routine
+    tier: ambient
+    at 6am   &lt;goto: Wren → Lighthouse&gt;
+    at noon  &lt;goto: Wren → Harbor&gt;
+    every random(15m, 45m)
+      &lt;if: at Harbor and Weather.fog&gt;
+        yield bark from HarborFogChatter
+</pre>
+
+<pre><strong>locations/Lighthouse.loom</strong>
+LOCATION Lighthouse
+  label:    The Saltmere Lighthouse
+  ambient:  wind_low
+  contains: bell_rope, brass_lantern, Wren
+  capacity: 6
+</pre>
+
+<pre><strong>stats/Combat.loom</strong>
+STATS Combat
+  attribute strength = 10, range 1 to 30
+
+  pool health
+    max:   max_health
+    regen: 2/s when not in_combat
+
+  stat max_health = 50 + strength * 5
+  stat damage     = 8 + strength * 0.5
+</pre>
+
+<pre><strong>beats/ringing.loom</strong>
+== ringing
   cast: Wren, Player
   setting: Lighthouse
 
@@ -815,10 +1172,10 @@ The sound carries across the rocks.
 WREN
   (stunned)
   You... rang it.
-  &lt;set: trusts.Player += 20&gt;
+  &lt;set: Wren.trusts.Player += 20&gt;
   &lt;fire: bell_acknowledged&gt;
 
-&lt;if: Wren.trusts.Player &gt; 40&gt;
+&lt;if: trusted&gt;                            ← uses the let from main.loom
   WREN
     Then you should know what I know.
   -&gt; ask_about with topic: bell, NPC: Wren
@@ -834,20 +1191,18 @@ WREN
 PLAYER
   What can you tell me about {topic}?
 
-&lt;match: NPC.knowledge of topic&gt;
-  full
+&lt;match: NPC.knows of topic&gt;
+  confirmed
     slot: answer
-  partial
+  suspects
     NPC
       I've heard rumours, but nothing I'd swear to.
   unknown
     NPC
       I'm sorry. I don't know.
-
-&lt;&lt;note: consider adding a "rumour" mode that always returns half-truths&gt;&gt;
 </pre>
 
-<p>The caller fills the slot at the divert:</p>
+<p>And from a caller — filling the answer slot at the divert site:</p>
 
 <pre>-&gt; ask_about with topic: bell, NPC: Wren
   answer:
@@ -857,88 +1212,92 @@ PLAYER
 </pre>
 
 <div class="callout good">
-  <strong>End state.</strong> A writer who has read Fountain reads this
-  file as a screenplay. A stage manager reads
+  <strong>End state.</strong> A writer who has read Fountain reads
+  these files as a screenplay. A stage manager reads
   <code>&lt;&lt;…&gt;&gt;</code> as a prompt-book column. A developer
-  reads <code>&lt;…&gt;</code> as runtime calls. A producer reads
-  declarations as a breakdown. The runtime reads it as a program. One
-  file, five audiences, no overlap.
+  reads <code>&lt;…&gt;</code> as runtime calls. A simulationist reads
+  <code>CHARACTER</code>, <code>STATS</code>, <code>goal</code>,
+  <code>on</code>, <code>generator</code> as a small simulation. A
+  producer reads the file tree as a breakdown. The runtime reads the
+  whole project as one weave of coroutines over one ledger. Five
+  audiences, one folder.
 </div>
 
-<h2 id="migration">13. Migration</h2>
+<h2 id="migration">17. Migration from v2</h2>
 
 <ol>
   <li><strong>Two parsers, one runtime.</strong> v3 ships behind the
-    header property <code>loom: 3</code>. v2 files (which carry no
-    <code>loom:</code> property or carry <code>loom: 2</code>) keep
-    parsing through the v2 path. Both lower to the shared bundle IR.</li>
+    header property <code>loom: 3</code>. v2 files (no
+    <code>loom:</code> or <code>loom: 2</code>) keep parsing through
+    the v2 path. Both lower to the shared bundle IR.</li>
   <li><strong>v2 desugars to v3 internally.</strong> <code>cast SPEAKER</code>
     becomes a tiny <code>CHARACTER</code>; <code>:conversation</code>
-    becomes a <code>story</code> with an implicit <code>== root</code>
-    knot; <code>~</code>-prefixed actions become the matching
+    becomes a file with an implicit <code>== root</code>;
+    <code>~</code>-prefixed actions become the matching
     <code>&lt;set:&gt;</code> / <code>&lt;fire:&gt;</code> /
     <code>&lt;cue:&gt;</code>; <code>{quietly}</code> emotion brackets
-    become <code>(quietly)</code> parentheticals. The IR sees no
-    difference.</li>
+    become <code>(quietly)</code> parentheticals; <code>$x</code>
+    becomes bare <code>x</code> under lexical resolution;
+    <code>@x</code>/<code>[[x]]</code> become bare capitalised names.
+    The Simulacra and Meridian semantics carry over unchanged — the
+    <em>names</em> change shape, not the model.</li>
   <li><strong>Phased rollout.</strong> (a) Land v3 grammar behind the
-    flag, shared IR, existing tests green. (b) Port lesson 04
-    (<em>declaring cast</em>) and lesson 20 (<em>tiny complete story</em>)
-    to v3 as reference. (c) Write the v3-only lessons covering typed
-    slots, <code>is</code>, <code>&lt;&lt;…&gt;&gt;</code> metadata,
-    and the directive set. (d) Soft-deprecate v2 with parser hints.
-    (e) Remove v2 when the examples and the LSP are caught up.</li>
+    flag, shared IR, existing tests green. (b) Port lessons 04
+    (declaring cast) and 20 (tiny story) to v3 as reference. (c) Add
+    v3-only lessons for typed slots, multi-file projects, the
+    reactive layer, the live layer. (d) Soft-deprecate v2 with parser
+    hints. (e) Remove v2 when examples and the LSP have caught up.</li>
   <li><strong>Tooling.</strong> The TextMate grammar at
     <code>tools/loom-syntax/loom.tmLanguage.json</code> gains five
     bracket scopes — <code>()</code>, <code>{}</code>, <code>[]</code>,
-    <code>&lt;…&gt;</code>, <code>&lt;&lt;…&gt;&gt;</code> — each with
-    a distinct theme colour. It loses the three v2 sigil scopes. The
-    LSP gains a directive completion list (kinds enumerated in §8) and
-    a metadata-kind index (so authors can jump between every
-    <code>&lt;&lt;todo:&gt;&gt;</code> in the workspace).</li>
+    <code>&lt;…&gt;</code>, <code>&lt;&lt;…&gt;&gt;</code> — and a
+    cross-file divert resolver in the LSP. The LSP gains
+    project-aware name completion (every <code>CHARACTER</code>,
+    every beat, every anchor, every <code>&lt;&lt;todo:&gt;&gt;</code>
+    in the workspace).</li>
 </ol>
 
-<h2 id="open">14. Open questions</h2>
+<h2 id="open">18. Open questions</h2>
 
 <ul>
-  <li><strong>Inline directive density.</strong> A heavy dialogue line
-    can carry several <code>&lt;set:&gt;</code> and <code>&lt;sfx:&gt;</code>
-    directives. Do we cap how many fit on one line, or trust the
-    writer? Leaning trust — Ink doesn't cap and writers manage.</li>
-  <li><strong>Knot parameters: parens or <code>takes</code>?</strong>
-    <code>== ask_about(topic)</code> reads like a function. An alternative
-    is <code>== ask_about takes topic: text</code>, which is more
-    declarative. Parens win on brevity; <code>takes</code> wins on
-    legibility. Leaning parens — it composes with
-    <code>with topic: bell</code> at the call site.</li>
-  <li><strong>Multi-word string values.</strong> <code>label: Wren the Keeper</code>
-    works because the colon takes the rest of the line. But
-    <code>has: brass_lantern, journal, three_candles</code> is a list —
-    what if a list element needs spaces? Leaning toward
-    <code>has: brass lantern, journal, three candles</code> being legal
-    (commas split, leading/trailing whitespace trimmed). If you need a
-    literal comma, use a name token (snake_case) instead.</li>
-  <li><strong><code>&lt;&lt;…&gt;&gt;</code> first-token registry.</strong>
-    Should the kinds inside <code>&lt;&lt;…&gt;&gt;</code> be a closed
-    set the LSP autocompletes (<code>warn</code>, <code>cue</code>,
-    <code>blocking</code>, <code>note</code>, <code>todo</code>,
-    <code>break</code>, <code>related</code>) or open? Leaning open —
-    let production teams invent their own conventions, and have the
-    LSP suggest from the workspace's history.</li>
+  <li><strong>Divert ambiguity resolution.</strong> When two beats in
+    different files share a name, do we error and force the writer to
+    qualify (<code>Lighthouse/ringing</code>), or pick by some
+    heuristic (closest in the folder tree, most-recently-touched)?
+    Leaning error — silent guessing is the worst failure mode for
+    narrative tools.</li>
+  <li><strong>File-level <code>cast:</code> shorthand.</strong>
+    Should a file declare a default cast that all its beats inherit,
+    so the per-beat <code>cast:</code> can be omitted? Leans yes for
+    character-centric files (<code>cast/Wren.loom</code>); leans no
+    for hub files. Probably both, with an explicit per-beat override.</li>
+  <li><strong>Hot-reload granularity.</strong> Editing
+    <code>cast/Wren.loom</code> mid-show — do all in-flight hooks
+    finish under the old definition, or rebind at the next ledger
+    flush? v2 chose "finish under the old"; keeping that is the
+    safer default but worth re-confirming with live operators.</li>
+  <li><strong>Reactive <code>let</code> visibility across files.</strong>
+    A <code>let</code> in <code>main.loom</code> is project-global by
+    default. Should files be able to declare <code>let</code>s that
+    are file-local (not visible to other files)? Leaning yes via a
+    <code>local let</code> form, but the common case is the global one.</li>
 </ul>
 
-<h2 id="acks">15. Acknowledgements</h2>
+<h2 id="acks">19. Acknowledgements</h2>
 
 <p>
-  Every idea in this document descends from somewhere older. The
-  five-bracket discipline is the only contribution that is genuinely
-  v3. Everything else is recombination — screenplay's positional
-  formatting, Fountain's inference-with-escape, Ink's
+  Every idea here descends from somewhere older. The five-bracket
+  discipline and the multi-file project model are v3's only
+  contributions. Everything else is recombination — screenplay's
+  positional formatting, Fountain's inference-with-escape, Ink's
   <code>==</code> / <code>*</code> / <code>+</code> / <code>-&gt;</code>
   vocabulary and the <code>[…]</code> suppress trick, Twine's
-  passage-as-file model, Obsidian/Logseq's local-first identity, and
-  the stage-manager's prompt-book column that v3 lifts into the same
-  file as <code>&lt;&lt;…&gt;&gt;</code>. The weave / loom / thread
-  metaphor predates all of them and is the project's reason for being.
+  passage-as-file model, Obsidian/Logseq's local-first identity, fine-
+  grained reactivity from the Solid/S.js lineage, the prompt-book
+  column from a hundred years of stage management, and the
+  character / stat / faction model that v2 built as Simulacra and
+  Meridian. The weave / loom / thread metaphor predates all of them
+  and is the project's reason for being.
 </p>
 
 </body>

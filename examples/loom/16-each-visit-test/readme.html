@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lesson 16 — each visit</title>
+  <style>
+    body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           max-width: 760px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
+    h1, h2 { line-height: 1.2; }
+    h2 { margin-top: 2.2rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+    code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+    code { background: #f4f4f6; padding: 0.1em 0.35em; border-radius: 3px; }
+    pre { background: #f4f4f6; padding: 1rem; border-radius: 6px; overflow-x: auto;
+          font-size: 14px; line-height: 1.45; }
+    .crumbs { color: #777; font-size: 0.92rem; margin-bottom: 0.3rem; }
+    .crumbs a { color: #0066cc; text-decoration: none; }
+    .nav { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee;
+           display: flex; justify-content: space-between; color: #777; }
+    .nav a { color: #0066cc; text-decoration: none; }
+    .try { border-left: 3px solid #e6c4c4; background: #fdf7f7;
+           padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+    .callout { border-left: 3px solid #c4d2e6; background: #f7fafd;
+               padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+
+<p class="crumbs"><a href="../README.html">← back to the tour</a></p>
+<h1>Lesson 16 — <code>each visit</code></h1>
+
+<p>
+  A common writing pattern: <em>the first time the player visits this scene
+  one thing happens, the second time another, after that nothing surprising
+  any more.</em> Loom has a dedicated block for it.
+</p>
+
+<h2>The shape</h2>
+
+<pre>each visit
+  first
+    WREN
+      Morning. New face.
+  then
+    WREN
+      Back again.
+  finally
+    WREN
+      You're practically furniture now.</pre>
+
+<p>The three branch labels:</p>
+
+<ul>
+  <li><code>first</code> — plays on visit number one.</li>
+  <li><code>then</code> — plays on every visit after the first, until
+    <code>finally</code> takes over.</li>
+  <li><code>finally</code> — plays from the visit after all the
+    <code>then</code> branches are exhausted onwards.</li>
+</ul>
+
+<h2>Multiple <code>then</code> branches</h2>
+
+<p>You can write several <code>then</code> branches in a row to cycle
+through them:</p>
+
+<pre>each visit
+  first
+    WREN
+      Welcome.
+  then
+    WREN
+      Back so soon?
+  then
+    WREN
+      Make yourself at home.
+  finally
+    WREN
+      Tea's on.</pre>
+
+<p>Reading top-to-bottom: visit 1 fires <code>first</code>, visit 2 fires
+the first <code>then</code>, visit 3 fires the second <code>then</code>,
+visit 4 onwards fires <code>finally</code>.</p>
+
+<h2>Without <code>finally</code></h2>
+
+<p>If you leave <code>finally</code> off, the last <code>then</code> branch
+keeps playing forever after its first appearance. Useful when you want a
+graceful settle into a stable line.</p>
+
+<h2>Without <code>first</code></h2>
+
+<p>You can leave <code>first</code> off too. Then visit one fires the first
+<code>then</code> and so on.</p>
+
+<h2>What this replaces</h2>
+
+<p>Before <code>each visit</code> existed, the same effect required:</p>
+
+<pre>~ var $visit_count := 0
+~ $visit_count++
+
+after $visit_count == 1
+  WREN
+    Welcome.
+after $visit_count == 2
+  WREN
+    Back again.
+after $visit_count &gt;= 3
+  WREN
+    Furniture.</pre>
+
+<p>It works — but the intent ("evolve the line over repeated visits") is
+buried in arithmetic. <code>each visit</code> says it out loud.</p>
+
+<h2>What you just learned</h2>
+
+<ul>
+  <li><code>each visit</code> opens a visit-evolving block.</li>
+  <li><code>first</code> plays on visit one; <code>then</code> plays on each
+    subsequent visit (cycle if there are multiple); <code>finally</code>
+    settles onto the closing line.</li>
+  <li>Each branch can contain any content — dialogue, flavor, mutations,
+    even more blocks.</li>
+</ul>
+
+<div class="callout">
+  <strong>What counts as a visit.</strong> Every entry to the section bumps
+  the visit count by one — whether you fell through, diverted into it, or
+  returned. The ledger is what tracks the count, so it survives save / load
+  and is consistent with <code>visits(section_id)</code> reads.
+</div>
+
+<div class="try">
+  <strong>Try this.</strong> Open <code>lesson.loom</code>. The story diverts
+  back into <code>hub</code> several times. Add a fourth <code>then</code>
+  branch with its own dialogue and see when it fires.
+</div>
+
+<p class="nav">
+  <a href="../15-after-otherwise-test/readme.html">← after / otherwise</a>
+  <a href="../17-match-test/readme.html">Next: match →</a>
+</p>
+
+</body>
+</html>

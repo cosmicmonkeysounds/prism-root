@@ -140,3 +140,154 @@ fn bundle_round_trips_through_postcard() {
     assert_eq!(decoded.documents[0].id, "harbor_greeting");
     assert_eq!(decoded.documents[0].sections.len(), 3);
 }
+
+// ─── Phase 2: guards, mutations, let-bindings, interpolation ────────
+
+/// A trust-gated branch — the player has to mutate `$trust` before the
+/// secret choice unlocks. Exercises:
+///   - `~ var $trust := 30` mutation
+///   - `let trusted = $trust > 25` boot binding + recomputation
+///   - `if $trusted` guard filtering on a choice
+///   - `${$trust}` interpolation in dialogue
+const TRUST_SOURCE: &str = "# trust_path
+cast WREN
+  .label \"Wren\"
+
+let trusted = $trust > 25
+
+-- start
+
+WREN
+  Trust meter: $trust.
+
+  * Earn trust
+    ~ var $trust := 30
+    -> trusted_step
+  * Stay wary
+    -> wary_step
+
+-- trusted_step
+
+WREN
+  Now trust is $trust.
+
+  * Tell me the secret. if $trusted
+    -> secret
+  * Maybe later.
+    -> ending
+
+-- wary_step
+
+WREN
+  Then I don't say more.
+
+-> ending
+
+-- secret
+
+WREN
+  The bell sings under the tide.
+
+-> ending
+
+-- ending
+";
+
+#[test]
+fn trust_branch_unlocks_guarded_choice() {
+    let mut show = Show::load(TRUST_SOURCE).expect("show should load");
+    // First frame parks at choice in `start`.
+    let _ = show.play_until_park();
+    show.choose(0); // Earn trust → trusted_step
+    let frames = show.play_until_park();
+    let choices = frames
+        .iter()
+        .rev()
+        .find_map(|f| match f {
+            Frame::Choices(c) => Some(c.clone()),
+            _ => None,
+        })
+        .expect("choices in trusted_step");
+    assert_eq!(choices.len(), 2, "secret should be visible: {choices:?}");
+    assert!(choices.iter().any(|c| c.label.contains("secret")));
+}
+
+#[test]
+fn wary_branch_hides_guarded_choice() {
+    let mut show = Show::load(TRUST_SOURCE).expect("show should load");
+    let _ = show.play_until_park();
+    show.choose(1); // Stay wary
+    let _frames = show.play_until_park();
+    // `trusted_step` is never entered; verify directly that the
+    // `secret` section was never played.
+    assert!(!show.ledger().played("secret"));
+    assert!(show.ledger().played("wary_step"));
+}
+
+#[test]
+fn trust_mutation_updates_vars_and_lets() {
+    let mut show = Show::load(TRUST_SOURCE).expect("show should load");
+    let _ = show.play_until_park();
+    show.choose(0); // Earn trust
+    let _ = show.play_until_park();
+    assert_eq!(
+        show.vars
+            .get("trust")
+            .and_then(|v| if let prism_loom_runtime::Value::Int(n) = v {
+                Some(*n)
+            } else {
+                None
+            }),
+        Some(30)
+    );
+    assert_eq!(
+        show.lets.get("trusted"),
+        Some(&prism_loom_runtime::Value::Bool(true))
+    );
+}
+
+#[test]
+fn interpolation_renders_live_var_value() {
+    let mut show = Show::load(TRUST_SOURCE).expect("show should load");
+    let frames = show.play_until_park();
+    // The opening line is `Trust meter: $trust.` — before any
+    // mutation, $trust is nil and renders as "nil".
+    let dialogue: Vec<String> = frames
+        .iter()
+        .flat_map(|f| match f {
+            Frame::Dialogue { lines, .. } => lines.clone(),
+            _ => Vec::new(),
+        })
+        .collect();
+    assert!(
+        dialogue.iter().any(|l| l.contains("nil")),
+        "expected `nil` interpolation pre-mutation, got {dialogue:?}"
+    );
+
+    show.choose(0); // mutate $trust to 30
+    let frames = show.play_until_park();
+    let dialogue: Vec<String> = frames
+        .iter()
+        .flat_map(|f| match f {
+            Frame::Dialogue { lines, .. } => lines.clone(),
+            _ => Vec::new(),
+        })
+        .collect();
+    assert!(
+        dialogue.iter().any(|l| l.contains("30")),
+        "expected `30` interpolation post-mutation, got {dialogue:?}"
+    );
+}
+
+#[test]
+fn fire_action_writes_to_ledger() {
+    let src = "# fired\n-- s\n~ fire bell_solved\n";
+    let mut show = Show::load(src).expect("show should load");
+    show.set_clock(42);
+    let _ = show.play_until_park();
+    assert!(show
+        .ledger()
+        .entries()
+        .iter()
+        .any(|e| matches!(e, LedgerEntry::Fired { event, at_ms } if event == "bell_solved" && *at_ms == 42)));
+}

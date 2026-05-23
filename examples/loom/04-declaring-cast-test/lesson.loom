@@ -1,0 +1,27 @@
+# declaring_cast
+
+cast WREN
+  .label "Wren the Fisher"
+  .voice female_alto
+
+cast ALEX
+  .label "Alex"
+  .voice male_tenor
+
+cast MAREN
+  .label "Maren the Keeper"
+
+-- meeting
+
+WREN
+  This is Maren.
+  She kept the bell for forty years.
+
+MAREN { quiet }
+  Forty-two.
+
+ALEX
+  And now?
+
+MAREN
+  Now I keep nothing. The bell does its own remembering.

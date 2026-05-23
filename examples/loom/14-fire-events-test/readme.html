@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lesson 14 — events</title>
+  <style>
+    body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           max-width: 760px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
+    h1, h2 { line-height: 1.2; }
+    h2 { margin-top: 2.2rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+    code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+    code { background: #f4f4f6; padding: 0.1em 0.35em; border-radius: 3px; }
+    pre { background: #f4f4f6; padding: 1rem; border-radius: 6px; overflow-x: auto;
+          font-size: 14px; line-height: 1.45; }
+    .crumbs { color: #777; font-size: 0.92rem; margin-bottom: 0.3rem; }
+    .crumbs a { color: #0066cc; text-decoration: none; }
+    .nav { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee;
+           display: flex; justify-content: space-between; color: #777; }
+    .nav a { color: #0066cc; text-decoration: none; }
+    .try { border-left: 3px solid #e6c4c4; background: #fdf7f7;
+           padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+    .callout { border-left: 3px solid #c4d2e6; background: #f7fafd;
+               padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+
+<p class="crumbs"><a href="../README.html">← back to the tour</a></p>
+<h1>Lesson 14 — events</h1>
+
+<p>
+  Sections and choices are <em>structural</em> things the ledger remembers
+  automatically. An <em>event</em> is your hook for anything that doesn't
+  fit those — "the bell rang", "a deal was struck", "the sun rose". You
+  fire one with <code>~ fire name</code> and check it later with the same
+  ledger queries.
+</p>
+
+<h2>Firing</h2>
+
+<p>An action line at the moment the thing happens:</p>
+
+<pre>~ fire bell_rang
+~ fire deal_struck
+~ fire sun_rose</pre>
+
+<p>Each <code>fire</code> writes an entry into the ledger stamped with the
+current time. The name is yours to choose; convention is lowercase with
+underscores.</p>
+
+<h2>Asking "did this happen?"</h2>
+
+<p>Two reads cover most cases:</p>
+
+<table style="width:100%; border-collapse:collapse; margin:0.8rem 0;">
+  <tr><th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;">Query</th>
+      <th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;">Returns</th></tr>
+  <tr><td style="padding:0.4rem;"><code>since(name)</code></td>
+      <td style="padding:0.4rem;">Milliseconds since the event last fired, or nothing if it never has.</td></tr>
+  <tr><td style="padding:0.4rem;"><code>count(event)</code></td>
+      <td style="padding:0.4rem;">Total number of events fired so far. Useful as a rough heartbeat.</td></tr>
+</table>
+
+<p>Putting them in conditions:</p>
+
+<pre>* Strike it again.  if since(bell_rang) &gt; 5000
+
+after since(deal_struck) &lt; 30000
+  WREN
+    We just shook on this.</pre>
+
+<div class="callout">
+  Guards live on sections and choices. To gate a single dialogue beat, wrap
+  it in <code>after &lt;cond&gt;</code> (see lesson 15).
+</div>
+
+<p>The numbers are in milliseconds, so <code>5000</code> is five seconds.</p>
+
+<h2>The full pattern</h2>
+
+<ol>
+  <li>Something happens in the story → <code>~ fire X</code>.</li>
+  <li>Later, a line wants to react → <code>if since(X) &lt; N</code> or
+    similar.</li>
+  <li>The ledger handles the bookkeeping.</li>
+</ol>
+
+<h2>Events vs choices in the ledger</h2>
+
+<p>
+  Both end up in the same ledger. The difference is just that
+  <code>chose(...)</code> looks at <em>choice</em> entries and
+  <code>since(...)</code> / <code>count(event)</code> look at <em>fired
+  event</em> entries. Same diary, different views.
+</p>
+
+<h2>What you just learned</h2>
+
+<ul>
+  <li><code>~ fire name</code> records a custom event.</li>
+  <li><code>since(name)</code> returns time-since in milliseconds (or
+    nothing).</li>
+  <li><code>count(event)</code> is the total number of events fired.</li>
+  <li>Use events for one-off "the thing happened" moments — variables for
+    things with a level, the ledger for things with a history.</li>
+</ul>
+
+<div class="callout">
+  <strong>Where does "now" come from?</strong> The runtime carries a virtual
+  clock. The host advances it (typically tied to wall-clock seconds, but it
+  can be anything monotonic — frame counts, tide cycles, beats). Saves
+  preserve the clock so reloads come back at the right "now".
+</div>
+
+<div class="try">
+  <strong>Try this.</strong> In <code>lesson.loom</code>, fire a
+  <code>second_strike</code> event and add a line that prints only if
+  <code>since(second_strike) &lt; 1000</code>. The line will play because
+  the second strike just happened.
+</div>
+
+<p class="nav">
+  <a href="../13-ledger-queries-test/readme.html">← ledger</a>
+  <a href="../15-after-otherwise-test/readme.html">Next: after / otherwise →</a>
+</p>
+
+</body>
+</html>

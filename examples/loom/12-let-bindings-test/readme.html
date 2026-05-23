@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lesson 12 — let bindings</title>
+  <style>
+    body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           max-width: 760px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
+    h1, h2 { line-height: 1.2; }
+    h2 { margin-top: 2.2rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+    code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+    code { background: #f4f4f6; padding: 0.1em 0.35em; border-radius: 3px; }
+    pre { background: #f4f4f6; padding: 1rem; border-radius: 6px; overflow-x: auto;
+          font-size: 14px; line-height: 1.45; }
+    .crumbs { color: #777; font-size: 0.92rem; margin-bottom: 0.3rem; }
+    .crumbs a { color: #0066cc; text-decoration: none; }
+    .nav { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee;
+           display: flex; justify-content: space-between; color: #777; }
+    .nav a { color: #0066cc; text-decoration: none; }
+    .try { border-left: 3px solid #e6c4c4; background: #fdf7f7;
+           padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+    .callout { border-left: 3px solid #c4d2e6; background: #f7fafd;
+               padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+
+<p class="crumbs"><a href="../README.html">← back to the tour</a></p>
+<h1>Lesson 12 — let bindings</h1>
+
+<p>
+  In the last lesson you wrote a guard like <code>if $trust &gt; 50</code>.
+  If you find yourself writing that same condition in three places, it's
+  time for a <em>let binding</em>: a name for the expression you can reuse
+  everywhere it's true.
+</p>
+
+<h2>The shape</h2>
+
+<p>At the top of a document, before any sections:</p>
+
+<pre>let trusted   = $trust &gt; 50
+let in_danger = $health &lt; 30
+let armed     = $weapon and $ammo &gt; 0</pre>
+
+<p>And then anywhere in the story:</p>
+
+<pre>* Tell me the secret. if $trusted
+* Run!  if $in_danger</pre>
+
+<p>
+  <code>$trusted</code> is now a variable just like any other — except it's
+  computed from <code>$trust</code> rather than set by you. Whenever
+  <code>$trust</code> changes, <code>$trusted</code> updates the next time
+  any line reads it.
+</p>
+
+<h2>How <code>let</code> differs from <code>var</code></h2>
+
+<table style="width:100%; border-collapse:collapse; margin:0.8rem 0;">
+  <tr><th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;"></th>
+      <th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;"><code>var</code></th>
+      <th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;"><code>let</code></th></tr>
+  <tr><td style="padding:0.4rem;"><strong>You set its value</strong></td>
+      <td style="padding:0.4rem;">Yes — with <code>~ $x := v</code></td>
+      <td style="padding:0.4rem;">No — Loom computes it from a formula</td></tr>
+  <tr><td style="padding:0.4rem;"><strong>It stays up to date</strong></td>
+      <td style="padding:0.4rem;">Only when you write to it</td>
+      <td style="padding:0.4rem;">Automatically, when the things it depends on change</td></tr>
+  <tr><td style="padding:0.4rem;"><strong>It serializes in saves</strong></td>
+      <td style="padding:0.4rem;">Yes (it's a stored value)</td>
+      <td style="padding:0.4rem;">No (it's re-derived on load)</td></tr>
+  <tr><td style="padding:0.4rem;"><strong>Used for…</strong></td>
+      <td style="padding:0.4rem;">"trust", "health", "town"</td>
+      <td style="padding:0.4rem;">"trusted", "in_danger", "armed"</td></tr>
+</table>
+
+<h2>Naming bindings well</h2>
+
+<p>The whole point of a let binding is that it reads like a sentence.</p>
+
+<pre>* Hide the body. if $can_act_unseen and $night
+
+* Confess.       if $witness_present and not $bribed</pre>
+
+<p>If the binding name doesn't make the choice line easier to read, you
+don't need the binding.</p>
+
+<h2>Bindings that depend on other bindings</h2>
+
+<p>Bindings see earlier bindings, so you can layer them:</p>
+
+<pre>let trusted   = $trust &gt; 50
+let well_lit  = $time &lt; 21 or $lantern_lit
+let it_is_safe = $trusted and $well_lit</pre>
+
+<h2>What you just learned</h2>
+
+<ul>
+  <li><code>let name = &lt;expression&gt;</code> declares a derived variable.</li>
+  <li>Loom recomputes lets whenever any <code>var</code> they depend on
+    changes.</li>
+  <li>Use lets to name conditions so guards read like English.</li>
+  <li>Lets can depend on earlier lets in the same document.</li>
+</ul>
+
+<div class="callout">
+  <strong>Phase note.</strong> Today Loom recomputes all bindings eagerly on
+  every var write. That's perfectly fine for hundreds of bindings; future
+  phases will swap in incremental recomputation for shows with thousands.
+  Nothing changes from the writer's perspective.
+</div>
+
+<div class="try">
+  <strong>Try this.</strong> Add a binding <code>let very_trusted = $trust
+  &gt; 90</code> and a choice gated on <code>if $very_trusted</code>. The
+  story already raises trust to 75, so the new choice will still be hidden
+  — proving the binding works.
+</div>
+
+<p class="nav">
+  <a href="../11-guards-test/readme.html">← guards</a>
+  <a href="../13-ledger-queries-test/readme.html">Next: the ledger →</a>
+</p>
+
+</body>
+</html>

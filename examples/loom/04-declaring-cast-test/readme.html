@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lesson 04 — declaring your cast</title>
+  <style>
+    body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           max-width: 760px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
+    h1, h2 { line-height: 1.2; }
+    h2 { margin-top: 2.2rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+    code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+    code { background: #f4f4f6; padding: 0.1em 0.35em; border-radius: 3px; }
+    pre { background: #f4f4f6; padding: 1rem; border-radius: 6px; overflow-x: auto;
+          font-size: 14px; line-height: 1.45; }
+    .crumbs { color: #777; font-size: 0.92rem; margin-bottom: 0.3rem; }
+    .crumbs a { color: #0066cc; text-decoration: none; }
+    .nav { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee;
+           display: flex; justify-content: space-between; color: #777; }
+    .nav a { color: #0066cc; text-decoration: none; }
+    .try { border-left: 3px solid #e6c4c4; background: #fdf7f7;
+           padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+    .callout { border-left: 3px solid #c4d2e6; background: #f7fafd;
+               padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+
+<p class="crumbs"><a href="../README.html">← back to the tour</a></p>
+<h1>Lesson 04 — declaring your cast</h1>
+
+<p>
+  In a film script the casting director picks who plays each role. In Loom
+  you tell the runtime up front: <em>here are the speakers in this document,
+  and this is what they're called</em>. The <code>cast</code> declaration
+  does that job.
+</p>
+
+<h2>The minimum</h2>
+
+<pre>cast WREN</pre>
+
+<p>
+  That alone is enough — it announces that <code>WREN</code> is a speaker. If
+  anyone later writes <code>WREN</code> at the left margin and indents a line
+  underneath, Loom understands it as Wren's dialogue.
+</p>
+
+<p>
+  But you'll usually want to attach a few details. Indent them under the cast
+  line, each prefixed with a dot:
+</p>
+
+<pre>cast WREN
+  .label "Wren the Fisher"
+  .voice female_alto</pre>
+
+<p>The two most common dots:</p>
+
+<ul>
+  <li><code>.label</code> — the human-readable name shown to the audience.
+    "WREN" is the script-internal id; "Wren the Fisher" is what the player
+    actually sees on screen.</li>
+  <li><code>.voice</code> — a hint for the audio layer. The id of a TTS profile
+    or a recorded performer.</li>
+</ul>
+
+<p>You can add any number of other dotted properties; the runtime preserves
+them for the host to read.</p>
+
+<h2>Why declare at all?</h2>
+
+<p>
+  Loom's validator checks that every SPEAKER you mention has a matching
+  <code>cast</code> declaration. Forgetting one isn't catastrophic — the
+  story still plays — but you get a warning. The declaration is your one
+  place to:
+</p>
+
+<ul>
+  <li>Spell-check your speakers before opening night.</li>
+  <li>Hand the audio team a complete voice list.</li>
+  <li>Wire each character to a portrait, a voice profile, or a performer.</li>
+</ul>
+
+<h2>What you just learned</h2>
+
+<ul>
+  <li><code>cast IDENT</code> introduces a speaker.</li>
+  <li>Indented dotted properties — <code>.label</code>, <code>.voice</code>,
+    and friends — attach metadata.</li>
+  <li>Every speaker should be declared, or the validator will complain.</li>
+</ul>
+
+<div class="callout">
+  <strong>Where to put declarations.</strong> Cast lines usually go just under
+  the document header, before any sections. They can also live in a separate
+  "characters" file that other stories import — but that's a Phase 3 topic.
+</div>
+
+<div class="try">
+  <strong>Try this.</strong> Add a <code>.voice</code> property to MAREN in
+  <code>lesson.loom</code>. The runtime will pick it up automatically; the
+  player won't see anything different until the audio layer reads it, but the
+  data is now part of the compiled bundle.
+</div>
+
+<p class="nav">
+  <a href="../03-first-dialogue-test/readme.html">← writing dialogue</a>
+  <a href="../05-sections-test/readme.html">Next: sections and the playhead →</a>
+</p>
+
+</body>
+</html>

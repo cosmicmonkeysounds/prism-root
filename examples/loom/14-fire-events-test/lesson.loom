@@ -1,0 +1,39 @@
+# events_demo
+
+cast WREN
+  .label "Wren"
+
+-- bell_tower
+
+> The rope is rough in her hands.
+
+~ fire bell_rang
+
+WREN
+  One.
+
+~ fire bell_rang
+
+WREN
+  Two.
+
+~ fire second_strike
+
+-- response
+
+after since(bell_rang) < 10000
+  WREN
+    That second strike was just now.
+
+after since(second_strike) < 1000
+  WREN
+    The echo's still going.
+
+WREN
+  Total events recorded: ${count(event)}.
+
+-> ending
+
+-- ending
+
+> Silence.

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lesson 10 — putting variables in dialogue</title>
+  <style>
+    body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           max-width: 760px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
+    h1, h2 { line-height: 1.2; }
+    h2 { margin-top: 2.2rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+    code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+    code { background: #f4f4f6; padding: 0.1em 0.35em; border-radius: 3px; }
+    pre { background: #f4f4f6; padding: 1rem; border-radius: 6px; overflow-x: auto;
+          font-size: 14px; line-height: 1.45; }
+    .crumbs { color: #777; font-size: 0.92rem; margin-bottom: 0.3rem; }
+    .crumbs a { color: #0066cc; text-decoration: none; }
+    .nav { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee;
+           display: flex; justify-content: space-between; color: #777; }
+    .nav a { color: #0066cc; text-decoration: none; }
+    .try { border-left: 3px solid #e6c4c4; background: #fdf7f7;
+           padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+
+<p class="crumbs"><a href="../README.html">← back to the tour</a></p>
+<h1>Lesson 10 — putting variables in dialogue</h1>
+
+<p>
+  Variables become visible to the audience the moment you put them inside a
+  line of dialogue. Loom calls this <em>interpolation</em>: the runtime
+  substitutes the variable's current value into the rendered text at the
+  moment the line is spoken.
+</p>
+
+<h2>The simple form</h2>
+
+<p>Drop a <code>$name</code> straight into a line:</p>
+
+<pre>~ var $trust := 30
+
+WREN
+  Trust meter: $trust.</pre>
+
+<p>When that plays the player sees <code>Trust meter: 30.</code></p>
+
+<p>
+  If <code>$trust</code> changes later, the next time the line plays it shows
+  the new value. There's no caching — every render reads the current value.
+</p>
+
+<h2>The braced form</h2>
+
+<p>
+  When you need to interpolate something more elaborate than a bare name —
+  an expression, or a value that sits inside another structure — wrap it in
+  <code>${...}</code>:
+</p>
+
+<pre>WREN
+  In total, you've earned ${$trust + 5} points of trust.</pre>
+
+<p>
+  The braced form is also clearer when the variable's name runs straight up
+  against other characters (e.g. <code>${name}_id</code> vs the ambiguous
+  <code>$name_id</code>).
+</p>
+
+<h2>Mixing prose and variables</h2>
+
+<p>Both forms compose freely with regular text and with each other:</p>
+
+<pre>WREN
+  Welcome to $town. The bell has struck $bells_struck times.
+
+WREN { soft }
+  Trust ${$trust} out of one hundred. We'll get there.</pre>
+
+<h2>What if the variable doesn't exist?</h2>
+
+<p>
+  If you reference a variable that hasn't been set, Loom renders it as
+  <code>nil</code>. That's a visual signal during development — if you see
+  the word "nil" appear in dialogue, the line ran before whatever was
+  supposed to set the value.
+</p>
+
+<h2>What you just learned</h2>
+
+<ul>
+  <li><code>$name</code> inside a dialogue line is replaced with the current
+    value when the line plays.</li>
+  <li><code>${...}</code> is the braced form, useful for expressions or
+    disambiguation.</li>
+  <li>Re-running the same line later will show the new value — there's no
+    snapshot.</li>
+  <li>Unset variables render as <code>nil</code>.</li>
+</ul>
+
+<div class="try">
+  <strong>Try this.</strong> In <code>lesson.loom</code>, add a third section
+  that bumps <code>$trust</code> with <code>~ $trust += 20</code> and then
+  re-plays the same "Trust meter: $trust" line. You'll see the same line
+  print a different number on its second visit.
+</div>
+
+<p class="nav">
+  <a href="../09-vars-test/readme.html">← variables</a>
+  <a href="../11-guards-test/readme.html">Next: conditions on choices →</a>
+</p>
+
+</body>
+</html>

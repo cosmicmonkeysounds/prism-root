@@ -17,6 +17,8 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use super::ledger::{Ledger, LedgerField};
 use super::value::Value;
 
@@ -111,7 +113,8 @@ pub fn field_chain_safe(root: Value, chain: &[String]) -> Value {
 /// later; today the runtime evaluates a small set of pre-canned
 /// guards that the bundle compiler will emit when Phase 2 wires the
 /// expression compiler in.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Expr {
     Lit(Value),
     Ident(String),
@@ -145,7 +148,8 @@ pub enum Expr {
     LedgerCount(LedgerField),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LedgerPredKind {
     Played,
     Visits,

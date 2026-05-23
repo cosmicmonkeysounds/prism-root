@@ -1,0 +1,17 @@
+# backlinks_demo
+
+cast WREN
+  .label "Wren"
+
+-- meeting
+
+WREN
+  Ask [[maren|Maren]] about the bell when you find her.
+
+WREN
+  She was at [[lighthouse_interior|the lighthouse]] the night it went silent.
+
+WREN { soft }
+  The [[bell_of_tides|Bell of Tides]] hasn't rung since.
+
+> A faint salt wind through [[harbor|the harbor]].

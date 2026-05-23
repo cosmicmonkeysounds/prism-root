@@ -1,0 +1,33 @@
+# let_bindings_demo
+
+cast WREN
+  .label "Wren"
+
+let trusted = $trust > 50
+let very_trusted = $trust > 90
+let armed = $weapon and $ammo > 0
+
+-- setup
+
+~ var $trust := 75
+~ var $weapon := true
+~ var $ammo := 3
+
+-- meeting
+
+WREN
+  How can I help?
+
+  * Tell me the bell's secret. if $trusted
+    WREN
+      It rings under the tide.
+  * Tell me the keeper's name. if $very_trusted
+    WREN
+      That's Maren. Don't say it loud.
+  + Show me the way home.
+    -> ending
+
+-- ending
+
+WREN
+  Take the lantern. The wind's coming up.

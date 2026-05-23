@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Loom — a tour for writers</title>
+  <style>
+    body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           max-width: 760px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
+    h1, h2, h3 { line-height: 1.2; }
+    h1 { font-size: 2rem; margin-bottom: 0.25rem; }
+    h2 { margin-top: 2.4rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+    h3 { margin-top: 1.6rem; }
+    code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+    code { background: #f4f4f6; padding: 0.1em 0.35em; border-radius: 3px; }
+    pre { background: #f4f4f6; padding: 1rem; border-radius: 6px; overflow-x: auto;
+          font-size: 14px; line-height: 1.45; }
+    .lede { font-size: 1.1rem; color: #555; }
+    .toc { background: #fafafa; border: 1px solid #eee; padding: 1rem 1.2rem;
+           border-radius: 6px; margin: 1.6rem 0; }
+    .toc ol { margin: 0; padding-left: 1.6rem; }
+    .toc li { margin: 0.2rem 0; }
+    .toc .label { color: #555; font-size: 0.92em; }
+    a { color: #0066cc; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .pill { display: inline-block; font-size: 0.78em; padding: 0.1em 0.5em;
+            border-radius: 999px; background: #eef; color: #335;
+            margin-left: 0.4em; vertical-align: middle; }
+    .callout { border-left: 3px solid #c4d2e6; background: #f7fafd;
+               padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+
+<h1>Loom <span class="pill">writer's tour</span></h1>
+<p class="lede">
+  Loom is a language for writing stories that branch, react, and play. It looks
+  like a screenplay, runs like a program, and reads like a script you could
+  hand to a stage manager. This folder is a hands-on tour — start at the top,
+  open each lesson in order, read the page, then open the <code>.loom</code> file
+  next to it.
+</p>
+
+<div class="callout">
+  <strong>You don't need to know how to code.</strong> If you've ever written a
+  letter, a dialogue, or a play, you already know most of what's here. The few
+  programming-shaped pieces (variables, conditions) are introduced one at a time
+  and always demonstrated in a working story.
+</div>
+
+<h2>Before we begin: what is a screenplay?</h2>
+
+<p>
+  If you've written for theatre or film before, skip ahead. If not — here's the
+  whole thing in 30 seconds.
+</p>
+
+<p>
+  A <em>screenplay</em> (or stage script) is a written plan for a performance.
+  It tells three kinds of people what to do:
+</p>
+
+<ul>
+  <li><strong>Performers</strong> — what to say and how to say it.</li>
+  <li><strong>The crew</strong> — when lights change, when music plays, what the
+    set looks like.</li>
+  <li><strong>The audience</strong> — implicitly, through what they hear and
+    see.</li>
+</ul>
+
+<p>
+  In a traditional screenplay every line carries one of a few labels — a
+  <em>scene heading</em>, an <em>action line</em>, a <em>character name</em>, a
+  <em>parenthetical</em>, or a line of <em>dialogue</em>. Layout matters:
+  character names are centered and capitalised, dialogue is indented under them,
+  action lines run full-width. The formatting <em>is</em> the meaning.
+</p>
+
+<pre>INT. LIGHTHOUSE — DAWN
+
+A bell rope swings in the gloom. WREN watches it.
+
+                    WREN
+              (quietly)
+              It hasn't rung in three days.
+
+She turns the lantern up.</pre>
+
+<p>
+  Loom keeps the screenplay's spirit — characters in caps, dialogue indented
+  under them, action lines as prose — but it adds the things a <em>game</em> or
+  <em>interactive show</em> needs: choices, variables, and conditions. The result
+  is a script that a director can read straight through <em>and</em> a runtime
+  can execute.
+</p>
+
+<h2>How Loom looks</h2>
+
+<p>The smallest playable Loom file is three lines:</p>
+
+<pre># hello
+
+WREN
+  Welcome.</pre>
+
+<p>That's a complete document. Reading it:</p>
+
+<ul>
+  <li><code># hello</code> — the <em>document header</em>. Every file starts with
+    one. <code>hello</code> is the document's id.</li>
+  <li>A blank line — Loom uses blank lines as breathers, the way a screenplay
+    does.</li>
+  <li><code>WREN</code> at the left margin — a <em>speaker</em>. By convention
+    speaker names are ALL CAPS.</li>
+  <li>The indented line beneath — <em>what Wren says</em>.</li>
+</ul>
+
+<p>
+  Indentation matters. The two-space indent under <code>WREN</code> is how
+  Loom knows the line belongs to her, the same way the screenplay's
+  center-tab does the same job visually.
+</p>
+
+<h2>The progression</h2>
+
+<p>
+  Each numbered folder below is a single lesson. Open its <code>readme.html</code>,
+  read the lesson, then open the <code>.loom</code> file in any text editor. The
+  files are intentionally small — a few dozen lines each — so you can hold the
+  whole story in your head while reading.
+</p>
+
+<div class="toc">
+  <h3 style="margin-top:0">Foundations <span class="label">(everything you need for a static story)</span></h3>
+  <ol>
+    <li><a href="01-screenplay-basics-test/readme.html">screenplay basics</a> <span class="label">— scene headers, action, dialogue, parentheticals</span></li>
+    <li><a href="02-loom-document-test/readme.html">your first Loom document</a> <span class="label">— headers, tags, archetypes</span></li>
+    <li><a href="03-first-dialogue-test/readme.html">writing dialogue</a> <span class="label">— SPEAKER, indentation, multi-line lines</span></li>
+    <li><a href="04-declaring-cast-test/readme.html">declaring your cast</a> <span class="label">— <code>cast</code>, <code>.label</code>, <code>.voice</code></span></li>
+    <li><a href="05-sections-test/readme.html">sections and the playhead</a> <span class="label">— <code>-- start</code>, fall-through</span></li>
+  </ol>
+
+  <h3>Interactivity <span class="label">(making the audience matter)</span></h3>
+  <ol start="6">
+    <li><a href="06-flavor-prose-test/readme.html">flavor and stage prose</a> <span class="label">— <code>&gt;</code> lines</span></li>
+    <li><a href="07-choices-test/readme.html">choices</a> <span class="label">— <code>*</code> once-only, <code>+</code> sticky</span></li>
+    <li><a href="08-diverts-test/readme.html">diverts</a> <span class="label">— <code>-&gt; section</code></span></li>
+    <li><a href="09-vars-test/readme.html">variables</a> <span class="label">— <code>~ var $x := value</code></span></li>
+    <li><a href="10-interpolation-test/readme.html">putting variables in dialogue</a> <span class="label">— <code>$x</code>, <code>${expr}</code></span></li>
+  </ol>
+
+  <h3>Smart writing <span class="label">(letting the story remember and decide)</span></h3>
+  <ol start="11">
+    <li><a href="11-guards-test/readme.html">conditions on choices</a> <span class="label">— <code>if $expr</code></span></li>
+    <li><a href="12-let-bindings-test/readme.html">named conditions with <code>let</code></a></li>
+    <li><a href="13-ledger-queries-test/readme.html">the ledger</a> <span class="label">— <code>played(X)</code>, <code>visits(X)</code>, <code>chose(X)</code></span></li>
+    <li><a href="14-fire-events-test/readme.html">events</a> <span class="label">— <code>~ fire X</code>, <code>since(X)</code></span></li>
+    <li><a href="15-after-otherwise-test/readme.html"><code>after</code> / <code>otherwise</code> blocks</a></li>
+  </ol>
+
+  <h3>Advanced + capstone <span class="label">(every tool, in one story)</span></h3>
+  <ol start="16">
+    <li><a href="16-each-visit-test/readme.html"><code>each visit</code></a> <span class="label">— first / then / finally</span></li>
+    <li><a href="17-match-test/readme.html"><code>match</code></a> <span class="label">— multi-way branches</span></li>
+    <li><a href="18-inline-assigns-test/readme.html">inline assigns</a> <span class="label">— <code>&lt;$x := v&gt;</code> inside text</span></li>
+    <li><a href="19-backlinks-test/readme.html">backlinks</a> <span class="label">— <code>[[target|display]]</code></span></li>
+    <li><a href="20-tiny-story-test/readme.html">a tiny complete story</a> <span class="label">— everything together</span></li>
+  </ol>
+</div>
+
+<h2>A word about the brackets</h2>
+
+<p>
+  Loom uses a few symbols that look funny at first. The promise it makes — and
+  keeps — is that <em>each bracket has exactly one job</em>. When you see one,
+  you always know what it does.
+</p>
+
+<table style="width:100%; border-collapse:collapse; margin:0.8rem 0;">
+  <tr><th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;">Symbol</th>
+      <th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;">Meaning</th>
+      <th align="left" style="padding:0.4rem; border-bottom:1px solid #ddd;">Example</th></tr>
+  <tr><td style="padding:0.4rem;"><code>$x</code></td>
+      <td style="padding:0.4rem;">resolve — "what is this <em>now</em>?"</td>
+      <td style="padding:0.4rem;"><code>$trust</code></td></tr>
+  <tr><td style="padding:0.4rem;"><code>@x</code></td>
+      <td style="padding:0.4rem;">static reference — "this thing exists in the project"</td>
+      <td style="padding:0.4rem;"><code>@lighthouse</code></td></tr>
+  <tr><td style="padding:0.4rem;"><code>[[x]]</code></td>
+      <td style="padding:0.4rem;">backlink — "this prose mentions x"</td>
+      <td style="padding:0.4rem;"><code>[[wren|Wren]]</code></td></tr>
+  <tr><td style="padding:0.4rem;"><code>&lt;...&gt;</code></td>
+      <td style="padding:0.4rem;">effect — a trigger, cue, or inline assignment</td>
+      <td style="padding:0.4rem;"><code>&lt;$trust += 5&gt;</code></td></tr>
+  <tr><td style="padding:0.4rem;"><code>--</code></td>
+      <td style="padding:0.4rem;">section header</td>
+      <td style="padding:0.4rem;"><code>-- harbor_scene</code></td></tr>
+  <tr><td style="padding:0.4rem;"><code>*</code> / <code>+</code></td>
+      <td style="padding:0.4rem;">choice (once-only / sticky)</td>
+      <td style="padding:0.4rem;"><code>* I'll help.</code></td></tr>
+  <tr><td style="padding:0.4rem;"><code>-&gt;</code></td>
+      <td style="padding:0.4rem;">divert (jump to a section)</td>
+      <td style="padding:0.4rem;"><code>-&gt; harbor_scene</code></td></tr>
+  <tr><td style="padding:0.4rem;"><code>~</code></td>
+      <td style="padding:0.4rem;">action line (do something — set a variable, fire an event)</td>
+      <td style="padding:0.4rem;"><code>~ var $trust := 30</code></td></tr>
+  <tr><td style="padding:0.4rem;"><code>&gt;</code></td>
+      <td style="padding:0.4rem;">flavor / narrator prose</td>
+      <td style="padding:0.4rem;"><code>&gt; The wind picks up.</code></td></tr>
+</table>
+
+<p>Don't memorise the table. Each symbol gets its own lesson.</p>
+
+<h2>How to read a lesson</h2>
+
+<p>Each lesson page follows the same shape:</p>
+
+<ol>
+  <li><strong>The idea.</strong> One paragraph saying what the lesson teaches.</li>
+  <li><strong>The story.</strong> The full text of the <code>.loom</code> file,
+    inline so you don't have to switch windows.</li>
+  <li><strong>What you just learned.</strong> A short list of the moves the
+    story used, so you can find them again later.</li>
+  <li><strong>Try this.</strong> A small change to make to the file. Editing
+    the file teaches faster than reading does.</li>
+</ol>
+
+<p>
+  When in doubt, open <a href="01-screenplay-basics-test/readme.html">lesson 1</a> and
+  go forward in order.
+</p>
+
+</body>
+</html>

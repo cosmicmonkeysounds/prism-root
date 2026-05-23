@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lesson 18 — inline assigns</title>
+  <style>
+    body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           max-width: 760px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
+    h1, h2 { line-height: 1.2; }
+    h2 { margin-top: 2.2rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+    code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+    code { background: #f4f4f6; padding: 0.1em 0.35em; border-radius: 3px; }
+    pre { background: #f4f4f6; padding: 1rem; border-radius: 6px; overflow-x: auto;
+          font-size: 14px; line-height: 1.45; }
+    .crumbs { color: #777; font-size: 0.92rem; margin-bottom: 0.3rem; }
+    .crumbs a { color: #0066cc; text-decoration: none; }
+    .nav { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee;
+           display: flex; justify-content: space-between; color: #777; }
+    .nav a { color: #0066cc; text-decoration: none; }
+    .try { border-left: 3px solid #e6c4c4; background: #fdf7f7;
+           padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+    .callout { border-left: 3px solid #c4d2e6; background: #f7fafd;
+               padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+
+<p class="crumbs"><a href="../README.html">← back to the tour</a></p>
+<h1>Lesson 18 — inline assigns</h1>
+
+<p>
+  An <em>inline assign</em> lets you change a variable from <em>inside</em>
+  a line of text. It surfaces as nothing in the rendered output — but the
+  side effect runs. Useful for "this dialogue beat earns the player some
+  trust" or "speaking this line lights the lantern".
+</p>
+
+<h2>The shape</h2>
+
+<p>Anywhere inside a text line, drop <code>&lt;...&gt;</code> with a
+mutation inside:</p>
+
+<pre>WREN
+  Thank you for coming.&lt;$bells_struck++&gt;</pre>
+
+<p>
+  The angle brackets are what say "this is an inline effect, not text".
+  Today the inline form is reliably parsed for the <code>$x++</code>
+  shape (which takes no right-hand side). For richer changes —
+  <code>:=</code>, <code>+=</code>, <code>-=</code> — use a regular
+  <code>~</code> action line on the next line down:
+</p>
+
+<pre>WREN
+  She lights the lamp.
+~ $lantern_lit := true</pre>
+
+<div class="callout">
+  <strong>Parser note.</strong> The design specifies that inline
+  <code>&lt;$x := value&gt;</code> works for any operator, but the current
+  parser can confuse the closing <code>&gt;</code> with the greater-than
+  comparison when reading the RHS expression. A future parser fix will
+  unlock the full form. For now, <code>~</code> action lines are the
+  reliable way to set or adjust a value at a specific beat.
+</div>
+
+<h2>Multiple in one line</h2>
+
+<p>You can chain them:</p>
+
+<pre>WREN
+  &lt;$lantern_lit := true&gt;The wick catches.&lt;$bells_struck++&gt;</pre>
+
+<p>The text reads as "The wick catches.", and behind the scenes two
+mutations fire.</p>
+
+<h2>Why not just use <code>~</code>?</h2>
+
+<p>
+  Inline assigns are for when the side effect <em>belongs to</em> the
+  dialogue beat — the line and the change are the same moment in the story.
+  Compare:
+</p>
+
+<pre>WREN
+  Thank you for coming.
+~ $trust += 5</pre>
+
+<p>vs.</p>
+
+<pre>WREN
+  Thank you for coming.&lt;$trust += 5&gt;</pre>
+
+<p>
+  Mechanically identical. Stylistically the inline form makes the dependency
+  obvious: <em>this line is what raised her trust</em>. Use whichever reads
+  cleaner.
+</p>
+
+<h2>When the assign fires</h2>
+
+<p>
+  Loom evaluates the line's text first (so any <code>$x</code> interpolation
+  reads the <em>old</em> value), then applies the inline assigns. The
+  same applies to <code>~</code> action lines that sit on the next line:
+  the dialogue beat is rendered against the pre-change values, the
+  action is applied right after, and the <em>next</em> beat reads the
+  new value.
+</p>
+
+<h2>What you just learned</h2>
+
+<ul>
+  <li><code>&lt;$x := v&gt;</code> inside a text line is an inline assign.</li>
+  <li>Same operators as actions: <code>:=</code>, <code>+=</code>,
+    <code>-=</code>, <code>++</code>.</li>
+  <li>The mutation runs after the line is rendered, so subsequent beats see
+    the new value.</li>
+  <li>Use inline assigns when the change belongs to the moment; use a
+    standalone <code>~</code> action when the change stands on its own.</li>
+</ul>
+
+<div class="callout">
+  <strong>The angle brackets again.</strong> Loom uses <code>&lt; &gt;</code>
+  for "an effect happens here" — inline assigns are the most common one.
+  Cues and triggers reuse the same bracket family for the same reason: a
+  side effect that doesn't render as visible text.
+</div>
+
+<div class="try">
+  <strong>Try this.</strong> Open <code>lesson.loom</code>. Add an inline
+  assign that decreases <code>$trust</code> on a colder line — for example
+  <code>&lt;$trust -= 3&gt;</code>. Watch trust drop on subsequent beats.
+</div>
+
+<p class="nav">
+  <a href="../17-match-test/readme.html">← match</a>
+  <a href="../19-backlinks-test/readme.html">Next: backlinks →</a>
+</p>
+
+</body>
+</html>

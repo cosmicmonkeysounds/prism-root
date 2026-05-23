@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lesson 02 — your first Loom document</title>
+  <style>
+    body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           max-width: 760px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
+    h1, h2 { line-height: 1.2; }
+    h2 { margin-top: 2.2rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+    code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+    code { background: #f4f4f6; padding: 0.1em 0.35em; border-radius: 3px; }
+    pre { background: #f4f4f6; padding: 1rem; border-radius: 6px; overflow-x: auto;
+          font-size: 14px; line-height: 1.45; }
+    .crumbs { color: #777; font-size: 0.92rem; margin-bottom: 0.3rem; }
+    .crumbs a { color: #0066cc; text-decoration: none; }
+    .nav { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee;
+           display: flex; justify-content: space-between; color: #777; }
+    .nav a { color: #0066cc; text-decoration: none; }
+    .try { border-left: 3px solid #e6c4c4; background: #fdf7f7;
+           padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+  </style>
+</head>
+<body>
+
+<p class="crumbs"><a href="../README.html">← back to the tour</a></p>
+<h1>Lesson 02 — your first Loom document</h1>
+
+<p>
+  Every <code>.loom</code> file begins with a <em>document header</em>: a
+  <code>#</code> followed by an id. That's enough to make Loom recognise the
+  file as a real document. After the header you can add an optional title in
+  quotes and any number of <em>archetype tags</em> that say what kind of file
+  it is.
+</p>
+
+<h2>The shape</h2>
+
+<pre># my_doc_id "An Optional Title" :archetype :other_tag</pre>
+
+<p>Things to notice:</p>
+
+<ul>
+  <li>The id is one word, lowercase, with underscores: <code>harbor_intro</code>,
+    <code>elena_meeting</code>. No spaces.</li>
+  <li>The title is human-readable. It shows up in editors and bundle browsers,
+    not in dialogue.</li>
+  <li>Tags say what <em>kind</em> of document this is. The big ones are
+    <code>:conversation</code>, <code>:character</code>, <code>:faction</code>,
+    <code>:script</code>, <code>:film</code>, <code>:cutscene</code>,
+    <code>:quest</code>. Pick one or leave it off — an untagged document is
+    treated as a generic conversation.</li>
+</ul>
+
+<h2>The minimum that runs</h2>
+
+<p>The shortest playable Loom file is just two lines:</p>
+
+<pre># empty_scene
+
+&gt; A quiet morning.</pre>
+
+<p>
+  Open <code>lesson.loom</code>. There are two documents stacked — when the
+  runtime encounters the second <code>#</code> at the left margin it knows
+  the first document is over and a new one begins.
+</p>
+
+<h2>What you just learned</h2>
+
+<ul>
+  <li><code># id "Title" :tag</code> is the document header.</li>
+  <li>Multiple documents can sit in one file; each starts with its own
+    <code>#</code>.</li>
+  <li>The tag is informational — Loom uses it to pick the right archetype-
+    specific shape when you start using features like <code>cast</code>,
+    <code>knowledge</code>, or <code>cue</code>.</li>
+</ul>
+
+<div class="try">
+  <strong>Try this.</strong> Add a third document to <code>lesson.loom</code>:
+  <code># my_third</code> on a new line, followed by one indented flavor line
+  underneath. The runtime will load all three.
+</div>
+
+<p class="nav">
+  <a href="../01-screenplay-basics-test/readme.html">← screenplay basics</a>
+  <a href="../03-first-dialogue-test/readme.html">Next: writing dialogue →</a>
+</p>
+
+</body>
+</html>

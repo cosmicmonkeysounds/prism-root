@@ -7,22 +7,33 @@
 //! cast / cue / location / cohort registries, and a list of "items"
 //! per section in source order.
 //!
-//! Phase 1 scope: dialogue, choices, diverts, returns, flavor / stage
-//! lines, action lines (opaque payload), annotations (opaque payload).
-//! Deferred to Phase 2+:
-//!   - expression evaluation (guards always evaluate to true today)
-//!   - inline text grammar (each TextContent is collapsed to a single
-//!     `text` string; the parser tree is retained verbatim under
-//!     `raw_text` for the eventual richer renderer)
+//! Phase 2 scope: every Phase 1 production plus —
+//!   - parsed expressions lowered to [`super::resolver::Expr`] for
+//!     guards (`if $trust > 50`), each-visit branches' "after" forms,
+//!     and the `let name = <expr>` registry;
+//!   - [`Mutation`] captures `$x := v`, `$x += v`, `$x -= v`, `$x++`,
+//!     `~ var $x := v`, and `~ fire <event>`;
+//!   - [`Item::EachVisit`], [`Item::After`], [`Item::Match`] block
+//!     constructs;
+//!   - inline `${expr}` / `$name` interpolation evaluated through the
+//!     resolver context at frame render time.
+//!
+//! Deferred to Phase 3+:
 //!   - generators / scenes / compose
 //!   - faction simulator
-//!   - reactivity (reactive `let`, generators, scheduler)
+//!   - reactive let → `Memo<T>` with dependency tracking (today the
+//!     show eagerly re-evaluates every let on every mutation; correct
+//!     but not yet incremental)
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use prism_core::language::loom::node_kinds as nk;
 use prism_core::language::syntax::{RootNode, SyntaxNode};
+
+use crate::expr::compile_expr;
+use crate::resolver::Expr;
+use crate::value::Value;
 
 // ─── Bundle shape ──────────────────────────────────────────────────
 
@@ -44,6 +55,23 @@ pub struct Document {
     /// Section ids in source order. The playhead falls through to the
     /// next section when one finishes without an explicit divert.
     pub section_order: Vec<String>,
+    /// Top-level `let name = <expr>` bindings, in source order. The
+    /// show evaluates them at boot and after every mutation that
+    /// touches the resolver-visible state.
+    pub lets: Vec<LetBinding>,
+}
+
+/// One `let name = <expr>` declaration. Serialized as the source
+/// position alone — the compiled [`Expr`] is rebuilt on load by
+/// re-running [`compile_expr`] over the stored source. (Today the
+/// runtime keeps the compiled form alongside; future LoroDoc-backed
+/// hot reload will rebuild on patch.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LetBinding {
+    pub name: String,
+    /// The compiled body. `Expr` is `Clone` + serde-able through the
+    /// existing tree, so the bundle round-trips through postcard.
+    pub body: Expr,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -80,7 +108,85 @@ pub struct CohortDef {
 pub struct Section {
     pub id: String,
     pub modifiers: Vec<String>,
+    /// Section-level `-- foo if $expr` guard. `None` means
+    /// unconditionally enterable.
+    pub guard: Option<Expr>,
     pub items: Vec<Item>,
+}
+
+/// One assignment operator for [`Mutation`] / [`Item::Mutate`]. The
+/// operator decides how to combine the existing value with the RHS;
+/// `Set` overwrites, `PlusEq` / `MinusEq` are int-or-list aware,
+/// `Inc` matches `$x++` (no RHS).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssignOp {
+    Set,
+    PlusEq,
+    MinusEq,
+    Inc,
+}
+
+/// A captured action-line mutation. The runtime applies it through
+/// `Show::apply_mutation` on encounter; serialisable so the bundle
+/// can round-trip and savable replays land identical writes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Mutation {
+    /// `$x` or `$x.field.subfield`. The leading `$` is stripped.
+    pub name: String,
+    pub chain: Vec<String>,
+    pub op: AssignOp,
+    /// `None` only for [`AssignOp::Inc`].
+    pub rhs: Option<Expr>,
+}
+
+// PartialEq via name + chain + op + serialized rhs — the rhs Expr tree
+// isn't structurally PartialEq because of f64, but the wire form is.
+impl PartialEq for Mutation {
+    fn eq(&self, other: &Self) -> bool {
+        if self.name != other.name || self.chain != other.chain || self.op != other.op {
+            return false;
+        }
+        match (&self.rhs, &other.rhs) {
+            (None, None) => true,
+            (Some(a), Some(b)) => serde_json::to_value(a).ok() == serde_json::to_value(b).ok(),
+            _ => false,
+        }
+    }
+}
+
+/// One branch of an `each visit` block. `kind` is `"first"` / `"then"`
+/// / `"finally"`. `body` is the content the playhead enters when the
+/// branch is chosen.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisitBranch {
+    pub kind: String,
+    pub body: Vec<Item>,
+}
+
+/// One renderable text run inside dialogue / flavor / stage / choice
+/// labels. Phase 2 keeps the parsed `RESOLVE_REF` / `STATIC_REF` /
+/// `INLINE_ASSIGN` segments around so the playhead can interpolate
+/// live, fire inline-assign mutations, and route static refs through
+/// the registry. `Literal` text is preserved verbatim with whitespace
+/// trimmed on the seams.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextSeg {
+    Literal(String),
+    /// `$name` / `${expr}` — resolve at frame render.
+    Resolve(Expr),
+    /// `@name` — static ref; renders as `@name` or its registered
+    /// label when one exists.
+    StaticRef(String),
+    /// `[[target|display]]` — backlink. Rendered as `display`.
+    Backlink {
+        target: String,
+        display: String,
+    },
+    /// Inline mutation `<$x := v>` — fires when this segment is
+    /// rendered. No visible text.
+    Assign(Mutation),
 }
 
 /// Externally tagged so the bundle round-trips through postcard
@@ -92,17 +198,22 @@ pub enum Item {
     Dialogue {
         speaker: String,
         attrs: Vec<(String, String)>,
-        lines: Vec<String>,
+        /// One entry per source-level dialogue line. Each entry is a
+        /// sequence of segments the playhead concatenates at render.
+        lines: Vec<Vec<TextSeg>>,
     },
     Flavor {
-        text: String,
+        text: Vec<TextSeg>,
     },
     Stage {
-        text: String,
+        text: Vec<TextSeg>,
     },
     Choice {
         once: bool,
-        label: String,
+        label: Vec<TextSeg>,
+        /// `if <expr>` guard captured off the choice line. `None` is
+        /// "always visible."
+        guard: Option<Expr>,
         body: Vec<Item>,
     },
     Divert {
@@ -111,15 +222,53 @@ pub enum Item {
     Return {
         thread: Option<String>,
     },
+    /// `~ keyword payload` registry-driven action that does NOT mutate
+    /// runtime state — the host dispatches it via [`Frame::Action`].
+    /// State-mutating actions live in [`Item::Mutate`] / [`Item::Fire`].
     Action {
         keyword: String,
         payload: String,
+    },
+    /// `~ var $x := v` / `~ $x := v` / `~ $x += v` / `~ $x++`. The
+    /// runtime applies the change and surfaces no frame.
+    Mutate(Mutation),
+    /// `~ fire <event>` — pushes a `Fired` ledger entry.
+    Fire {
+        event: String,
     },
     Annotation {
         name: String,
         body: String,
     },
-    /// Catch-all for productions Phase 1 doesn't compile further. The
+    /// `each visit` → branches are tried in order; the playhead
+    /// enters the first `kind` that matches its visit count
+    /// (`first` on visit 1, `then` for the middle visits, `finally`
+    /// on the last). `next` cycles through `then` branches in order
+    /// after the first visit.
+    EachVisit {
+        branches: Vec<VisitBranch>,
+    },
+    /// `after $expr` followed by an optional `otherwise` arm. The
+    /// playhead descends into `body_if` when `cond` evaluates truthy,
+    /// otherwise into `body_else` (or skips when `body_else` is empty).
+    After {
+        cond: Expr,
+        body_if: Vec<Item>,
+        body_else: Vec<Item>,
+    },
+    /// `match $expr` with arms keyed by the rendered string form of
+    /// each arm's discriminant.
+    Match {
+        scrutinee: Expr,
+        arms: Vec<(String, Vec<Item>)>,
+    },
+    /// Section-level `if <expr>` placed before a content block. The
+    /// playhead descends into `body` only when truthy.
+    Conditional {
+        cond: Expr,
+        body: Vec<Item>,
+    },
+    /// Catch-all for productions Phase 2 doesn't compile further. The
     /// payload's `node_kind` field carries the raw SyntaxNode kind so
     /// consumers can stringify-and-skip without breaking playback.
     /// (Named `node_kind`, not `kind`, to avoid colliding with the
@@ -157,6 +306,7 @@ fn compile_document(node: &SyntaxNode) -> Document {
         cohorts: IndexMap::new(),
         sections: IndexMap::new(),
         section_order: Vec::new(),
+        lets: Vec::new(),
     };
 
     let mut anonymous_count: usize = 0;
@@ -191,6 +341,11 @@ fn compile_document(node: &SyntaxNode) -> Document {
                 let coh = compile_cohort(child);
                 doc.cohorts.insert(coh.id.clone(), coh);
             }
+            nk::LET_BINDING => {
+                if let Some(binding) = compile_let_binding(child) {
+                    doc.lets.push(binding);
+                }
+            }
             nk::SECTION => {
                 let mut section = compile_section(child);
                 if section.id.is_empty() {
@@ -205,6 +360,17 @@ fn compile_document(node: &SyntaxNode) -> Document {
     }
 
     doc
+}
+
+fn compile_let_binding(node: &SyntaxNode) -> Option<LetBinding> {
+    let name = first_ident_value(node)?;
+    // The let binding's children are [IDENT(name), <expr>]. Grab the
+    // first non-ident child as the expression body.
+    let expr_node = node.children.iter().find(|c| c.kind != nk::IDENT)?;
+    Some(LetBinding {
+        name,
+        body: compile_expr(expr_node),
+    })
 }
 
 fn compile_cast(node: &SyntaxNode) -> CastSlot {
@@ -282,6 +448,7 @@ fn compile_section(node: &SyntaxNode) -> Section {
     let mut section = Section {
         id: first_ident_value(node).unwrap_or_default(),
         modifiers: Vec::new(),
+        guard: None,
         items: Vec::new(),
     };
     for child in &node.children {
@@ -291,37 +458,93 @@ fn compile_section(node: &SyntaxNode) -> Section {
                     section.modifiers.push(name);
                 }
             }
-            nk::IDENT | nk::GUARD | nk::PARTICIPANT_SCOPE | nk::DOCSTRING => {}
+            nk::GUARD => {
+                if let Some(expr_node) = child.children.first() {
+                    section.guard = Some(compile_expr(expr_node));
+                }
+            }
+            nk::IDENT | nk::PARTICIPANT_SCOPE | nk::DOCSTRING => {}
+            _ => {}
+        }
+    }
+    section.items = compile_item_sequence(&node.children);
+    section
+}
+
+/// Walk a slice of child nodes producing `Item`s, joining `after` with
+/// any immediately-following `otherwise` into a single [`Item::After`].
+/// Skips structural / metadata nodes that don't lower to items
+/// (modifiers, guards, idents, participant scopes, docstrings).
+fn compile_item_sequence(children: &[SyntaxNode]) -> Vec<Item> {
+    let mut items = Vec::new();
+    let mut i = 0;
+    while i < children.len() {
+        let child = &children[i];
+        match child.kind.as_str() {
+            nk::MODIFIER
+            | nk::GUARD
+            | nk::IDENT
+            | nk::PARTICIPANT_SCOPE
+            | nk::DOCSTRING
+            | nk::HEADER
+            | nk::DOC_TAG => {
+                i += 1;
+                continue;
+            }
+            nk::AFTER_BLOCK => {
+                // Look ahead past blank/comment for an otherwise.
+                let mut j = i + 1;
+                while j < children.len() && matches!(children[j].kind.as_str(), "blank" | "comment")
+                {
+                    j += 1;
+                }
+                let otherwise = children.get(j).filter(|n| n.kind == nk::OTHERWISE_BLOCK);
+                items.push(compile_after_block(child, otherwise));
+                i = if otherwise.is_some() { j + 1 } else { i + 1 };
+                continue;
+            }
+            nk::OTHERWISE_BLOCK => {
+                // A stray `otherwise` with no preceding `after` — emit
+                // as Other so it doesn't silently vanish.
+                items.push(Item::Other {
+                    node_kind: child.kind.clone(),
+                    text: render_inline_text(child),
+                });
+                i += 1;
+                continue;
+            }
             _ => {
                 if let Some(item) = compile_item(child) {
-                    section.items.push(item);
+                    items.push(item);
                 }
+                i += 1;
             }
         }
     }
-    section
+    items
 }
 
 fn compile_item(node: &SyntaxNode) -> Option<Item> {
     Some(match node.kind.as_str() {
         nk::DIALOGUE => compile_dialogue(node),
         nk::FLAVOR_LINE => Item::Flavor {
-            text: render_text_content(node),
+            text: collect_text_segments(node),
         },
         nk::STAGE_DIRECTION => Item::Stage {
-            text: render_text_content(node),
+            text: collect_text_segments(node),
         },
         nk::CHOICE => compile_choice(node),
         nk::DIVERT => compile_divert(node),
         nk::RETURN_LINE => Item::Return {
             thread: first_ident_value(node),
         },
-        nk::ACTION_LINE => compile_action(node),
+        nk::ACTION_LINE => compile_action_line(node)?,
         nk::ANNOTATION => compile_annotation(node),
+        nk::EACH_VISIT_BLOCK => compile_each_visit(node),
+        nk::AFTER_BLOCK => compile_after_block(node, None),
+        nk::MATCH_BLOCK => compile_match(node),
         "blank" | "comment" => return None,
-        // Block constructs (each-visit / after / when / match), text
-        // variations, sexps, etc. — keep them visible as Other so the
-        // tree round-trips and the consumer can decide how to skip.
+        // Catch-all for productions we don't recognize yet.
         kind => Item::Other {
             node_kind: kind.to_string(),
             text: render_inline_text(node),
@@ -369,9 +592,9 @@ fn compile_dialogue(node: &SyntaxNode) -> Item {
         }
     }
 
-    let mut lines = Vec::new();
+    let mut lines: Vec<Vec<TextSeg>> = Vec::new();
     for line in node.children.iter().filter(|c| c.kind == nk::TEXT_LINE) {
-        lines.push(render_text_content(line));
+        lines.push(collect_text_segments(line));
     }
 
     Item::Dialogue {
@@ -396,8 +619,15 @@ fn compile_choice(node: &SyntaxNode) -> Item {
         .children
         .iter()
         .find(|c| c.kind == nk::CHOICE_LABEL)
-        .map(render_text_content)
+        .map(collect_text_segments)
         .unwrap_or_default();
+
+    let guard = node
+        .children
+        .iter()
+        .find(|c| c.kind == nk::GUARD)
+        .and_then(|g| g.children.first())
+        .map(compile_expr);
 
     let mut body = Vec::new();
     // Inline `-> target` on the same line as the choice — compile it
@@ -407,14 +637,15 @@ fn compile_choice(node: &SyntaxNode) -> Item {
     }
     // Nested content block.
     if let Some(block) = node.children.iter().find(|c| c.kind == "content_block") {
-        for item_node in &block.children {
-            if let Some(item) = compile_item(item_node) {
-                body.push(item);
-            }
-        }
+        body.extend(compile_item_sequence(&block.children));
     }
 
-    Item::Choice { once, label, body }
+    Item::Choice {
+        once,
+        label,
+        guard,
+        body,
+    }
 }
 
 fn compile_divert(node: &SyntaxNode) -> Item {
@@ -432,22 +663,147 @@ fn compile_divert(node: &SyntaxNode) -> Item {
     Item::Divert { target }
 }
 
-fn compile_action(node: &SyntaxNode) -> Item {
-    let keyword_action = node.children.iter().find(|c| c.kind == nk::KEYWORD_ACTION);
-    let (keyword, payload) = match keyword_action {
-        Some(ka) => {
-            let kw = first_ident_value(ka).unwrap_or_default();
-            let payload = ka
-                .children
-                .iter()
-                .find(|c| c.kind == nk::PROPERTY_VALUE)
-                .and_then(|c| c.value.clone())
-                .unwrap_or_default();
-            (kw, payload)
-        }
-        None => (String::new(), String::new()),
+/// Compile an `action_line` into the appropriate [`Item`] flavour.
+/// Returns `None` for the (rare) empty action line.
+fn compile_action_line(node: &SyntaxNode) -> Option<Item> {
+    // Each action_line wraps either a `mutation_expr`, a
+    // `keyword_action`, a `namespace_call`, or an error.
+    if let Some(mut_expr) = node.children.iter().find(|c| c.kind == nk::MUTATION_EXPR) {
+        return Some(Item::Mutate(compile_mutation(mut_expr)?));
+    }
+    let ka = node
+        .children
+        .iter()
+        .find(|c| c.kind == nk::KEYWORD_ACTION)?;
+    let kw = first_ident_value(ka).unwrap_or_default();
+    let payload = ka
+        .children
+        .iter()
+        .find(|c| c.kind == nk::PROPERTY_VALUE)
+        .and_then(|c| c.value.clone())
+        .unwrap_or_default();
+    // Special-case the keywords that *do* mutate runtime state: `fire`
+    // and `var $x := v`. Everything else stays opaque as `Item::Action`
+    // for the host to dispatch.
+    match kw.as_str() {
+        "fire" => Some(Item::Fire {
+            event: payload.split_whitespace().next().unwrap_or("").to_string(),
+        }),
+        "var" => parse_var_payload(&payload)
+            .map(Item::Mutate)
+            .or(Some(Item::Action {
+                keyword: kw,
+                payload,
+            })),
+        _ => Some(Item::Action {
+            keyword: kw,
+            payload,
+        }),
+    }
+}
+
+fn compile_mutation(node: &SyntaxNode) -> Option<Mutation> {
+    // Children: [RESOLVE_REF, assign_op, <expr>?]
+    let lhs = node.children.iter().find(|c| c.kind == nk::RESOLVE_REF)?;
+    let (name, chain) = resolve_ref_path(lhs);
+    let op_text = node
+        .children
+        .iter()
+        .find(|c| c.kind == "assign_op")
+        .and_then(|c| c.value.clone())
+        .unwrap_or_default();
+    let op = match op_text.as_str() {
+        ":=" => AssignOp::Set,
+        "+=" => AssignOp::PlusEq,
+        "-=" => AssignOp::MinusEq,
+        "++" => AssignOp::Inc,
+        _ => return None,
     };
-    Item::Action { keyword, payload }
+    let rhs = node
+        .children
+        .iter()
+        .rfind(|c| !matches!(c.kind.as_str(), nk::RESOLVE_REF) && c.kind != "assign_op")
+        .map(compile_expr);
+    Some(Mutation {
+        name,
+        chain,
+        op,
+        rhs,
+    })
+}
+
+fn resolve_ref_path(node: &SyntaxNode) -> (String, Vec<String>) {
+    let name = node
+        .children
+        .iter()
+        .find(|c| c.kind == nk::IDENT)
+        .and_then(|c| c.value.clone())
+        .unwrap_or_default();
+    let mut chain = Vec::new();
+    if let Some(fc) = node.children.iter().find(|c| c.kind == nk::FIELD_CHAIN) {
+        for seg in &fc.children {
+            if matches!(seg.kind.as_str(), nk::FIELD_ACCESS | nk::SAFE_NAV) {
+                if let Some(id) = seg
+                    .children
+                    .iter()
+                    .find(|c| c.kind == nk::IDENT)
+                    .and_then(|c| c.value.clone())
+                {
+                    chain.push(id);
+                }
+            }
+        }
+    }
+    (name, chain)
+}
+
+/// `~ var $x := value` falls through the registry as
+/// `KeywordAction("var", "$x := value")`. The parser doesn't crack
+/// the tail any further than a `property_value` blob, so we have to
+/// re-parse it here. The acceptable forms are intentionally narrow:
+/// `$ident(.field)* := <literal>` — anything richer (`$x := $y + 1`)
+/// stays as a generic [`Item::Action`] and the host can dispatch it
+/// manually.
+fn parse_var_payload(payload: &str) -> Option<Mutation> {
+    let payload = payload.trim();
+    let payload = payload.strip_prefix('$')?;
+    let assign_pos = payload.find(":=")?;
+    let (lhs, rhs) = payload.split_at(assign_pos);
+    let rhs = rhs[2..].trim();
+    let lhs = lhs.trim();
+    let mut parts = lhs.split('.');
+    let name = parts.next()?.to_string();
+    let chain: Vec<String> = parts.map(|p| p.to_string()).collect();
+    let rhs_value = parse_literal_value(rhs)?;
+    Some(Mutation {
+        name,
+        chain,
+        op: AssignOp::Set,
+        rhs: Some(Expr::Lit(rhs_value)),
+    })
+}
+
+fn parse_literal_value(raw: &str) -> Option<Value> {
+    let raw = raw.trim();
+    if raw == "true" {
+        return Some(Value::Bool(true));
+    }
+    if raw == "false" {
+        return Some(Value::Bool(false));
+    }
+    if raw == "nil" {
+        return Some(Value::Nil);
+    }
+    if let Ok(i) = raw.parse::<i64>() {
+        return Some(Value::Int(i));
+    }
+    if let Ok(f) = raw.parse::<f64>() {
+        return Some(Value::Float(f));
+    }
+    if raw.len() >= 2 && raw.starts_with('"') && raw.ends_with('"') {
+        return Some(Value::Str(raw[1..raw.len() - 1].to_string()));
+    }
+    None
 }
 
 fn compile_annotation(node: &SyntaxNode) -> Item {
@@ -522,96 +878,230 @@ fn unquote_str(raw: &str) -> String {
     }
 }
 
-/// Concatenate the rendered inline text of a node carrying TEXT_CONTENT
-/// children. For Phase 1 we collapse the full sequence of LITERAL_RUN /
-/// RESOLVE_REF / STATIC_REF / BACKLINK / etc. into a single human-
-/// readable string. Richer rendering (real interpolation, trigger
-/// dispatch, backlink resolution) lands when the renderer arrives.
-fn render_text_content(node: &SyntaxNode) -> String {
-    let mut out = String::new();
+/// Walk the inline-text children of `node` and produce a flat
+/// [`Vec<TextSeg>`] preserving every renderable atom (literal,
+/// resolve, static ref, backlink) plus the side-effect markers the
+/// playhead needs to fire (inline assigns). Phase 2 keeps things
+/// simple: text variations render their first variant, triggers /
+/// conditional triggers / range closers are dropped (their semantics
+/// land with the live-performance pipeline in Phase 3+).
+fn collect_text_segments(node: &SyntaxNode) -> Vec<TextSeg> {
+    let mut out = Vec::new();
     for child in &node.children {
         if child.kind == nk::TEXT_CONTENT {
-            collect_text(child, &mut out);
+            collect_segments_into(child, &mut out);
         } else if child.kind == nk::LITERAL_RUN {
-            push_with_space(&mut out, child.value.as_deref().unwrap_or(""));
+            push_literal(&mut out, child.value.as_deref().unwrap_or(""));
         }
     }
-    out.trim().to_string()
+    coalesce_literals(out)
 }
 
 fn render_inline_text(node: &SyntaxNode) -> String {
-    let mut out = String::new();
-    collect_text(node, &mut out);
-    out.trim().to_string()
+    // For unmapped node kinds in `Item::Other` — flatten everything
+    // we can find into a debug-friendly string.
+    fn walk(n: &SyntaxNode, buf: &mut String) {
+        if let Some(v) = n.value.as_deref() {
+            if !v.is_empty() {
+                if !buf.is_empty() && !buf.ends_with(' ') {
+                    buf.push(' ');
+                }
+                buf.push_str(v.trim());
+            }
+        }
+        for c in &n.children {
+            walk(c, buf);
+        }
+    }
+    let mut buf = String::new();
+    walk(node, &mut buf);
+    buf.trim().to_string()
 }
 
-fn collect_text(node: &SyntaxNode, out: &mut String) {
+fn collect_segments_into(node: &SyntaxNode, out: &mut Vec<TextSeg>) {
     match node.kind.as_str() {
-        nk::LITERAL_RUN => push_with_space(out, node.value.as_deref().unwrap_or("")),
-        nk::ESCAPED_CHAR => push_with_space(out, node.value.as_deref().unwrap_or("")),
+        nk::LITERAL_RUN | nk::ESCAPED_CHAR => {
+            push_literal(out, node.value.as_deref().unwrap_or(""));
+        }
         nk::BACKLINK => {
-            // Render as the display text if present, else the target.
             let lit_runs: Vec<&str> = node
                 .children
                 .iter()
                 .filter(|c| c.kind == nk::LITERAL_RUN)
                 .filter_map(|c| c.value.as_deref())
                 .collect();
-            // The display child (after `|`) is the last LITERAL_RUN if
-            // there are two; otherwise the target text serves as both.
-            let display = lit_runs.last().copied().unwrap_or("");
-            push_with_space(out, display);
+            let target = lit_runs.first().copied().unwrap_or("");
+            let display = lit_runs.last().copied().unwrap_or(target);
+            out.push(TextSeg::Backlink {
+                target: target.to_string(),
+                display: display.to_string(),
+            });
         }
-        nk::RESOLVE_REF => {
-            // Render as `${name}` so the consumer can spot unresolved
-            // references at preview time.
-            if let Some(name) = first_ident_value(node) {
-                push_with_space(out, &format!("${{{name}}}"));
-            }
+        nk::RESOLVE_REF | nk::INLINE_EVAL => {
+            out.push(TextSeg::Resolve(compile_expr(node)));
         }
         nk::STATIC_REF => {
-            if let Some(name) = first_ident_value(node) {
-                push_with_space(out, &format!("@{name}"));
+            let parts: Vec<String> = node
+                .children
+                .iter()
+                .filter(|c| c.kind == nk::IDENT)
+                .filter_map(|c| c.value.clone())
+                .collect();
+            out.push(TextSeg::StaticRef(parts.join(".")));
+        }
+        nk::INLINE_ASSIGN => {
+            if let Some(m) = compile_inline_assign(node) {
+                out.push(TextSeg::Assign(m));
             }
         }
-        nk::INLINE_TRIGGER
-        | nk::CHAIN_TRIGGER
-        | nk::COND_TRIGGER
-        | nk::RANGE_CLOSER
-        | nk::INLINE_ASSIGN
-        | nk::INLINE_EVAL => {
-            // Triggers carry no renderable text — they're side-effect
-            // markers. Skip silently.
+        nk::INLINE_TRIGGER | nk::CHAIN_TRIGGER | nk::COND_TRIGGER | nk::RANGE_CLOSER => {
+            // Side-effect markers — they belong to the live-performance
+            // pipeline, not the text stream.
         }
         nk::TEXT_VARIATION => {
-            // For Phase 1, render the first variant; cycle / shuffle /
-            // weighted modes need the ledger + RNG state, which we wire
-            // up when the renderer lands.
+            // Render the first variant — cycle / shuffle / weighted
+            // pickers land in Phase 3+ with the RNG + per-section state.
             if let Some(first) = node
                 .children
                 .iter()
                 .find(|c| c.kind == nk::VARIATION_VARIANT)
             {
-                collect_text(first, out);
+                collect_segments_into(first, out);
             }
         }
         _ => {
             for c in &node.children {
-                collect_text(c, out);
+                collect_segments_into(c, out);
             }
         }
     }
 }
 
-fn push_with_space(out: &mut String, s: &str) {
+fn compile_inline_assign(node: &SyntaxNode) -> Option<Mutation> {
+    let lhs = node.children.iter().find(|c| c.kind == nk::RESOLVE_REF)?;
+    let (name, chain) = resolve_ref_path(lhs);
+    let op_text = node
+        .children
+        .iter()
+        .find(|c| c.kind == "assign_op")
+        .and_then(|c| c.value.clone())
+        .unwrap_or_default();
+    let op = match op_text.as_str() {
+        ":=" => AssignOp::Set,
+        "+=" => AssignOp::PlusEq,
+        "-=" => AssignOp::MinusEq,
+        "++" => AssignOp::Inc,
+        _ => return None,
+    };
+    let rhs = node
+        .children
+        .iter()
+        .rfind(|c| !matches!(c.kind.as_str(), nk::RESOLVE_REF) && c.kind != "assign_op")
+        .map(compile_expr);
+    Some(Mutation {
+        name,
+        chain,
+        op,
+        rhs,
+    })
+}
+
+fn push_literal(out: &mut Vec<TextSeg>, s: &str) {
     let trimmed = s.trim();
     if trimmed.is_empty() {
         return;
     }
-    if !out.is_empty() && !out.ends_with(|c: char| c.is_whitespace()) {
-        out.push(' ');
+    out.push(TextSeg::Literal(trimmed.to_string()));
+}
+
+/// Glue adjacent `Literal` segments into one so renderers don't have
+/// to special-case the space-between-runs case.
+fn coalesce_literals(segs: Vec<TextSeg>) -> Vec<TextSeg> {
+    let mut out: Vec<TextSeg> = Vec::with_capacity(segs.len());
+    for seg in segs {
+        if let (Some(TextSeg::Literal(prev)), TextSeg::Literal(next)) = (out.last_mut(), &seg) {
+            if !prev.is_empty() && !next.is_empty() {
+                prev.push(' ');
+            }
+            prev.push_str(next);
+            continue;
+        }
+        out.push(seg);
     }
-    out.push_str(trimmed);
+    out
+}
+
+// ─── Block constructs (each visit / after / otherwise / match) ─────
+
+fn compile_each_visit(node: &SyntaxNode) -> Item {
+    let mut branches = Vec::new();
+    for child in &node.children {
+        if child.kind != nk::VISIT_BRANCH {
+            continue;
+        }
+        let kind = child
+            .children
+            .iter()
+            .find(|c| c.kind == nk::IDENT)
+            .and_then(|c| c.value.clone())
+            .unwrap_or_else(|| "then".to_string());
+        let body = compile_content_block(child);
+        branches.push(VisitBranch { kind, body });
+    }
+    Item::EachVisit { branches }
+}
+
+/// `after $expr` may be followed by an `otherwise` sibling in the
+/// parent's child list. The caller threads that sibling in via
+/// `following_otherwise` — `compile_section` and `compile_content_block`
+/// pick it up by index. Here we only handle the local form (no
+/// `otherwise`); the section-level joining logic lives in
+/// [`compile_content_block`] / [`compile_section`].
+fn compile_after_block(node: &SyntaxNode, otherwise: Option<&SyntaxNode>) -> Item {
+    let cond = node
+        .children
+        .first()
+        .map(compile_expr)
+        .unwrap_or(Expr::Lit(Value::Nil));
+    let body_if = compile_content_block(node);
+    let body_else = otherwise.map(compile_content_block).unwrap_or_default();
+    Item::After {
+        cond,
+        body_if,
+        body_else,
+    }
+}
+
+fn compile_match(node: &SyntaxNode) -> Item {
+    let scrutinee = node
+        .children
+        .iter()
+        .find(|c| !matches!(c.kind.as_str(), nk::MATCH_ARM))
+        .map(compile_expr)
+        .unwrap_or(Expr::Lit(Value::Nil));
+    let mut arms = Vec::new();
+    for arm in node.children.iter().filter(|c| c.kind == nk::MATCH_ARM) {
+        let head = arm
+            .children
+            .iter()
+            .find(|c| matches!(c.kind.as_str(), nk::IDENT | nk::STRING | nk::NUMBER))
+            .and_then(|c| c.value.clone())
+            .unwrap_or_default();
+        let body = compile_content_block(arm);
+        arms.push((head, body));
+    }
+    Item::Match { scrutinee, arms }
+}
+
+/// Pull the `content_block` child off a block-style node (each-visit
+/// branch, after / otherwise, match arm) and compile its items.
+fn compile_content_block(node: &SyntaxNode) -> Vec<Item> {
+    for c in &node.children {
+        if c.kind == "content_block" {
+            return compile_item_sequence(&c.children);
+        }
+    }
+    Vec::new()
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────
@@ -641,6 +1131,18 @@ mod tests {
         assert_eq!(cast.voice.as_deref(), Some("female_mezzo"));
     }
 
+    fn render_segs(segs: &[TextSeg]) -> String {
+        segs.iter()
+            .filter_map(|s| match s {
+                TextSeg::Literal(s) => Some(s.clone()),
+                TextSeg::Backlink { display, .. } => Some(display.clone()),
+                TextSeg::StaticRef(s) => Some(format!("@{s}")),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     #[test]
     fn compiles_section_with_dialogue_and_choice() {
         let src = "# d\ncast WREN\n  .label x\n-- start\nWREN\n  Hello.\n  * I'll help. -> next\n-- next\nWREN\n  Thanks.\n";
@@ -654,14 +1156,16 @@ mod tests {
             Item::Dialogue { speaker, lines, .. } => {
                 assert_eq!(speaker, "WREN");
                 assert_eq!(lines.len(), 1);
-                assert!(lines[0].contains("Hello"));
+                assert!(render_segs(&lines[0]).contains("Hello"));
             }
             other => panic!("expected dialogue, got {other:?}"),
         }
         match &start.items[1] {
-            Item::Choice { once, label, body } => {
+            Item::Choice {
+                once, label, body, ..
+            } => {
                 assert!(*once, "`*` choices should compile as once");
-                assert!(label.contains("help"));
+                assert!(render_segs(label).contains("help"));
                 assert!(
                     matches!(body.first(), Some(Item::Divert { target, .. }) if target == "next"),
                     "inline divert should land at the head of the choice body",
@@ -669,6 +1173,133 @@ mod tests {
             }
             other => panic!("expected choice, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn captures_choice_guard_expression() {
+        let src = "# d\ncast WREN\n  .label x\n-- s\nWREN\n  hi\n  * leave if not $trusted\n    -> done\n-- done\n";
+        let db = compile_src(src);
+        let s = &db.documents[0].sections["s"];
+        let choice = s
+            .items
+            .iter()
+            .find_map(|i| match i {
+                Item::Choice { guard, .. } => Some(guard.clone()),
+                _ => None,
+            })
+            .expect("choice present");
+        assert!(choice.is_some(), "choice should carry compiled guard");
+        assert!(matches!(choice.as_ref().unwrap(), Expr::Not(_)));
+    }
+
+    #[test]
+    fn captures_section_guard() {
+        let src = "# d\n-- s if played(intro)\n  > body\n";
+        let db = compile_src(src);
+        let s = &db.documents[0].sections["s"];
+        assert!(s.guard.is_some(), "section should carry compiled guard");
+    }
+
+    #[test]
+    fn compiles_var_action_to_mutation() {
+        let src = "# d\n-- s\n~ var $trust := 30\n";
+        let db = compile_src(src);
+        let s = &db.documents[0].sections["s"];
+        let m = s
+            .items
+            .iter()
+            .find_map(|i| match i {
+                Item::Mutate(m) => Some(m.clone()),
+                _ => None,
+            })
+            .expect("mutation");
+        assert_eq!(m.name, "trust");
+        assert_eq!(m.op, AssignOp::Set);
+        assert!(matches!(m.rhs, Some(Expr::Lit(Value::Int(30)))));
+    }
+
+    #[test]
+    fn compiles_inline_mutation_action() {
+        let src = "# d\n-- s\n~ $trust := 30\n";
+        let db = compile_src(src);
+        let s = &db.documents[0].sections["s"];
+        let m = s
+            .items
+            .iter()
+            .find_map(|i| match i {
+                Item::Mutate(m) => Some(m.clone()),
+                _ => None,
+            })
+            .expect("mutation");
+        assert_eq!(m.name, "trust");
+    }
+
+    #[test]
+    fn compiles_fire_action() {
+        let src = "# d\n-- s\n~ fire bell_solved\n";
+        let db = compile_src(src);
+        let s = &db.documents[0].sections["s"];
+        let fired = s
+            .items
+            .iter()
+            .find_map(|i| match i {
+                Item::Fire { event } => Some(event.clone()),
+                _ => None,
+            })
+            .expect("fire");
+        assert_eq!(fired, "bell_solved");
+    }
+
+    #[test]
+    fn compiles_let_binding() {
+        let src = "# d\nlet trusted = $trust > 50\n";
+        let db = compile_src(src);
+        assert_eq!(db.documents[0].lets.len(), 1);
+        assert_eq!(db.documents[0].lets[0].name, "trusted");
+        assert!(matches!(db.documents[0].lets[0].body, Expr::Gt(_, _)));
+    }
+
+    #[test]
+    fn compiles_after_otherwise_pair() {
+        let src = "# d\n-- s\nafter $trusted\n  > yes\notherwise\n  > no\n";
+        let db = compile_src(src);
+        let s = &db.documents[0].sections["s"];
+        let pair = s
+            .items
+            .iter()
+            .find_map(|i| match i {
+                Item::After {
+                    cond,
+                    body_if,
+                    body_else,
+                } => Some((cond.clone(), body_if.clone(), body_else.clone())),
+                _ => None,
+            })
+            .expect("after");
+        assert!(matches!(pair.0, Expr::Resolve { .. }));
+        assert!(!pair.1.is_empty(), "if-body should hold the `> yes` flavor");
+        assert!(
+            !pair.2.is_empty(),
+            "else-body should hold the `> no` flavor"
+        );
+    }
+
+    #[test]
+    fn compiles_each_visit_block() {
+        let src =
+            "# d\n-- s\neach visit\n  first\n    > hi\n  then\n    > again\n  finally\n    > done\n";
+        let db = compile_src(src);
+        let s = &db.documents[0].sections["s"];
+        let branches = s
+            .items
+            .iter()
+            .find_map(|i| match i {
+                Item::EachVisit { branches } => Some(branches.clone()),
+                _ => None,
+            })
+            .expect("each visit");
+        let kinds: Vec<&str> = branches.iter().map(|b| b.kind.as_str()).collect();
+        assert_eq!(kinds, vec!["first", "then", "finally"]);
     }
 
     #[test]

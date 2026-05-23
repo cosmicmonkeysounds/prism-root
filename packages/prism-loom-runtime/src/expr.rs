@@ -262,7 +262,10 @@ fn parse_number(raw: &str) -> Value {
         .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
         .collect();
     if cleaned.contains('.') {
-        cleaned.parse::<f64>().map(Value::Float).unwrap_or(Value::Nil)
+        cleaned
+            .parse::<f64>()
+            .map(Value::Float)
+            .unwrap_or(Value::Nil)
     } else {
         cleaned.parse::<i64>().map(Value::Int).unwrap_or(Value::Nil)
     }

@@ -1,0 +1,34 @@
+# guards_demo
+
+cast WREN
+  .label "Wren"
+
+-- start
+
+~ var $trust := 30
+
+WREN
+  What do you want to know?
+
+  * The town's history.
+    WREN
+      Founded by herring boats. Long story.
+  * The bell's secret. if $trust > 50
+    WREN
+      Not yet.
+  + Nothing more.
+    -> ending
+
+-- earn_trust
+
+~ $trust := 75
+
+WREN
+  All right. Ask again.
+
+-> start
+
+-- ending
+
+WREN
+  Safe travels.

@@ -1,0 +1,32 @@
+# inline_assigns_demo
+
+cast WREN
+  .label "Wren"
+
+-- setup
+
+~ var $trust := 30
+~ var $bells_struck := 0
+~ var $lantern_lit := false
+
+-- conversation
+
+WREN
+  Thank you for coming.<$bells_struck++>
+
+WREN
+  Now $bells_struck bell tones have rung.
+
+> She turns the lantern up.
+~ $lantern_lit := true
+~ $trust += 5
+
+WREN
+  Trust now: $trust.
+
+WREN { cold }
+  Don't speak of this again.
+~ $trust -= 10
+
+WREN
+  Final trust: $trust.
