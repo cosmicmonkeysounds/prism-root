@@ -6,11 +6,17 @@ schema_version = 1
 authors = ["Prism Framework"]
 repository = "https://github.com/anthropics/prism-root"
 
-# Zed uses tree-sitter for syntax highlights, so a TextMate grammar
-# can't drive its colours directly. This extension ships only the
-# language metadata (file association, comment markers, brackets)
-# today; the LSP server backed by Prism's canonical Loom parser will
-# provide full semantic highlights once it lands.
-[language_servers.loom-lsp]
+# Zed renders syntax via tree-sitter, so this extension carries no
+# `grammar.scm` — Loom highlighting comes from the LSP's
+# semanticTokens stream instead. The language metadata block (file
+# association, comment markers, brackets) lives in
+# `languages/loom/config.toml`.
+#
+# The language-server launch invokes the Prism CLI's `loom lsp`
+# subcommand. Users who haven't installed the unified `prism` binary
+# can override this in their Zed settings to point at
+# `target/debug/prism-loom-lsp` directly.
+[language_servers.prism-loom]
 name = "Prism Loom"
-language = "Loom"
+languages = ["Loom"]
+binary = { path = "prism", arguments = ["loom", "lsp"] }

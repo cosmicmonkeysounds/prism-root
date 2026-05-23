@@ -46,6 +46,12 @@ serde_json = { workspace = true }
 # Default features (HTML SSR only) keep the dep graph cheap — no
 # winit / femtovg / cosmic-text are pulled in for a CLI build.
 prism-ui-runtime = { path = "../prism-ui-runtime" }
+# `prism loom lsp` runs the Loom Language Server Protocol
+# implementation in-process. Pulled here so the CLI binary itself
+# can host the server without spawning the separate
+# `prism-loom-lsp` binary — useful for editors (Zed, …) that
+# accept any command line as their language-server launcher.
+prism-loom-lsp = { path = "../prism-loom-lsp" }
 
 [dev-dependencies]
 filetime = "0.2"

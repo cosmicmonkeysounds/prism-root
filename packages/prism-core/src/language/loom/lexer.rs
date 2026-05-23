@@ -83,15 +83,15 @@ pub enum TokenKind {
     Lt,         // <
     Gt,         // >
     Apostrophe, // ' (single — three are a Docstring; lone is treated as
-                //   punctuation so contractions in dialogue ("I'll") and
-                //   English apostrophes in stage prose round-trip
-                //   through the inline-text collector).
-    LParen,     // (
-    RParen,     // )
-    LBrace,     // {
-    RBrace,     // }
-    LBrack,     // [
-    RBrack,     // ]
+    //   punctuation so contractions in dialogue ("I'll") and
+    //   English apostrophes in stage prose round-trip
+    //   through the inline-text collector).
+    LParen, // (
+    RParen, // )
+    LBrace, // {
+    RBrace, // }
+    LBrack, // [
+    RBrack, // ]
 
     // ── Multi-character sigils ─────────────────────────────────────
     DashDash,    // --   (section opener; also a line marker)

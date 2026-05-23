@@ -176,10 +176,7 @@ impl<'t> Parser<'t> {
     /// for error recovery — the parser drops back to the next line
     /// boundary and resumes parsing top-down items.
     fn resync_to_line_boundary(&mut self) {
-        while !self.at_eof()
-            && !self.at(TokenKind::Newline)
-            && !self.at(TokenKind::Dedent)
-        {
+        while !self.at_eof() && !self.at(TokenKind::Newline) && !self.at(TokenKind::Dedent) {
             self.advance();
         }
         if self.at(TokenKind::Newline) {
@@ -214,11 +211,7 @@ impl<'t> Parser<'t> {
 
     /// Produce an ERROR node anchored at the current position and
     /// record a matching diagnostic. Used for graceful recovery.
-    fn error_node(
-        &mut self,
-        id: &'static str,
-        msg: impl Into<String>,
-    ) -> SyntaxNode {
+    fn error_node(&mut self, id: &'static str, msg: impl Into<String>) -> SyntaxNode {
         let start = self.peek().range.start;
         let m = msg.into();
         self.diag(id, Severity::Error, m.clone());
@@ -348,7 +341,11 @@ impl Parser<'_> {
         }
 
         let doc_end = self.peek().range.start;
-        Some(make_node(nk::DOCUMENT, range_to(doc_start, doc_end), children))
+        Some(make_node(
+            nk::DOCUMENT,
+            range_to(doc_start, doc_end),
+            children,
+        ))
     }
 
     fn parse_header(&mut self) -> SyntaxNode {
@@ -356,10 +353,7 @@ impl Parser<'_> {
         self.expect(TokenKind::Hash, "doc-header-id", "Expected `#`");
 
         let mut children = Vec::new();
-        if matches!(
-            self.peek_kind(),
-            TokenKind::Ident | TokenKind::Speaker
-        ) {
+        if matches!(self.peek_kind(), TokenKind::Ident | TokenKind::Speaker) {
             let tok = self.advance().clone();
             children.push(leaf(nk::IDENT, tok.range, tok.text));
         } else {
@@ -388,20 +382,32 @@ impl Parser<'_> {
             }
         }
 
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after header");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after header",
+        );
         let end = self.peek().range.start;
         make_node(nk::HEADER, range_to(start, end), children)
     }
 
     fn parse_property_block(&mut self) -> SyntaxNode {
         let start = self.peek().range.start;
-        self.expect(TokenKind::Indent, "indent-jump", "Expected indented property block");
+        self.expect(
+            TokenKind::Indent,
+            "indent-jump",
+            "Expected indented property block",
+        );
         let mut props = Vec::new();
         while self.at(TokenKind::Dot) {
             props.push(self.parse_property());
             self.skip_newlines();
         }
-        self.expect(TokenKind::Dedent, "indent-jump", "Expected dedent after property block");
+        self.expect(
+            TokenKind::Dedent,
+            "indent-jump",
+            "Expected dedent after property block",
+        );
         let end = self.peek().range.start;
         // Properties become children of the property block grouping.
         make_node("property_block", range_to(start, end), props)
@@ -429,7 +435,11 @@ impl Parser<'_> {
         }
         if !raw.is_empty() {
             let value_end = self.peek().range.start;
-            children.push(leaf(nk::PROPERTY_VALUE, range_to(value_start, value_end), raw));
+            children.push(leaf(
+                nk::PROPERTY_VALUE,
+                range_to(value_start, value_end),
+                raw,
+            ));
         }
         if self.at(TokenKind::Newline) {
             self.advance();
@@ -569,10 +579,10 @@ impl Parser<'_> {
         let node = self.parse_content_line();
         if self.pos == before {
             // No progress — emit an error and skip the offending line.
-            let err = self.error_node("unexpected-child", format!(
-                "Unexpected token `{}` at this position",
-                self.peek().text
-            ));
+            let err = self.error_node(
+                "unexpected-child",
+                format!("Unexpected token `{}` at this position", self.peek().text),
+            );
             self.resync_to_line_boundary();
             return Some(err);
         }
@@ -596,7 +606,11 @@ impl Parser<'_> {
             let tok = self.advance().clone();
             children.push(leaf(nk::STRING, tok.range, tok.text));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after cast id");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after cast id",
+        );
         if self.at(TokenKind::Indent) {
             children.push(self.parse_property_block());
         }
@@ -614,7 +628,11 @@ impl Parser<'_> {
         } else {
             children.push(self.error_node("unknown-cue", "Expected cue identifier"));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after cue id");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after cue id",
+        );
         if self.at(TokenKind::Indent) {
             children.push(self.parse_property_block());
         }
@@ -633,7 +651,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::STRING, t.range, t.text));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after location id");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after location id",
+        );
         if self.at(TokenKind::Indent) {
             children.push(self.parse_property_block());
         }
@@ -651,7 +673,11 @@ impl Parser<'_> {
         } else {
             children.push(self.error_node("unknown-cohort", "Expected cohort identifier"));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after cohort id");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after cohort id",
+        );
         if self.at(TokenKind::Indent) {
             children.push(self.parse_property_block());
         }
@@ -667,9 +693,7 @@ impl Parser<'_> {
                 Some(leaf(nk::SPEAKER, t.range, t.text))
             }
             TokenKind::At => Some(self.parse_static_ref()),
-            _ => {
-                Some(self.error_node("unknown-cast", "Expected SPEAKER or @ref"))
-            }
+            _ => Some(self.error_node("unknown-cast", "Expected SPEAKER or @ref")),
         }
     }
 
@@ -677,7 +701,11 @@ impl Parser<'_> {
         let start = self.peek().range.start;
         self.advance(); // `broadcast`
         let scope = self.parse_broadcast_scope();
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after broadcast scope");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after broadcast scope",
+        );
         let mut children = vec![scope];
         if self.at(TokenKind::Indent) {
             children.push(self.parse_indented_content_block());
@@ -701,7 +729,11 @@ impl Parser<'_> {
 
     fn parse_scope_atom(&mut self) -> SyntaxNode {
         let start = self.peek().range.start;
-        self.expect(TokenKind::Colon, "broadcast-empty-scope", "Expected `:` to introduce broadcast scope");
+        self.expect(
+            TokenKind::Colon,
+            "broadcast-empty-scope",
+            "Expected `:` to introduce broadcast scope",
+        );
         // `:all` shorthand
         if self.at_word("all") {
             let t = self.advance().clone();
@@ -721,7 +753,11 @@ impl Parser<'_> {
                 self.advance();
                 let arg = self.parse_expression();
                 children.push(arg);
-                self.expect(TokenKind::RParen, "bracket-unbalanced", "Expected `)` after scope argument");
+                self.expect(
+                    TokenKind::RParen,
+                    "bracket-unbalanced",
+                    "Expected `)` after scope argument",
+                );
             }
         }
         let end = self.peek().range.start;
@@ -768,7 +804,11 @@ impl Parser<'_> {
             self.parse_expression()
         };
         children.push(discriminant);
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after when discriminant");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after when discriminant",
+        );
         if self.at(TokenKind::Indent) {
             children.push(self.parse_indented_content_block());
         }
@@ -778,7 +818,7 @@ impl Parser<'_> {
 
     fn parse_participant_when(&mut self, start: Position) -> SyntaxNode {
         self.advance(); // `participant`
-        // The next word picks the variant.
+                        // The next word picks the variant.
         let verb_tok = self.advance().clone();
         let verb = verb_tok.text.clone();
         let mut children = vec![leaf(nk::IDENT, verb_tok.range, verb.clone())];
@@ -817,7 +857,11 @@ impl Parser<'_> {
             _ => nk::PARTICIPANT_LIFECYCLE,
         };
 
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after when-clause");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after when-clause",
+        );
         if self.at(TokenKind::Indent) {
             children.push(self.parse_indented_content_block());
         }
@@ -848,7 +892,11 @@ impl Parser<'_> {
                 children.push(self.parse_resolve_ref());
             }
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after faction event");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after faction event",
+        );
         if self.at(TokenKind::Indent) {
             children.push(self.parse_indented_content_block());
         }
@@ -865,7 +913,11 @@ impl Parser<'_> {
             if self.at(TokenKind::LParen) {
                 self.advance();
                 children.push(self.parse_expression());
-                self.expect(TokenKind::Comma, "doc-header-id", "Expected `,` in stance qualifier");
+                self.expect(
+                    TokenKind::Comma,
+                    "doc-header-id",
+                    "Expected `,` in stance qualifier",
+                );
                 children.push(self.parse_expression());
                 self.expect(TokenKind::RParen, "bracket-unbalanced", "Expected `)`");
             }
@@ -963,7 +1015,11 @@ impl Parser<'_> {
         }
 
         self.parse_modifiers_and_scope_and_guard(&mut children);
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after section header");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after section header",
+        );
 
         if self.at(TokenKind::Docstring) {
             let t = self.advance().clone();
@@ -1055,7 +1111,11 @@ impl Parser<'_> {
                 }
             }
             let id_end = self.peek().range.start;
-            children.push(make_node(nk::SCENE_SLUG, range_to(id_start, id_end), slug_children));
+            children.push(make_node(
+                nk::SCENE_SLUG,
+                range_to(id_start, id_end),
+                slug_children,
+            ));
         }
 
         if self.at(TokenKind::String) {
@@ -1064,7 +1124,11 @@ impl Parser<'_> {
         }
 
         self.parse_modifiers_and_scope_and_guard(&mut children);
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after slugline");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after slugline",
+        );
 
         if self.at(TokenKind::Docstring) {
             let t = self.advance().clone();
@@ -1090,7 +1154,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::NUMBER, t.range, t.text));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after timecode");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after timecode",
+        );
         if self.at(TokenKind::Indent) {
             // Body: track commands OR dialogue lines.
             self.advance();
@@ -1105,10 +1173,10 @@ impl Parser<'_> {
                 } else if self.at(TokenKind::Newline) {
                     self.advance();
                 } else {
-                    children.push(self.error_node("unexpected-child", format!(
-                        "Unexpected token `{}` inside `at` block",
-                        self.peek().text
-                    )));
+                    children.push(self.error_node(
+                        "unexpected-child",
+                        format!("Unexpected token `{}` inside `at` block", self.peek().text),
+                    ));
                     self.resync_to_line_boundary();
                 }
             }
@@ -1126,7 +1194,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Colon, "doc-header-id", "Expected `:` in track command");
+        self.expect(
+            TokenKind::Colon,
+            "doc-header-id",
+            "Expected `:` in track command",
+        );
         if matches!(self.peek_kind(), TokenKind::Ident | TokenKind::Speaker) {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
@@ -1206,7 +1278,10 @@ impl Parser<'_> {
         } else if self.at(TokenKind::Dollar) {
             children.push(self.parse_resolve_ref());
         } else {
-            children.push(self.error_node("as-faction-bad-target", "Expected `participant`, `faction`, or $ref"));
+            children.push(self.error_node(
+                "as-faction-bad-target",
+                "Expected `participant`, `faction`, or $ref",
+            ));
         }
         let end = self.peek().range.start;
         make_node(nk::PARTICIPANT_SCOPE, range_to(start, end), children)
@@ -1301,9 +1376,14 @@ impl Parser<'_> {
         if self.at_word("let") {
             return self.parse_let_binding();
         }
-        if self.at_word("var") || self.at_word("fire") || self.at_word("advance")
-            || self.at_word("trigger") || self.at_word("modify") || self.at_word("enroll")
-            || self.at_word("cue") || self.at_word("reveal")
+        if self.at_word("var")
+            || self.at_word("fire")
+            || self.at_word("advance")
+            || self.at_word("trigger")
+            || self.at_word("modify")
+            || self.at_word("enroll")
+            || self.at_word("cue")
+            || self.at_word("reveal")
         {
             return self.parse_action_line();
         }
@@ -1334,7 +1414,11 @@ impl Parser<'_> {
             children.push(self.parse_improv_parenthetical());
         }
 
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after speaker");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after speaker",
+        );
 
         // Optional parenthetical (indented one level).
         if self.at(TokenKind::Indent) && self.peek_n(1).kind == TokenKind::LParen {
@@ -1533,7 +1617,11 @@ impl Parser<'_> {
         let label_start = self.peek().range.start;
         let label = self.collect_inline_text_until_guard_or_newline();
         let label_end = self.peek().range.start;
-        children.push(make_node(nk::CHOICE_LABEL, range_to(label_start, label_end), vec![label]));
+        children.push(make_node(
+            nk::CHOICE_LABEL,
+            range_to(label_start, label_end),
+            vec![label],
+        ));
 
         // Optional inline divert: `-> target` directly on the same
         // line. Some authors write `* I'll help. -> investigate`.
@@ -1545,7 +1633,11 @@ impl Parser<'_> {
             children.push(self.parse_guard());
         }
 
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after choice");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after choice",
+        );
         if self.at(TokenKind::Indent) {
             children.push(self.parse_indented_content_block());
         }
@@ -1584,7 +1676,8 @@ impl Parser<'_> {
                     if self.consume(TokenKind::Arrow) {
                         // Trailing `->` confirms tunnel call.
                         let end = self.peek().range.start;
-                        let tunnel = make_node(nk::TUNNEL_CALL, range_to(t.range.start, end), tgt_children);
+                        let tunnel =
+                            make_node(nk::TUNNEL_CALL, range_to(t.range.start, end), tgt_children);
                         children.push(tunnel);
                     } else {
                         children.extend(tgt_children);
@@ -1600,7 +1693,11 @@ impl Parser<'_> {
 
         // Modifiers + scope + guard.
         self.parse_modifiers_and_scope_and_guard(&mut children);
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after divert");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after divert",
+        );
         let end = self.peek().range.start;
         make_node(nk::DIVERT, range_to(start, end), children)
     }
@@ -1613,7 +1710,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after return");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after return",
+        );
         let end = self.peek().range.start;
         make_node(nk::RETURN_LINE, range_to(start, end), children)
     }
@@ -1689,10 +1790,7 @@ impl Parser<'_> {
             // `fire bell_solved` all under one production.
             let payload_start = self.peek().range.start;
             let mut payload = String::new();
-            while !self.at(TokenKind::Newline)
-                && !self.at(TokenKind::Semi)
-                && !self.at_eof()
-            {
+            while !self.at(TokenKind::Newline) && !self.at(TokenKind::Semi) && !self.at_eof() {
                 let t = self.advance();
                 if !payload.is_empty() {
                     payload.push(' ');
@@ -1768,7 +1866,11 @@ impl Parser<'_> {
         }
         if !body.is_empty() {
             let body_end = self.peek().range.start;
-            children.push(leaf(nk::PROPERTY_VALUE, range_to(body_start, body_end), body));
+            children.push(leaf(
+                nk::PROPERTY_VALUE,
+                range_to(body_start, body_end),
+                body,
+            ));
         }
         if self.at(TokenKind::Newline) {
             self.advance();
@@ -1791,7 +1893,11 @@ impl Parser<'_> {
         while self.at(TokenKind::Dot) {
             children.push(self.parse_modifier());
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after `each visit`");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after `each visit`",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -1799,12 +1905,16 @@ impl Parser<'_> {
                     self.advance();
                     continue;
                 }
-                if self.at_word("first") || self.at_word("then") || self.at_word("finally")
+                if self.at_word("first")
+                    || self.at_word("then")
+                    || self.at_word("finally")
                     || self.at(TokenKind::Slash)
                 {
                     children.push(self.parse_visit_branch());
                 } else {
-                    children.push(self.error_node("unexpected-child", "Expected first/then/finally/`/`"));
+                    children.push(
+                        self.error_node("unexpected-child", "Expected first/then/finally/`/`"),
+                    );
                     self.resync_to_line_boundary();
                 }
             }
@@ -1824,7 +1934,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after branch label");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after branch label",
+        );
         if self.at(TokenKind::Indent) {
             children.push(self.parse_indented_content_block());
         }
@@ -1836,7 +1950,11 @@ impl Parser<'_> {
         let start = self.peek().range.start;
         self.advance(); // `after`
         let mut children = vec![self.parse_expression()];
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after `after`");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after `after`",
+        );
         if self.at(TokenKind::Indent) {
             children.push(self.parse_indented_content_block());
         }
@@ -1847,7 +1965,11 @@ impl Parser<'_> {
     fn parse_otherwise_block(&mut self) -> SyntaxNode {
         let start = self.peek().range.start;
         self.advance(); // `otherwise`
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after `otherwise`");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after `otherwise`",
+        );
         let mut children = Vec::new();
         if self.at(TokenKind::Indent) {
             children.push(self.parse_indented_content_block());
@@ -1860,7 +1982,11 @@ impl Parser<'_> {
         let start = self.peek().range.start;
         self.advance(); // `match`
         let mut children = vec![self.parse_expression()];
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after `match`");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after `match`",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -1893,11 +2019,16 @@ impl Parser<'_> {
                 children.push(leaf(nk::IDENT, t.range, t.text));
             }
             _ => {
-                children.push(self.error_node("unexpected-child", "Expected match arm discriminant"));
+                children
+                    .push(self.error_node("unexpected-child", "Expected match arm discriminant"));
                 self.advance();
             }
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after match arm");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after match arm",
+        );
         if self.at(TokenKind::Indent) {
             children.push(self.parse_indented_content_block());
         }
@@ -1914,7 +2045,11 @@ impl Parser<'_> {
     fn parse_knowledge_block(&mut self) -> SyntaxNode {
         let start = self.peek().range.start;
         self.advance(); // `knowledge`
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after `knowledge`");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after `knowledge`",
+        );
         let mut children = Vec::new();
         if self.at(TokenKind::Indent) {
             self.advance();
@@ -1940,7 +2075,11 @@ impl Parser<'_> {
         } else {
             children.push(self.error_node("knowledge-bad-type", "Expected knowledge field name"));
         }
-        self.expect(TokenKind::Colon, "doc-header-id", "Expected `:` in knowledge field");
+        self.expect(
+            TokenKind::Colon,
+            "doc-header-id",
+            "Expected `:` in knowledge field",
+        );
         children.push(self.parse_knowledge_type());
         if self.consume(TokenKind::Eq) {
             children.push(self.parse_expression());
@@ -1976,7 +2115,11 @@ impl Parser<'_> {
             // `list<T>` form.
             if head.text == "list" && self.consume(TokenKind::Lt) {
                 children.push(self.parse_knowledge_type());
-                self.expect(TokenKind::Gt, "bracket-unbalanced", "Expected `>` to close `list<T>`");
+                self.expect(
+                    TokenKind::Gt,
+                    "bracket-unbalanced",
+                    "Expected `>` to close `list<T>`",
+                );
             }
         } else {
             children.push(self.error_node("knowledge-bad-type", "Expected type name"));
@@ -1997,7 +2140,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after goal name");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after goal name",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -2050,7 +2197,11 @@ impl Parser<'_> {
             }
             if !raw.is_empty() {
                 let chain_end = self.peek().range.start;
-                children.push(leaf(nk::ACTION_CHAIN, range_to(chain_start, chain_end), raw));
+                children.push(leaf(
+                    nk::ACTION_CHAIN,
+                    range_to(chain_start, chain_end),
+                    raw,
+                ));
             }
         }
         if self.at(TokenKind::Newline) {
@@ -2071,10 +2222,15 @@ impl Parser<'_> {
             }
             TokenKind::At => children.push(self.parse_static_ref()),
             _ => {
-                children.push(self.error_node("as-faction-bad-target", "Expected disposition target"));
+                children
+                    .push(self.error_node("as-faction-bad-target", "Expected disposition target"));
             }
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after disposition target");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after disposition target",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -2101,7 +2257,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Eq, "doc-header-id", "Expected `=` in disposition axis");
+        self.expect(
+            TokenKind::Eq,
+            "doc-header-id",
+            "Expected `=` in disposition axis",
+        );
         children.push(self.parse_num_range_or_expression());
         // Optional ", init N" and ", mirror $ref".
         while self.consume(TokenKind::Comma) {
@@ -2120,7 +2280,11 @@ impl Parser<'_> {
                     _ => self.error_node("disposition-mirror-cycle", "Expected mirror target"),
                 };
                 let mc_end = self.peek().range.start;
-                children.push(make_node(nk::MIRROR_CLAUSE, range_to(mc_start, mc_end), vec![target]));
+                children.push(make_node(
+                    nk::MIRROR_CLAUSE,
+                    range_to(mc_start, mc_end),
+                    vec![target],
+                ));
             } else {
                 self.advance();
             }
@@ -2136,7 +2300,11 @@ impl Parser<'_> {
         let start = self.peek().range.start;
         self.advance(); // `reacts`
         let mut children = vec![self.parse_expression()];
-        self.expect(TokenKind::Arrow, "doc-header-id", "Expected `->` in disposition reacts");
+        self.expect(
+            TokenKind::Arrow,
+            "doc-header-id",
+            "Expected `->` in disposition reacts",
+        );
         match self.peek_kind() {
             TokenKind::Ident | TokenKind::Speaker => {
                 let t = self.advance().clone();
@@ -2206,7 +2374,11 @@ impl Parser<'_> {
         );
         let mut children = vec![pattern];
 
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after hook pattern");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after hook pattern",
+        );
         if self.at(TokenKind::Indent) {
             children.push(self.parse_indented_content_block());
         }
@@ -2228,7 +2400,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Eq, "doc-header-id", "Expected `=` in attribute decl");
+        self.expect(
+            TokenKind::Eq,
+            "doc-header-id",
+            "Expected `=` in attribute decl",
+        );
         if self.at(TokenKind::Number) {
             let t = self.advance().clone();
             children.push(leaf(nk::NUMBER, t.range, t.text));
@@ -2275,7 +2451,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after axis name");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after axis name",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -2313,7 +2493,11 @@ impl Parser<'_> {
                 children.push(self.parse_expression());
             }
             "milestones" => {
-                self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after `milestones`");
+                self.expect(
+                    TokenKind::Newline,
+                    "doc-header-id",
+                    "Expected newline after `milestones`",
+                );
                 if self.at(TokenKind::Indent) {
                     self.advance();
                     while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -2409,7 +2593,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::NUMBER, t.range, t.text));
         }
-        self.expect(TokenKind::Colon, "doc-header-id", "Expected `:` in milestone entry");
+        self.expect(
+            TokenKind::Colon,
+            "doc-header-id",
+            "Expected `:` in milestone entry",
+        );
         children.push(self.parse_expression());
         if self.at(TokenKind::Newline) {
             self.advance();
@@ -2426,7 +2614,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after pool name");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after pool name",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -2533,7 +2725,11 @@ impl Parser<'_> {
                     self.advance();
                     let expr = self.parse_expression();
                     let f_end = self.peek().range.start;
-                    children.push(make_node(nk::STAT_DERIVED, range_to(f_start, f_end), vec![expr]));
+                    children.push(make_node(
+                        nk::STAT_DERIVED,
+                        range_to(f_start, f_end),
+                        vec![expr],
+                    ));
                 }
                 if self.at(TokenKind::Newline) {
                     self.advance();
@@ -2542,7 +2738,11 @@ impl Parser<'_> {
             }
         } else {
             // Lookup form — `stat NAME\n  lookup ...`.
-            self.expect(TokenKind::Newline, "stat-form-ambiguous", "Expected newline after stat name");
+            self.expect(
+                TokenKind::Newline,
+                "stat-form-ambiguous",
+                "Expected newline after stat name",
+            );
             if self.at(TokenKind::Indent) {
                 self.advance();
                 while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -2615,7 +2815,11 @@ impl Parser<'_> {
                 }
                 _ => self.error_node("unexpected-child", "Expected dict key"),
             };
-            self.expect(TokenKind::Colon, "doc-header-id", "Expected `:` in dict entry");
+            self.expect(
+                TokenKind::Colon,
+                "doc-header-id",
+                "Expected `:` in dict entry",
+            );
             let value = self.parse_expression();
             let entry_end = self.peek().range.start;
             children.push(make_node(
@@ -2640,7 +2844,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after node name");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after node name",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -2742,7 +2950,11 @@ impl Parser<'_> {
         if self.at(TokenKind::Pipe) {
             children.push(self.parse_param_list());
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after generator header");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after generator header",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             // Optional scheduler properties first.
@@ -2774,7 +2986,11 @@ impl Parser<'_> {
         if self.at(TokenKind::Pipe) {
             children.push(self.parse_param_list());
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after scene header");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after scene header",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             // Optional scheduler properties.
@@ -2802,7 +3018,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after scene state name");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after scene state name",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -2908,7 +3128,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after `loop`");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after `loop`",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -2958,7 +3182,11 @@ impl Parser<'_> {
                     _ => self.error_node("unknown-ref", "Expected @ref after `bark from`"),
                 };
                 let yb_end = self.peek().range.start;
-                children.push(make_node(nk::YIELD_BODY, range_to(yb_start, yb_end), vec![r]));
+                children.push(make_node(
+                    nk::YIELD_BODY,
+                    range_to(yb_start, yb_end),
+                    vec![r],
+                ));
             } else if self.peek().is_word("with_chance") {
                 let yb_start = self.peek().range.start;
                 self.advance();
@@ -3057,7 +3285,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after compose name");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after compose name",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -3083,7 +3315,11 @@ impl Parser<'_> {
         if self.at(TokenKind::Dollar) {
             children.push(self.parse_resolve_ref());
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after `pattern`");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after `pattern`",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -3116,7 +3352,11 @@ impl Parser<'_> {
                 children.push(leaf(nk::IDENT, t.range, t.text));
             }
         }
-        self.expect(TokenKind::Colon, "doc-header-id", "Expected `:` in pattern arm");
+        self.expect(
+            TokenKind::Colon,
+            "doc-header-id",
+            "Expected `:` in pattern arm",
+        );
         if self.at(TokenKind::String) {
             let t = self.advance().clone();
             children.push(leaf(nk::STRING, t.range, t.text));
@@ -3154,7 +3394,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after faction name");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after faction name",
+        );
         if self.at(TokenKind::Indent) {
             self.advance();
             while !self.at(TokenKind::Dedent) && !self.at_eof() {
@@ -3207,7 +3451,11 @@ impl Parser<'_> {
     fn parse_members_block(&mut self) -> SyntaxNode {
         let start = self.peek().range.start;
         self.advance(); // `members`
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after `members`");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after `members`",
+        );
         let mut children = Vec::new();
         if self.at(TokenKind::Indent) {
             self.advance();
@@ -3268,7 +3516,11 @@ impl Parser<'_> {
     fn parse_visibility_clause(&mut self) -> SyntaxNode {
         let start = self.peek().range.start;
         self.advance(); // `visibility`
-        self.expect(TokenKind::Colon, "doc-header-id", "Expected `:` in visibility clause");
+        self.expect(
+            TokenKind::Colon,
+            "doc-header-id",
+            "Expected `:` in visibility clause",
+        );
         let mut children = Vec::new();
         let lvl_start = self.peek().range.start;
         let mut lvl_children = Vec::new();
@@ -3300,7 +3552,11 @@ impl Parser<'_> {
     fn parse_state_block(&mut self) -> SyntaxNode {
         let start = self.peek().range.start;
         self.advance(); // `state`
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after `state`");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after `state`",
+        );
         let mut children = Vec::new();
         if self.at(TokenKind::Indent) {
             self.advance();
@@ -3342,7 +3598,11 @@ impl Parser<'_> {
                     _ => self.error_node("disposition-mirror-cycle", "Expected mirror target"),
                 };
                 let mc_end = self.peek().range.start;
-                children.push(make_node(nk::MIRROR_CLAUSE, range_to(mc_start, mc_end), vec![target]));
+                children.push(make_node(
+                    nk::MIRROR_CLAUSE,
+                    range_to(mc_start, mc_end),
+                    vec![target],
+                ));
             } else {
                 self.advance();
             }
@@ -3357,7 +3617,11 @@ impl Parser<'_> {
     fn parse_stance_block(&mut self) -> SyntaxNode {
         let start = self.peek().range.start;
         self.advance(); // `stance`
-        self.expect(TokenKind::Newline, "doc-header-id", "Expected newline after `stance`");
+        self.expect(
+            TokenKind::Newline,
+            "doc-header-id",
+            "Expected newline after `stance`",
+        );
         let mut children = Vec::new();
         if self.at(TokenKind::Indent) {
             self.advance();
@@ -3387,7 +3651,11 @@ impl Parser<'_> {
                 }
             }
         }
-        self.expect(TokenKind::Eq, "doc-header-id", "Expected `=` in stance entry");
+        self.expect(
+            TokenKind::Eq,
+            "doc-header-id",
+            "Expected `=` in stance entry",
+        );
         // Stance level (open word).
         if matches!(self.peek_kind(), TokenKind::Ident | TokenKind::Speaker) {
             let t = self.advance().clone();
@@ -3419,7 +3687,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Eq, "assign-op-mismatch", "Expected `=` in let binding");
+        self.expect(
+            TokenKind::Eq,
+            "assign-op-mismatch",
+            "Expected `=` in let binding",
+        );
         children.push(self.parse_expression());
         if self.at(TokenKind::Newline) {
             self.advance();
@@ -3438,7 +3710,7 @@ impl Parser<'_> {
         // production. We don't consume the `(` yet.
         let save = self.pos;
         self.advance(); // `(`
-        // Skip whitespace tokens — none expected inside, but defensive.
+                        // Skip whitespace tokens — none expected inside, but defensive.
         let head_text = if matches!(self.peek_kind(), TokenKind::Ident | TokenKind::Speaker) {
             self.peek().text.clone()
         } else {
@@ -3468,7 +3740,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Colon, "doc-header-id", "Expected `:` in list decl");
+        self.expect(
+            TokenKind::Colon,
+            "doc-header-id",
+            "Expected `:` in list decl",
+        );
         while !self.at(TokenKind::RParen) && !self.at_eof() {
             if matches!(self.peek_kind(), TokenKind::Ident | TokenKind::Speaker) {
                 let t = self.advance().clone();
@@ -3602,7 +3878,11 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.expect(TokenKind::Pipe, "bracket-unbalanced", "Expected `|` to close param list");
+        self.expect(
+            TokenKind::Pipe,
+            "bracket-unbalanced",
+            "Expected `|` to close param list",
+        );
         let end = self.peek().range.start;
         make_node(nk::PARAM_LIST, range_to(start, end), children)
     }
@@ -3706,26 +3986,98 @@ struct BinOp {
 fn binop_for(token: &Token) -> Option<BinOp> {
     let p = match token.kind {
         TokenKind::Ident => match token.text.as_str() {
-            "or" => Some(BinOp { text: "or", precedence: 1, right_assoc: false }),
-            "and" => Some(BinOp { text: "and", precedence: 2, right_assoc: false }),
-            "is" => Some(BinOp { text: "is", precedence: 4, right_assoc: false }),
-            "has" => Some(BinOp { text: "has", precedence: 6, right_assoc: false }),
-            "in" => Some(BinOp { text: "in", precedence: 6, right_assoc: false }),
+            "or" => Some(BinOp {
+                text: "or",
+                precedence: 1,
+                right_assoc: false,
+            }),
+            "and" => Some(BinOp {
+                text: "and",
+                precedence: 2,
+                right_assoc: false,
+            }),
+            "is" => Some(BinOp {
+                text: "is",
+                precedence: 4,
+                right_assoc: false,
+            }),
+            "has" => Some(BinOp {
+                text: "has",
+                precedence: 6,
+                right_assoc: false,
+            }),
+            "in" => Some(BinOp {
+                text: "in",
+                precedence: 6,
+                right_assoc: false,
+            }),
             _ => None,
         },
-        TokenKind::IsNot => Some(BinOp { text: "is not", precedence: 4, right_assoc: false }),
-        TokenKind::HasNot => Some(BinOp { text: "has not", precedence: 6, right_assoc: false }),
-        TokenKind::EqEq => Some(BinOp { text: "==", precedence: 4, right_assoc: false }),
-        TokenKind::Neq => Some(BinOp { text: "!=", precedence: 4, right_assoc: false }),
-        TokenKind::Lt => Some(BinOp { text: "<", precedence: 5, right_assoc: false }),
-        TokenKind::Lte => Some(BinOp { text: "<=", precedence: 5, right_assoc: false }),
-        TokenKind::Gt => Some(BinOp { text: ">", precedence: 5, right_assoc: false }),
-        TokenKind::Gte => Some(BinOp { text: ">=", precedence: 5, right_assoc: false }),
-        TokenKind::Plus => Some(BinOp { text: "+", precedence: 7, right_assoc: false }),
-        TokenKind::Minus => Some(BinOp { text: "-", precedence: 7, right_assoc: false }),
-        TokenKind::Star => Some(BinOp { text: "*", precedence: 8, right_assoc: false }),
-        TokenKind::Slash => Some(BinOp { text: "/", precedence: 8, right_assoc: false }),
-        TokenKind::Percent => Some(BinOp { text: "%", precedence: 8, right_assoc: false }),
+        TokenKind::IsNot => Some(BinOp {
+            text: "is not",
+            precedence: 4,
+            right_assoc: false,
+        }),
+        TokenKind::HasNot => Some(BinOp {
+            text: "has not",
+            precedence: 6,
+            right_assoc: false,
+        }),
+        TokenKind::EqEq => Some(BinOp {
+            text: "==",
+            precedence: 4,
+            right_assoc: false,
+        }),
+        TokenKind::Neq => Some(BinOp {
+            text: "!=",
+            precedence: 4,
+            right_assoc: false,
+        }),
+        TokenKind::Lt => Some(BinOp {
+            text: "<",
+            precedence: 5,
+            right_assoc: false,
+        }),
+        TokenKind::Lte => Some(BinOp {
+            text: "<=",
+            precedence: 5,
+            right_assoc: false,
+        }),
+        TokenKind::Gt => Some(BinOp {
+            text: ">",
+            precedence: 5,
+            right_assoc: false,
+        }),
+        TokenKind::Gte => Some(BinOp {
+            text: ">=",
+            precedence: 5,
+            right_assoc: false,
+        }),
+        TokenKind::Plus => Some(BinOp {
+            text: "+",
+            precedence: 7,
+            right_assoc: false,
+        }),
+        TokenKind::Minus => Some(BinOp {
+            text: "-",
+            precedence: 7,
+            right_assoc: false,
+        }),
+        TokenKind::Star => Some(BinOp {
+            text: "*",
+            precedence: 8,
+            right_assoc: false,
+        }),
+        TokenKind::Slash => Some(BinOp {
+            text: "/",
+            precedence: 8,
+            right_assoc: false,
+        }),
+        TokenKind::Percent => Some(BinOp {
+            text: "%",
+            precedence: 8,
+            right_assoc: false,
+        }),
         _ => None,
     };
     p
@@ -3902,11 +4254,7 @@ impl Parser<'_> {
                     self.diag("bracket-unbalanced", Severity::Error, "Expected `)`");
                     self.peek().range.start
                 };
-                make_node(
-                    nk::GROUPED_EXPR,
-                    range_to(lp.range.start, end),
-                    vec![inner],
-                )
+                make_node(nk::GROUPED_EXPR, range_to(lp.range.start, end), vec![inner])
             }
             TokenKind::Ident | TokenKind::Speaker => {
                 let t = self.advance().clone();
@@ -3920,9 +4268,7 @@ impl Parser<'_> {
                     // builtins share the `head(arg)` shape — downstream
                     // resolution (validator / LSP) decides which based
                     // on the argument shape and the calling context.
-                    "played" | "visits" | "chose" | "since" => {
-                        self.parse_ledger_pred_after_head(t)
-                    }
+                    "played" | "visits" | "chose" | "since" => self.parse_ledger_pred_after_head(t),
                     "any" | "all" | "count" | "min" | "max" | "closest" | "first" | "last" => {
                         if self.at(TokenKind::LParen) {
                             self.parse_aggregate_after_head(t)
@@ -3943,7 +4289,11 @@ impl Parser<'_> {
                 if !self.at_eof()
                     && !matches!(
                         self.peek_kind(),
-                        TokenKind::Newline | TokenKind::Dedent | TokenKind::RParen | TokenKind::RBrack | TokenKind::RBrace
+                        TokenKind::Newline
+                            | TokenKind::Dedent
+                            | TokenKind::RParen
+                            | TokenKind::RBrack
+                            | TokenKind::RBrace
                     )
                 {
                     self.advance();
@@ -3979,11 +4329,15 @@ impl Parser<'_> {
 
     fn parse_list_or_comprehension(&mut self) -> SyntaxNode {
         let lb = self.advance().clone(); // `[`
-        // Try parsing an expression; if followed by `for`, it's a
-        // comprehension.
+                                         // Try parsing an expression; if followed by `for`, it's a
+                                         // comprehension.
         if self.at(TokenKind::RBrack) {
             let rb = self.advance().clone();
-            return make_node("list_literal", range_to(lb.range.start, rb.range.end), Vec::new());
+            return make_node(
+                "list_literal",
+                range_to(lb.range.start, rb.range.end),
+                Vec::new(),
+            );
         }
         let first = self.parse_expression();
         if self.at_word("for") {
@@ -4020,11 +4374,7 @@ impl Parser<'_> {
             self.diag("bracket-unbalanced", Severity::Error, "Expected `]`");
             self.peek().range.start
         };
-        make_node(
-            "list_literal",
-            range_to(lb.range.start, rb_end),
-            children,
-        )
+        make_node("list_literal", range_to(lb.range.start, rb_end), children)
     }
 }
 
@@ -4162,7 +4512,11 @@ impl Parser<'_> {
 
     fn parse_static_ref(&mut self) -> SyntaxNode {
         let start = self.peek().range.start;
-        self.expect(TokenKind::At, "unknown-ref", "Expected `@` static reference");
+        self.expect(
+            TokenKind::At,
+            "unknown-ref",
+            "Expected `@` static reference",
+        );
         let mut children = Vec::new();
         if matches!(self.peek_kind(), TokenKind::Ident | TokenKind::Speaker) {
             let t = self.advance().clone();
@@ -4238,31 +4592,56 @@ impl Parser<'_> {
         while !self.at_eof() && !self.should_stop_inline(&stop) {
             // Backlink — `[[ ... ]]`.
             if self.at(TokenKind::LBrack2) {
-                flush_literal(&mut children, &mut literal_acc, &mut literal_start, literal_end);
+                flush_literal(
+                    &mut children,
+                    &mut literal_acc,
+                    &mut literal_start,
+                    literal_end,
+                );
                 children.push(self.parse_backlink());
                 continue;
             }
             // Range closer — `</>` or `</%name>`.
             if self.at(TokenKind::LtSlashGt) {
-                flush_literal(&mut children, &mut literal_acc, &mut literal_start, literal_end);
+                flush_literal(
+                    &mut children,
+                    &mut literal_acc,
+                    &mut literal_start,
+                    literal_end,
+                );
                 let t = self.advance().clone();
                 children.push(leaf(nk::RANGE_CLOSER, t.range, t.text));
                 continue;
             }
             if self.at(TokenKind::LtSlashPct) {
-                flush_literal(&mut children, &mut literal_acc, &mut literal_start, literal_end);
+                flush_literal(
+                    &mut children,
+                    &mut literal_acc,
+                    &mut literal_start,
+                    literal_end,
+                );
                 children.push(self.parse_named_range_closer());
                 continue;
             }
             // Conditional trigger — `<?expr><trig>`.
             if self.at(TokenKind::LtQMark) {
-                flush_literal(&mut children, &mut literal_acc, &mut literal_start, literal_end);
+                flush_literal(
+                    &mut children,
+                    &mut literal_acc,
+                    &mut literal_start,
+                    literal_end,
+                );
                 children.push(self.parse_cond_trigger());
                 continue;
             }
             // Inline assign — `<$x := expr>` (or `<$x.field += rhs>` etc.).
             if self.at(TokenKind::Lt) && self.peek_n(1).kind == TokenKind::Dollar {
-                flush_literal(&mut children, &mut literal_acc, &mut literal_start, literal_end);
+                flush_literal(
+                    &mut children,
+                    &mut literal_acc,
+                    &mut literal_start,
+                    literal_end,
+                );
                 children.push(self.parse_inline_assign());
                 continue;
             }
@@ -4273,37 +4652,59 @@ impl Parser<'_> {
             // else is a literal less-than.
             if self.at(TokenKind::Lt)
                 && matches!(self.peek_n(1).kind, TokenKind::Ident | TokenKind::Speaker)
-                && matches!(
-                    self.peek_n(2).kind,
-                    TokenKind::Colon | TokenKind::Plus
-                )
+                && matches!(self.peek_n(2).kind, TokenKind::Colon | TokenKind::Plus)
             {
-                flush_literal(&mut children, &mut literal_acc, &mut literal_start, literal_end);
+                flush_literal(
+                    &mut children,
+                    &mut literal_acc,
+                    &mut literal_start,
+                    literal_end,
+                );
                 children.push(self.parse_inline_trigger());
                 continue;
             }
             // Inline eval — `${...}` or `$(...)`.
             if self.at(TokenKind::DollarBrace) || self.at(TokenKind::DollarParen) {
-                flush_literal(&mut children, &mut literal_acc, &mut literal_start, literal_end);
+                flush_literal(
+                    &mut children,
+                    &mut literal_acc,
+                    &mut literal_start,
+                    literal_end,
+                );
                 children.push(self.parse_resolve_ref());
                 continue;
             }
             // Resolve ref — `$name(.field)*`.
             if self.at(TokenKind::Dollar) {
-                flush_literal(&mut children, &mut literal_acc, &mut literal_start, literal_end);
+                flush_literal(
+                    &mut children,
+                    &mut literal_acc,
+                    &mut literal_start,
+                    literal_end,
+                );
                 children.push(self.parse_resolve_ref());
                 continue;
             }
             // Static ref — `@name(.sub)*`.
             if self.at(TokenKind::At) {
-                flush_literal(&mut children, &mut literal_acc, &mut literal_start, literal_end);
+                flush_literal(
+                    &mut children,
+                    &mut literal_acc,
+                    &mut literal_start,
+                    literal_end,
+                );
                 children.push(self.parse_static_ref());
                 continue;
             }
             // Text variation — `[a / b / c].mode`. Distinguished from a
             // bare `[` literal by looking for the `/` separator inside.
             if self.at(TokenKind::LBrack) && self.looks_like_text_variation() {
-                flush_literal(&mut children, &mut literal_acc, &mut literal_start, literal_end);
+                flush_literal(
+                    &mut children,
+                    &mut literal_acc,
+                    &mut literal_start,
+                    literal_end,
+                );
                 children.push(self.parse_text_variation());
                 continue;
             }
@@ -4331,7 +4732,12 @@ impl Parser<'_> {
             literal_end = t.range.end;
         }
 
-        flush_literal(&mut children, &mut literal_acc, &mut literal_start, literal_end);
+        flush_literal(
+            &mut children,
+            &mut literal_acc,
+            &mut literal_start,
+            literal_end,
+        );
 
         let end = self.peek().range.start;
         make_node(nk::TEXT_CONTENT, range_to(start, end), children)
@@ -4345,7 +4751,9 @@ impl Parser<'_> {
                 self.at(TokenKind::Slash) || self.at(TokenKind::RBrack)
             }
             InlineStop::ChoiceLabel => {
-                self.at(TokenKind::Newline) || self.at(TokenKind::Arrow) || self.peek().is_word("if")
+                self.at(TokenKind::Newline)
+                    || self.at(TokenKind::Arrow)
+                    || self.peek().is_word("if")
             }
         }
     }
@@ -4393,10 +4801,7 @@ impl Parser<'_> {
             let disp_start = self.peek().range.start;
             let mut disp_text = String::new();
             let mut disp_end = disp_start;
-            while !self.at(TokenKind::RBrack2)
-                && !self.at(TokenKind::Newline)
-                && !self.at_eof()
-            {
+            while !self.at(TokenKind::RBrack2) && !self.at(TokenKind::Newline) && !self.at_eof() {
                 let t = self.advance();
                 if !disp_text.is_empty() {
                     disp_text.push(' ');
@@ -4426,7 +4831,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Gt, "range-unclosed", "Expected `>` after named anchor");
+        self.expect(
+            TokenKind::Gt,
+            "range-unclosed",
+            "Expected `>` after named anchor",
+        );
         let end = self.peek().range.start;
         make_node(nk::RANGE_CLOSER, range_to(start, end), children)
     }
@@ -4435,12 +4844,17 @@ impl Parser<'_> {
         let start = self.peek().range.start;
         self.advance(); // `<?`
         let mut children = vec![self.parse_expression()];
-        self.expect(TokenKind::Gt, "range-unclosed", "Expected `>` after conditional expression");
+        self.expect(
+            TokenKind::Gt,
+            "range-unclosed",
+            "Expected `>` after conditional expression",
+        );
         // The following trigger.
         if self.at(TokenKind::Lt) {
             children.push(self.parse_inline_trigger());
         } else {
-            children.push(self.error_node("unknown-trigger-kw", "Expected trigger after conditional"));
+            children
+                .push(self.error_node("unknown-trigger-kw", "Expected trigger after conditional"));
         }
         let end = self.peek().range.start;
         make_node(nk::COND_TRIGGER, range_to(start, end), children)
@@ -4459,7 +4873,11 @@ impl Parser<'_> {
             self.advance().clone()
         } else {
             // Defensive: emit an error but keep going.
-            self.diag("assign-op-mismatch", Severity::Error, "Expected assignment operator in inline assign");
+            self.diag(
+                "assign-op-mismatch",
+                Severity::Error,
+                "Expected assignment operator in inline assign",
+            );
             self.advance().clone()
         };
         children.push(leaf("assign_op", op_tok.range, op_tok.text.clone()));
@@ -4531,17 +4949,29 @@ impl Parser<'_> {
                 }
                 // Fall through — unknown tail token. Eat to avoid an
                 // infinite loop, but flag.
-                self.diag("unknown-trigger-kw", Severity::Warning, format!(
-                    "Unexpected token `{}` inside inline trigger",
-                    self.peek().text
-                ));
+                self.diag(
+                    "unknown-trigger-kw",
+                    Severity::Warning,
+                    format!(
+                        "Unexpected token `{}` inside inline trigger",
+                        self.peek().text
+                    ),
+                );
                 self.advance();
             }
         }
 
-        self.expect(TokenKind::Gt, "range-unclosed", "Expected `>` to close inline trigger");
+        self.expect(
+            TokenKind::Gt,
+            "range-unclosed",
+            "Expected `>` to close inline trigger",
+        );
         let end = self.peek().range.start;
-        let kind = if is_chain { nk::CHAIN_TRIGGER } else { nk::INLINE_TRIGGER };
+        let kind = if is_chain {
+            nk::CHAIN_TRIGGER
+        } else {
+            nk::INLINE_TRIGGER
+        };
         make_node(kind, range_to(start, end), children)
     }
 
@@ -4554,7 +4984,11 @@ impl Parser<'_> {
             let t = self.advance().clone();
             children.push(leaf(nk::IDENT, t.range, t.text));
         }
-        self.expect(TokenKind::Colon, "doc-header-id", "Expected `:` in trigger head");
+        self.expect(
+            TokenKind::Colon,
+            "doc-header-id",
+            "Expected `:` in trigger head",
+        );
         // Args — accumulate text up to `+` / `>` / `for:` / `%name` /
         // named-attr / newline.
         let args_start = self.peek().range.start;
@@ -4562,7 +4996,11 @@ impl Parser<'_> {
         let mut args_end = args_start;
         while !matches!(
             self.peek_kind(),
-            TokenKind::Plus | TokenKind::Gt | TokenKind::Percent | TokenKind::Newline | TokenKind::Eof
+            TokenKind::Plus
+                | TokenKind::Gt
+                | TokenKind::Percent
+                | TokenKind::Newline
+                | TokenKind::Eof
         ) {
             if self.peek().is_word("for") && self.peek_n(1).kind == TokenKind::Colon {
                 break;
@@ -4667,7 +5105,11 @@ impl Parser<'_> {
             }
             break;
         }
-        self.expect(TokenKind::RBrack, "bracket-unbalanced", "Expected `]` to close text variation");
+        self.expect(
+            TokenKind::RBrack,
+            "bracket-unbalanced",
+            "Expected `]` to close text variation",
+        );
 
         // Optional mode: `.cycle`, `.shuffle`, `.weighted(0.7, 0.3)`,
         // etc.
@@ -4796,18 +5238,14 @@ mod tests {
 
     #[test]
     fn parses_properties_under_header() {
-        let r = parse_ok(
-            "# story\n  .actors wren, hale\n  .tags chapter-1\n",
-        );
+        let r = parse_ok("# story\n  .actors wren, hale\n  .tags chapter-1\n");
         let root = root_to_node(&r.root);
         assert_eq!(count_kind(&root, nk::PROPERTY), 2);
     }
 
     #[test]
     fn parses_docstring_after_properties() {
-        let r = parse_ok(
-            "# story\n  .actors wren\n\n'''\nOpening.\n'''\n\n",
-        );
+        let r = parse_ok("# story\n  .actors wren\n\n'''\nOpening.\n'''\n\n");
         let doc = &r.root.children[0];
         let ds = find_kind(doc, nk::DOCSTRING).expect("docstring");
         assert!(ds.value.as_deref().unwrap().contains("Opening"));
@@ -4815,9 +5253,7 @@ mod tests {
 
     #[test]
     fn parses_cast_decl_with_properties() {
-        let r = parse_ok(
-            "# story\n\ncast WREN\n  .label \"Wren\"\n  .voice female_mezzo\n",
-        );
+        let r = parse_ok("# story\n\ncast WREN\n  .label \"Wren\"\n  .voice female_mezzo\n");
         let cast = find_kind(&r.root.children[0], nk::CAST_DECL).expect("cast");
         assert_eq!(cast.children[0].kind, nk::SPEAKER);
         assert_eq!(cast.children[0].value.as_deref(), Some("WREN"));
@@ -4871,7 +5307,8 @@ mod tests {
 
     #[test]
     fn parses_each_visit() {
-        let src = "# d\n-- s\neach visit\n  first\n    WREN\n      hi\n  then\n    WREN\n      again\n";
+        let src =
+            "# d\n-- s\neach visit\n  first\n    WREN\n      hi\n  then\n    WREN\n      again\n";
         let r = parse_ok(src);
         assert!(find_kind(&r.root.children[0], nk::EACH_VISIT_BLOCK).is_some());
     }
@@ -4996,9 +5433,7 @@ mod tests {
         // The expression's `(` opens a group that's never closed before
         // the newline; the parser should flag it.
         assert!(
-            r.diagnostics
-                .iter()
-                .any(|d| d.id == "bracket-unbalanced"),
+            r.diagnostics.iter().any(|d| d.id == "bracket-unbalanced"),
             "expected bracket-unbalanced diagnostic, got {:?}",
             r.diagnostics
         );
@@ -5102,7 +5537,10 @@ mod tests {
         let r = parse_ok(src);
         let lit = find_kind(&r.root.children[0], nk::LITERAL_RUN).expect("literal");
         let v = lit.value.as_deref().unwrap_or("");
-        assert!(v.contains("I'll"), "expected `I'll` to survive intact, got `{v}`");
+        assert!(
+            v.contains("I'll"),
+            "expected `I'll` to survive intact, got `{v}`"
+        );
     }
 
     #[test]
@@ -5111,7 +5549,10 @@ mod tests {
         let r = parse_ok(src);
         let closer = find_kind(&r.root.children[0], nk::RANGE_CLOSER).expect("closer");
         // The named form has an identifier child carrying the anchor name.
-        assert!(closer.children.iter().any(|c| c.value.as_deref() == Some("slow")));
+        assert!(closer
+            .children
+            .iter()
+            .any(|c| c.value.as_deref() == Some("slow")));
     }
 
     // ── §16 character archetype ─────────────────────────────────────
@@ -5163,7 +5604,10 @@ mod tests {
             })
             .expect("drives knob");
         // Should reference the generator name.
-        assert!(drives.children.iter().any(|c| c.value.as_deref() == Some("wander_with_purpose")));
+        assert!(drives
+            .children
+            .iter()
+            .any(|c| c.value.as_deref() == Some("wander_with_purpose")));
     }
 
     #[test]

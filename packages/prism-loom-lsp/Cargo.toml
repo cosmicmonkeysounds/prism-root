@@ -1,0 +1,22 @@
+[package]
+name = "prism-loom-lsp"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Language Server Protocol implementation for the Loom storytelling language. Speaks JSON-RPC over stdio; backed by prism_core::language::loom."
+
+[lib]
+name = "prism_loom_lsp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "prism-loom-lsp"
+path = "src/bin/prism-loom-lsp.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+lsp-server = { workspace = true }
+lsp-types = { workspace = true }
+prism-core = { path = "../prism-core" }

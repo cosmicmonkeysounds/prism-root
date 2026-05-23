@@ -1,37 +1,52 @@
 # Loom (Prism) — Zed extension
 
-Minimal Zed extension for `.loom` files. Part of the
+Zed extension for the Loom storytelling language. Part of the
 [Prism Framework](https://github.com/anthropics/prism-root).
 
-## What it covers today
+## What it does
 
-- File association for `.loom`.
-- Comment markers (`//`, `/* … */`).
-- Auto-closing brackets for `{ }`, `[ ]`, `( )`, `[[ ]]`, `${ }`,
-  `$( )`, and `" "`.
-- Default indent (2 spaces, no hard tabs) — Loom is
+- **File association** for `.loom`.
+- **Comment markers** (`//`, `/* … */`).
+- **Auto-closing brackets** for `{ }`, `[ ]`, `( )`, `[[ ]]`,
+  `${ }`, `$( )`, and `" "`.
+- **Default indent**: 2 spaces, no hard tabs — Loom is
   indentation-sensitive (`loom-grammar.md` §2.3).
+- **LSP wiring**: spawns `prism loom lsp` and streams diagnostics,
+  hover, completion, and semantic-token highlights from the
+  canonical Loom parser in
+  [`prism-core::language::loom`](../../../packages/prism-core/src/language/loom/).
 
-## What it doesn't cover yet
+## Setup
 
-**No syntax highlighting.** Zed renders syntax via tree-sitter
-grammars, and the Prism Loom contribution doesn't ship one. The
-`prism-framework/vscode-loom` extension covers VSCode / Sublime /
-IntelliJ / GitHub Linguist via the canonical
-`loom.tmLanguage.json` (also under `tools/loom-syntax/`); Zed
-intentionally goes a different route.
+1. Install the unified `prism` binary on your PATH (see the
+   workspace root for `./scripts/install-cli.sh`). The extension
+   shells out to `prism loom lsp`.
+2. From Zed's command palette: `zed: install dev extension`, point
+   it at this directory.
+3. Open a `.loom` file — diagnostics appear inline, hover reveals
+   keyword help, completion suggests reserved words, and semantic
+   tokens colour the source via the LSP stream.
 
-The plan is to ship a Prism Loom **LSP server** (backed by the
-canonical Loom parser in `prism-core::language::loom`) that emits
-LSP semantic tokens. Zed picks those up natively and renders
-highlights matching the validator's view of the source — accurate by
-construction. The `[language_servers.loom-lsp]` block in
-`extension.toml` reserves the name; the server binary is the next
-deliverable.
+## Override the LSP path
 
-## Local development
+If you don't want to install the full `prism` binary, you can run
+the standalone `prism-loom-lsp` instead. Add to your Zed settings:
 
-1. `zed: install dev extension` from the command palette.
-2. Point it at this directory.
-3. Open any `.loom` file — bracket pairing and comments should work
-   immediately. Highlights will appear once the LSP server lands.
+```jsonc
+"lsp": {
+  "prism-loom": {
+    "binary": {
+      "path": "/absolute/path/to/target/debug/prism-loom-lsp",
+      "arguments": []
+    }
+  }
+}
+```
+
+## How it differs from the VSCode extension
+
+The `vscode-loom` extension highlights via a regex TextMate grammar.
+This Zed extension highlights via LSP semantic tokens, which see the
+actual parse tree — so an unknown `@cue` shows as an error, not just
+a static-ref. Both share the same diagnostic ids (§21 of the
+grammar doc).

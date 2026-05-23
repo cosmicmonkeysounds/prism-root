@@ -38,49 +38,45 @@ Rust on every codegen run and your changes will be overwritten.
 
 ## Editor coverage
 
-| Editor | Today | Tomorrow |
+| Editor | Today | Notes |
 |---|---|---|
-| **VSCode** | TextMate highlights (`vscode-loom/`) | LSP semantic tokens (refines this) |
-| **Sublime Text 3+** | TextMate highlights (drop `loom.tmLanguage.json` in) | LSP if it grows a Loom client |
-| **IntelliJ / JetBrains** | TextMate highlights (via the TextMate bundle plugin) | LSP via official extension |
-| **GitHub** | TextMate highlights (pending Linguist PR) | — |
-| **Zed** | File association + brackets only (`zed-loom/`) | LSP semantic tokens (renders highlights) |
-| **Neovim / Helix** | LSP from day one (when it ships) | — |
+| **VSCode** | TextMate highlights (`vscode-loom/`) | LSP refines via `prism loom lsp`; configure via `vscode-langservers-extracted`. |
+| **Sublime Text 3+** | TextMate highlights (drop `loom.tmLanguage.json` in) | LSP via the `LSP` package + custom client config. |
+| **IntelliJ / JetBrains** | TextMate highlights (via the TextMate bundle plugin) | LSP via the JetBrains LSP API. |
+| **GitHub** | TextMate highlights (pending Linguist PR) | No LSP path on github.com. |
+| **Zed** | Full LSP-driven highlights via `zed-loom/` | Diagnostics + hover + completion + semantic tokens, all from the canonical parser. |
+| **Neovim / Helix** | LSP via the standalone `prism-loom-lsp` binary | Add a server config pointing at `target/debug/prism-loom-lsp` (or `prism loom lsp`). |
 
-## Why TextMate now and LSP next
+## Two layers: TextMate + LSP
 
 TextMate grammars are regex-based and approximate. They do well at
 **lexical** classification (this run of characters is a keyword;
 this span is a string) and badly at **structural** classification
-(is this `node` identifier the declaration or a reference?). They're
-also the *de facto* lingua franca — VSCode, Sublime, IntelliJ,
-GitHub Linguist, and many others all read the same JSON, so one
-file covers a huge surface area.
+(is this `node` identifier the declaration or a reference?).
+They're the *de facto* lingua franca — VSCode, Sublime, IntelliJ,
+GitHub Linguist all consume the same JSON.
 
-What they can't do is reflect the validator's view of the source.
-[`loom-grammar.md` §21](../../docs/dev/loom-grammar.md#21-diagnostics-lint-catalog)
-lists ~60 diagnostic IDs the parser will emit — unknown casts,
-unbalanced range openers, dedent jumps, cycles in the disposition
-mirror graph, stance default conflicts, etc. None of those are
-expressible in a TextMate grammar. They need a real parser.
+The **LSP server** ([`packages/prism-loom-lsp`](../../packages/prism-loom-lsp/))
+is the structural layer. It's backed by the canonical Loom parser
+inside
+[`prism-core::language::loom`](../../packages/prism-core/src/language/loom/)
+and emits:
 
-The plan is a small Prism LSP server (`prism loom lsp`) backed by
-the canonical Loom parser inside
-[`prism-core::language::loom`](../../packages/prism-core/src/language/loom/).
-It will emit:
+- **Semantic tokens** — refines TextMate guesses with the parser's
+  verdict (an unknown `@cue` shows as an error, not just a
+  static-ref).
+- **Diagnostics** — the parser surfaces ~20 of the §21 ids today
+  (lex errors, unbalanced brackets, indent jumps, unknown action
+  keywords, …); the validator pass that adds registry-driven ones
+  (`unknown-cast`, `divert-target-unknown`, `stance-cycle`, …) is
+  the next deliverable.
+- **Hover** — keyword help + category labels from the
+  `keywords.rs` registry.
+- **Completion** — reserved words filtered by prefix.
 
-- **Semantic tokens** — refining the TextMate guess with the
-  validator's verdict (e.g. an unknown `@cue` is highlighted as an
-  error, not just a static-ref).
-- **Diagnostics** — every rule in `loom-grammar.md` §21, surfaced
-  inline.
-- **Hover** — keyword help, sigil reminders, ledger predicate
-  signatures.
-- **Completion** — registry-aware: only casts you've declared,
-  only cues that exist, only stance levels in the registry.
-
-The parser itself is the next deliverable — `prism-core/CLAUDE.md`
-tracks `language::loom` as the new contribution slot.
+Launch it via `prism loom lsp` (uses the unified `prism` binary) or
+the standalone `prism-loom-lsp` binary if you'd rather not install
+the whole CLI.
 
 ## Installing the extensions
 

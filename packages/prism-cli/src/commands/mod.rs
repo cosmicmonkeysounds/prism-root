@@ -20,6 +20,7 @@ pub mod e2e;
 pub mod fmt;
 pub mod gc;
 pub mod lint;
+pub mod loom;
 pub mod new;
 pub mod rewrite_canonical;
 pub mod scripts;
@@ -89,6 +90,8 @@ pub enum Command {
     /// (`docs/dev/prui-expressiveness-roadmap.md` §6.24).
     #[command(name = "rewrite-canonical")]
     RewriteCanonical(rewrite_canonical::RewriteCanonicalArgs),
+    /// Loom storytelling-language tools (`prism loom lsp`, …).
+    Loom(loom::LoomArgs),
 }
 
 /// Dispatch a parsed [`Cli`] to the right subcommand.
@@ -109,6 +112,7 @@ pub fn run(cli: &Cli, workspace: &Workspace) -> Result<u8> {
         Command::Scripts(args) => scripts::run(args, workspace, cli.dry_run),
         Command::New(args) => new::run(args, workspace, cli.dry_run),
         Command::RewriteCanonical(args) => rewrite_canonical::run(args, workspace, cli.dry_run),
+        Command::Loom(args) => loom::run(args, workspace, cli.dry_run),
     }
 }
 
