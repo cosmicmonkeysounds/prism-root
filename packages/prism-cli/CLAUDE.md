@@ -76,34 +76,33 @@ expanded argv without executing anything.
 - `relay` → `cargo build -p prism-relay`. The Rust axum SSR server
   replaced the Hono TS relay on 2026-04-15.
 
-### `prism dev [shell|studio|web|relay|all] [--no-hot-reload]`
+### `prism dev [shell|studio|web|relay|all] [--no-hot-reload] [--hot=respawn|subsecond]`
 - Defaults to `shell`.
-- **Hot-reload is on by default** for any target that runs the
-  shell (§7 of `docs/dev/slint-migration-plan.md`). Two orthogonal
-  legs compose into one experience:
-  1. **`.slint` → Slint live-preview.** The cargo command gets
-     `--features prism-shell/live-preview` and a compile-time
-     `SLINT_LIVE_PREVIEW=1` env var. `slint-build` swaps the baked
-     `AppWindow` codegen for a `LiveReloadingComponent` wrapper
-     that parses `ui/app.slint` at runtime via `slint-interpreter`
-     and reloads it whenever the file changes. In-process, zero
-     CLI work.
-  2. **`.rs` → respawn.** Single-target `prism dev shell` runs the
-     cargo child inside `dev_loop::DevLoop`, which wraps
-     `WatchLoop` over `packages/prism-shell/src/`. Any `.rs` batch
-     kills the child and re-execs `cargo run`; cargo's incremental
-     compile keeps iteration fast.
-  `--no-hot-reload` drops the env var, the feature flag, and the
-  respawn loop — useful when the interpreter's compile cost is
-  unacceptable or when debugging something the extra wiring
-  obscures.
+- **Native run targets (`shell` / `studio` / `relay`, single or `all`)
+  are compiled by one combined `cargo build` and the dev child execs
+  the prebuilt binary directly** (see `prism-shell` CLAUDE.md for why:
+  a fixed package set + feature resolution keeps `target/.cargo-lock`
+  contention down and avoids feature-flag ping-ponging between
+  alternating dev invocations).
+- **Hot-reload is on by default.** Single-target `prism dev shell`
+  runs the cargo child inside [`crate::dev_loop::DevLoop`], which
+  watches `packages/prism-shell/src/` for `.rs` changes and kills +
+  respawns the child when a batch lands. cargo's incremental
+  compilation keeps iteration fast. `.prui` skeleton edits are
+  picked up on the next respawn — the source-first runtime parses
+  the file at boot. `--no-hot-reload` disables the respawn loop.
+- **`--hot=subsecond`** (Phase 9 of `docs/dev/dioxus-inspiration.md`)
+  compiles the shell with `--features hot-reload` so `subsecond::call`
+  wraps the render walk, letting the patch pipeline swap in a changed
+  `lower_ui` body without dropping the `Surface` tree or reactive
+  `Owner` graph. Falls back to `respawn` for changes subsecond can't
+  patch (struct-layout edits, public-API breaks).
 - `web` is special: runs the `wasm32-unknown-unknown` cargo build
   and the wasm-bindgen post-process as a synchronous preflight,
   then execs `python3 -m http.server 1420 --directory
   packages/prism-shell/web` as the long-running child. Re-invoke
   `prism dev web` for a rebuild — the dev loop's `.rs` respawn
-  half is native-only because Slint's live-preview currently
-  requires the native backend.
+  half is native-only.
 - `all` spawns every target behind the process supervisor:
   - Each child gets a colored label prefix on every output line.
   - First non-zero exit tears down all siblings.
@@ -111,9 +110,7 @@ expanded argv without executing anything.
   - Web's preflight (cargo build + wasm-bindgen) runs once before
     the supervisor starts, so the web child is just the static
     server.
-  - The shell slot still ships with live-preview flags (pure cargo
-    arg propagation) so `.slint` hot-reload works in `all` mode.
-    The `.rs` respawn half is inactive in multi-target mode — the
+  - The `.rs` respawn half is inactive in multi-target mode — the
     `Supervisor` can't kill + respawn individual children mid-run.
     Users who want the full loop should run `prism dev shell`
     alone.
@@ -121,7 +118,7 @@ expanded argv without executing anything.
 ### `prism e2e [--test <name>] [--list] [--record] [--output <dir>]`
 - End-to-end test suite. Runs built-in test scripts through the
   `prism-shell` binary in `--e2e` mode. Each script drives the shell
-  through the same Slint callback paths a human uses — key combos,
+  through the same callback-level paths a human uses — key combos,
   command dispatch, grid cell clicks, viewport switches — then
   asserts expected `AppState` outcomes.
 - `--test viewport-switching` — run a single test.
@@ -263,9 +260,9 @@ sibling crates can reach into it without going through `std::process`.
   Accepts a user-supplied `LineSink` so tests can capture output
   instead of writing to stdout, and a user-supplied shutdown
   future so tests can simulate Ctrl+C deterministically.
-- `watch::WatchLoop` — Phase 1 notify-driven file watcher scaffold
-  (§11 of `docs/dev/slint-migration-plan.md`). Wraps
-  `notify::RecommendedWatcher` and exposes
+- `watch::WatchLoop` — notify-driven file watcher (§11 of the
+  original `docs/dev/slint-migration-plan.md`, lifted into the
+  unified dev loop). Wraps `notify::RecommendedWatcher` and exposes
   `next_batch(timeout)` / `try_next_batch()` that return
   deduplicated `WatchBatch { paths }` values debounced over a
   150ms default window. Drops pure access events

@@ -115,7 +115,7 @@ paradigm, ported to Rust:
 | `transport-http` | axum + tokio + tower                        | HTTP adapter: `POST /invoke/:command`          |
 | `transport-grpc` | tonic + prost + tokio                       | gRPC adapter: hand-rolled `DaemonService/Invoke` |
 | `transport-uniffi` | uniffi                                    | Typed Swift/Kotlin bindings                    |
-| `transport-ipc`  | interprocess + postcard                     | Local IPC adapter: length-prefixed postcard frames over unix sockets / named pipes; the Slint-based Studio ↔ daemon sidecar wire (see `docs/dev/slint-migration-plan.md`) |
+| `transport-ipc`  | interprocess + postcard                     | Local IPC adapter: length-prefixed postcard frames over unix sockets / named pipes; the `prism-studio` desktop ↔ daemon sidecar wire (see `docs/dev/clay-migration-plan.md` §4.5) |
 
 Mobile/embedded/wasm builds don't contain the code they can't run.
 Individual capabilities: `crdt`, `luau`, `build`, `watcher`, `vfs`,
@@ -159,10 +159,10 @@ are thin wrappers:
   `serde_json::Value` is `#[serde(untagged)]` and postcard's
   non-self-describing format can't round-trip it. The `prism-daemond`
   binary exposes this mode via `--ipc-socket <display>`; the
-  Slint-based Studio (`prism-studio/src-tauri`, name is a
+  `prism-studio` desktop shell (`prism-studio/src-tauri`, name is a
   historical artefact) is the canonical client and uses it to talk to
   the daemon sidecar over this wire (see
-  `docs/dev/slint-migration-plan.md`). **Phase 6 of
+  `docs/dev/clay-migration-plan.md` §4.5). **Phase 6 of
   `docs/dev/dioxus-inspiration.md`:** the same wire is also reachable
   through `IpcInvoker::connect(display)` — a
   `prism_core::reactive::ipc::DaemonInvoker` impl that holds the
@@ -220,7 +220,7 @@ are thin wrappers:
   banner + `daemon.capabilities` + `crdt.write` + unknown-command
   error paths through length-prefixed postcard frames, and confirm
   the child reaps cleanly after a kill. The spawn/supervise/kill
-  proof for the Slint-Studio ↔ daemon sidecar wire.
+  proof for the `prism-studio` ↔ daemon sidecar wire.
 The Playwright-driven browser E2E suite (`e2e/wasm.spec.ts`) and the
 `scripts/test-all.sh` full-matrix runner were retired 2026-04-15
 alongside the Hono TS relay. The C-ABI `src/wasm.rs` tests still

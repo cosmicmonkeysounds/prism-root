@@ -34,9 +34,9 @@
 //! stdio loop to the local-IPC transport defined in
 //! [`prism_daemon::transport::ipc_local`]. Frames are length-prefixed
 //! `postcard` encodings of [`prism_daemon::IpcRequest`] /
-//! [`prism_daemon::IpcResponse`]. This is the mode the Slint-based
-//! Studio shell uses to talk to the daemon sidecar (see
-//! `docs/dev/slint-migration-plan.md`). Only available when the
+//! [`prism_daemon::IpcResponse`]. This is the mode the `prism-studio`
+//! desktop shell uses to talk to the daemon sidecar (see
+//! `docs/dev/clay-migration-plan.md` §4.5). Only available when the
 //! binary is compiled with the `transport-ipc` feature.
 //!
 //! ### Permission tier

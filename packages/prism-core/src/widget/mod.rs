@@ -2,7 +2,8 @@
 //!
 //! Core engines declare widgets via [`WidgetContribution`]; the builder
 //! wraps each contribution in a `CoreWidgetComponent` that implements
-//! `Component` and renders through the existing Slint pipeline.
+//! `Component` and renders through the unified `lower_ui` pipeline
+//! (`prism-ui-runtime` natively, `lower_semantic_html` for SSR).
 //!
 //! [`FieldSpec`] is the unified field descriptor used by property panels,
 //! widget config, facet schemas, and dashboard settings. Moved here from

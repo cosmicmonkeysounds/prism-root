@@ -249,7 +249,8 @@ mod tests {
         let src = "# d\ngoal investigate\n  active_when = $x\n";
         let d = p.diagnose(src, None);
         assert!(
-            d.iter().any(|x| x.code.as_deref() == Some("goal-no-priority")),
+            d.iter()
+                .any(|x| x.code.as_deref() == Some("goal-no-priority")),
             "expected goal-no-priority in {:?}",
             d
         );

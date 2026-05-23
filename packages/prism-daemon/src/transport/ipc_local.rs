@@ -1,9 +1,9 @@
 //! Local IPC transport — length-prefixed `postcard` frames over
 //! `interprocess::local_socket`.
 //!
-//! This is the wire the Slint-based `prism-studio` shell uses to
-//! talk to the daemon sidecar (see `docs/dev/slint-migration-plan.md`).
-//! The
+//! This is the wire the `prism-studio` desktop shell uses to talk to
+//! the daemon sidecar (see `docs/dev/clay-migration-plan.md` §4.5).
+//! The original
 //! plan's open question on "postcard vs. tarpc" is resolved to raw
 //! postcard here: the daemon kernel is sync and exposes a single
 //! `invoke(name, payload_json) -> result_json` entry point, which is a

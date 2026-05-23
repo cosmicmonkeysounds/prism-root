@@ -2,9 +2,9 @@
 //!
 //! Port of `packages/prism-studio/src/kernel/studio-kernel.ts` at 8426588,
 //! reduced to the parts that survived the Slint migration. The Rust
-//! version is narrower by design: Slint owns the UI tree, so
-//! UI-specific registries stay out of `prism-core` and live in
-//! `prism-shell` or a host crate. What's left is the bag of
+//! version is narrower by design: `prism-shell` owns the UI tree (via
+//! `prism-ui-runtime`), so UI-specific registries stay out of
+//! `prism-core` and live in `prism-shell` or a host crate. What's left is the bag of
 //! framework-free primitives every app composes:
 //!
 //! - `object_registry` — entity + edge type definitions.

@@ -108,11 +108,7 @@ fn collect_registry(root: &RootNode, diagnostics: &mut Vec<LoomDiagnostic>) -> R
     reg
 }
 
-fn collect_in_node(
-    node: &SyntaxNode,
-    reg: &mut Registry,
-    diagnostics: &mut Vec<LoomDiagnostic>,
-) {
+fn collect_in_node(node: &SyntaxNode, reg: &mut Registry, diagnostics: &mut Vec<LoomDiagnostic>) {
     match node.kind.as_str() {
         nk::SECTION => {
             // First IDENT child is the section name (anonymous sections
@@ -131,22 +127,26 @@ fn collect_in_node(
         }
         nk::CAST_DECL => {
             if let Some(name) = find_speaker_or_static_name(node) {
-                reg.casts.insert(name, node.position.unwrap_or_default_safe());
+                reg.casts
+                    .insert(name, node.position.unwrap_or_default_safe());
             }
         }
         nk::CUE_DECL => {
             if let Some(name) = first_ident_value(node) {
-                reg.cues.insert(name, node.position.unwrap_or_default_safe());
+                reg.cues
+                    .insert(name, node.position.unwrap_or_default_safe());
             }
         }
         nk::LOCATION_DECL => {
             if let Some(name) = find_speaker_or_static_name(node) {
-                reg.locations.insert(name, node.position.unwrap_or_default_safe());
+                reg.locations
+                    .insert(name, node.position.unwrap_or_default_safe());
             }
         }
         nk::COHORT_DECL => {
             if let Some(name) = first_ident_value(node) {
-                reg.cohorts.insert(name, node.position.unwrap_or_default_safe());
+                reg.cohorts
+                    .insert(name, node.position.unwrap_or_default_safe());
             }
         }
         nk::INLINE_FACTION_DECL => {
@@ -160,24 +160,31 @@ fn collect_in_node(
         }
         nk::GENERATOR_DECL => {
             if let Some(name) = first_ident_value(node) {
-                reg.generators.insert(name, node.position.unwrap_or_default_safe());
+                reg.generators
+                    .insert(name, node.position.unwrap_or_default_safe());
             }
         }
         nk::SCENE_DECL => {
             if let Some(name) = first_ident_value(node) {
-                reg.scenes.insert(name, node.position.unwrap_or_default_safe());
+                reg.scenes
+                    .insert(name, node.position.unwrap_or_default_safe());
             }
         }
         nk::COMPOSE_DECL => {
             if let Some(name) = first_ident_value(node) {
-                reg.composes.insert(name, node.position.unwrap_or_default_safe());
+                reg.composes
+                    .insert(name, node.position.unwrap_or_default_safe());
             }
         }
         nk::TREE_NODE_DECL => {
             if let Some(name) = first_ident_value(node) {
                 let range = node.position.unwrap_or_default_safe();
                 // `requires <expr>` knob feeds the requires graph.
-                for prop in node.children.iter().filter(|c| c.kind == nk::TREE_NODE_PROPERTY) {
+                for prop in node
+                    .children
+                    .iter()
+                    .filter(|c| c.kind == nk::TREE_NODE_PROPERTY)
+                {
                     if first_ident_value(prop).as_deref() == Some("requires") {
                         for ref_name in extract_referenced_idents(prop) {
                             reg.tree_requires.push((name.clone(), ref_name, range));
@@ -189,27 +196,32 @@ fn collect_in_node(
         }
         nk::GOAL_DECL => {
             if let Some(name) = first_ident_value(node) {
-                reg.goals.insert(name, node.position.unwrap_or_default_safe());
+                reg.goals
+                    .insert(name, node.position.unwrap_or_default_safe());
             }
         }
         nk::AXIS_DECL => {
             if let Some(name) = first_ident_value(node) {
-                reg.axes.insert(name, node.position.unwrap_or_default_safe());
+                reg.axes
+                    .insert(name, node.position.unwrap_or_default_safe());
             }
         }
         nk::POOL_DECL => {
             if let Some(name) = first_ident_value(node) {
-                reg.pools.insert(name, node.position.unwrap_or_default_safe());
+                reg.pools
+                    .insert(name, node.position.unwrap_or_default_safe());
             }
         }
         nk::STAT_DECL => {
             if let Some(name) = first_ident_value(node) {
-                reg.stats.insert(name, node.position.unwrap_or_default_safe());
+                reg.stats
+                    .insert(name, node.position.unwrap_or_default_safe());
             }
         }
         nk::ATTRIBUTE_DECL => {
             if let Some(name) = first_ident_value(node) {
-                reg.attributes.insert(name, node.position.unwrap_or_default_safe());
+                reg.attributes
+                    .insert(name, node.position.unwrap_or_default_safe());
             }
         }
         nk::HEADER => {
@@ -224,7 +236,8 @@ fn collect_in_node(
                         // section / divert nested below this header.
                         // For diagnostic purposes we just note that
                         // this document is script-shaped.
-                        reg.script_doc_ranges.push(node.position.unwrap_or_default_safe());
+                        reg.script_doc_ranges
+                            .push(node.position.unwrap_or_default_safe());
                     }
                 }
             }
@@ -234,8 +247,11 @@ fn collect_in_node(
             if let Some(name) = first_ident_value(node) {
                 for mc in node.children.iter().filter(|c| c.kind == nk::MIRROR_CLAUSE) {
                     if let Some(target) = mirror_target_label(mc) {
-                        reg.disposition_mirrors
-                            .push((name.clone(), target, mc.position.unwrap_or_default_safe()));
+                        reg.disposition_mirrors.push((
+                            name.clone(),
+                            target,
+                            mc.position.unwrap_or_default_safe(),
+                        ));
                     }
                 }
             }
@@ -248,16 +264,10 @@ fn collect_in_node(
     }
 }
 
-fn collect_faction_links(
-    faction_node: &SyntaxNode,
-    name: &str,
-    reg: &mut Registry,
-) {
+fn collect_faction_links(faction_node: &SyntaxNode, name: &str, reg: &mut Registry) {
     walk(faction_node, &mut |node| {
         // `.parent @SomeOther` property
-        if node.kind == nk::PROPERTY
-            && first_ident_value(node).as_deref() == Some("parent")
-        {
+        if node.kind == nk::PROPERTY && first_ident_value(node).as_deref() == Some("parent") {
             for parent in extract_referenced_idents(node) {
                 reg.faction_parents.push((
                     name.to_string(),
@@ -286,26 +296,22 @@ fn collect_faction_links(
 
 // ─── Pass 2 — reference resolution ─────────────────────────────────
 
-fn check_references(
-    root: &RootNode,
-    reg: &Registry,
-    diagnostics: &mut Vec<LoomDiagnostic>,
-) {
+fn check_references(root: &RootNode, reg: &Registry, diagnostics: &mut Vec<LoomDiagnostic>) {
     for doc in &root.children {
         check_refs_in_node(doc, reg, diagnostics);
     }
 }
 
-fn check_refs_in_node(
-    node: &SyntaxNode,
-    reg: &Registry,
-    diagnostics: &mut Vec<LoomDiagnostic>,
-) {
+fn check_refs_in_node(node: &SyntaxNode, reg: &Registry, diagnostics: &mut Vec<LoomDiagnostic>) {
     match node.kind.as_str() {
         // Speaker-led dialogue: the speaker token must be a declared cast.
         nk::DIALOGUE => {
             if let Some(speaker_ref) = node.children.iter().find(|c| c.kind == nk::SPEAKER_REF) {
-                for sp in speaker_ref.children.iter().filter(|c| c.kind == nk::SPEAKER) {
+                for sp in speaker_ref
+                    .children
+                    .iter()
+                    .filter(|c| c.kind == nk::SPEAKER)
+                {
                     if let Some(name) = sp.value.as_deref() {
                         if !reg.casts.contains_key(name) {
                             diagnostics.push(diag(
@@ -326,7 +332,10 @@ fn check_refs_in_node(
         nk::DIVERT => {
             // Find first IDENT child (the bare-name path) or static_ref.
             if let Some(first_kid) = node.children.iter().find(|c| {
-                matches!(c.kind.as_str(), nk::IDENT | nk::STATIC_REF | nk::TUNNEL_CALL)
+                matches!(
+                    c.kind.as_str(),
+                    nk::IDENT | nk::STATIC_REF | nk::TUNNEL_CALL
+                )
             }) {
                 if first_kid.kind == nk::IDENT {
                     if let Some(name) = first_kid.value.as_deref() {
@@ -385,7 +394,11 @@ fn check_refs_in_node(
             // After the verb IDENT (joins/leaves) there may be an IDENT
             // for the cohort filter (we serialised `:` then the name
             // into a flat IDENT child).
-            let idents: Vec<_> = node.children.iter().filter(|c| c.kind == nk::IDENT).collect();
+            let idents: Vec<_> = node
+                .children
+                .iter()
+                .filter(|c| c.kind == nk::IDENT)
+                .collect();
             // First IDENT is the verb (joins / leaves). If there's a
             // second IDENT it's the cohort filter.
             if let Some(cohort_node) = idents.get(1) {
@@ -416,7 +429,6 @@ fn check_refs_in_node(
         // Stat / pool / axis / attribute references — postfix field
         // chains on entity refs are too project-wide to validate
         // locally; defer to the validator's project pass.
-
         _ => {}
     }
 
@@ -431,10 +443,13 @@ fn check_keyword_action_refs(
     diagnostics: &mut Vec<LoomDiagnostic>,
 ) {
     // First IDENT is the keyword.
-    let kw = action
-        .children
-        .first()
-        .and_then(|c| if c.kind == nk::IDENT { c.value.as_deref() } else { None });
+    let kw = action.children.first().and_then(|c| {
+        if c.kind == nk::IDENT {
+            c.value.as_deref()
+        } else {
+            None
+        }
+    });
     let Some(kw) = kw else { return };
 
     // Payload is a single PROPERTY_VALUE leaf carrying the rest of the
@@ -455,9 +470,7 @@ fn check_keyword_action_refs(
             if let Some(first) = tokens.first() {
                 let bare = first.strip_prefix('@').unwrap_or(first);
                 if !bare.is_empty()
-                    && bare
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && bare.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
                     && !reg.cues.contains_key(bare)
                 {
                     diagnostics.push(diag(
@@ -475,9 +488,7 @@ fn check_keyword_action_refs(
                 if let Some(coh) = tokens.get(into_idx + 1) {
                     let bare = coh.strip_prefix('@').unwrap_or(coh);
                     if !bare.is_empty()
-                        && bare
-                            .chars()
-                            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                        && bare.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
                         && !reg.cohorts.contains_key(bare)
                     {
                         diagnostics.push(diag(
@@ -496,9 +507,7 @@ fn check_keyword_action_refs(
                 // Strip a `( ... )` arglist suffix if present.
                 let bare = bare.split('(').next().unwrap_or(bare);
                 if !bare.is_empty()
-                    && bare
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && bare.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
                     && !reg.generators.contains_key(bare)
                     && !reg.scenes.contains_key(bare)
                 {
@@ -535,11 +544,7 @@ fn doc_is_script(doc: &SyntaxNode) -> bool {
         .any(|name| name == "script" || name == "film")
 }
 
-fn check_shape_in_node(
-    node: &SyntaxNode,
-    in_script: bool,
-    diagnostics: &mut Vec<LoomDiagnostic>,
-) {
+fn check_shape_in_node(node: &SyntaxNode, in_script: bool, diagnostics: &mut Vec<LoomDiagnostic>) {
     let range = node.position.unwrap_or_default_safe();
     match node.kind.as_str() {
         nk::CHOICE if in_script => {
@@ -998,7 +1003,8 @@ mod tests {
 
     #[test]
     fn faction_with_label_not_flagged() {
-        let src = "# d :immersive\nfaction rebels\n  .label \"Rebels\"\n  state\n    morale = 0..100\n";
+        let src =
+            "# d :immersive\nfaction rebels\n  .label \"Rebels\"\n  state\n    morale = 0..100\n";
         let diags = validate_src(src);
         assert!(!has_id(&diags, "faction-no-label"), "{:?}", diags);
     }

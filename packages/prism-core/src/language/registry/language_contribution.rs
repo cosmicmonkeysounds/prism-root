@@ -8,8 +8,8 @@
 //!
 //! Two generic slots keep `prism-core` framework-free:
 //!
-//! - `R` — the surface renderer type (a Slint-component handle in the
-//!   Studio shell, `()` in headless tests).
+//! - `R` — the surface renderer type (a `prism-ui-runtime` block
+//!   handle in the Studio shell, `()` in headless tests).
 //! - `E` — the editor extension type (CodeMirror `Extension` on the
 //!   web hybrid, `()` elsewhere).
 //!
@@ -31,7 +31,7 @@ use super::surface_types::{InlineTokenDef, SurfaceMode};
 /// `renderers` is a partial map — not every language supports every
 /// mode (markdown has no spreadsheet, CSV has no preview). The
 /// renderer type is opaque at the core level; Studio specialises it
-/// to a Slint-component handle, a headless test can use `()`.
+/// to a `prism-ui-runtime` block handle, a headless test can use `()`.
 #[derive(Clone)]
 pub struct LanguageSurface<R = ()> {
     /// Default editing mode when opening a file of this language.

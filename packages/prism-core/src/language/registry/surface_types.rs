@@ -61,7 +61,8 @@ pub struct InlineTokenDef {
     /// Extract display text and structured data from a regex match.
     pub extract: InlineTokenExtractFn,
     /// CSS class applied in code-mode surfaces (CodeMirror mark
-    /// decoration in the TS tree; Slint class lookup in the Rust tree).
+    /// decoration in the TS tree; the `prism-ui-runtime` text-style
+    /// lookup in the Rust tree).
     pub css_class: Option<String>,
     /// Semantic color hint for chip renderers. Palette matches the
     /// legacy TS palette: `"teal"`, `"amber"`, `"violet"`, `"emerald"`,

@@ -36,7 +36,8 @@ pub struct StyleProperties {
 
 impl StyleProperties {
     /// True when the node carries a visual background or border that
-    /// needs a wrapper `Rectangle` in the Slint output.
+    /// needs to paint a backdrop layer in the lowered `prism-ui-runtime`
+    /// node.
     pub fn has_background_or_border(&self) -> bool {
         self.background.is_some() || self.border_radius.is_some()
     }

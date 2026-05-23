@@ -16,6 +16,11 @@ members = [
     # diagnostics + semantic-token highlights + hover + completion
     # straight from the canonical parser.
     "packages/prism-loom-lsp",
+    # Loom runtime — the playback engine. Compiles a parsed `RootNode`
+    # into a `LoomDatabase` (postcard-serializable bundle) and runs
+    # the playhead + ledger + resolver. Reactivity, scheduler tiers,
+    # and the faction simulator land in follow-up phases.
+    "packages/prism-loom-runtime",
     # Post-Slint render + DSL stack (see
     # `docs/dev/clay-migration-plan.md`). Both crates ship under
     # `MIT OR Apache-2.0`; existing crates stay on GPL.

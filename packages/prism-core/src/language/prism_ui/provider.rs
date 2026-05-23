@@ -1,10 +1,10 @@
 //! `PrismUiSyntaxProvider` — diagnostics, completions, and hover for
 //! `.prui` files.
 //!
-//! Mirrors the `SlintSyntaxProvider` shape: lightweight, no runtime
-//! dependency, intended to give the editor enough intelligence to
-//! navigate the DSL while the heavier `prism-builder` provider layers
-//! component-registry context on top.
+//! Lightweight provider with no runtime dependency, intended to give
+//! the editor enough intelligence to navigate the DSL while the
+//! heavier `prism-builder` provider layers component-registry context
+//! on top.
 
 use super::ast::AttributeNamespace;
 use super::grammar::parse;

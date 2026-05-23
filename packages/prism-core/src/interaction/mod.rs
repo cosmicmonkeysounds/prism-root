@@ -3,8 +3,9 @@
 //!
 //! Phase-2 destination for the runtime data behind lenses, layouts,
 //! notifications, activity, query, search, and the page-builder. The
-//! rendering half (Slint) lives elsewhere; only the
-//! data + reducers land here so hosts can drive them from any UI.
+//! rendering half (`prism-ui-runtime` + `prism-builder`) lives
+//! elsewhere; only the data + reducers land here so hosts can drive
+//! them from any UI.
 //!
 //! Ported so far:
 //!

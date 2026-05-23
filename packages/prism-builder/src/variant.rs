@@ -57,10 +57,10 @@ pub fn apply_variant_overrides(props: &Value, variants: &[VariantAxis]) -> Value
     Value::Object(base)
 }
 
-/// Built-in component variant axes, shared between the Slint
-/// `Component` impls (`starter.rs`) and the HTML `HtmlBlock` impls
-/// (`html_starter.rs`) so a single source of truth feeds both render
-/// walkers' `apply_variant_defaults` step.
+/// Built-in component variant axes. One source of truth feeds the
+/// unified `lower_ui` walk that both the live `prism-ui-runtime`
+/// renderer and the relay `lower_semantic_html` SSR consume —
+/// `apply_variant_defaults` is called once on the shared path.
 pub mod presets {
     use super::{VariantAxis, VariantOption};
     use serde_json::json;
