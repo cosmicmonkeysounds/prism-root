@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Loom v3 — design</title>
+  <style>
+    body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           max-width: 840px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
+    h1, h2, h3, h4 { line-height: 1.2; }
+    h1 { font-size: 2.2rem; margin-bottom: 0.25rem; }
+    h2 { margin-top: 2.6rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+    h3 { margin-top: 1.8rem; }
+    h4 { margin-top: 1.2rem; color: #444; }
+    code, pre { font-family: SF Mono, Menlo, Consolas, monospace; }
+    code { background: #f4f4f6; padding: 0.1em 0.35em; border-radius: 3px; }
+    pre { background: #f4f4f6; padding: 1rem; border-radius: 6px; overflow-x: auto;
+          font-size: 13.5px; line-height: 1.5; }
+    .lede { font-size: 1.1rem; color: #555; }
+    .pill { display: inline-block; font-size: 0.78em; padding: 0.1em 0.5em;
+            border-radius: 999px; background: #eef; color: #335;
+            margin-left: 0.4em; vertical-align: middle; }
+    .pill.warn { background: #fde7e7; color: #8a2424; }
+    .pill.good { background: #e6f4ea; color: #1d6b35; }
+    .callout { border-left: 3px solid #c4d2e6; background: #f7fafd;
+               padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+    .callout.warn { border-color: #d8b14a; background: #fffaef; }
+    .callout.good { border-color: #7fb78a; background: #f3faf4; }
+    .callout.big { border-left-width: 5px; padding: 1rem 1.2rem; font-size: 1.04em; }
+    table { width: 100%; border-collapse: collapse; margin: 0.8rem 0; font-size: 14.5px; }
+    th, td { padding: 0.5rem 0.6rem; border-bottom: 1px solid #eee; text-align: left; vertical-align: top; }
+    th { background: #fafafa; }
+    .strike { text-decoration: line-through; color: #888; }
+    .toc { background: #fafafa; border: 1px solid #eee; padding: 1rem 1.2rem;
+           border-radius: 6px; margin: 1.6rem 0; }
+    .toc ol { margin: 0; padding-left: 1.6rem; }
+    .toc li { margin: 0.2rem 0; }
+    .toc .label { color: #555; font-size: 0.92em; }
+    .bracket-grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr 2fr; gap: 0; margin: 1rem 0;
+                    border: 1px solid #e6e6e6; border-radius: 6px; overflow: hidden; font-size: 14px; }
+    .bracket-grid > div { padding: 0.6rem 0.7rem; border-bottom: 1px solid #eee; }
+    .bracket-grid > div:nth-child(4n+1) { background: #fafafa; font-weight: 600; }
+    .bracket-grid > div:nth-child(-n+4) { background: #f0f0f3; border-bottom: 1px solid #ddd; font-weight: 600; }
+    a { color: #0066cc; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    em.term { font-style: italic; color: #334; }
+  </style>
+</head>
+<body>
+
+<h1>Loom v3 <span class="pill">design</span></h1>
+<p class="lede">
+  Loom is not a programming language. It is a <strong>format</strong> —
+  a way of writing down a story, its production, and the systems that
+  weave them together, all in one local-first plain-text file.
+  Writers read it as a screenplay. Stage managers read it as a prompt
+  book. Producers read it as a breakdown. The runtime reads it as a
+  program. v3 commits to that promise.
+</p>
+
+<div class="callout big good">
+  <strong>The three claims.</strong>
+  <ol style="margin:0.5rem 0 0 1.2rem; padding:0;">
+    <li><strong>The format is a screenplay.</strong> Position,
+      capitalisation, and indentation carry meaning. Quotes,
+      apostrophes, and most punctuation belong to the writer. We
+      borrow the 1920s screenplay convention, Fountain's
+      plain-text-with-escapes discipline, and Ink's branching
+      vocabulary — wholesale.</li>
+    <li><strong>Five brackets, five audiences.</strong> The
+      performer, the reader, the choice-list, the runtime, the
+      production team. Each has its own bracket; none share. (See §4.)</li>
+    <li><strong>Generics are typed slots.</strong> One mechanism
+      covers cast members, parameters, iteration variables, and
+      object properties. There is no <code>trait</code>, no
+      <code>template</code>, no <code>macro</code>, no
+      <code>extends</code>. There is one composition verb,
+      <code>is</code>, and one execution model, top-down with
+      branches.</li>
+  </ol>
+</div>
+
+<div class="toc">
+  <h3 style="margin-top:0">Contents</h3>
+  <ol>
+    <li><a href="#lineage">The lineage — six formats v3 descends from</a></li>
+    <li><a href="#format">Loom as a format, not a syntax</a></li>
+    <li><a href="#imperative">The imperative weave</a></li>
+    <li><a href="#brackets">Five brackets, five audiences</a></li>
+    <li><a href="#shape">A <code>.loom</code> file</a></li>
+    <li><a href="#slots">Typed slots — the one generic mechanism</a></li>
+    <li><a href="#composition">Composition: <code>is</code></a></li>
+    <li><a href="#directives">Runtime directives — <code>&lt;…&gt;</code></a></li>
+    <li><a href="#metadata">Production metadata — <code>&lt;&lt;…&gt;&gt;</code></a></li>
+    <li><a href="#prism">Prism + Obsidian: local-first, linked</a></li>
+    <li><a href="#cleanup">What v2 had that v3 doesn't</a></li>
+    <li><a href="#example">A full example</a></li>
+    <li><a href="#migration">Migration</a></li>
+  </ol>
+</div>
+
+<h2 id="lineage">1. The lineage — six formats v3 descends from</h2>
+
+<p>
+  Every choice below is an inheritance from a tradition older than this
+  document. Knowing which is which is the cheat sheet for understanding
+  v3.
+</p>
+
+<table>
+  <tr><th>Tradition</th><th>What v3 takes</th></tr>
+  <tr>
+    <td><strong>Stage scripts</strong> (Samuel French / Dramatists, BBC radio, prompt books)</td>
+    <td>The <em>parallel cue column</em>. Production metadata lives next to text, not inside it.
+      v3's <code>&lt;&lt;…&gt;&gt;</code> bracket is that column, lifted into the same file.</td>
+  </tr>
+  <tr>
+    <td><strong>Hollywood screenplay</strong> (Academy/WGA, ~1920s)</td>
+    <td>Position-is-syntax: ALL CAPS speaker cues, indented dialogue, parenthetical
+      directions in <code>(parens)</code>, action lines flush left, scene headings
+      <code>INT./EXT.</code></td>
+  </tr>
+  <tr>
+    <td><strong>Fountain</strong> (Maschwitz/August, 2012)</td>
+    <td>Plain-text screenplay with <em>inference and escape</em>: defaults are
+      positional; sigils (<code>.</code>, <code>@</code>, <code>!</code>,
+      <code>&gt;</code>) only appear when the writer needs to override the
+      inference. v3 follows the same discipline — a writer who knows screenplay
+      formatting knows v3 prose.</td>
+  </tr>
+  <tr>
+    <td><strong>Ink</strong> (inkle Studios, 2016 — used in <em>80 Days</em>, <em>Heaven's Vault</em>)</td>
+    <td>Knots (<code>==</code>), choices (<code>*</code> once, <code>+</code> sticky),
+      diverts (<code>-&gt;</code>), gathers (<code>-</code>), and the
+      <em>choice-suppress trick</em> <code>[…]</code> — the same line serves the
+      choice list and the narration output. All four are imported verbatim.</td>
+  </tr>
+  <tr>
+    <td><strong>Twine</strong> (Klimas, 2009)</td>
+    <td>The <em>passage as a file unit AND a graph node</em>. A beat in v3 can
+      live as its own <code>.loom</code> file, identified by name, addressable
+      by any other file — the Twine/Obsidian "everything is a file" instinct.</td>
+  </tr>
+  <tr>
+    <td><strong>Obsidian / Logseq</strong> (local-first plain-text notes, 2020+)</td>
+    <td>Identity by filename, emergent backlinks from bare
+      <code>[[wiki links]]</code> (in v3: bare Capitalised names auto-link),
+      inline <code>key: value</code> properties (no YAML frontmatter required).
+      Prism's parent inspiration; Loom inherits it.</td>
+  </tr>
+</table>
+
+<p>
+  v3 contributes one new thing: the <strong>five-bracket discipline</strong>
+  (§4). Everything else is recombination of patterns that have already shipped
+  somewhere.
+</p>
+
+<h2 id="format">2. Loom as a format, not a syntax</h2>
+
+<p>
+  A <em>syntax</em> requires you to think in tokens, delimiters, escapes.
+  A <em>format</em> is something a human reads and understands without
+  parsing. Markdown is a format. Fountain is a format. Loom v3 is a
+  format with one extra promise: the same file is the writer's
+  screenplay, the stage manager's prompt book, the producer's
+  breakdown, and the runtime's program.
+</p>
+
+<p>Concretely, this commits us to four rules:</p>
+
+<ol>
+  <li><strong>Quotes belong to the writer.</strong> <code>"</code>,
+    <code>'</code>, <code>«</code>, <code>"</code> never appear in the
+    grammar. A writer can paste any dialogue verbatim, including
+    contractions and quoted speech, and it parses.</li>
+  <li><strong>Position over delimiters where position works.</strong>
+    A name on its own line is a speaker. An indented line under a
+    speaker is dialogue. A paragraph at the left margin is action.
+    A line starting with <code>*</code> or <code>+</code> is a choice.
+    These are all positional — exactly as screenplay has done for a
+    century.</li>
+  <li><strong>Brackets, when used, mean one thing each.</strong> Five
+    bracket shapes, five distinct jobs, no overlap. §4.</li>
+  <li><strong>Printable on paper.</strong> A <code>.loom</code> file
+    printed and handed to a director should be directable. Any line
+    that exists for the machine alone is in <code>&lt;&lt;…&gt;&gt;</code>
+    (sidecar metadata) so a producer can mark it as "ignore at the
+    table read".</li>
+</ol>
+
+<h2 id="imperative">3. The imperative weave</h2>
+
+<p>
+  Loom is an <strong>imperative</strong> language. A beat is read
+  top-to-bottom; the playhead advances through prose, dialogue, and
+  cues; branches fork at choices and diverts. State (variables,
+  disposition, knowledge) is mutated by explicit actions. There is no
+  reactive graph, no declarative truth-maintenance.
+</p>
+
+<p>
+  A "weave" is the branching graph traced by all possible playheads
+  through the document. The writer authors moments in order; the
+  runtime weaves them into a thread for each playthrough. This is the
+  same execution model as Ink, Twine, and most screenplay-shaped
+  narrative engines.
+</p>
+
+<h2 id="brackets">4. Five brackets, five audiences</h2>
+
+<p>
+  Every bracket in v3 maps to one audience and one job. If you can
+  name the audience, you know which bracket to use.
+</p>
+
+<div class="bracket-grid">
+  <div>Bracket</div><div>Audience</div><div>Job</div><div>Example</div>
+
+  <div><code>( … )</code></div>
+  <div>the performer</div>
+  <div>what is acted or read aloud</div>
+  <div><code>(quietly)</code><br><code>(she crosses DSR)</code><br><code>(beat)</code></div>
+
+  <div><code>{ … }</code></div>
+  <div>the reader</div>
+  <div>value substituted into text</div>
+  <div><code>You have {coins} coins.</code><br><code>Welcome, {Player.name}.</code></div>
+
+  <div><code>[ … ]</code></div>
+  <div>the reader (hidden)</div>
+  <div>Ink-style choice-only suppression</div>
+  <div><code>* &quot;Yes.&quot;[ I said firmly.]</code><br>→ choice shows <em>"Yes."</em>, narration plays <em>"Yes. I said firmly."</em></div>
+
+  <div><code>&lt; … &gt;</code></div>
+  <div>the runtime</div>
+  <div>side effect, control flow, anchor</div>
+  <div><code>&lt;sfx: bell-toll&gt;</code><br><code>&lt;set: trust += 10&gt;</code><br><code>&lt;anchor: opening&gt;</code><br><code>&lt;if: trust &gt; 50&gt;</code></div>
+
+  <div><code>&lt;&lt; … &gt;&gt;</code></div>
+  <div>the production team</div>
+  <div>sidecar metadata, ignored at runtime</div>
+  <div><code>&lt;&lt;warn lx14&gt;&gt;</code><br><code>&lt;&lt;blocking: cross DSR on &quot;rang&quot;&gt;&gt;</code><br><code>&lt;&lt;note: revisit in act 3&gt;&gt;</code></div>
+</div>
+
+<h3 id="parens">4.1 <code>( … )</code> — the performer</h3>
+
+<p>
+  Parens are reserved for what an actor performs. The 1920s screenplay
+  convention: a parenthetical sits indented under a speaker, in lowercase,
+  describing manner or action.
+</p>
+
+<pre>WREN
+  (quietly)
+  It hasn't rung in three days.
+  (she turns the lantern up)
+</pre>
+
+<p>
+  Outside a speaker block, parens describe a stage action that any
+  performer in scene executes — the "she crosses DSR" of a stage script.
+  Inside prose narration parens are <em>literal text</em>; a writer
+  uses them freely. The parser knows the difference by position: a
+  <code>(lowercased phrase)</code> on a line by itself, indented under
+  a speaker or at action depth, is a directive. A paragraph that
+  happens to contain "(an aside)" mid-sentence is just prose.
+</p>
+
+<h3 id="interp">4.2 <code>{ … }</code> — the reader (value)</h3>
+
+<p>
+  Curly braces always evaluate to a value substituted into the
+  surrounding text. Nothing else lives here.
+</p>
+
+<pre>PLAYER
+  I have {coins} coins and {Player.inventory.length} items.
+
+WREN
+  Welcome back, {Player.name}.
+</pre>
+
+<h3 id="suppress">4.3 <code>[ … ]</code> — the reader (hidden)</h3>
+
+<p>
+  Lifted verbatim from Ink. Text inside square brackets appears in the
+  choice list only; text after the brackets appears in the narration
+  output only; text before appears in both.
+</p>
+
+<pre>* "There is not a moment to lose!"[] I declared.
+  -&gt; hurry_outside
+
+* "Monsieur, let us savour this moment."[] I declared.
+  -&gt; dragged_outside
+</pre>
+
+<p>
+  This earns its own bracket because no other tradition has solved the
+  "the same utterance reads differently in the menu vs. the playback"
+  problem so compactly.
+</p>
+
+<h3 id="runtime-bracket">4.4 <code>&lt; … &gt;</code> — the runtime</h3>
+
+<p>
+  Single angle brackets fire something at the runtime. Side effects,
+  state mutation, control flow blocks, testing anchors. All inline or
+  on their own line. The directive's first token names its kind; a
+  colon separates the kind from its arguments.
+</p>
+
+<pre>WREN
+  The bell... &lt;sfx: ding&gt; it's ringing.
+
+&lt;set: trust += 10&gt;
+&lt;fire: bell_acknowledged&gt;
+&lt;anchor: bell_moment&gt;          ← bookmark for testing / replay / linking
+
+&lt;if: Player.has key&gt;
+  Player unlocks the door.
+&lt;else&gt;
+  WREN
+    You'll need a key.
+
+&lt;shuffle: Hi | Hello | Hey&gt; there.
+</pre>
+
+<p>
+  Inline directives in dialogue (<code>&lt;sfx: ding&gt;</code>,
+  <code>&lt;pause: 1s&gt;</code>, <code>&lt;set: x += 1&gt;</code>) fire
+  at the typewriter reveal point — useful for syncing sound with a
+  line, mutating state mid-sentence, or planting a named
+  <code>&lt;anchor: …&gt;</code> for tests to jump to.
+</p>
+
+<p>The full set of directive kinds is enumerated in §8.</p>
+
+<h3 id="meta-bracket">4.5 <code>&lt;&lt; … &gt;&gt;</code> — the production team</h3>
+
+<p>
+  Doubled angle brackets are <em>passive metadata</em>. The runtime
+  ignores them. They exist for stage managers, producers, debuggers,
+  and the author's own notes. The prompt-book convention, brought
+  inline.
+</p>
+
+<pre>&lt;&lt;warn lx14&gt;&gt;
+WREN
+  (quietly)
+  It hasn't rung in three days.
+  &lt;&lt;blocking: cross DSR on "rang"&gt;&gt;
+&lt;&lt;lx14 go&gt;&gt;
+
+&lt;&lt;note: this scene felt long at the table read — try cutting the lantern beat&gt;&gt;
+
+She turns the lantern up.
+</pre>
+
+<p>
+  The split between <code>&lt;…&gt;</code> and
+  <code>&lt;&lt;…&gt;&gt;</code> is <em>does the runtime do something
+  with it?</em> A sound cue fires at production — that's
+  <code>&lt;sfx:&gt;</code>. A warning to the lighting board four lines
+  before the actual cue — that's <code>&lt;&lt;warn lx14&gt;&gt;</code>.
+  An author note about pacing is purely <code>&lt;&lt;…&gt;&gt;</code>.
+</p>
+
+<h2 id="shape">5. A <code>.loom</code> file</h2>
+
+<p>Two zones, mixed freely.</p>
+
+<pre># Lighthouse Dawn
+loom: 3
+entry: opening
+
+#  Declarations  ─────────────────────────────────
+
+CHARACTER Wren is Keeper, Combatant
+  voice: female_alto
+  home:  Lighthouse
+  hp:    80
+  attack: 4
+  has:   brass_lantern
+  knows: bell_origin
+
+  trusts Player:  30 of 100
+  respects Player: 50 of 100
+
+CHARACTER Player is Visitor
+
+ITEM brass_lantern
+  weight: 2
+  fuel:   75 of 100
+
+LOCATION Lighthouse
+  ambient:  wind_low
+  contains: bell_rope, brass_lantern
+
+#  Beats  ─────────────────────────────────────────
+
+== opening
+  cast: Wren, Player
+  setting: Lighthouse
+
+INT. LIGHTHOUSE - DAWN
+
+A bell rope swings in the gloom. Wren watches it from the doorway.
+
+WREN
+  (quietly)
+  It hasn't rung in three days.
+
+She turns the lantern up.
+
+* Ring the bell.
+  -&gt; ring_bell
++ Ask about the keepers.
+  -&gt; ask_about with topic: keepers, NPC: Wren
+</pre>
+
+<p>The structural conventions:</p>
+
+<ul>
+  <li><strong>Header</strong> — a Markdown-style <code># Title</code>
+    plus a few <code>key: value</code> properties (<code>loom: 3</code>,
+    <code>entry: knot_name</code>, <code>tags: …</code>).</li>
+  <li><strong>Declarations</strong> — <code>CHARACTER</code>,
+    <code>ITEM</code>, <code>LOCATION</code>, <code>FACTION</code>,
+    <code>ENTITY</code> (the unopinionated base). Each is a named block
+    of <code>key: value</code> properties plus optional composition
+    (<code>is X, Y</code>).</li>
+  <li><strong>Beats</strong> — <code>== knot_name</code> introduces an
+    imperative beat. Contract follows (<code>cast:</code>,
+    <code>setting:</code>, <code>uses:</code>), then the woven body
+    (prose, dialogue, choices, diverts, directives).</li>
+  <li><strong>Scene headings</strong> — Fountain-style
+    <code>INT. LOCATION - TIME</code> lines. Pure atmosphere — they tell
+    a director and a reader where we are. They do <em>not</em> define
+    structure; <code>==</code> does that.</li>
+</ul>
+
+<h2 id="slots">6. Typed slots — the one generic mechanism</h2>
+
+<p>
+  Generics in non-linear narrative happen at every scale. A
+  <em>merchant</em> beat works for any merchant. A <em>guard</em>
+  character template instantiates any guard. A <em>recognition</em>
+  scene needs a mentor and a mentee. All of these are the same
+  shape: <strong>a typed slot, filled at the call site.</strong>
+</p>
+
+<h3 id="slot-pattern">6.1 The pattern</h3>
+
+<p>
+  A typed slot is a property declaration with no default. The
+  declaration is <em>abstract</em> until every required slot is filled;
+  concrete the moment the last one resolves.
+</p>
+
+<pre>CHARACTER Keeper                       ← abstract: voice has no default
+  voice: any
+  home:  any of LOCATION
+  reputation: 0 to 100 = 50
+
+CHARACTER Wren is Keeper               ← fills the slots, now concrete
+  voice: female_alto
+  home:  Lighthouse
+  reputation: 60
+</pre>
+
+<p>
+  No <code>trait</code> keyword. No <code>abstract</code> keyword.
+  Abstractness is a consequence of unfilled slots — the same way
+  arithmetic on undefined values is a consequence, not a separate
+  feature. The compiler refuses to instantiate
+  <code>Keeper</code> directly because <code>voice</code> has no value;
+  it instantiates <code>Wren</code> happily.
+</p>
+
+<h3 id="slot-everywhere">6.2 The same pattern, four places</h3>
+
+<table>
+  <tr><th>Where</th><th>Looks like</th><th>Filled by</th></tr>
+  <tr>
+    <td>Object property</td>
+    <td><code>voice: any</code></td>
+    <td>a child declaration (via <code>is</code>) or instantiation override</td>
+  </tr>
+  <tr>
+    <td>Beat cast member</td>
+    <td><code>cast: NPC, Player</code></td>
+    <td>the caller, at the divert</td>
+  </tr>
+  <tr>
+    <td>Beat parameter</td>
+    <td><code>== ask_about(topic)</code></td>
+    <td>the caller (<code>with topic: keepers</code>)</td>
+  </tr>
+  <tr>
+    <td>Iteration variable</td>
+    <td><code>&lt;for: item in Player.inventory&gt;</code></td>
+    <td>each pass of the loop binds <code>item</code></td>
+  </tr>
+</table>
+
+<p>
+  All four are "a name introduced in a header, used bare in the body".
+  Resolution is lexical: the parser knows what
+  <code>topic</code> means inside a beat declared with
+  <code>(topic)</code>; it knows what <code>item</code> means inside
+  the <code>&lt;for:&gt;</code> block; it knows what <code>Wren</code>
+  means after <code>cast: Wren</code>.
+</p>
+
+<h3 id="slot-types">6.3 What goes in a slot type</h3>
+
+<table>
+  <tr><th>Type</th><th>Meaning</th></tr>
+  <tr><td><code>int</code>, <code>number</code>, <code>text</code>, <code>bool</code></td><td>primitives</td></tr>
+  <tr><td><code>0 to 100</code></td><td>bounded numeric range (replaces v2's <code>0..100</code>)</td></tr>
+  <tr><td><code>red | green | blue</code></td><td>closed enum of atoms</td></tr>
+  <tr><td><code>any</code></td><td>any value</td></tr>
+  <tr><td><code>any of CHARACTER</code></td><td>any value that is a CHARACTER (or descendant via <code>is</code>)</td></tr>
+  <tr><td><code>any of Keeper with reputation &gt; 50</code></td><td>constrained slot — only Keepers with rep above 50 satisfy it</td></tr>
+  <tr><td><code>list of T</code>, <code>map of K to V</code></td><td>collections</td></tr>
+</table>
+
+<h2 id="composition">7. Composition: <code>is</code></h2>
+
+<p>
+  One verb. <code>is X, Y</code> pulls in the property declarations of
+  X and Y. When a slot in X has a default, that default flows into the
+  child unless overridden. When a slot has no default, the child must
+  provide one (or remain abstract itself).
+</p>
+
+<pre>CHARACTER Humanoid
+  hp:    int = 100
+  speed: int = 5
+
+CHARACTER Combatant                    ← abstract: hp and attack required
+  hp:     int
+  attack: int
+
+CHARACTER Bandit is Humanoid, Combatant
+  hp:     30                           ← satisfies Combatant.hp + overrides Humanoid.hp
+  attack: 8                            ← satisfies Combatant.attack
+                                       ← speed inherited from Humanoid (5)
+</pre>
+
+<p>
+  Conflicts between two parents (both declare <code>hp</code> with
+  different defaults) are resolved by the child providing an explicit
+  value. Without one, the compiler emits an "ambiguous slot" error.
+  There is no method resolution order to memorise; there is no
+  inheritance chain to walk; <code>is</code> is set union with override.
+</p>
+
+<p>Beats compose the same way:</p>
+
+<pre>== greeting
+  cast: NPC, Player
+  setting: any
+  NPC
+    Hello.
+
+== formal_greeting is greeting
+  NPC
+    Good day to you.                   ← inherits cast/setting, replaces body
+</pre>
+
+<h2 id="directives">8. Runtime directives — <code>&lt;…&gt;</code></h2>
+
+<p>
+  Every directive is <code>&lt;kind: args&gt;</code> (or
+  <code>&lt;kind&gt;</code> for nullary). The kind names the operation;
+  args follow a colon. Block-opening directives have an indented body
+  and end at dedent.
+</p>
+
+<table>
+  <tr><th>Kind</th><th>Form</th><th>Effect</th></tr>
+  <tr><td><code>sfx</code></td><td><code>&lt;sfx: bell-toll&gt;</code></td><td>fire a sound effect (inline or block-level)</td></tr>
+  <tr><td><code>cue</code></td><td><code>&lt;cue: lights_up&gt;</code></td><td>fire a named crew cue (lighting, projection, machine)</td></tr>
+  <tr><td><code>set</code></td><td><code>&lt;set: trust += 10&gt;</code></td><td>mutate a variable or property</td></tr>
+  <tr><td><code>fire</code></td><td><code>&lt;fire: bell_acknowledged&gt;</code></td><td>fire a named event onto the bus</td></tr>
+  <tr><td><code>anchor</code></td><td><code>&lt;anchor: bell_moment&gt;</code></td><td>name this point in the weave — tests jump here, replays bookmark here, linkbacks point here</td></tr>
+  <tr><td><code>pause</code></td><td><code>&lt;pause: 2s&gt;</code></td><td>delay the next reveal</td></tr>
+  <tr><td><code>shuffle</code> / <code>cycle</code> / <code>once</code> / <code>random</code></td><td><code>&lt;shuffle: a | b | c&gt;</code> or block form</td><td>runtime selects from alternatives (Ink-flavoured)</td></tr>
+  <tr><td><code>if</code> / <code>else</code></td><td><code>&lt;if: cond&gt;</code> ... <code>&lt;else&gt;</code></td><td>conditional block</td></tr>
+  <tr><td><code>match</code></td><td><code>&lt;match: expr&gt;</code></td><td>multi-arm block</td></tr>
+  <tr><td><code>for</code></td><td><code>&lt;for: item in xs&gt;</code></td><td>iteration block</td></tr>
+  <tr><td><code>spawn</code></td><td><code>&lt;spawn: Bandit with rank: 2&gt;</code></td><td>create a runtime instance of a template</td></tr>
+</table>
+
+<div class="callout">
+  <strong>Anchors are first-class.</strong> <code>&lt;anchor: name&gt;</code>
+  is the v3 testing primitive. Any anchor is addressable from tests
+  (<code>play_to(@bell_moment)</code>), from analytics (count how many
+  players reach this point), from linkbacks (other documents
+  cross-referencing <code>@bell_moment</code>), and from authoring
+  (the editor's "skip to here" affordance). Lift anchors liberally —
+  they're cheap and they pay off everywhere.
+</div>
+
+<h2 id="metadata">9. Production metadata — <code>&lt;&lt;…&gt;&gt;</code></h2>
+
+<p>
+  <code>&lt;&lt;…&gt;&gt;</code> is the prompt-book column, lifted into
+  the file. The runtime parses it but does nothing at production. It
+  exists so that:
+</p>
+
+<ul>
+  <li><strong>Stage managers</strong> can mark blocking, warns, cues, and standbys without polluting the spoken text.</li>
+  <li><strong>Producers</strong> can break the script down — flag props, set pieces, costume changes — using filterable tags.</li>
+  <li><strong>Authors</strong> can leave notes-to-self, todos, table-read feedback, structural reminders.</li>
+  <li><strong>Debugging</strong> can drop conditional breakpoints, watches, and trace markers that the runtime can opt into at debug-time but ignores in production.</li>
+</ul>
+
+<pre>&lt;&lt;warn lx14&gt;&gt;
+&lt;&lt;warn sq7&gt;&gt;
+
+WREN
+  (quietly)
+  It hasn't rung in three days.
+  &lt;&lt;blocking: cross DSR on "rang"&gt;&gt;
+
+&lt;&lt;lx14 go&gt;&gt;
+&lt;&lt;sq7 go on "Mitch"&gt;&gt;
+
+&lt;&lt;note: this scene felt long at the table read — try cutting the lantern beat&gt;&gt;
+&lt;&lt;todo: confirm with director that the silence after the bell holds&gt;&gt;
+&lt;&lt;break: trust &gt;= 80&gt;&gt;     ← debugger conditional breakpoint
+</pre>
+
+<p>
+  The first token inside <code>&lt;&lt;…&gt;&gt;</code> is the
+  metadata kind. Tooling can filter on it: "show me all
+  <code>blocking:</code> notes for act 1", "list every
+  <code>todo:</code>", "highlight every <code>warn:</code> in the
+  prompt view". The runtime itself reads them only to forward to
+  consumers (debug protocol, prompt-book view, breakdown report).
+</p>
+
+<h2 id="prism">10. Prism + Obsidian: local-first, linked</h2>
+
+<p>Loom files live inside a Prism workspace. Three integration points matter.</p>
+
+<h3 id="files">10.1 Files are the identity</h3>
+
+<p>
+  Each <code>CHARACTER</code> or <code>ITEM</code> or <code>LOCATION</code>
+  <em>may</em> live in its own file — <code>cast/Wren.loom</code>,
+  <code>items/brass_lantern.loom</code>, <code>locations/Lighthouse.loom</code>.
+  Or many declarations can sit in one file. The bare name in
+  another file resolves the same way either way; the resolver walks
+  the workspace tree and picks the declaration with the matching name.
+  Twine and Obsidian both work this way; v3 follows.
+</p>
+
+<h3 id="backlinks">10.2 Backlinks are emergent</h3>
+
+<p>
+  When a beat mentions <code>Wren</code> in prose, that's a backlink.
+  When a beat diverts to <code>-&gt; ring_bell</code>, that's a
+  backlink. When metadata mentions <code>&lt;&lt;related: Wren's
+  Backstory&gt;&gt;</code>, that's a backlink. Prism harvests them all
+  and shows the inverse — "every place that mentions Wren" — without
+  the writer having to maintain it.
+</p>
+
+<h3 id="runtime-integration">10.3 The Prism runtime</h3>
+
+<p>
+  <code>packages/prism-loom-runtime/</code> already exists. v3 lands
+  as a new parser path behind a <code>loom: 3</code> header property;
+  v2 files continue to compile through the v2 path. Both lower to a
+  shared bundle IR, so the playhead, ledger, hook system, and
+  disposition machinery are reused unchanged. The new modules are
+  <code>objects.rs</code> (unified declaration registry),
+  <code>directives.rs</code> (one dispatcher for every
+  <code>&lt;kind:&gt;</code>), and <code>metadata.rs</code> (read-only
+  sidecar parsing). Loom's LSP
+  (<code>packages/prism-loom-lsp/</code>) follows the same split.
+</p>
+
+<h2 id="cleanup">11. What v2 had that v3 doesn't</h2>
+
+<table>
+  <tr><th>v2</th><th>v3</th><th>Why</th></tr>
+  <tr><td>Sigils <code>$</code>, <code>@</code>, <code>[[ ]]</code></td>
+      <td>None. Bare capitalised names link; lexical scope resolves.</td>
+      <td>Position and capitalisation carry the same information.</td></tr>
+  <tr><td>Quote-delimited strings <code>"…"</code> / <code>'…'</code></td>
+      <td>None. Tail-of-<code>:</code> for properties; indented prose for dialogue.</td>
+      <td>Quote characters belong to the writer.</td></tr>
+  <tr><td><code>{quietly}</code> as a speaker emotion bracket</td>
+      <td><code>(quietly)</code> on its own line — screenplay convention.</td>
+      <td>Curly braces are reserved for value substitution. Performer notes are parens, as they have been for a century.</td></tr>
+  <tr><td><code>match</code> + <code>after</code>/<code>otherwise</code></td>
+      <td><code>&lt;if:&gt;</code> + <code>&lt;match:&gt;</code>. Two forms.</td>
+      <td>Two control verbs cover every case.</td></tr>
+  <tr><td><code>~ action</code> action lines</td>
+      <td><code>&lt;set:&gt;</code>, <code>&lt;fire:&gt;</code>, <code>&lt;cue:&gt;</code> directives.</td>
+      <td>One bracket discipline for everything the runtime executes.</td></tr>
+  <tr><td>Inline <code>$(s-expr)</code></td>
+      <td>Gone. Use <code>{expr}</code> for values.</td>
+      <td>One value-substitution form.</td></tr>
+  <tr><td>Generators (barks, routines, improv)</td>
+      <td><code>&lt;shuffle:&gt;</code>, <code>&lt;cycle:&gt;</code>, <code>&lt;random:&gt;</code>, <code>&lt;weave:&gt;</code> directives.</td>
+      <td>One directive set, one parsing rule, applicable inline or block-level.</td></tr>
+  <tr><td><code>each visit { first / then / finally }</code></td>
+      <td><code>&lt;cycle&gt;</code> block with arms.</td>
+      <td>Same idea, one keyword.</td></tr>
+  <tr><td>v2 archetypes (eleven of them)</td>
+      <td>Four: <code>story</code>, <code>module</code>, <code>character</code>, <code>beat</code>. Plus declaration keywords <code>CHARACTER</code>, <code>ITEM</code>, <code>LOCATION</code>, <code>FACTION</code>, <code>ENTITY</code>.</td>
+      <td>The retired archetypes are idioms inside a <code>story</code>, not separate languages.</td></tr>
+  <tr><td><code>extends</code>, <code>derives</code>, <code>impls</code>, <code>mixin</code>, <code>template</code>, <code>macro</code>, <code>takes</code>, <code>trait</code></td>
+      <td><code>is</code>, plus typed slots with no defaults.</td>
+      <td>Eight forms collapsed to two ideas: composition (<code>is</code>) and abstractness (unfilled slots).</td></tr>
+  <tr><td>Goals, disposition, hooks, ledger</td>
+      <td><strong>Kept as-is.</strong></td>
+      <td>They were already orthogonal and well-typed.</td></tr>
+</table>
+
+<h2 id="example">12. A full example</h2>
+
+<p>
+  Six declarations, two beats, one parameterised beat, prompt-book
+  metadata, and a testing anchor. No quotes anywhere. Five bracket
+  shapes, used precisely.
+</p>
+
+<pre># The Lighthouse at Dawn
+loom: 3
+entry: opening
+tags: tutorial, single-act
+
+#  Declarations  ─────────────────────────────────
+
+CHARACTER Keeper                       ← abstract; voice has no default
+  voice:      any
+  home:       any of LOCATION
+  reputation: 0 to 100 = 50
+
+CHARACTER Combatant
+  hp:     int
+  attack: int
+
+CHARACTER Wren is Keeper, Combatant
+  voice:      female_alto
+  home:       Lighthouse
+  reputation: 60
+  hp:         80
+  attack:     4
+  has:        brass_lantern
+  knows:      bell_origin
+
+  trusts Player:   30 of 100
+  respects Player: 50 of 100
+
+CHARACTER Player is Visitor
+
+ITEM brass_lantern
+  weight: 2
+  fuel:   75 of 100
+  etched: true
+
+LOCATION Lighthouse
+  ambient:  wind_low
+  contains: bell_rope, brass_lantern
+
+#  Beats  ─────────────────────────────────────────
+
+== opening
+  cast: Wren, Player
+  setting: Lighthouse
+
+INT. LIGHTHOUSE - DAWN
+
+&lt;&lt;warn lx_dawn&gt;&gt;
+&lt;anchor: opening_top&gt;
+
+A bell rope swings in the gloom. Wren watches it from the doorway.
+
+&lt;cue: lx_dawn&gt;
+
+WREN
+  (quietly)
+  It hasn't rung in three days.
+  &lt;&lt;blocking: cross to lantern on "three"&gt;&gt;
+
+She turns the lantern up.
+
+* Ring the bell.[ I shouldn't, but I do.]
+  -&gt; ring_bell
+
++ Ask about the keepers.
+  -&gt; ask_about with topic: keepers, NPC: Wren
+
++ Leave quietly.
+  -&gt; END
+
+== ring_bell
+  cast: Wren, Player
+  setting: Lighthouse
+
+&lt;sfx: bell_toll&gt;
+&lt;anchor: the_bell_rings&gt;
+
+The sound carries across the rocks.
+
+WREN
+  (stunned)
+  You... rang it.
+  &lt;set: trusts.Player += 20&gt;
+  &lt;fire: bell_acknowledged&gt;
+
+&lt;if: Wren.trusts.Player &gt; 40&gt;
+  WREN
+    Then you should know what I know.
+  -&gt; ask_about with topic: bell, NPC: Wren
+&lt;else&gt;
+  WREN
+    Leave. Now.
+  -&gt; END
+
+== ask_about(topic)
+  cast: NPC, Player
+  setting: any
+
+PLAYER
+  What can you tell me about {topic}?
+
+&lt;match: NPC.knowledge of topic&gt;
+  full
+    slot: answer
+  partial
+    NPC
+      I've heard rumours, but nothing I'd swear to.
+  unknown
+    NPC
+      I'm sorry. I don't know.
+
+&lt;&lt;note: consider adding a "rumour" mode that always returns half-truths&gt;&gt;
+</pre>
+
+<p>The caller fills the slot at the divert:</p>
+
+<pre>-&gt; ask_about with topic: bell, NPC: Wren
+  answer:
+    WREN
+      The bell rings when the keeper is in danger.
+      I was the last keeper before me.
+</pre>
+
+<div class="callout good">
+  <strong>End state.</strong> A writer who has read Fountain reads this
+  file as a screenplay. A stage manager reads
+  <code>&lt;&lt;…&gt;&gt;</code> as a prompt-book column. A developer
+  reads <code>&lt;…&gt;</code> as runtime calls. A producer reads
+  declarations as a breakdown. The runtime reads it as a program. One
+  file, five audiences, no overlap.
+</div>
+
+<h2 id="migration">13. Migration</h2>
+
+<ol>
+  <li><strong>Two parsers, one runtime.</strong> v3 ships behind the
+    header property <code>loom: 3</code>. v2 files (which carry no
+    <code>loom:</code> property or carry <code>loom: 2</code>) keep
+    parsing through the v2 path. Both lower to the shared bundle IR.</li>
+  <li><strong>v2 desugars to v3 internally.</strong> <code>cast SPEAKER</code>
+    becomes a tiny <code>CHARACTER</code>; <code>:conversation</code>
+    becomes a <code>story</code> with an implicit <code>== root</code>
+    knot; <code>~</code>-prefixed actions become the matching
+    <code>&lt;set:&gt;</code> / <code>&lt;fire:&gt;</code> /
+    <code>&lt;cue:&gt;</code>; <code>{quietly}</code> emotion brackets
+    become <code>(quietly)</code> parentheticals. The IR sees no
+    difference.</li>
+  <li><strong>Phased rollout.</strong> (a) Land v3 grammar behind the
+    flag, shared IR, existing tests green. (b) Port lesson 04
+    (<em>declaring cast</em>) and lesson 20 (<em>tiny complete story</em>)
+    to v3 as reference. (c) Write the v3-only lessons covering typed
+    slots, <code>is</code>, <code>&lt;&lt;…&gt;&gt;</code> metadata,
+    and the directive set. (d) Soft-deprecate v2 with parser hints.
+    (e) Remove v2 when the examples and the LSP are caught up.</li>
+  <li><strong>Tooling.</strong> The TextMate grammar at
+    <code>tools/loom-syntax/loom.tmLanguage.json</code> gains five
+    bracket scopes — <code>()</code>, <code>{}</code>, <code>[]</code>,
+    <code>&lt;…&gt;</code>, <code>&lt;&lt;…&gt;&gt;</code> — each with
+    a distinct theme colour. It loses the three v2 sigil scopes. The
+    LSP gains a directive completion list (kinds enumerated in §8) and
+    a metadata-kind index (so authors can jump between every
+    <code>&lt;&lt;todo:&gt;&gt;</code> in the workspace).</li>
+</ol>
+
+<h2 id="open">14. Open questions</h2>
+
+<ul>
+  <li><strong>Inline directive density.</strong> A heavy dialogue line
+    can carry several <code>&lt;set:&gt;</code> and <code>&lt;sfx:&gt;</code>
+    directives. Do we cap how many fit on one line, or trust the
+    writer? Leaning trust — Ink doesn't cap and writers manage.</li>
+  <li><strong>Knot parameters: parens or <code>takes</code>?</strong>
+    <code>== ask_about(topic)</code> reads like a function. An alternative
+    is <code>== ask_about takes topic: text</code>, which is more
+    declarative. Parens win on brevity; <code>takes</code> wins on
+    legibility. Leaning parens — it composes with
+    <code>with topic: bell</code> at the call site.</li>
+  <li><strong>Multi-word string values.</strong> <code>label: Wren the Keeper</code>
+    works because the colon takes the rest of the line. But
+    <code>has: brass_lantern, journal, three_candles</code> is a list —
+    what if a list element needs spaces? Leaning toward
+    <code>has: brass lantern, journal, three candles</code> being legal
+    (commas split, leading/trailing whitespace trimmed). If you need a
+    literal comma, use a name token (snake_case) instead.</li>
+  <li><strong><code>&lt;&lt;…&gt;&gt;</code> first-token registry.</strong>
+    Should the kinds inside <code>&lt;&lt;…&gt;&gt;</code> be a closed
+    set the LSP autocompletes (<code>warn</code>, <code>cue</code>,
+    <code>blocking</code>, <code>note</code>, <code>todo</code>,
+    <code>break</code>, <code>related</code>) or open? Leaning open —
+    let production teams invent their own conventions, and have the
+    LSP suggest from the workspace's history.</li>
+</ul>
+
+<h2 id="acks">15. Acknowledgements</h2>
+
+<p>
+  Every idea in this document descends from somewhere older. The
+  five-bracket discipline is the only contribution that is genuinely
+  v3. Everything else is recombination — screenplay's positional
+  formatting, Fountain's inference-with-escape, Ink's
+  <code>==</code> / <code>*</code> / <code>+</code> / <code>-&gt;</code>
+  vocabulary and the <code>[…]</code> suppress trick, Twine's
+  passage-as-file model, Obsidian/Logseq's local-first identity, and
+  the stage-manager's prompt-book column that v3 lifts into the same
+  file as <code>&lt;&lt;…&gt;&gt;</code>. The weave / loom / thread
+  metaphor predates all of them and is the project's reason for being.
+</p>
+
+</body>
+</html>
