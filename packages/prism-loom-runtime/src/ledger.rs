@@ -90,15 +90,12 @@ impl Ledger {
     /// `since(event)` — milliseconds since the last `Fired` event of
     /// this name, or `None` if it never fired.
     pub fn since(&self, event: &str, now_ms: u64) -> Option<u64> {
-        self.entries
-            .iter()
-            .rev()
-            .find_map(|e| match e {
-                LedgerEntry::Fired { event: ev, at_ms } if ev == event => {
-                    Some(now_ms.saturating_sub(*at_ms))
-                }
-                _ => None,
-            })
+        self.entries.iter().rev().find_map(|e| match e {
+            LedgerEntry::Fired { event: ev, at_ms } if ev == event => {
+                Some(now_ms.saturating_sub(*at_ms))
+            }
+            _ => None,
+        })
     }
 
     /// Last entry of the given kind family. Field names mirror the

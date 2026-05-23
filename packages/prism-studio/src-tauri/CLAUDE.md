@@ -1,10 +1,11 @@
 # prism-studio
 
 The packaged Prism Studio desktop shell. Thin launcher around
-`prism-shell` — Slint owns windowing/layout/rendering via the
-library's `Shell::run()`, and Studio's only extra job is spawning
-the `prism-daemond` sibling process over `interprocess` and holding
-its handle for the lifetime of the event loop.
+`prism-shell` — `prism-ui-runtime` (winit + femtovg) owns
+windowing/layout/rendering via the library's `Shell::run()`, and
+Studio's only extra job is spawning the `prism-daemond` sibling
+process over `interprocess` and holding its handle for the lifetime
+of the event loop.
 
 > **Canonical location:** all Rust lives here in `src-tauri/`. The
 > directory name is a historical artefact from the pre-Option-C
@@ -24,10 +25,10 @@ its handle for the lifetime of the event loop.
 ## Architecture
 - `src/main.rs` is ~30 lines: spawn the daemon sidecar (best-effort,
   log and continue on failure), build a `prism_shell::Shell`, and
-  call `Shell::run()`. Slint drives the winit event loop from
-  there; every panel, every lens, and every pointer/keyboard event
-  flows through the shell library the same way the standalone
-  `prism-shell` dev binary does.
+  call `Shell::run()`. `prism-ui-runtime`'s femtovg backend drives
+  the winit event loop from there; every panel, every lens, and
+  every pointer/keyboard event flows through the shell library the
+  same way the standalone `prism-shell` dev binary does.
 - **Sidecar**: `prism-daemon` is spawned as a sibling process, not
   linked as a library. IPC rides `interprocess` (unix sockets /
   named pipes behind one trait) with length-prefixed `postcard`
@@ -49,8 +50,8 @@ its handle for the lifetime of the event loop.
   binary next to the Studio bundle as a resource) is scheduled for
   Phase 5.
 
-## §4.5 history — resolved 2026-04-15 by Clay → Slint pivot
-Phase 0 went through two abandoned attempts before landing on
+## §4.5 history
+Phase 0 went through several abandoned attempts before landing on
 today's shape. Option B (Tauri 2 "no-webview" via the `unstable`
 feature's `tauri::window::WindowBuilder`) landed 2026-04-14 but
 fell over when we tried to wire raw pointer input through
@@ -62,21 +63,19 @@ unconditionally drops every tao event except
 all thrown away on the assumption that a webview is handling them.
 Option C (bare `tao` + `wgpu` + hand-vendored `UiRenderer` + Clay)
 then landed on 2026-04-15 as a stopgap, but the `clay-layout` +
-wgpu pipeline it relied on was itself retired the same day in the
-Clay → Slint pivot (see `docs/dev/slint-migration-plan.md`).
+wgpu pipeline it relied on was itself retired in the Clay → Slint
+pivot. Slint itself was then exorcised in the Phase 5 cutover (see
+`docs/dev/clay-migration-plan.md` §17 + §24-§28).
 
-The final resolution: Slint owns windowing + layout + rendering via
-its native winit + femtovg backend, `prism-shell` exposes a thin
-`Shell::run()` entry point, and Studio is a ~30-line launcher on
-top.
+The final resolution: `prism-ui-runtime` (winit + femtovg) owns
+windowing + layout + rendering, `prism-shell` exposes a thin
+`Shell::run()` entry point on top of it, and Studio is a
+~30-line launcher around the shell.
 
 ## Dependencies
-- `prism-shell` (path, `features = ["native"]`) — the UI tree + the
-  Slint event loop Studio runs.
+- `prism-shell` (path, `features = ["native"]`) — the UI tree +
+  the `prism-ui-runtime` event loop Studio runs.
 - `prism-core` (path) — shared types.
-- `slint` (workspace) — only used for `slint::PlatformError` at the
-  `main` return type; the real Slint invocation lives in the shell
-  library.
 - `prism-daemon` (path, `features = ["full", "transport-ipc"]`) —
   kept on the path so dev builds can spawn the in-tree binary.
   Not a library link.

@@ -353,7 +353,11 @@ fn compile_dialogue(node: &SyntaxNode) -> Item {
     let mut attrs = Vec::new();
     if let Some(block) = node.children.iter().find(|c| c.kind == nk::CHAR_BLOCK) {
         for item in block.children.iter().filter(|c| c.kind == nk::CHAR_ITEM) {
-            let idents: Vec<_> = item.children.iter().filter(|c| c.kind == nk::IDENT).collect();
+            let idents: Vec<_> = item
+                .children
+                .iter()
+                .filter(|c| c.kind == nk::IDENT)
+                .collect();
             match idents.as_slice() {
                 [a] => attrs.push((String::new(), a.value.clone().unwrap_or_default())),
                 [k, v] => attrs.push((
@@ -429,10 +433,7 @@ fn compile_divert(node: &SyntaxNode) -> Item {
 }
 
 fn compile_action(node: &SyntaxNode) -> Item {
-    let keyword_action = node
-        .children
-        .iter()
-        .find(|c| c.kind == nk::KEYWORD_ACTION);
+    let keyword_action = node.children.iter().find(|c| c.kind == nk::KEYWORD_ACTION);
     let (keyword, payload) = match keyword_action {
         Some(ka) => {
             let kw = first_ident_value(ka).unwrap_or_default();
@@ -573,8 +574,12 @@ fn collect_text(node: &SyntaxNode, out: &mut String) {
                 push_with_space(out, &format!("@{name}"));
             }
         }
-        nk::INLINE_TRIGGER | nk::CHAIN_TRIGGER | nk::COND_TRIGGER | nk::RANGE_CLOSER
-        | nk::INLINE_ASSIGN | nk::INLINE_EVAL => {
+        nk::INLINE_TRIGGER
+        | nk::CHAIN_TRIGGER
+        | nk::COND_TRIGGER
+        | nk::RANGE_CLOSER
+        | nk::INLINE_ASSIGN
+        | nk::INLINE_EVAL => {
             // Triggers carry no renderable text — they're side-effect
             // markers. Skip silently.
         }
@@ -640,7 +645,10 @@ mod tests {
     fn compiles_section_with_dialogue_and_choice() {
         let src = "# d\ncast WREN\n  .label x\n-- start\nWREN\n  Hello.\n  * I'll help. -> next\n-- next\nWREN\n  Thanks.\n";
         let db = compile_src(src);
-        let start = db.documents[0].sections.get("start").expect("section start");
+        let start = db.documents[0]
+            .sections
+            .get("start")
+            .expect("section start");
         assert_eq!(start.items.len(), 2);
         match &start.items[0] {
             Item::Dialogue { speaker, lines, .. } => {
@@ -675,7 +683,10 @@ mod tests {
         let src = "# d\n-- s\nWREN\n  hi\n+ keep open\n  -> s\ncast WREN\n  .label x\n";
         let db = compile_src(src);
         let s = &db.documents[0].sections["s"];
-        let any_sticky = s.items.iter().any(|i| matches!(i, Item::Choice { once: false, .. }));
+        let any_sticky = s
+            .items
+            .iter()
+            .any(|i| matches!(i, Item::Choice { once: false, .. }));
         assert!(any_sticky);
     }
 
@@ -683,7 +694,11 @@ mod tests {
     fn anonymous_sections_get_synthetic_ids() {
         let src = "# d\n--\n  WREN\n    body\n--\n  WREN\n    again\ncast WREN\n  .label x\n";
         let db = compile_src(src);
-        let ids: Vec<&str> = db.documents[0].section_order.iter().map(String::as_str).collect();
+        let ids: Vec<&str> = db.documents[0]
+            .section_order
+            .iter()
+            .map(String::as_str)
+            .collect();
         assert_eq!(ids.len(), 2);
         assert!(ids.iter().all(|id| id.starts_with("__anon_")));
     }

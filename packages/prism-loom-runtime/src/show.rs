@@ -107,8 +107,11 @@ impl Show {
         if self.playhead.is_awaiting_choice() {
             return None;
         }
-        self.playhead
-            .step(&self.bundle.documents[self.active_doc], &mut self.ledger, self.clock_ms)
+        self.playhead.step(
+            &self.bundle.documents[self.active_doc],
+            &mut self.ledger,
+            self.clock_ms,
+        )
     }
 
     /// Resolve the currently pending choice by selecting the 0-based

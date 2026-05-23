@@ -44,12 +44,14 @@ pub mod resolver;
 pub mod show;
 pub mod value;
 
-pub use bundle::{compile, CastSlot, CohortDef, CueDef, Document, Item, LocationDef, LoomDatabase, Section};
+pub use bundle::{
+    compile, CastSlot, CohortDef, CueDef, Document, Item, LocationDef, LoomDatabase, Section,
+};
 pub use ledger::{Ledger, LedgerEntry, LedgerField};
 pub use playhead::{ChoiceFrame, Frame, Playhead};
 pub use resolver::{
-    evaluate, field_chain, field_chain_safe, resolve_name, Expr, LedgerPredKind, Resolved,
-    ResolveSource, ResolverContext,
+    evaluate, field_chain, field_chain_safe, resolve_name, Expr, LedgerPredKind, ResolveSource,
+    Resolved, ResolverContext,
 };
 pub use show::{LoadError, LoadResult, Show};
 pub use value::Value;

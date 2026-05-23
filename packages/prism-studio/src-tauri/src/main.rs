@@ -1,9 +1,10 @@
 //! Prism Studio — packaged desktop shell.
 //!
-//! Slint owns windowing, layout, and rendering via the `prism-shell`
-//! library; Studio's only extra responsibility is spawning the
-//! `prism-daemond` sidecar over `interprocess` and holding its
-//! handle for the lifetime of the event loop.
+//! `prism-ui-runtime` (winit + femtovg) owns windowing, layout, and
+//! rendering via the `prism-shell` library; Studio's only extra
+//! responsibility is spawning the `prism-daemond` sidecar over
+//! `interprocess` and holding its handle for the lifetime of the
+//! event loop.
 //!
 //! Packaging/signing/auto-updates land in Phase 5 via
 //! `cargo-packager` + `self_update` + the standalone shell crates

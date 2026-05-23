@@ -187,30 +187,54 @@ pub fn evaluate(expr: &Expr, ctx: &ResolverContext<'_>, now_ms: u64) -> Value {
                 evaluate(r, ctx, now_ms)
             }
         }
-        Expr::Eq(l, r) => Value::Bool(value_eq(&evaluate(l, ctx, now_ms), &evaluate(r, ctx, now_ms))),
-        Expr::Neq(l, r) => {
-            Value::Bool(!value_eq(&evaluate(l, ctx, now_ms), &evaluate(r, ctx, now_ms)))
-        }
-        Expr::Lt(l, r) => Value::Bool(value_cmp(&evaluate(l, ctx, now_ms), &evaluate(r, ctx, now_ms))
-            .map(|o| o == std::cmp::Ordering::Less)
-            .unwrap_or(false)),
+        Expr::Eq(l, r) => Value::Bool(value_eq(
+            &evaluate(l, ctx, now_ms),
+            &evaluate(r, ctx, now_ms),
+        )),
+        Expr::Neq(l, r) => Value::Bool(!value_eq(
+            &evaluate(l, ctx, now_ms),
+            &evaluate(r, ctx, now_ms),
+        )),
+        Expr::Lt(l, r) => Value::Bool(
+            value_cmp(&evaluate(l, ctx, now_ms), &evaluate(r, ctx, now_ms))
+                .map(|o| o == std::cmp::Ordering::Less)
+                .unwrap_or(false),
+        ),
         Expr::Lte(l, r) => Value::Bool(
             value_cmp(&evaluate(l, ctx, now_ms), &evaluate(r, ctx, now_ms))
                 .map(|o| o != std::cmp::Ordering::Greater)
                 .unwrap_or(false),
         ),
-        Expr::Gt(l, r) => Value::Bool(value_cmp(&evaluate(l, ctx, now_ms), &evaluate(r, ctx, now_ms))
-            .map(|o| o == std::cmp::Ordering::Greater)
-            .unwrap_or(false)),
+        Expr::Gt(l, r) => Value::Bool(
+            value_cmp(&evaluate(l, ctx, now_ms), &evaluate(r, ctx, now_ms))
+                .map(|o| o == std::cmp::Ordering::Greater)
+                .unwrap_or(false),
+        ),
         Expr::Gte(l, r) => Value::Bool(
             value_cmp(&evaluate(l, ctx, now_ms), &evaluate(r, ctx, now_ms))
                 .map(|o| o != std::cmp::Ordering::Less)
                 .unwrap_or(false),
         ),
-        Expr::Add(l, r) => arith(&evaluate(l, ctx, now_ms), &evaluate(r, ctx, now_ms), Op::Add),
-        Expr::Sub(l, r) => arith(&evaluate(l, ctx, now_ms), &evaluate(r, ctx, now_ms), Op::Sub),
-        Expr::Mul(l, r) => arith(&evaluate(l, ctx, now_ms), &evaluate(r, ctx, now_ms), Op::Mul),
-        Expr::Div(l, r) => arith(&evaluate(l, ctx, now_ms), &evaluate(r, ctx, now_ms), Op::Div),
+        Expr::Add(l, r) => arith(
+            &evaluate(l, ctx, now_ms),
+            &evaluate(r, ctx, now_ms),
+            Op::Add,
+        ),
+        Expr::Sub(l, r) => arith(
+            &evaluate(l, ctx, now_ms),
+            &evaluate(r, ctx, now_ms),
+            Op::Sub,
+        ),
+        Expr::Mul(l, r) => arith(
+            &evaluate(l, ctx, now_ms),
+            &evaluate(r, ctx, now_ms),
+            Op::Mul,
+        ),
+        Expr::Div(l, r) => arith(
+            &evaluate(l, ctx, now_ms),
+            &evaluate(r, ctx, now_ms),
+            Op::Div,
+        ),
         Expr::LedgerPred { kind, arg } => match kind {
             LedgerPredKind::Played => Value::Bool(ctx.ledger.played(arg)),
             LedgerPredKind::Visits => Value::Int(ctx.ledger.visits(arg) as i64),

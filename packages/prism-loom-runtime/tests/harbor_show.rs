@@ -135,8 +135,7 @@ fn bundle_round_trips_through_postcard() {
     // load → compile → encode → decode produces an equivalent bundle.
     let show = Show::load(HARBOR_SOURCE).expect("show should load");
     let bytes = postcard::to_allocvec(show.bundle()).expect("encode");
-    let decoded: prism_loom_runtime::LoomDatabase =
-        postcard::from_bytes(&bytes).expect("decode");
+    let decoded: prism_loom_runtime::LoomDatabase = postcard::from_bytes(&bytes).expect("decode");
     assert_eq!(decoded.documents.len(), 1);
     assert_eq!(decoded.documents[0].id, "harbor_greeting");
     assert_eq!(decoded.documents[0].sections.len(), 3);

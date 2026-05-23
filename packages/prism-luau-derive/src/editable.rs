@@ -4,8 +4,9 @@
 //!
 //! Designed to fully replace the ad-hoc `apply_*_edit(&mut T, key,
 //! value)` functions in `prism-shell/src/app/mutations.rs`. The
-//! Slint property panel emits stringly-typed edits as `(path, value)`
-//! pairs; this derive turns the static type tree into the dispatcher.
+//! `prism-shell` property panel emits stringly-typed edits as
+//! `(path, value)` pairs; this derive turns the static type tree
+//! into the dispatcher.
 //!
 //! ## Path grammar
 //!

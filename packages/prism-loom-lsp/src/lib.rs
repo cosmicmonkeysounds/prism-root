@@ -39,12 +39,11 @@ use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
     Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, Hover, HoverContents, HoverParams, HoverProviderCapability,
-    InitializeParams, MarkupContent, MarkupKind, Position as LspPosition,
-    PublishDiagnosticsParams, Range as LspRange, SemanticToken, SemanticTokenModifier,
-    SemanticTokenType, SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend,
-    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Uri, WorkDoneProgressOptions,
+    InitializeParams, MarkupContent, MarkupKind, Position as LspPosition, PublishDiagnosticsParams,
+    Range as LspRange, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Uri, WorkDoneProgressOptions,
 };
 
 use prism_core::language::loom::node_kinds as nk;
@@ -60,8 +59,8 @@ pub fn run_stdio() -> Result<()> {
     let (connection, io_threads) = Connection::stdio();
     let server_capabilities = serde_json::to_value(server_capabilities())?;
     let initialization_params = connection.initialize(server_capabilities)?;
-    let _: InitializeParams = serde_json::from_value(initialization_params)
-        .context("decoding InitializeParams")?;
+    let _: InitializeParams =
+        serde_json::from_value(initialization_params).context("decoding InitializeParams")?;
 
     let mut state = ServerState::default();
     main_loop(&connection, &mut state)?;
@@ -75,29 +74,29 @@ pub fn run_stdio() -> Result<()> {
 /// `tokenType` integer the protocol expects. Keep this list aligned
 /// with [`token_type_for_node`].
 pub const TOKEN_TYPES: &[SemanticTokenType] = &[
-    SemanticTokenType::KEYWORD,           // 0
-    SemanticTokenType::VARIABLE,          // 1
-    SemanticTokenType::PARAMETER,         // 2
-    SemanticTokenType::PROPERTY,          // 3
-    SemanticTokenType::FUNCTION,          // 4
-    SemanticTokenType::NAMESPACE,         // 5
-    SemanticTokenType::TYPE,              // 6
-    SemanticTokenType::CLASS,             // 7
-    SemanticTokenType::ENUM_MEMBER,       // 8
-    SemanticTokenType::STRING,            // 9
-    SemanticTokenType::NUMBER,            // 10
-    SemanticTokenType::OPERATOR,          // 11
-    SemanticTokenType::COMMENT,           // 12
-    SemanticTokenType::DECORATOR,         // 13
-    SemanticTokenType::MACRO,             // 14
-    SemanticTokenType::EVENT,             // 15
+    SemanticTokenType::KEYWORD,     // 0
+    SemanticTokenType::VARIABLE,    // 1
+    SemanticTokenType::PARAMETER,   // 2
+    SemanticTokenType::PROPERTY,    // 3
+    SemanticTokenType::FUNCTION,    // 4
+    SemanticTokenType::NAMESPACE,   // 5
+    SemanticTokenType::TYPE,        // 6
+    SemanticTokenType::CLASS,       // 7
+    SemanticTokenType::ENUM_MEMBER, // 8
+    SemanticTokenType::STRING,      // 9
+    SemanticTokenType::NUMBER,      // 10
+    SemanticTokenType::OPERATOR,    // 11
+    SemanticTokenType::COMMENT,     // 12
+    SemanticTokenType::DECORATOR,   // 13
+    SemanticTokenType::MACRO,       // 14
+    SemanticTokenType::EVENT,       // 15
 ];
 
 pub const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
-    SemanticTokenModifier::DECLARATION,   // 0
-    SemanticTokenModifier::DEFINITION,    // 1
-    SemanticTokenModifier::READONLY,      // 2
-    SemanticTokenModifier::DOCUMENTATION, // 3
+    SemanticTokenModifier::DECLARATION,     // 0
+    SemanticTokenModifier::DEFINITION,      // 1
+    SemanticTokenModifier::READONLY,        // 2
+    SemanticTokenModifier::DOCUMENTATION,   // 3
     SemanticTokenModifier::DEFAULT_LIBRARY, // 4
 ];
 
@@ -165,7 +164,11 @@ impl Document {
     /// Convert an LSP (line, character) position to a byte offset.
     fn position_to_offset(&self, pos: LspPosition) -> usize {
         let line = pos.line as usize;
-        let line_start = self.line_starts.get(line).copied().unwrap_or(self.text.len());
+        let line_start = self
+            .line_starts
+            .get(line)
+            .copied()
+            .unwrap_or(self.text.len());
         let line_end = self
             .line_starts
             .get(line + 1)
@@ -226,9 +229,9 @@ fn main_loop(connection: &Connection, state: &mut ServerState) -> Result<()> {
 fn handle_request(connection: &Connection, state: &mut ServerState, req: Request) -> Result<()> {
     let id = req.id.clone();
     let result = match req.method.as_str() {
-        HoverRequest::METHOD => cast_and_run(req, |params: HoverParams| {
-            Ok(handle_hover(state, params))
-        }),
+        HoverRequest::METHOD => {
+            cast_and_run(req, |params: HoverParams| Ok(handle_hover(state, params)))
+        }
         Completion::METHOD => cast_and_run(req, |params: CompletionParams| {
             Ok(handle_completion(state, params))
         }),
@@ -262,11 +265,7 @@ fn handle_request(connection: &Connection, state: &mut ServerState, req: Request
     Ok(())
 }
 
-fn send_method_not_found(
-    connection: &Connection,
-    id: RequestId,
-    method: &str,
-) -> Result<()> {
+fn send_method_not_found(connection: &Connection, id: RequestId, method: &str) -> Result<()> {
     let response = Response {
         id,
         result: None,
@@ -435,9 +434,7 @@ fn handle_completion(state: &ServerState, params: CompletionParams) -> serde_jso
     serde_json::to_value(CompletionResponse::Array(items)).unwrap()
 }
 
-fn map_completion_kind(
-    kind: prism_core::language::syntax::CompletionKind,
-) -> CompletionItemKind {
+fn map_completion_kind(kind: prism_core::language::syntax::CompletionKind) -> CompletionItemKind {
     use prism_core::language::syntax::CompletionKind as K;
     match kind {
         K::Keyword => CompletionItemKind::KEYWORD,
@@ -451,10 +448,7 @@ fn map_completion_kind(
 
 // ─── Semantic tokens ───────────────────────────────────────────────
 
-fn handle_semantic_tokens(
-    state: &ServerState,
-    params: SemanticTokensParams,
-) -> serde_json::Value {
+fn handle_semantic_tokens(state: &ServerState, params: SemanticTokensParams) -> serde_json::Value {
     let uri = params.text_document.uri;
     let Some(doc) = state.docs.get(&uri) else {
         return serde_json::Value::Null;
@@ -504,11 +498,7 @@ fn collect_semantic_tokens(
     out
 }
 
-fn walk_node(
-    doc: &Document,
-    node: &SyntaxNode,
-    out: &mut Vec<(usize, usize, u32, u32)>,
-) {
+fn walk_node(doc: &Document, node: &SyntaxNode, out: &mut Vec<(usize, usize, u32, u32)>) {
     if let Some(token_type) = token_type_for_node(node) {
         if let Some(range) = node.position {
             let start_offset = range.start.offset;
@@ -583,7 +573,9 @@ fn token_type_for_node(node: &SyntaxNode) -> Option<u32> {
         nk::CAST_DECL | nk::CUE_DECL | nk::LOCATION_DECL | nk::COHORT_DECL => 0,
         nk::GENERATOR_DECL | nk::SCENE_DECL | nk::COMPOSE_DECL => 0,
         nk::KNOWLEDGE_BLOCK | nk::GOAL_DECL | nk::DISPOSITION_BLOCK | nk::HOOK_DECL => 0,
-        nk::ATTRIBUTE_DECL | nk::AXIS_DECL | nk::POOL_DECL | nk::STAT_DECL | nk::TREE_NODE_DECL => 0,
+        nk::ATTRIBUTE_DECL | nk::AXIS_DECL | nk::POOL_DECL | nk::STAT_DECL | nk::TREE_NODE_DECL => {
+            0
+        }
         nk::INLINE_FACTION_DECL | nk::MEMBERS_BLOCK | nk::STATE_BLOCK | nk::STANCE_BLOCK => 0,
         nk::FACTION_EVENT | nk::PARTICIPANT_FACTION_LIFECYCLE | nk::DISCOVERY_EVENT => 0,
         nk::PARTICIPANT_LIFECYCLE | nk::LOCATION_EVENT | nk::BROADCAST_BLOCK => 0,

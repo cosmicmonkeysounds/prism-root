@@ -165,9 +165,7 @@ impl Playhead {
                 }
                 Some(item) => {
                     self.stack[frame_idx].cursor += 1;
-                    if let Some(frame) =
-                        self.handle_item(doc, frame_idx, item, ledger, now_ms)
-                    {
+                    if let Some(frame) = self.handle_item(doc, frame_idx, item, ledger, now_ms) {
                         return Some(frame);
                     }
                     // Item produced no Frame (e.g. Return, processed
@@ -234,7 +232,9 @@ impl Playhead {
                 if text.is_empty() {
                     None
                 } else {
-                    Some(Frame::Stage { text: format!("[{node_kind}] {text}") })
+                    Some(Frame::Stage {
+                        text: format!("[{node_kind}] {text}"),
+                    })
                 }
             }
         }
@@ -306,13 +306,7 @@ impl Playhead {
     /// `option_idx` is the 0-based index into the *visible* options
     /// vector — `once` choices already spent are filtered out, so the
     /// indices the host sees stay packed.
-    pub fn choose(
-        &mut self,
-        doc: &Document,
-        option_idx: usize,
-        ledger: &mut Ledger,
-        now_ms: u64,
-    ) {
+    pub fn choose(&mut self, doc: &Document, option_idx: usize, ledger: &mut Ledger, now_ms: u64) {
         let Some(indices) = self.pending_choices.take() else {
             return;
         };
