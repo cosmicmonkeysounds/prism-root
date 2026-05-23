@@ -4628,6 +4628,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "prism-loom-runtime"
+version = "0.1.0"
+dependencies = [
+ "indexmap 2.14.0",
+ "postcard",
+ "prism-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "prism-luau-derive"
 version = "0.1.0"
 dependencies = [
