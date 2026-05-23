@@ -28,6 +28,13 @@ pub enum CodegenKind {
     /// the workspace. By default writes one consolidated stub file
     /// per source crate under `<workspace>/types/`.
     LuauTypes(LuauTypesArgs),
+    /// Emit the TextMate grammar for the Loom storytelling language
+    /// (`loom.tmLanguage.json`). The output is **derived** from
+    /// `prism_core::language::loom::keywords` — adding a keyword
+    /// there automatically extends the editor highlights on the next
+    /// run. By default writes to
+    /// `<workspace>/tools/loom-syntax/loom.tmLanguage.json`.
+    LoomTmgrammar(LoomTmgrammarArgs),
 }
 
 #[derive(Debug, Args)]
@@ -40,9 +47,21 @@ pub struct LuauTypesArgs {
     pub stdout: bool,
 }
 
+#[derive(Debug, Args)]
+pub struct LoomTmgrammarArgs {
+    /// Output file. Defaults to
+    /// `<workspace>/tools/loom-syntax/loom.tmLanguage.json`.
+    #[arg(long)]
+    pub out: Option<PathBuf>,
+    /// Print the generated grammar to stdout instead of writing it.
+    #[arg(long)]
+    pub stdout: bool,
+}
+
 pub fn run(args: &CodegenArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
     match &args.kind {
         CodegenKind::LuauTypes(args) => luau_types(args, workspace, dry_run),
+        CodegenKind::LoomTmgrammar(args) => loom_tmgrammar(args, workspace, dry_run),
     }
 }
 
@@ -78,6 +97,48 @@ fn luau_types(args: &LuauTypesArgs, workspace: &Workspace, dry_run: bool) -> Res
         println!("wrote {}", path.display());
     }
     Ok(0)
+}
+
+fn loom_tmgrammar(args: &LoomTmgrammarArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
+    let grammar = prism_core::language::loom::tmgrammar::emit_tmgrammar();
+
+    if args.stdout || dry_run {
+        println!("{grammar}");
+        return Ok(0);
+    }
+
+    // Write to the canonical path (single source of truth) and, if the
+    // VSCode extension's `syntaxes/` directory exists, refresh its
+    // bundled copy too. Keeping both in lock-step avoids the "edit was
+    // generated but the marketplace package shipped stale" trap.
+    let canonical = args.out.clone().unwrap_or_else(|| {
+        workspace
+            .root()
+            .join("tools/loom-syntax/loom.tmLanguage.json")
+    });
+    write_grammar(&canonical, &grammar)?;
+    println!("wrote {}", canonical.display());
+
+    if args.out.is_none() {
+        let vscode_bundle = workspace
+            .root()
+            .join("tools/loom-syntax/vscode-loom/syntaxes/loom.tmLanguage.json");
+        if vscode_bundle.parent().is_some_and(|p| p.exists()) {
+            write_grammar(&vscode_bundle, &grammar)?;
+            println!("wrote {}", vscode_bundle.display());
+        }
+    }
+
+    Ok(0)
+}
+
+fn write_grammar(path: &PathBuf, grammar: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create loom-syntax output dir at {}", parent.display()))?;
+    }
+    fs::write(path, grammar).with_context(|| format!("write {}", path.display()))?;
+    Ok(())
 }
 
 /// Build the `signals.d.luau` payload by walking the built-in

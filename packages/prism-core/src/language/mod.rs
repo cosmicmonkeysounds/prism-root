@@ -21,6 +21,7 @@ pub mod codegen;
 pub mod document;
 pub mod expression;
 pub mod forms;
+pub mod loom;
 pub mod luau;
 pub mod markdown;
 pub mod prism_ui;

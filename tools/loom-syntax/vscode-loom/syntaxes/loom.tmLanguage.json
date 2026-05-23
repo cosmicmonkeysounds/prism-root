@@ -1,0 +1,779 @@
+{
+  "fileTypes": [
+    "loom"
+  ],
+  "information_for_contributors": [
+    "GENERATED FILE — DO NOT EDIT BY HAND.",
+    "Regenerate with `prism codegen loom-tmgrammar`. Source: packages/prism-core/src/language/loom/ (prism:loom).",
+    "Mime type: text/x-loom.",
+    "Spec: docs/dev/loom-design.md + docs/dev/loom-grammar.md."
+  ],
+  "name": "Loom",
+  "patterns": [
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#docstring"
+    },
+    {
+      "include": "#string"
+    },
+    {
+      "include": "#header"
+    },
+    {
+      "include": "#slugline"
+    },
+    {
+      "include": "#section_line"
+    },
+    {
+      "include": "#speaker_line"
+    },
+    {
+      "include": "#choice_marker"
+    },
+    {
+      "include": "#divert"
+    },
+    {
+      "include": "#return_line"
+    },
+    {
+      "include": "#flavor_line"
+    },
+    {
+      "include": "#action_prefix"
+    },
+    {
+      "include": "#property"
+    },
+    {
+      "include": "#modifier"
+    },
+    {
+      "include": "#backlink"
+    },
+    {
+      "include": "#range_closer"
+    },
+    {
+      "include": "#inline_trigger"
+    },
+    {
+      "include": "#inline_assign"
+    },
+    {
+      "include": "#inline_eval_brace"
+    },
+    {
+      "include": "#inline_eval_paren"
+    },
+    {
+      "include": "#resolve_ref"
+    },
+    {
+      "include": "#static_ref"
+    },
+    {
+      "include": "#doc_tag"
+    },
+    {
+      "include": "#number"
+    },
+    {
+      "include": "#atomic_sigil"
+    },
+    {
+      "include": "#operator"
+    },
+    {
+      "include": "#keyword"
+    },
+    {
+      "include": "#identifier"
+    }
+  ],
+  "repository": {
+    "action_prefix": {
+      "captures": {
+        "1": {
+          "name": "punctuation.section.action.loom"
+        }
+      },
+      "match": "^\\s*(~)"
+    },
+    "atomic_sigil": {
+      "patterns": [
+        {
+          "match": "(?<![\\w])--(?![\\w])",
+          "name": "punctuation.section.section.loom"
+        },
+        {
+          "match": "(?<![\\w])##(?![\\w])",
+          "name": "punctuation.section.slugline.loom"
+        },
+        {
+          "match": "(?<![\\w])#(?![\\w])",
+          "name": "punctuation.section.header.loom"
+        },
+        {
+          "match": "(?<![\\w])\\*(?![\\w])",
+          "name": "punctuation.section.choice.once.loom"
+        },
+        {
+          "match": "(?<![\\w])\\+(?![\\w])",
+          "name": "punctuation.section.choice.sticky.loom"
+        },
+        {
+          "match": "(?<![\\w])>(?![\\w])",
+          "name": "punctuation.section.flavor.loom"
+        },
+        {
+          "match": "(?<![\\w])~(?![\\w])",
+          "name": "punctuation.section.action.loom"
+        },
+        {
+          "match": "(?<![\\w])%(?![\\w])",
+          "name": "punctuation.section.anchor.loom"
+        }
+      ]
+    },
+    "backlink": {
+      "begin": "\\[\\[",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.link.begin.loom"
+        }
+      },
+      "end": "\\]\\]",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.link.end.loom"
+        }
+      },
+      "name": "markup.underline.link.loom",
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "name": "entity.name.tag.backlink-type.loom"
+            },
+            "2": {
+              "name": "punctuation.separator.loom"
+            }
+          },
+          "match": "([A-Za-z_][A-Za-z0-9_-]*)(:)",
+          "name": "entity.name.tag.backlink-type.loom"
+        },
+        {
+          "captures": {
+            "1": {
+              "name": "punctuation.separator.display.loom"
+            },
+            "2": {
+              "name": "string.unquoted.backlink-display.loom"
+            }
+          },
+          "match": "(\\|)([^\\]]+)"
+        }
+      ]
+    },
+    "choice_marker": {
+      "captures": {
+        "1": {
+          "name": "punctuation.section.choice.loom"
+        }
+      },
+      "match": "^\\s*([*+])(?=\\s)"
+    },
+    "comment": {
+      "patterns": [
+        {
+          "match": "//.*$",
+          "name": "comment.line.double-slash.loom"
+        },
+        {
+          "begin": "/\\*",
+          "captures": {
+            "0": {
+              "name": "punctuation.definition.comment.loom"
+            }
+          },
+          "end": "\\*/",
+          "name": "comment.block.loom"
+        }
+      ]
+    },
+    "divert": {
+      "captures": {
+        "1": {
+          "name": "keyword.control.divert.loom"
+        },
+        "2": {
+          "name": "entity.name.section.divert-target.loom"
+        }
+      },
+      "match": "(->)\\s*(@?[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)?)?"
+    },
+    "doc_tag": {
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.tag.loom"
+        },
+        "2": {
+          "name": "entity.name.tag.loom"
+        }
+      },
+      "match": "(?<![\\w:])(:)([A-Za-z_][A-Za-z0-9_-]*)\\b"
+    },
+    "docstring": {
+      "begin": "'''",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.loom"
+        }
+      },
+      "end": "'''",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.loom"
+        }
+      },
+      "name": "string.quoted.triple.loom"
+    },
+    "flavor_line": {
+      "captures": {
+        "1": {
+          "name": "punctuation.section.flavor.loom"
+        }
+      },
+      "match": "^\\s*(>)\\s"
+    },
+    "header": {
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.heading.loom"
+        },
+        "2": {
+          "name": "entity.name.section.document.loom"
+        }
+      },
+      "match": "^(#)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+    },
+    "identifier": {
+      "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b",
+      "name": "variable.other.loom"
+    },
+    "inline_assign": {
+      "begin": "<(?=\\$)",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.inline-assign.begin.loom"
+        }
+      },
+      "end": ">",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.inline-assign.end.loom"
+        }
+      },
+      "name": "meta.inline-assign.loom",
+      "patterns": [
+        {
+          "include": "#resolve_ref"
+        },
+        {
+          "include": "#operator"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#static_ref"
+        },
+        {
+          "include": "#keyword"
+        }
+      ]
+    },
+    "inline_eval_brace": {
+      "begin": "\\$\\{",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.inline-eval.begin.loom"
+        }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.inline-eval.end.loom"
+        }
+      },
+      "name": "meta.inline-eval.loom",
+      "patterns": [
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "include": "#resolve_ref"
+        },
+        {
+          "include": "#static_ref"
+        },
+        {
+          "include": "#operator"
+        },
+        {
+          "include": "#keyword"
+        },
+        {
+          "include": "#identifier"
+        }
+      ]
+    },
+    "inline_eval_paren": {
+      "begin": "\\$\\(",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.inline-eval.begin.loom"
+        }
+      },
+      "end": "\\)",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.inline-eval.end.loom"
+        }
+      },
+      "name": "meta.inline-eval-sexp.loom",
+      "patterns": [
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "include": "#resolve_ref"
+        },
+        {
+          "include": "#static_ref"
+        },
+        {
+          "include": "#operator"
+        },
+        {
+          "include": "#keyword"
+        },
+        {
+          "include": "#identifier"
+        }
+      ]
+    },
+    "inline_trigger": {
+      "begin": "<(?!/|\\?|-|\\$)([A-Za-z_][A-Za-z0-9_]*)(:)",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.trigger.begin.loom"
+        },
+        "1": {
+          "patterns": [
+            {
+              "match": "\\b(pause|sfx|vo|speed|camera|cue|color|shake)\\b",
+              "name": "support.function.trigger.builtin.loom"
+            },
+            {
+              "match": "[A-Za-z_][A-Za-z0-9_]*",
+              "name": "support.function.trigger.loom"
+            }
+          ]
+        },
+        "2": {
+          "name": "punctuation.separator.loom"
+        }
+      },
+      "end": ">",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.trigger.end.loom"
+        }
+      },
+      "name": "meta.trigger.loom",
+      "patterns": [
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "include": "#resolve_ref"
+        },
+        {
+          "include": "#static_ref"
+        },
+        {
+          "captures": {
+            "1": {
+              "name": "variable.parameter.trigger-attr.loom"
+            },
+            "2": {
+              "name": "punctuation.separator.loom"
+            }
+          },
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(:)",
+          "name": "variable.parameter.trigger-attr.loom"
+        }
+      ]
+    },
+    "keyword": {
+      "patterns": [
+        {
+          "match": "\\b(if|and|or|not|is|has|in|of)\\b",
+          "name": "keyword.control.flow.loom"
+        },
+        {
+          "match": "\\b(var|let|define|defn|defmacro)\\b",
+          "name": "keyword.declaration.loom"
+        },
+        {
+          "match": "\\b(fire|advance|trigger|modify)\\b",
+          "name": "keyword.other.action.loom"
+        },
+        {
+          "match": "\\b(each|visit|first|then|finally|after|otherwise|when|match|import|export)\\b",
+          "name": "keyword.control.block.loom"
+        },
+        {
+          "match": "\\b(true|false|nil)\\b",
+          "name": "constant.language.loom"
+        },
+        {
+          "match": "\\b(cast|cue|cohort|location|broadcast|improv|enroll|as|joins|leaves|enters|exits|participant)\\b",
+          "name": "keyword.other.performance.loom"
+        },
+        {
+          "match": "\\b(type|extends|knowledge|goal|disposition|mirror|on|meeting|passes|drops|below|reacts|init|range)\\b",
+          "name": "keyword.other.character.loom"
+        },
+        {
+          "match": "\\b(attribute|axis|pool|stat|node|ability|rank|mode|curve|milestones|table|interpolate|lookup)\\b",
+          "name": "keyword.other.stats.loom"
+        },
+        {
+          "match": "\\b(xp_curve|use_tracking|point_buy|milestone|narrative_trigger|sdk_controlled)\\b",
+          "name": "constant.language.axis-mode.loom"
+        },
+        {
+          "match": "\\b(generator|scene|loop|wait|until|at|every|yield|spawn|cancel|await|return|with_chance|random|compose|pattern|bark|from|run)\\b",
+          "name": "keyword.other.reactivity.loom"
+        },
+        {
+          "match": "\\b(priority|active_when|completes_when|fails_when|drives|on_complete|on_fail)\\b",
+          "name": "keyword.other.goal.loom"
+        },
+        {
+          "match": "\\b(faction|template|members|state|stance|emerges|dissolves|grows|shrinks|changes|proposes|founds|asymmetric|parent|default|size|age|has_stance|is_at_least|is_at_most|discovers_member|membership)\\b",
+          "name": "keyword.other.faction.loom"
+        },
+        {
+          "match": "\\b(visibility|public|private|actually|as_known_by|believes|reveal|revealed|hidden_from)\\b",
+          "name": "keyword.other.visibility.loom"
+        },
+        {
+          "match": "\\b(hostile|wary|neutral|friendly|allied)\\b",
+          "name": "constant.language.stance.loom"
+        },
+        {
+          "match": "\\b(focal|active|ambient|budget_ms|tier)\\b",
+          "name": "keyword.other.scheduling.loom"
+        },
+        {
+          "match": "\\b(advance_on|pedal|tap|speech|gesture|quorum|stage_manager|performer)\\b",
+          "name": "keyword.other.improv.loom"
+        },
+        {
+          "match": "\\b(settling_window|spawn_rate_limit|late_join_observer_template)\\b",
+          "name": "keyword.other.template.loom"
+        },
+        {
+          "match": "\\b(list|relation|entity|one-to-one|one-to-many|many-to-many)\\b",
+          "name": "keyword.declaration.sexp.loom"
+        },
+        {
+          "match": "\\b(conversation|barks|quest|cutscene|script|film|immersive|character|type|stats|tree|faction|template|typewriter|module)\\b",
+          "name": "entity.name.tag.loom"
+        },
+        {
+          "match": "\\b(pause|sfx|vo|speed|camera|cue|color|shake)\\b",
+          "name": "support.function.trigger.loom"
+        },
+        {
+          "match": "\\b(vo|director|status|note|hint|loc)\\b",
+          "name": "support.function.annotation.loom"
+        },
+        {
+          "match": "\\b(once|hub|return|sticky|fallback|interrupt|show|dispatch|critical|high|normal|low|skip|block)\\b",
+          "name": "support.type.modifier.loom"
+        },
+        {
+          "match": "\\b(played|visits|chose|last|since|count)\\b",
+          "name": "support.function.ledger.loom"
+        },
+        {
+          "match": "\\b(any|all|count|min|max|closest|first|last)\\b",
+          "name": "support.function.aggregate.loom"
+        },
+        {
+          "match": "\\b(bool|int|float|string|list)\\b",
+          "name": "storage.type.loom"
+        }
+      ]
+    },
+    "modifier": {
+      "captures": {
+        "1": {
+          "name": "punctuation.accessor.modifier.loom"
+        },
+        "2": {
+          "name": "support.type.modifier.loom"
+        }
+      },
+      "match": "(?<=\\s)(\\.)([A-Za-z_][A-Za-z0-9_-]*)"
+    },
+    "number": {
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "name": "constant.numeric.loom"
+            },
+            "2": {
+              "name": "keyword.other.unit.loom"
+            }
+          },
+          "match": "(?<![\\w])(-?[0-9]+(?:\\.[0-9]+)?)(ms|s|m|h)\\b",
+          "name": "constant.numeric.duration.loom"
+        },
+        {
+          "match": "(?<![\\w])-?[0-9]+(?:\\.[0-9]+)?",
+          "name": "constant.numeric.loom"
+        }
+      ]
+    },
+    "operator": {
+      "patterns": [
+        {
+          "match": "!\\?=",
+          "name": "keyword.operator.membership.negated.loom"
+        },
+        {
+          "match": "->",
+          "name": "keyword.control.divert.loom"
+        },
+        {
+          "match": "<-",
+          "name": "keyword.control.return.loom"
+        },
+        {
+          "match": ":=",
+          "name": "keyword.operator.assignment.walrus.loom"
+        },
+        {
+          "match": "\\+=",
+          "name": "keyword.operator.assignment.augmented.loom"
+        },
+        {
+          "match": "-=",
+          "name": "keyword.operator.assignment.augmented.loom"
+        },
+        {
+          "match": "\\+\\+",
+          "name": "keyword.operator.assignment.increment.loom"
+        },
+        {
+          "match": "==",
+          "name": "keyword.operator.comparison.loom"
+        },
+        {
+          "match": "!=",
+          "name": "keyword.operator.comparison.loom"
+        },
+        {
+          "match": ">=",
+          "name": "keyword.operator.comparison.loom"
+        },
+        {
+          "match": "<=",
+          "name": "keyword.operator.comparison.loom"
+        },
+        {
+          "match": "\\?\\.",
+          "name": "keyword.operator.navigation.safe.loom"
+        },
+        {
+          "match": "\\?=",
+          "name": "keyword.operator.membership.loom"
+        },
+        {
+          "match": "=",
+          "name": "keyword.operator.assignment.loom"
+        },
+        {
+          "match": "\\+",
+          "name": "keyword.operator.arithmetic.loom"
+        },
+        {
+          "match": "-",
+          "name": "keyword.operator.arithmetic.loom"
+        },
+        {
+          "match": "\\*",
+          "name": "keyword.operator.arithmetic.loom"
+        },
+        {
+          "match": "\\/",
+          "name": "keyword.operator.arithmetic.loom"
+        },
+        {
+          "match": "%",
+          "name": "keyword.operator.arithmetic.loom"
+        },
+        {
+          "match": "<",
+          "name": "keyword.operator.comparison.loom"
+        },
+        {
+          "match": ">",
+          "name": "keyword.operator.comparison.loom"
+        }
+      ]
+    },
+    "property": {
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.property.loom"
+        },
+        "2": {
+          "name": "variable.other.property.loom"
+        }
+      },
+      "match": "^\\s*(\\.)([A-Za-z_][A-Za-z0-9_-]*)"
+    },
+    "range_closer": {
+      "patterns": [
+        {
+          "match": "</>",
+          "name": "punctuation.definition.range.end.loom"
+        },
+        {
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.range.end.loom"
+            },
+            "2": {
+              "name": "entity.name.tag.anchor.loom"
+            },
+            "3": {
+              "name": "punctuation.definition.range.end.loom"
+            }
+          },
+          "match": "(</%)([A-Za-z_][A-Za-z0-9_]*)(>)"
+        }
+      ]
+    },
+    "resolve_ref": {
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.variable.resolve.loom"
+        },
+        "2": {
+          "name": "variable.other.resolve.loom"
+        },
+        "3": {
+          "name": "variable.other.resolve.chain.loom"
+        },
+        "4": {
+          "name": "punctuation.definition.presence-check.loom"
+        }
+      },
+      "match": "(\\$)([A-Za-z_][A-Za-z0-9_]*)((?:\\.[A-Za-z_][A-Za-z0-9_]*|\\?\\.[A-Za-z_][A-Za-z0-9_]*)*)(\\?)?"
+    },
+    "return_line": {
+      "captures": {
+        "1": {
+          "name": "keyword.control.return.loom"
+        },
+        "2": {
+          "name": "entity.name.section.return-target.loom"
+        }
+      },
+      "match": "(<-)\\s*([A-Za-z_][A-Za-z0-9_]*)?"
+    },
+    "section_line": {
+      "captures": {
+        "1": {
+          "name": "punctuation.section.section.loom"
+        },
+        "2": {
+          "name": "entity.name.section.loom"
+        }
+      },
+      "match": "^\\s*(--)\\s*([A-Za-z_][A-Za-z0-9_]*)?"
+    },
+    "slugline": {
+      "captures": {
+        "1": {
+          "name": "punctuation.section.slugline.loom"
+        },
+        "2": {
+          "name": "entity.name.section.slugline.loom"
+        }
+      },
+      "match": "^\\s*(##)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)?)?"
+    },
+    "speaker_id": {
+      "match": "\\b[A-Z][A-Z0-9_]+\\b",
+      "name": "entity.name.function.speaker.loom"
+    },
+    "speaker_line": {
+      "captures": {
+        "2": {
+          "name": "entity.name.function.speaker.loom"
+        }
+      },
+      "match": "^(\\s*)([A-Z][A-Z0-9_]*)(?=\\s*(?:\\{|\\^|$))"
+    },
+    "static_ref": {
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.variable.static.loom"
+        },
+        "2": {
+          "name": "variable.other.static.loom"
+        }
+      },
+      "match": "(@)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)"
+    },
+    "string": {
+      "begin": "\"",
+      "end": "\"",
+      "name": "string.quoted.double.loom",
+      "patterns": [
+        {
+          "match": "\\\\(?:[\"\\\\nrt]|u\\{[0-9A-Fa-f]+\\})",
+          "name": "constant.character.escape.loom"
+        }
+      ]
+    }
+  },
+  "scopeName": "source.loom",
+  "uuid": "5b9b8a8e-1f1c-4b1c-9a1e-c8b6b9d7e9f1"
+}

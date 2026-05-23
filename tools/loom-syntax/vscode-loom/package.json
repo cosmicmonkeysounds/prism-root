@@ -1,0 +1,39 @@
+{
+  "name": "loom",
+  "displayName": "Loom (Prism)",
+  "description": "Syntax highlighting for the Loom storytelling language. Part of the Prism Framework.",
+  "publisher": "prism-framework",
+  "version": "0.1.0",
+  "license": "GPL-3.0-or-later",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "loom",
+        "aliases": [
+          "Loom",
+          "loom"
+        ],
+        "extensions": [
+          ".loom"
+        ],
+        "mimetypes": [
+          "text/x-loom"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "loom",
+        "scopeName": "source.loom",
+        "path": "./syntaxes/loom.tmLanguage.json"
+      }
+    ]
+  }
+}

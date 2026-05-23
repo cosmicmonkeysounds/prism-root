@@ -1,0 +1,16 @@
+id = "loom"
+name = "Loom (Prism)"
+description = "File association + LSP wiring for the Loom storytelling language."
+version = "0.1.0"
+schema_version = 1
+authors = ["Prism Framework"]
+repository = "https://github.com/anthropics/prism-root"
+
+# Zed uses tree-sitter for syntax highlights, so a TextMate grammar
+# can't drive its colours directly. This extension ships only the
+# language metadata (file association, comment markers, brackets)
+# today; the LSP server backed by Prism's canonical Loom parser will
+# provide full semantic highlights once it lands.
+[language_servers.loom-lsp]
+name = "Prism Loom"
+language = "Loom"
