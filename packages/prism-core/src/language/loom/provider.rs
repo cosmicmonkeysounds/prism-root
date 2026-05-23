@@ -14,7 +14,8 @@ use crate::language::syntax::{
 };
 
 use super::keywords::KEYWORD_CATEGORIES;
-use super::parser::{parse, Severity as LoomSeverity};
+use super::parser::{parse, LoomDiagnostic, Severity as LoomSeverity};
+use super::validator::validate;
 use super::LOOM_ID;
 
 #[derive(Debug, Clone, Default)]
@@ -33,23 +34,16 @@ impl SyntaxProvider for LoomSyntaxProvider {
 
     fn diagnose(&self, source: &str, _context: Option<&SchemaContext>) -> Vec<Diagnostic> {
         let result = parse(source);
-        result
-            .diagnostics
-            .into_iter()
-            .map(|d| Diagnostic {
-                message: d.message,
-                severity: match d.severity {
-                    LoomSeverity::Error => DiagnosticSeverity::Error,
-                    LoomSeverity::Warning => DiagnosticSeverity::Warning,
-                    LoomSeverity::Info => DiagnosticSeverity::Info,
-                },
-                range: TextRange {
-                    start: d.range.start.offset,
-                    end: d.range.end.offset.max(d.range.start.offset),
-                },
-                code: Some(d.id.to_string()),
-            })
-            .collect()
+        // Run the validator over the parsed tree even when the parser
+        // produced diagnostics — validator passes are independent and
+        // their messages tend to be the more actionable ones for
+        // editor users.
+        let validator_diags = validate(&result.root);
+
+        let mut diagnostics = Vec::with_capacity(result.diagnostics.len() + validator_diags.len());
+        diagnostics.extend(result.diagnostics.into_iter().map(convert_diagnostic));
+        diagnostics.extend(validator_diags.into_iter().map(convert_diagnostic));
+        diagnostics
     }
 
     fn complete(
@@ -98,6 +92,22 @@ impl SyntaxProvider for LoomSyntaxProvider {
             contents: detail,
             range: TextRange { start, end },
         })
+    }
+}
+
+fn convert_diagnostic(d: LoomDiagnostic) -> Diagnostic {
+    Diagnostic {
+        message: d.message,
+        severity: match d.severity {
+            LoomSeverity::Error => DiagnosticSeverity::Error,
+            LoomSeverity::Warning => DiagnosticSeverity::Warning,
+            LoomSeverity::Info => DiagnosticSeverity::Info,
+        },
+        range: TextRange {
+            start: d.range.start.offset,
+            end: d.range.end.offset.max(d.range.start.offset),
+        },
+        code: Some(d.id.to_string()),
     }
 }
 
@@ -200,6 +210,47 @@ mod tests {
             d.iter()
                 .any(|x| x.code.as_deref() == Some("bracket-unbalanced")),
             "expected bracket-unbalanced code in {:?}",
+            d
+        );
+    }
+
+    #[test]
+    fn diagnose_surfaces_validator_unknown_cast() {
+        let p = LoomSyntaxProvider::new();
+        // Speaker `WREN` used in dialogue with no `cast` declaration —
+        // a registry-driven diagnostic the parser alone can't catch.
+        let src = "# story\n-- start\nWREN\n  hi\n";
+        let d = p.diagnose(src, None);
+        assert!(
+            d.iter().any(|x| x.code.as_deref() == Some("unknown-cast")),
+            "expected unknown-cast from validator in {:?}",
+            d
+        );
+    }
+
+    #[test]
+    fn diagnose_surfaces_validator_divert_target_unknown() {
+        let p = LoomSyntaxProvider::new();
+        let src = "# story\n-- start\n-> nowhere\n";
+        let d = p.diagnose(src, None);
+        assert!(
+            d.iter()
+                .any(|x| x.code.as_deref() == Some("divert-target-unknown")),
+            "expected divert-target-unknown in {:?}",
+            d
+        );
+    }
+
+    #[test]
+    fn diagnose_surfaces_validator_shape_check() {
+        let p = LoomSyntaxProvider::new();
+        // `goal` with no `priority` knob — pure shape check from the
+        // validator's pass 3.
+        let src = "# d\ngoal investigate\n  active_when = $x\n";
+        let d = p.diagnose(src, None);
+        assert!(
+            d.iter().any(|x| x.code.as_deref() == Some("goal-no-priority")),
+            "expected goal-no-priority in {:?}",
             d
         );
     }

@@ -35,6 +35,7 @@ pub mod node_kinds;
 pub mod parser;
 pub mod provider;
 pub mod tmgrammar;
+pub mod validator;
 
 pub use contribution::create_loom_contribution;
 
