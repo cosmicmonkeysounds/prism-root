@@ -379,9 +379,14 @@ mod tests {
                 json!({ "key": key, "plaintext": hex::encode(b"authenticated") }),
             )
             .unwrap();
-        // Flip one byte of the ciphertext hex.
+        // Flip one byte of the ciphertext hex. Previously this overwrote
+        // the first two chars with `"ff"`, which silently no-op'd ~1 in
+        // 256 runs (when the first ciphertext byte happened to already be
+        // `0xff`). Incrementing the byte guarantees a real mutation.
         let mut ct = out["ciphertext"].as_str().unwrap().to_string();
-        ct.replace_range(0..2, "ff");
+        let first = u8::from_str_radix(&ct[0..2], 16).unwrap();
+        let tampered = format!("{:02x}", first.wrapping_add(1));
+        ct.replace_range(0..2, &tampered);
 
         let err = k
             .invoke(
@@ -393,7 +398,7 @@ mod tests {
                 }),
             )
             .unwrap_err();
-        matches!(err, CommandError::Handler { .. });
+        assert!(matches!(err, CommandError::Handler { .. }));
     }
 
     #[test]
