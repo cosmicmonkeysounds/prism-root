@@ -62,32 +62,36 @@ pub enum TokenKind {
     BlockComment,
 
     // ── Single-character sigils ────────────────────────────────────
-    Hash,    // #
-    Dot,     // .
-    At,      // @
-    Dollar,  // $
-    Tilde,   // ~
-    Caret,   // ^
-    QMark,   // ?
-    Percent, // %
-    Pipe,    // |
-    Comma,   // ,
-    Colon,   // :
-    Semi,    // ;
-    Bang,    // !
-    Star,    // *
-    Plus,    // +
-    Minus,   // -
-    Slash,   // /
-    Eq,      // =
-    Lt,      // <
-    Gt,      // >
-    LParen,  // (
-    RParen,  // )
-    LBrace,  // {
-    RBrace,  // }
-    LBrack,  // [
-    RBrack,  // ]
+    Hash,       // #
+    Dot,        // .
+    At,         // @
+    Dollar,     // $
+    Tilde,      // ~
+    Caret,      // ^
+    QMark,      // ?
+    Percent,    // %
+    Pipe,       // |
+    Comma,      // ,
+    Colon,      // :
+    Semi,       // ;
+    Bang,       // !
+    Star,       // *
+    Plus,       // +
+    Minus,      // -
+    Slash,      // /
+    Eq,         // =
+    Lt,         // <
+    Gt,         // >
+    Apostrophe, // ' (single — three are a Docstring; lone is treated as
+                //   punctuation so contractions in dialogue ("I'll") and
+                //   English apostrophes in stage prose round-trip
+                //   through the inline-text collector).
+    LParen,     // (
+    RParen,     // )
+    LBrace,     // {
+    RBrace,     // }
+    LBrack,     // [
+    RBrack,     // ]
 
     // ── Multi-character sigils ─────────────────────────────────────
     DashDash,    // --   (section opener; also a line marker)
@@ -903,6 +907,7 @@ impl<'s> Lexer<'s> {
             '=' => TokenKind::Eq,
             '<' => TokenKind::Lt,
             '>' => TokenKind::Gt,
+            '\'' => TokenKind::Apostrophe,
             '(' => TokenKind::LParen,
             ')' => TokenKind::RParen,
             '{' => TokenKind::LBrace,
@@ -915,21 +920,27 @@ impl<'s> Lexer<'s> {
 }
 
 /// All-caps identifier predicate (grammar §3.2). Returns `true` when
-/// every character is uppercase ASCII, a digit, or underscore, and
-/// the string contains at least one alphabetic character.
+/// every character is uppercase ASCII, a digit, or underscore, AND
+/// the string contains at least **two** alphabetic characters.
+///
+/// The two-char minimum departs slightly from a literal reading of
+/// §3.2 (which says `[A-Z][A-Z0-9_]*`) but makes the parser usable
+/// for natural English — single-letter words like `I` and `A` would
+/// otherwise be parsed as speaker labels and trip dialogue mode mid-
+/// text. Loom doesn't ship a real one-letter speaker; if a project
+/// needs one, they can use `_X` or `X1`.
 fn is_speaker(s: &str) -> bool {
-    let mut saw_alpha = false;
+    let mut alpha_count = 0usize;
     for ch in s.chars() {
         if ch.is_ascii_uppercase() {
-            saw_alpha = true;
+            alpha_count += 1;
         } else if ch.is_ascii_digit() || ch == '_' {
-            // OK, but only after at least one alpha — `_` alone is
-            // a plain ident, not a speaker.
+            // OK — but doesn't count toward the alpha minimum.
         } else {
             return false;
         }
     }
-    saw_alpha
+    alpha_count >= 2
 }
 
 #[cfg(test)]
@@ -971,13 +982,14 @@ mod tests {
 
     #[test]
     fn single_letter_caps_is_ident_not_speaker() {
-        // A single uppercase letter (e.g. `X`) is too short to be a
-        // dialogue label per §3.2's two-char minimum convention.
-        // Our `is_speaker` accepts any all-caps run with at least
-        // one alpha, so `X` IS a Speaker — document this for the
-        // future if it bites.
+        // The two-char minimum in `is_speaker` means single uppercase
+        // letters lex as `Ident` — this lets natural English ("I'll
+        // help.", "A new day...") survive in dialogue text without
+        // being mis-classified as speaker labels mid-line.
         let toks = lex("X").unwrap();
-        assert_eq!(toks[0].kind, TokenKind::Speaker);
+        assert_eq!(toks[0].kind, TokenKind::Ident);
+        let toks = lex("I").unwrap();
+        assert_eq!(toks[0].kind, TokenKind::Ident);
     }
 
     #[test]

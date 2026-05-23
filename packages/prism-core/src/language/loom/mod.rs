@@ -27,9 +27,16 @@
 //!   `prism codegen loom-tmgrammar` and shipped in the VSCode / GitHub
 //!   Linguist editor extensions.
 
+pub mod contribution;
+pub mod diagnostics;
 pub mod keywords;
 pub mod lexer;
+pub mod node_kinds;
+pub mod parser;
+pub mod provider;
 pub mod tmgrammar;
+
+pub use contribution::create_loom_contribution;
 
 /// Namespaced contribution id reserved for the future
 /// `LanguageContribution` registration. Used today only by the
