@@ -1,0 +1,60 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+@import "dockview-react/dist/styles/dockview.css";
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background-color: #0b0d10;
+  color: #e6e6e6;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.cm-editor {
+  height: 100%;
+  font-size: 13px;
+}
+
+.cm-editor.cm-focused {
+  outline: none;
+}
+
+/* ─── Light theme overrides ──────────────────────────────────────────────────
+   When `data-theme="light"` is set on <html>, swap the few dark zinc colors
+   we use for the chrome (header, footer, sidebar, panels, dialogs) to light
+   equivalents. CodeMirror has its own theme prop, untouched here.            */
+
+html[data-theme="light"],
+html[data-theme="light"] body,
+html[data-theme="light"] #root {
+  background-color: #fafafa;
+  color: #18181b;
+}
+
+html[data-theme="light"] .bg-zinc-950 { background-color: #ffffff !important; }
+html[data-theme="light"] .bg-zinc-900 { background-color: #f4f4f5 !important; }
+html[data-theme="light"] .bg-zinc-900\/50 { background-color: rgba(244,244,245,0.6) !important; }
+html[data-theme="light"] .bg-zinc-900\/40 { background-color: rgba(244,244,245,0.5) !important; }
+html[data-theme="light"] .bg-zinc-800 { background-color: #e4e4e7 !important; }
+html[data-theme="light"] .bg-black\/40 { background-color: rgba(0,0,0,0.18) !important; }
+html[data-theme="light"] .bg-black\/50 { background-color: rgba(0,0,0,0.22) !important; }
+
+html[data-theme="light"] .bg-white\/5 { background-color: rgba(0,0,0,0.04) !important; }
+html[data-theme="light"] .bg-white\/10 { background-color: rgba(0,0,0,0.08) !important; }
+html[data-theme="light"] .hover\:bg-white\/5:hover { background-color: rgba(0,0,0,0.06) !important; }
+html[data-theme="light"] .hover\:bg-white\/10:hover { background-color: rgba(0,0,0,0.10) !important; }
+
+html[data-theme="light"] .border-white\/5 { border-color: rgba(0,0,0,0.05) !important; }
+html[data-theme="light"] .border-white\/10 { border-color: rgba(0,0,0,0.10) !important; }
+
+html[data-theme="light"] .text-white { color: #18181b !important; }
+html[data-theme="light"] .text-zinc-100 { color: #27272a !important; }
+html[data-theme="light"] .text-zinc-200 { color: #3f3f46 !important; }
+html[data-theme="light"] .text-zinc-300 { color: #52525b !important; }
+html[data-theme="light"] .text-zinc-400 { color: #71717a !important; }
+html[data-theme="light"] .text-zinc-500 { color: #71717a !important; }
+html[data-theme="light"] .text-zinc-600 { color: #a1a1aa !important; }
+html[data-theme="light"] .text-zinc-700 { color: #d4d4d8 !important; }
+html[data-theme="light"] .hover\:text-white:hover { color: #18181b !important; }
+html[data-theme="light"] .hover\:text-zinc-100:hover { color: #27272a !important; }
+html[data-theme="light"] .hover\:text-zinc-200:hover { color: #3f3f46 !important; }
