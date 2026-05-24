@@ -90,6 +90,30 @@ impl Workspace {
         self.wasm_artifact_dir(release).join("prism_shell.wasm")
     }
 
+    /// Where cargo drops the `wasm32-unknown-emscripten` daemon
+    /// build for a given profile. This is the sidecar wasm the
+    /// browser shell loads to reach a real `mlua` Luau runtime —
+    /// see `packages/prism-daemon/src/wasm.rs`.
+    pub fn daemon_wasm_artifact_dir(&self, release: bool) -> PathBuf {
+        let profile = if release { "release" } else { "debug" };
+        self.root
+            .join("target")
+            .join("wasm32-unknown-emscripten")
+            .join(profile)
+    }
+
+    /// `(js_loader, wasm_blob)` artifact pair emitted by the
+    /// emscripten daemon build. `prism build --target web` copies
+    /// both next to `shell_web_dir()/index.html` so the browser's
+    /// dynamic `import("./prism_daemon_wasm.js")` resolves.
+    pub fn daemon_wasm_artifacts(&self, release: bool) -> (PathBuf, PathBuf) {
+        let dir = self.daemon_wasm_artifact_dir(release);
+        (
+            dir.join("prism_daemon_wasm.js"),
+            dir.join("prism_daemon_wasm.wasm"),
+        )
+    }
+
     /// Source tree the `prism dev shell` hot-reload loop watches for
     /// `.rs` changes. Scoped to the shell's own `src/` directory;
     /// watching `prism-core`/other transitive crates is deferred until

@@ -28,9 +28,10 @@
   <body>
     <!--
       The Slint winit backend (wasm32-unknown-unknown) locates the
-      canvas by id. `prism-shell`'s wasm-bindgen `(start)` entry
+      canvas by id. `prism-shell`'s wasm-bindgen `web_start` entry
       point constructs an `AppWindow` and runs the event loop into
-      this canvas.
+      this canvas. `web_start` is called *after* the daemon
+      bootstrap below so the shell picks up `JsLuauHost`.
     -->
     <canvas id="canvas"></canvas>
     <script>
@@ -52,8 +53,78 @@
       })();
     </script>
     <script type="module">
-      import init from "./prism_shell.js";
-      init();
+      // ── Bootstrap order ─────────────────────────────────────────
+      //   1. Initialise the shell's wasm-bindgen module (loads the
+      //      `wasm32-unknown-unknown` build of `prism-shell`).
+      //   2. Try to load the emscripten daemon module
+      //      (`prism_daemon_wasm.js`) sitting next to us. It carries
+      //      the real `mlua` Luau runtime — see
+      //      `packages/prism-daemon/src/wasm.rs`. Missing file →
+      //      shell still boots, just without Luau (NoopLuauHost).
+      //   3. If the daemon loaded, wrap its `prism_daemon_invoke`
+      //      C-ABI symbol with `Module.cwrap` and hand it to the
+      //      shell via `set_luau_invoker`. The shell will store the
+      //      function and later use it from `JsLuauHost::exec`.
+      //   4. Call `web_start()` to actually boot the shell.
+      import init, { set_luau_invoker, web_start } from "./prism_shell.js";
+
+      await init();
+
+      try {
+        const daemonModule = await import("./prism_daemon_wasm.js");
+        const factory = daemonModule.default || daemonModule;
+        if (typeof factory !== "function") {
+          throw new Error("prism_daemon_wasm.js has no default export");
+        }
+        const Module = await factory();
+
+        const create = Module.cwrap("prism_daemon_create", "number", []);
+        const invoke = Module.cwrap(
+          "prism_daemon_invoke",
+          "number",
+          ["number", "string", "string"],
+        );
+        const freeString = Module.cwrap("prism_daemon_free_string", null, [
+          "number",
+        ]);
+
+        const kernel = create();
+        if (!kernel) {
+          throw new Error("prism_daemon_create returned null");
+        }
+
+        // The shape `set_luau_invoker` expects: a JS function
+        // taking `(commandName, payloadJson)` and returning the
+        // daemon's JSON envelope as a string. We pin the kernel
+        // pointer in the closure.
+        const invokerFn = (commandName, payloadJson) => {
+          const resultPtr = invoke(kernel, commandName, payloadJson);
+          if (!resultPtr) {
+            return JSON.stringify({
+              ok: false,
+              error: "prism_daemon_invoke returned a null pointer",
+            });
+          }
+          try {
+            return Module.UTF8ToString(resultPtr);
+          } finally {
+            freeString(resultPtr);
+          }
+        };
+
+        set_luau_invoker(invokerFn);
+        // Stash for debugging / external panels that want the
+        // capability surface (`daemon.capabilities`).
+        window.__prismDaemon = { Module, kernel, invoke: invokerFn };
+      } catch (err) {
+        // Soft failure: the shell still boots without the daemon.
+        console.warn(
+          "[prism-shell] daemon module unavailable, Luau falls back to NoopLuauHost:",
+          err,
+        );
+      }
+
+      web_start();
     </script>
   </body>
 </html>

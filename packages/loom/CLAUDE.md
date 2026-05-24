@@ -18,8 +18,18 @@ section each module implements.
 
 ## Status
 
-Phase 1 (this commit): V2 deleted; the four sibling crates are
-scaffolded with module skeletons + spec cross-references. Nothing
-parses or runs yet. Subsequent phases land the lexer → AST →
-declarations → reactive graph → playhead → simulacra → meridian →
-live layer → LSP request loop, in roughly that order.
+Phase 4 in progress: parser stitches headers / declarations (raw
+bodies) / beats / dialogue / choices / diverts / fences / conditional
+chains (`<if:>/<else if:>/<else>`) / block-opening directives. Runtime
+plays the §16 worked example end-to-end with `Bundle` + `Playhead`,
+resolves cross-file diverts, dispatches directive calls
+(`sfx`/`cue`/`pause`/`anchor`/`fire`/`set`), evaluates reactive `let`
+bindings against a `World` scope, runs `<if:>` arms, expands inline
+`{expr}` substitutions inside action / dialogue text, tracks sticky
+vs. once-only choice consumption, and answers `played(name)` /
+`visits(name)` / `since(name)` ledger queries from expressions.
+
+Still to come: Simulacra (CHARACTER bodies — disposition, knowledge,
+goals), Meridian (stats / axes / pools / trees), SCENE / GENERATOR
+coroutines, tiered scheduler, live-performance layer, Luau bridge,
+and the LSP request loop.

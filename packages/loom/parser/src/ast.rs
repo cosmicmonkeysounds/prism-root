@@ -160,6 +160,37 @@ pub enum BodyItem {
     Directive(Directive),
     /// Triple-backtick production-metadata fence (spec §15).
     Metadata(Located<String>),
+    /// `<if: cond> … <else if: cond> … <else> …` syntactic form (spec §14.2).
+    Conditional(Conditional),
+    /// Any other block-opening `<kind: args>` directive that carries
+    /// an indented body (e.g. `<broadcast: …>`). The body runs after
+    /// the directive's side effects.
+    DirectiveBlock(DirectiveBlock),
+}
+
+/// One `<if:>` chain — first true arm wins (spec §14.2).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Conditional {
+    pub arms: Vec<ConditionalArm>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConditionalArm {
+    /// `None` for the trailing `<else>` arm.
+    pub condition: Option<String>,
+    pub body: Vec<BodyItem>,
+    pub span: Span,
+}
+
+/// A directive that opens an indented body — `<broadcast: …>`,
+/// `<for: …>`, … (spec §14). The body lowers after the directive's
+/// dispatch returns.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DirectiveBlock {
+    pub directive: Directive,
+    pub body: Vec<BodyItem>,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -258,11 +258,24 @@ impl<'d> Parser<'d> {
                 &line,
             ))),
             LineKind::Directive(raw) => {
-                self.cursor += 1;
-                Some(BodyItem::Directive(crate::ast::Directive {
-                    raw: raw.clone(),
-                    span: line.span(),
-                }))
+                // Only `<if: cond>` opens a NEW conditional chain.
+                // `<else if:>` / `<else>` are consumed as siblings
+                // inside `parse_conditional`. A bare `<else>` with no
+                // preceding `<if:>` falls through to the plain
+                // Directive path.
+                if raw.trim_start().starts_with("if:") {
+                    Some(BodyItem::Conditional(self.parse_conditional(&line)))
+                } else if self.directive_has_body(&line) {
+                    Some(BodyItem::DirectiveBlock(
+                        self.parse_directive_block(raw.clone(), &line),
+                    ))
+                } else {
+                    self.cursor += 1;
+                    Some(BodyItem::Directive(crate::ast::Directive {
+                        raw: raw.clone(),
+                        span: line.span(),
+                    }))
+                }
             }
             LineKind::Prose(text) => {
                 // Action paragraph — accumulate consecutive prose
@@ -462,6 +475,103 @@ impl<'d> Parser<'d> {
     fn peek(&self) -> Option<&ScannedLine> {
         self.lines.get(self.cursor)
     }
+
+    fn peek_ahead(&self, offset: usize) -> Option<&ScannedLine> {
+        self.lines.get(self.cursor + offset)
+    }
+
+    /// True if the next line after the current directive is indented
+    /// strictly further. Used to decide whether to consume body items
+    /// into a `DirectiveBlock` vs leaving the directive standalone.
+    fn directive_has_body(&self, opener: &ScannedLine) -> bool {
+        match self.peek_ahead(1) {
+            Some(next) => next.indent > opener.indent,
+            None => false,
+        }
+    }
+
+    fn parse_conditional(&mut self, opener: &ScannedLine) -> Conditional {
+        let opener_indent = opener.indent;
+        let start = opener.span().start;
+        let mut end = opener.span().end;
+        let mut arms = Vec::new();
+        let mut saw_opener = false;
+        while let Some(line) = self.peek().cloned() {
+            if line.indent != opener_indent {
+                break;
+            }
+            let raw = match &line.kind {
+                LineKind::Directive(r) => r.clone(),
+                _ => break,
+            };
+            let trimmed = raw.trim_start();
+            let cond = if !saw_opener && trimmed.starts_with("if:") {
+                // Leading `if:` — open the chain.
+                Some(trimmed.trim_start_matches("if:").trim().to_string())
+            } else if saw_opener && trimmed.starts_with("else if:") {
+                Some(trimmed.trim_start_matches("else if:").trim().to_string())
+            } else if saw_opener && trimmed.trim() == "else" {
+                None
+            } else {
+                // A second top-level `<if:>` is a NEW chain — not a
+                // continuation. Bail out and let the outer loop pick
+                // it up as a sibling.
+                break;
+            };
+            saw_opener = true;
+            self.cursor += 1;
+            let body_indent_floor = opener_indent + 1;
+            let mut body = Vec::new();
+            let mut arm_end = line.span().end;
+            while let Some(child) = self.peek() {
+                if child.indent < body_indent_floor {
+                    break;
+                }
+                if let Some(item) = self.parse_body_item(body_indent_floor) {
+                    arm_end = body_item_end(&item).unwrap_or(arm_end);
+                    body.push(item);
+                } else {
+                    self.cursor += 1;
+                }
+            }
+            end = arm_end;
+            arms.push(ConditionalArm {
+                condition: cond,
+                body,
+                span: Span::new(line.span().start, arm_end),
+            });
+        }
+        Conditional {
+            arms,
+            span: Span::new(start, end),
+        }
+    }
+
+    fn parse_directive_block(&mut self, raw: String, opener: &ScannedLine) -> DirectiveBlock {
+        self.cursor += 1;
+        let body_indent_floor = opener.indent + 1;
+        let mut body = Vec::new();
+        let mut end = opener.span().end;
+        while let Some(child) = self.peek() {
+            if child.indent < body_indent_floor {
+                break;
+            }
+            if let Some(item) = self.parse_body_item(body_indent_floor) {
+                end = body_item_end(&item).unwrap_or(end);
+                body.push(item);
+            } else {
+                self.cursor += 1;
+            }
+        }
+        DirectiveBlock {
+            directive: crate::ast::Directive {
+                raw,
+                span: opener.span(),
+            },
+            body,
+            span: Span::new(opener.span().start, end),
+        }
+    }
 }
 
 fn body_item_end(item: &BodyItem) -> Option<Position> {
@@ -473,6 +583,8 @@ fn body_item_end(item: &BodyItem) -> Option<Position> {
         BodyItem::Divert(d) => divert_span(d).end,
         BodyItem::Directive(d) => d.span.end,
         BodyItem::Metadata(l) => l.span.end,
+        BodyItem::Conditional(c) => c.span.end,
+        BodyItem::DirectiveBlock(d) => d.span.end,
     })
 }
 
@@ -702,6 +814,56 @@ CHARACTER Wren is Keeper, Combatant
             }
             other => panic!("expected let binding, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn conditional_arms_are_grouped() {
+        let src = "\
+== opening
+
+<if: trust > 50>
+  WREN
+    You may pass.
+<else if: trust > 20>
+  WREN
+    Maybe later.
+<else>
+  WREN
+    Leave. Now.
+  -> END
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            other => panic!("expected beat, got {other:?}"),
+        };
+        let cond = match &beat.body[0] {
+            BodyItem::Conditional(c) => c,
+            other => panic!("expected conditional, got {other:?}"),
+        };
+        assert_eq!(cond.arms.len(), 3);
+        assert_eq!(cond.arms[0].condition.as_deref(), Some("trust > 50"));
+        assert_eq!(cond.arms[1].condition.as_deref(), Some("trust > 20"));
+        assert!(cond.arms[2].condition.is_none());
+        // The else arm carries the dialogue + the divert.
+        assert_eq!(cond.arms[2].body.len(), 2);
+    }
+
+    #[test]
+    fn directive_block_collects_indented_body() {
+        let (file, _) =
+            parse("== opening\n\n<broadcast: location(BellTower)>\n  WREN\n    Listen.\n");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            _ => panic!(),
+        };
+        let block = match &beat.body[0] {
+            BodyItem::DirectiveBlock(d) => d,
+            other => panic!("expected directive block, got {other:?}"),
+        };
+        assert!(block.directive.raw.starts_with("broadcast"));
+        assert_eq!(block.body.len(), 1);
     }
 
     #[test]

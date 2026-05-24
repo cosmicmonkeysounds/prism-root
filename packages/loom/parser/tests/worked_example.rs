@@ -116,6 +116,8 @@ fn main_file_parses_cleanly() {
             BodyItem::Choice(_) => "choice",
             BodyItem::Divert(_) => "divert",
             BodyItem::Directive(_) => "directive",
+            BodyItem::Conditional(_) => "conditional",
+            BodyItem::DirectiveBlock(_) => "directive-block",
         });
     }
     assert_eq!(

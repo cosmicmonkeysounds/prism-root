@@ -97,6 +97,11 @@ features = [
     "HtmlCanvasElement",
     "Window",
     "WebGl2RenderingContext",
+    # `Window::performance()` returns `Option<Performance>`; the
+    # method itself is gated behind the `Performance` feature in
+    # web-sys 0.3. The femtovg backend reads `performance.now()`
+    # for the animated-image frame clock (Wave 14.7).
+    "Performance",
 ]
 
 [dev-dependencies]

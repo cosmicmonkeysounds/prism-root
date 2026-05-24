@@ -78,11 +78,19 @@ pub use state::{
     SearchSlot, SignalConnection, Toast, ToastKind, ToolMode, TransformSnapshot, WorkspaceSlot,
 };
 
-/// Browser entry point. `wasm-bindgen` calls this automatically via
-/// its `(start)` attribute so the HTML loader only has to import the
-/// generated JS module and invoke `init()`.
+/// Browser entry point. Intentionally **not** marked `(start)`: the
+/// HTML loader awaits `init()` and then calls [`set_luau_invoker`]
+/// (handing in a JS function that trampolines to the emscripten
+/// daemon module) before invoking `web_start()`. That ordering is
+/// what lets `Shell::new` install [`crate::services::JsLuauHost`]
+/// instead of falling back to [`crate::services::NoopLuauHost`].
+///
+/// Calling `web_start()` without first calling `set_luau_invoker` is
+/// supported — the shell boots with [`crate::services::NoopLuauHost`]
+/// and `luau.exec` calls are recorded but no-op. That keeps a
+/// daemon-less preview working.
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
+#[wasm_bindgen::prelude::wasm_bindgen]
 pub fn web_start() -> Result<(), wasm_bindgen::JsValue> {
     console_error_panic_hook::set_once();
     let shell = Shell::new().map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
@@ -90,4 +98,42 @@ pub fn web_start() -> Result<(), wasm_bindgen::JsValue> {
         .run()
         .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
     Ok(())
+}
+
+/// Stash a JS-side daemon invoker so [`Shell::new`] can construct a
+/// [`crate::services::JsLuauHost`]. The function signature on the JS
+/// side is `(commandName: string, payloadJson: string) -> string`,
+/// returning the daemon's `{ok, result|error}` envelope as JSON text.
+/// See `web/index.html` for the canonical bootstrap that loads the
+/// emscripten daemon module and registers a `cwrap`'d
+/// `prism_daemon_invoke` here.
+///
+/// The function is stored in a `thread_local` cell; the wasm module
+/// is single-threaded, so the cell never races. Calling this a second
+/// time replaces the previous invoker (useful for tests / hot-reload).
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn set_luau_invoker(invoker: js_sys::Function) {
+    luau_invoker_slot::install(invoker);
+}
+
+/// Process-wide slot for the browser daemon invoker. Single-threaded
+/// by construction (wasm modules don't share thread state across
+/// workers without explicit `SharedArrayBuffer`), so a `thread_local`
+/// `RefCell` is sound.
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+pub(crate) mod luau_invoker_slot {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static SLOT: RefCell<Option<js_sys::Function>> = const { RefCell::new(None) };
+    }
+
+    pub fn install(invoker: js_sys::Function) {
+        SLOT.with(|cell| cell.borrow_mut().replace(invoker));
+    }
+
+    pub fn take() -> Option<js_sys::Function> {
+        SLOT.with(|cell| cell.borrow_mut().take())
+    }
 }

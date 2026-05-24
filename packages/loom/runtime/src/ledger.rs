@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::bundle::BeatRef;
+use crate::expr::{CallArg, ExprError, Value};
 
 /// One event written by the playhead.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +71,11 @@ pub enum Event {
         name: String,
         payload: Vec<(String, String)>,
     },
+    /// One arm of a `<if:>/<else if:>/<else>` chain was selected.
+    /// `condition` is `None` for the trailing `<else>` arm.
+    ConditionalArm { condition: Option<String> },
+    /// A top-level `let` binding was (re-)evaluated.
+    LetEvaluated { name: String, value: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,5 +115,64 @@ impl Ledger {
     /// `since(…)` query primitive once it lands.
     pub fn last_matching<F: Fn(&Event) -> bool>(&self, predicate: F) -> Option<usize> {
         self.events.iter().rposition(predicate)
+    }
+
+    /// Count of `BeatEntered` events naming `beat`. Backs the
+    /// `visits(name)` ledger query (spec §12.2).
+    pub fn beat_visit_count(&self, beat: &str) -> usize {
+        self.events
+            .iter()
+            .filter(|e| matches!(e, Event::BeatEntered { beat: b, .. } if b == beat))
+            .count()
+    }
+
+    /// `true` once `name` has appeared as either a `BeatEntered`,
+    /// a fired `<anchor: name>` directive, or a `<fire: name>`
+    /// envelope. Backs the `played(name)` ledger query (spec §12.2).
+    pub fn played(&self, name: &str) -> bool {
+        self.events.iter().any(|e| event_names(e, name))
+    }
+
+    /// Steps elapsed since the most recent event named `name`
+    /// (as recognised by [`event_names`]). `None` if it never
+    /// happened. Returns the ledger's "logical time" — number of
+    /// envelopes between the match and the current end — rather
+    /// than wall-clock seconds. Wall-clock backing lands when the
+    /// clock subsystem comes online.
+    pub fn since(&self, name: &str) -> Option<usize> {
+        for (idx, event) in self.events.iter().enumerate().rev() {
+            if event_names(event, name) {
+                return Some(self.events.len() - idx - 1);
+            }
+        }
+        None
+    }
+}
+
+fn event_names(event: &Event, name: &str) -> bool {
+    match event {
+        Event::BeatEntered { beat, .. } => beat == name,
+        Event::Fired { name: n, .. } => n == name,
+        Event::Directive {
+            kind, positional, ..
+        } if kind == "anchor" => positional.first().map(|s| s.as_str()) == Some(name),
+        _ => false,
+    }
+}
+
+/// Resolve a query call from an expression — `played(name)`,
+/// `visits(name)`, `since(name)`. Bare identifiers (`played(intro)`)
+/// are accepted as the literal name via [`CallArg::as_name`]; quoted
+/// strings (`played("intro")`) also work.
+pub fn call_query(ledger: &Ledger, name: &str, args: &[CallArg<'_>]) -> Result<Value, ExprError> {
+    let first_name = || args.first().map(|a| a.as_name()).unwrap_or_default();
+    match name {
+        "played" => Ok(Value::Bool(ledger.played(&first_name()))),
+        "visits" => Ok(Value::Number(ledger.beat_visit_count(&first_name()) as f64)),
+        "since" => Ok(match ledger.since(&first_name()) {
+            Some(steps) => Value::Number(steps as f64),
+            None => Value::Null,
+        }),
+        other => Err(ExprError::UnknownFunction(other.into())),
     }
 }

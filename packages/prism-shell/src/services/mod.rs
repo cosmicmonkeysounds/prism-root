@@ -61,6 +61,8 @@ pub use editor_files::EditorFilesService;
 pub use field_focus::FieldFocusService;
 pub use help::HelpService;
 pub use input::{InputScheme, InputService};
+#[cfg(feature = "web")]
+pub use luau::JsLuauHost;
 #[cfg(feature = "native")]
 pub use luau::MluaLuauHost;
 pub use luau::{LuauHost, LuauService, NoopLuauHost};

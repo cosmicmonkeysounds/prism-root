@@ -17,10 +17,13 @@ members = [
     #                scheduler, directive registry, Luau bridge
     #   - lsp      — stdio JSON-RPC server (workspace-wide name index)
     #   - syntax   — TextMate grammar + Zed / VSCode extension shells
+    #   - wasm     — wasm-bindgen surface for the web editor's
+    #                CodeMirror live-parse / live-lint extensions
     "packages/loom/parser",
     "packages/loom/runtime",
     "packages/loom/lsp",
     "packages/loom/syntax",
+    "packages/loom/wasm",
     # Post-Slint render + DSL stack (see
     # `docs/dev/clay-migration-plan.md`). Both crates ship under
     # `MIT OR Apache-2.0`; existing crates stay on GPL.

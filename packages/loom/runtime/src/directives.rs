@@ -338,6 +338,11 @@ impl Registry {
     }
 }
 
+/// One dispatch's outcome bundled with the evaluated argument
+/// vectors — surfaced to the playhead so the generic `Event::Directive`
+/// envelope can include both positional and named values.
+pub type DispatchResult = (HandlerOutcome, Vec<Value>, IndexMap<String, Value>);
+
 /// Dispatch one [`DirectiveCall`] through `registry`, evaluating its
 /// expression args against `world` first.
 pub fn dispatch(
@@ -345,7 +350,7 @@ pub fn dispatch(
     registry: &Registry,
     world: &mut World,
     ledger: &mut Ledger,
-) -> Result<(HandlerOutcome, Vec<Value>, IndexMap<String, Value>), DirectiveError> {
+) -> Result<DispatchResult, DirectiveError> {
     let handler = registry
         .get(&call.kind)
         .ok_or_else(|| DirectiveError::UnknownKind(call.kind.clone()))?;

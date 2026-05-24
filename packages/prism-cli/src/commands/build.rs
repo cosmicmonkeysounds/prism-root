@@ -11,11 +11,20 @@
 //!   directory or `prism-studio` aborts with "daemon sidecar
 //!   unavailable"). Bundling/signing lives in Phase 5 via
 //!   `cargo-packager`.
-//! - `web`     — two steps:
+//! - `web`     — two-to-three steps:
 //!     1. `cargo build --target wasm32-unknown-unknown
 //!        -p prism-shell --no-default-features --features web`,
 //!     2. `wasm-bindgen --target web --out-dir packages/prism-shell/web
-//!        target/wasm32-unknown-unknown/<profile>/prism_shell.wasm`.
+//!        target/wasm32-unknown-unknown/<profile>/prism_shell.wasm`,
+//!     3. (only when `emcc` is on PATH) `cargo build --target
+//!        wasm32-unknown-emscripten -p prism-daemon --bin
+//!        prism_daemon_wasm --no-default-features --features wasm`
+//!        followed by a small filesystem copy that lands
+//!        `prism_daemon_wasm.{js,wasm}` next to `index.html`. That
+//!        sidecar carries the real `mlua` Luau runtime — see
+//!        `packages/prism-daemon/src/wasm.rs` for the C ABI and
+//!        `packages/prism-shell/src/services/luau.rs` for the
+//!        `JsLuauHost` that calls into it.
 //!
 //!   wasm-bindgen writes `prism_shell.js` + `prism_shell_bg.wasm`
 //!   directly next to `index.html` — no post-copy step.
@@ -101,6 +110,11 @@ pub fn plan(args: &BuildArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
                 }
                 plan.push(cargo_cmd.cwd(workspace.root()));
                 plan.push(web_bindgen_builder(workspace, args.ship));
+                // Daemon-wasm step is included unconditionally so
+                // `--dry-run` / unit tests see the full plan; the
+                // `run()` filter below removes it when `emcc` is not
+                // on PATH.
+                plan.push(daemon_wasm_builder(workspace, args.ship));
             }
             BuildTarget::Relay => {
                 plan.push(build_cargo_target(
@@ -158,6 +172,68 @@ pub(crate) fn daemon_bin_builder(workspace: &Workspace, release: bool) -> Comman
     cmd.cwd(workspace.root())
 }
 
+/// `cargo build --target wasm32-unknown-emscripten -p prism-daemon
+/// --bin prism_daemon_wasm --no-default-features --features wasm`.
+///
+/// Emscripten emits the `.js` loader + `.wasm` blob into
+/// `target/wasm32-unknown-emscripten/<profile>/`; the post-build
+/// [`copy_daemon_wasm_artifacts`] helper drops them next to the
+/// shell's `web/index.html` so the browser's
+/// `import("./prism_daemon_wasm.js")` resolves. Exposed `pub(crate)`
+/// so `dev.rs` can reuse the same builder.
+pub(crate) fn daemon_wasm_builder(workspace: &Workspace, release: bool) -> CommandBuilder {
+    let mut cmd = CommandBuilder::cargo()
+        .arg("build")
+        .arg("--target")
+        .arg("wasm32-unknown-emscripten")
+        .package("prism-daemon")
+        .arg("--bin")
+        .arg("prism_daemon_wasm")
+        .arg("--no-default-features")
+        .arg("--features")
+        .arg("wasm")
+        .label("daemon-wasm-build");
+    if release {
+        cmd = cmd.release();
+    }
+    cmd.cwd(workspace.root())
+}
+
+/// Detect whether `emcc` is on `PATH`. The daemon-wasm cargo step
+/// depends on it because mlua's vendored Luau C++ source needs
+/// emscripten's libc++ to link; without `emcc` cargo aborts inside
+/// the build script. We pre-check so the user gets a clear "skipping"
+/// message instead of a deep emcc-not-found stack trace, and so a
+/// machine without the SDK can still finish a normal web build (the
+/// shell will run with `NoopLuauHost`).
+pub(crate) fn has_emscripten() -> bool {
+    std::process::Command::new("emcc")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Filesystem-only post-step that lands the emscripten daemon's
+/// `.js` + `.wasm` artifacts next to `index.html` so the browser can
+/// `import("./prism_daemon_wasm.js")` them. Pure `std::fs::copy` —
+/// we deliberately avoid spawning `cp` so the behaviour is identical
+/// on every platform the workspace runs on.
+pub(crate) fn copy_daemon_wasm_artifacts(workspace: &Workspace, release: bool) -> Result<()> {
+    use anyhow::Context;
+    let (js_src, wasm_src) = workspace.daemon_wasm_artifacts(release);
+    let out_dir = workspace.shell_web_dir();
+    let js_dst = out_dir.join("prism_daemon_wasm.js");
+    let wasm_dst = out_dir.join("prism_daemon_wasm.wasm");
+    std::fs::copy(&js_src, &js_dst)
+        .with_context(|| format!("copying {} → {}", js_src.display(), js_dst.display()))?;
+    std::fs::copy(&wasm_src, &wasm_dst)
+        .with_context(|| format!("copying {} → {}", wasm_src.display(), wasm_dst.display()))?;
+    Ok(())
+}
+
 /// `wasm-bindgen --target web --out-dir <shell-web-dir> <cargo-wasm>`.
 /// Exposed `pub(crate)` so `dev.rs` can reuse the same builder
 /// without duplicating the argv.
@@ -178,9 +254,28 @@ pub(crate) fn web_bindgen_builder(workspace: &Workspace, release: bool) -> Comma
 }
 
 pub fn run(args: &BuildArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
-    let plan = plan(args, workspace);
+    let mut plan = plan(args, workspace);
+    let build_daemon_wasm =
+        matches!(args.target, BuildTarget::Web | BuildTarget::All) && has_emscripten();
+    if !build_daemon_wasm {
+        if matches!(args.target, BuildTarget::Web | BuildTarget::All) {
+            eprintln!(
+                "[prism build] `emcc` not on PATH — skipping daemon-wasm step; \
+                 shell will boot with NoopLuauHost. Install the emscripten SDK \
+                 and `source emsdk_env.sh` to enable browser Luau."
+            );
+        }
+        plan.retain(|c| c.label_str() != Some("daemon-wasm-build"));
+    }
+
     let code = super::execute_plan(&plan, dry_run)?;
     if code == 0 {
+        if build_daemon_wasm && !dry_run {
+            if let Err(e) = copy_daemon_wasm_artifacts(workspace, args.ship) {
+                eprintln!("[prism build] copying daemon-wasm artifacts failed: {e}");
+                return Ok(1);
+            }
+        }
         crate::gc::sweep(&workspace.target_dir());
     }
     Ok(code)
@@ -206,10 +301,13 @@ mod tests {
     }
 
     #[test]
-    fn all_target_fans_out_to_six() {
-        // desktop + daemon-build + studio + web-build + web-bindgen + relay
+    fn all_target_fans_out_to_seven() {
+        // desktop + daemon-build + studio + web-build + web-bindgen
+        // + daemon-wasm-build + relay. `daemon-wasm-build` is always
+        // in the plan; `run()` filters it back out when `emcc` is
+        // missing from PATH.
         let p = plan(&args(BuildTarget::All), &ws());
-        assert_eq!(p.len(), 6);
+        assert_eq!(p.len(), 7);
         let labels: Vec<_> = p.iter().map(|c| c.label_str().unwrap()).collect();
         assert_eq!(
             labels,
@@ -219,6 +317,7 @@ mod tests {
                 "studio-build",
                 "web-build",
                 "web-bindgen",
+                "daemon-wasm-build",
                 "relay-build"
             ]
         );
@@ -285,7 +384,9 @@ mod tests {
     #[test]
     fn web_cargo_step_uses_wasm32_unknown_unknown_with_web_feature() {
         let p = plan(&args(BuildTarget::Web), &ws());
-        assert_eq!(p.len(), 2);
+        // web-build + web-bindgen + daemon-wasm-build (always in
+        // plan; `run()` filters daemon-wasm when emcc is missing).
+        assert_eq!(p.len(), 3);
         let argv = p[0].argv().1;
         assert_eq!(argv[0], "build");
         assert_eq!(argv[1], "--target");
@@ -315,6 +416,34 @@ mod tests {
         assert!(p[0].argv().1.contains(&"--release".to_string()));
         let bindgen_argv = p[1].argv().1;
         assert!(bindgen_argv[4].ends_with("wasm32-unknown-unknown/release/prism_shell.wasm"));
+    }
+
+    #[test]
+    fn web_plan_includes_daemon_wasm_cargo_step() {
+        let p = plan(&args(BuildTarget::Web), &ws());
+        let daemon = p
+            .iter()
+            .find(|c| c.label_str() == Some("daemon-wasm-build"))
+            .expect("web plan must include daemon-wasm-build");
+        let argv = daemon.argv().1;
+        assert_eq!(argv[0], "build");
+        assert!(argv.contains(&"wasm32-unknown-emscripten".to_string()));
+        assert!(argv.contains(&"prism-daemon".to_string()));
+        assert!(argv.contains(&"prism_daemon_wasm".to_string()));
+        assert!(argv.contains(&"--no-default-features".to_string()));
+        assert!(argv.contains(&"wasm".to_string()));
+        // Fast debug by default — matches the web-build flag.
+        assert!(!argv.contains(&"--release".to_string()));
+    }
+
+    #[test]
+    fn web_ship_passes_release_to_daemon_wasm_step() {
+        let p = plan(&ship_args(BuildTarget::Web), &ws());
+        let daemon = p
+            .iter()
+            .find(|c| c.label_str() == Some("daemon-wasm-build"))
+            .expect("web ship plan must include daemon-wasm-build");
+        assert!(daemon.argv().1.contains(&"--release".to_string()));
     }
 
     #[test]

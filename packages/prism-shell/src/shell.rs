@@ -571,7 +571,22 @@ impl Shell {
                         Box::new(NoopLuauHost::default()) as Box<dyn LuauHost>
                     }
                 }
-                #[cfg(not(feature = "native"))]
+                // Web: if JS has registered a daemon invoker via
+                // `set_luau_invoker` (see `web/index.html`), reach the
+                // real `mlua` Luau runtime that lives in the
+                // emscripten-built `prism-daemon` sidecar. No invoker
+                // → boot with `NoopLuauHost` so a daemon-less preview
+                // still works.
+                #[cfg(all(feature = "web", target_arch = "wasm32"))]
+                {
+                    match crate::luau_invoker_slot::take() {
+                        Some(invoker) => {
+                            Box::new(crate::services::JsLuauHost::new(invoker)) as Box<dyn LuauHost>
+                        }
+                        None => Box::new(NoopLuauHost::default()) as Box<dyn LuauHost>,
+                    }
+                }
+                #[cfg(not(any(feature = "native", all(feature = "web", target_arch = "wasm32"))))]
                 {
                     Box::new(NoopLuauHost::default()) as Box<dyn LuauHost>
                 }

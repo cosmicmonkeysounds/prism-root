@@ -201,6 +201,11 @@ fn single_plan(
         DevTarget::Web => vec![
             web_build_builder(workspace),
             super::build::web_bindgen_builder(workspace, false),
+            // Always in the plan so `--dry-run` shows the full
+            // pipeline; `run()` strips it back out when `emcc` is
+            // missing from PATH so a daemon-less preview still
+            // works.
+            super::build::daemon_wasm_builder(workspace, false),
             web_serve_builder(workspace),
         ],
         DevTarget::All => unreachable!("handled by all_plan"),
@@ -216,6 +221,8 @@ fn all_plan(workspace: &Workspace) -> Vec<CommandBuilder> {
         bin_exec_builder(workspace, "relay", false),
         web_build_builder(workspace),
         super::build::web_bindgen_builder(workspace, false),
+        // Same daemon-wasm sidecar as single-target `dev web`.
+        super::build::daemon_wasm_builder(workspace, false),
         web_serve_builder(workspace),
     ]
 }
@@ -268,14 +275,25 @@ pub fn run(args: &DevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
         return Ok(0);
     }
 
-    // Single-target web dev is three steps: cargo build, wasm-bindgen,
-    // python serve. The cargo + wasm-bindgen pair are synchronous
-    // preflight; the serve is the long-running foreground exec that
-    // Ctrl+C drops onto.
+    // Single-target web dev is up to four steps: cargo build,
+    // wasm-bindgen, optional daemon-wasm (only when `emcc` is on
+    // PATH), then the python static server as the long-running
+    // foreground child Ctrl+C drops onto.
     if args.target == DevTarget::Web {
-        let (build_cmd, bindgen_cmd, serve_cmd) = single_web_trio(&plan);
+        let (build_cmd, bindgen_cmd, daemon_cmd, serve_cmd) = single_web_quad(&plan);
         run_cmd_sync(build_cmd)?;
         run_cmd_sync(bindgen_cmd)?;
+        if super::build::has_emscripten() {
+            run_cmd_sync(daemon_cmd)?;
+            if let Err(e) = super::build::copy_daemon_wasm_artifacts(workspace, false) {
+                anyhow::bail!("copying daemon-wasm artifacts failed: {e}");
+            }
+        } else {
+            eprintln!(
+                "[prism dev web] `emcc` not on PATH — skipping daemon-wasm; \
+                 the shell will boot with NoopLuauHost (no browser Luau)."
+            );
+        }
         crate::gc::sweep(&workspace.target_dir());
         return exec_foreground(serve_cmd);
     }
@@ -298,18 +316,35 @@ pub fn run(args: &DevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
     // prebuilt binaries + the static web server. No per-child cargo,
     // so no feature re-resolution and no lock contention.
     if args.target == DevTarget::All {
+        let has_emcc = super::build::has_emscripten();
         let mut supervisor_plan: Vec<CommandBuilder> = Vec::new();
         let mut had_preflight = false;
+        let mut ran_daemon_wasm = false;
         for cmd in plan {
             match cmd.label_str() {
+                Some("daemon-wasm-build") if !has_emcc => {
+                    eprintln!(
+                        "[prism dev all] `emcc` not on PATH — skipping daemon-wasm; \
+                         the browser shell will boot with NoopLuauHost."
+                    );
+                }
                 Some("combined-build")
                 | Some("web-build")
                 | Some("web-bindgen")
-                | Some("daemon-build") => {
+                | Some("daemon-build")
+                | Some("daemon-wasm-build") => {
                     run_cmd_sync(&cmd)?;
+                    if cmd.label_str() == Some("daemon-wasm-build") {
+                        ran_daemon_wasm = true;
+                    }
                     had_preflight = true;
                 }
                 _ => supervisor_plan.push(cmd),
+            }
+        }
+        if ran_daemon_wasm {
+            if let Err(e) = super::build::copy_daemon_wasm_artifacts(workspace, false) {
+                anyhow::bail!("copying daemon-wasm artifacts failed: {e}");
             }
         }
         if had_preflight {
@@ -373,10 +408,17 @@ fn watch_paths(target: DevTarget, workspace: &Workspace) -> Vec<PathBuf> {
     }
 }
 
-/// Pull the `web-build`, `web-bindgen`, and `web` builders out of a
-/// single-target web plan. Panics if the plan shape doesn't match
-/// — the only caller is `run`, which has already verified the target.
-fn single_web_trio(plan: &[CommandBuilder]) -> (&CommandBuilder, &CommandBuilder, &CommandBuilder) {
+/// Pull the four builders out of a single-target web dev plan.
+/// Panics if the plan shape doesn't match — the only caller is
+/// `run`, which has already verified the target.
+fn single_web_quad(
+    plan: &[CommandBuilder],
+) -> (
+    &CommandBuilder,
+    &CommandBuilder,
+    &CommandBuilder,
+    &CommandBuilder,
+) {
     let build = plan
         .iter()
         .find(|c| c.label_str() == Some("web-build"))
@@ -385,11 +427,15 @@ fn single_web_trio(plan: &[CommandBuilder]) -> (&CommandBuilder, &CommandBuilder
         .iter()
         .find(|c| c.label_str() == Some("web-bindgen"))
         .expect("web plan must include web-bindgen");
+    let daemon = plan
+        .iter()
+        .find(|c| c.label_str() == Some("daemon-wasm-build"))
+        .expect("web plan must include daemon-wasm-build");
     let serve = plan
         .iter()
         .find(|c| c.label_str() == Some("web"))
         .expect("web plan must include web serve");
-    (build, bindgen, serve)
+    (build, bindgen, daemon, serve)
 }
 
 fn run_cmd_sync(cmd: &CommandBuilder) -> Result<()> {
@@ -579,10 +625,13 @@ mod tests {
     }
 
     #[test]
-    fn web_expands_into_build_bindgen_plus_python_serve() {
+    fn web_expands_into_build_bindgen_daemon_wasm_plus_python_serve() {
         let a = args(DevTarget::Web);
         let p = plan(&a, &ws());
-        assert_eq!(p.len(), 3);
+        // web-build + web-bindgen + daemon-wasm-build + web serve.
+        // The daemon-wasm step is always in the plan; `run()`
+        // checks `emcc` at execution time and skips when missing.
+        assert_eq!(p.len(), 4);
 
         assert_eq!(p[0].label_str(), Some("web-build"));
         assert_eq!(p[0].program(), crate::builder::Program::Cargo);
@@ -602,9 +651,17 @@ mod tests {
         assert!(bindgen_argv[3].ends_with("packages/prism-shell/web"));
         assert!(bindgen_argv[4].ends_with("wasm32-unknown-unknown/debug/prism_shell.wasm"));
 
-        assert_eq!(p[2].label_str(), Some("web"));
-        assert_eq!(p[2].program(), crate::builder::Program::Python3);
-        let serve_argv = p[2].argv().1;
+        assert_eq!(p[2].label_str(), Some("daemon-wasm-build"));
+        assert_eq!(p[2].program(), crate::builder::Program::Cargo);
+        let daemon_argv = p[2].argv().1;
+        assert!(daemon_argv.contains(&"wasm32-unknown-emscripten".to_string()));
+        assert!(daemon_argv.contains(&"prism-daemon".to_string()));
+        assert!(daemon_argv.contains(&"prism_daemon_wasm".to_string()));
+        assert!(daemon_argv.contains(&"wasm".to_string()));
+
+        assert_eq!(p[3].label_str(), Some("web"));
+        assert_eq!(p[3].program(), crate::builder::Program::Python3);
+        let serve_argv = p[3].argv().1;
         assert_eq!(serve_argv[0], "-m");
         assert_eq!(serve_argv[1], "http.server");
         assert_eq!(serve_argv[2], WEB_DEV_PORT);
@@ -636,6 +693,7 @@ mod tests {
                 "relay",
                 "web-build",
                 "web-bindgen",
+                "daemon-wasm-build",
                 "web"
             ]
         );

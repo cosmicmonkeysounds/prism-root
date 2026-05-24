@@ -14,9 +14,7 @@
 //! | `fire`    | Pushes a custom named event onto the ledger.                           |
 //! | `set`     | Applies the directive's `<set: lhs OP rhs>` assignment to `World`.     |
 
-use crate::directives::{
-    AssignOp, CallContext, DirectiveError, Handler, HandlerOutcome, Registry,
-};
+use crate::directives::{AssignOp, CallContext, DirectiveError, Handler, HandlerOutcome, Registry};
 use crate::expr::Value;
 use crate::ledger::Event;
 
@@ -71,7 +69,7 @@ impl Handler for SetHandler {
     fn call(&self, ctx: &mut CallContext<'_>) -> Result<HandlerOutcome, DirectiveError> {
         let assign = ctx.assign.ok_or(DirectiveError::BadAssignment)?;
         let key = assign.path.join(".");
-        let rhs = crate::expr::eval(&assign.rhs, ctx.world, &mut |name, _| {
+        let rhs = crate::expr::eval(&assign.rhs, ctx.world, &mut |name, _args| {
             Err(crate::expr::ExprError::UnknownFunction(name.into()))
         })?;
         let new_value = match assign.op {

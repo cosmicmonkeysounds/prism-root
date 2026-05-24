@@ -1,0 +1,20 @@
+[package]
+name = "loom-wasm"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "wasm-bindgen surface for loom-parser — exposes parse() to the Loom web editor for live syntax highlighting and diagnostics."
+
+[lib]
+name = "loom_wasm"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+loom-parser = { path = "../parser" }
+loom-syntax = { path = "../syntax" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wasm-bindgen = { workspace = true }
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = { workspace = true }

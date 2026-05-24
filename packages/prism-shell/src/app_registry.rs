@@ -192,6 +192,13 @@ pub fn install_panels_from_manifests(
 /// Call after every Luau-script load step but before the registry's
 /// tag resolver is finalised, so the registry has the new blocks
 /// when the resolver builds its dispatch table.
+///
+/// Gated on `feature = "native"` because the underlying
+/// [`LuauComponentBlock`] needs `prism-core`'s `luau` feature, which
+/// only the native build pulls in. The browser shell installs
+/// components through the daemon-wasm sidecar instead — see
+/// [`crate::services::JsLuauHost`].
+#[cfg(feature = "native")]
 pub fn install_components(
     registrar: &ShellAppRegistrar,
     registry: &mut crate::components::ShellComponentRegistry,
@@ -283,6 +290,7 @@ pub fn install_services_replace(
 /// active app id from the [`crate::services::ServiceContext`] onto
 /// each new instance — that's how the active-app cursor flows
 /// through to per-app service state.
+#[cfg(feature = "native")]
 pub fn install_services(
     registrar: &ShellAppRegistrar,
     services: &mut crate::services::ServiceRegistry,

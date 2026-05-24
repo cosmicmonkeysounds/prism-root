@@ -27,7 +27,14 @@ default = ["native"]
 # (vendored Luau only builds against emscripten); the runtime feature
 # therefore stays off in the `web` matrix.
 native = ["prism-core/crdt", "prism-core/luau", "prism-ui-runtime/femtovg", "prism-ui-runtime/luau", "dep:rfd", "dep:notify"]
-web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom", "uuid/js", "prism-ui-runtime/web"]
+# `js-sys` is pulled in alongside `wasm-bindgen` because the web
+# `LuauHost` impl (`services::luau::JsLuauHost`) calls a JS-side
+# `Function` handed in via the `set_luau_invoker` wasm-bindgen
+# setter. That function trampolines through emscripten's daemon
+# wasm module to reach the real `mlua` Luau runtime — see
+# `web/index.html`'s bootstrap and `packages/prism-daemon/src/wasm.rs`
+# for the C-ABI on the other side.
+web = ["dep:wasm-bindgen", "dep:js-sys", "dep:console_error_panic_hook", "dep:getrandom", "uuid/js", "prism-ui-runtime/web"]
 # Phase 9 of `docs/dev/dioxus-inspiration.md`. Wraps the per-frame
 # render walk in `subsecond::call` so a swapped-in `lower_ui` body
 # patches in-place without dropping the `Surface` tree or the
@@ -51,6 +58,7 @@ prism-ui-build = { path = "../prism-ui-build" }
 subsecond = { workspace = true, optional = true }
 
 wasm-bindgen = { workspace = true, optional = true }
+js-sys = { workspace = true, optional = true }
 console_error_panic_hook = { workspace = true, optional = true }
 getrandom = { workspace = true, optional = true, features = ["js"] }
 

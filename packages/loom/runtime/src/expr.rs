@@ -147,11 +147,13 @@ pub fn parse(source: &str) -> Result<Expr, ExprError> {
 
 /// Evaluate `expr` against `world`. Unknown identifiers resolve to
 /// [`Value::Null`]; unknown call targets are an error. Calls are
-/// delegated to `call_fn` — pass a registry-aware closure to wire up
-/// `since(…)`, `count(…)`, etc. once those land.
+/// delegated to `call_fn`, which receives the function name plus a
+/// [`CallArg`] per argument carrying both the parsed AST (so a query
+/// like `played(intro)` can read the symbolic argument) and the
+/// evaluated value.
 pub fn eval<F>(expr: &Expr, world: &World, call_fn: &mut F) -> Result<Value, ExprError>
 where
-    F: FnMut(&str, Vec<Value>) -> Result<Value, ExprError>,
+    F: FnMut(&str, Vec<CallArg<'_>>) -> Result<Value, ExprError>,
 {
     Ok(match expr {
         Expr::Null => Value::Null,
@@ -184,13 +186,47 @@ where
             eval_binary(*op, lv, rv)
         }
         Expr::Call(name, args) => {
-            let mut evaled = Vec::with_capacity(args.len());
+            let mut packed: Vec<CallArg<'_>> = Vec::with_capacity(args.len());
             for a in args {
-                evaled.push(eval(a, world, call_fn)?);
+                let value = eval(a, world, call_fn)?;
+                packed.push(CallArg { expr: a, value });
             }
-            call_fn(name, evaled)?
+            call_fn(name, packed)?
         }
     })
+}
+
+/// One argument passed to a `call_fn`. Carries both the parsed AST
+/// (so ledger queries can read symbolic names like `played(intro)`)
+/// and the evaluated [`Value`].
+#[derive(Clone, Debug)]
+pub struct CallArg<'a> {
+    pub expr: &'a Expr,
+    pub value: Value,
+}
+
+impl CallArg<'_> {
+    /// Best-effort symbolic name — the dotted path joined by `.`
+    /// when the arg is a [`Expr::Path`], else `None`. Lets queries
+    /// like `played(bell_seen)` recover the literal identifier when
+    /// the world lookup would resolve to [`Value::Null`].
+    pub fn symbol(&self) -> Option<String> {
+        match self.expr {
+            Expr::Path(segs) => Some(segs.join(".")),
+            _ => None,
+        }
+    }
+
+    /// Coerce the argument to a string — prefer a literal string
+    /// value, fall back to the symbolic name for path args, then to
+    /// the display form of the evaluated value.
+    pub fn as_name(&self) -> String {
+        match &self.value {
+            Value::String(s) => s.clone(),
+            Value::Null => self.symbol().unwrap_or_default(),
+            other => self.symbol().unwrap_or_else(|| other.display()),
+        }
+    }
 }
 
 fn eval_binary(op: BinOp, l: Value, r: Value) -> Value {
@@ -402,12 +438,9 @@ impl Parser {
 
     fn parse_expr(&mut self, min_prec: u8) -> Result<Expr, ExprError> {
         let mut lhs = self.parse_prefix()?;
-        loop {
-            let (op, prec) = match self.peek() {
-                Some(t) => match binop_prec(t) {
-                    Some(p) => p,
-                    None => break,
-                },
+        while let Some(t) = self.peek() {
+            let (op, prec) = match binop_prec(t) {
+                Some(p) => p,
                 None => break,
             };
             if prec < min_prec {
@@ -511,7 +544,7 @@ fn precedence_unary() -> u8 {
 mod tests {
     use super::*;
 
-    fn no_calls() -> impl FnMut(&str, Vec<Value>) -> Result<Value, ExprError> {
+    fn no_calls() -> impl FnMut(&str, Vec<CallArg<'_>>) -> Result<Value, ExprError> {
         |name, _args| Err(ExprError::UnknownFunction(name.into()))
     }
 
@@ -557,9 +590,10 @@ mod tests {
         let w = World::new();
         let expr = parse("count(7) + 1").unwrap();
         let mut calls = 0;
-        let mut f = |name: &str, args: Vec<Value>| -> Result<Value, ExprError> {
+        let mut f = |name: &str, args: Vec<CallArg<'_>>| -> Result<Value, ExprError> {
             assert_eq!(name, "count");
-            assert_eq!(args, vec![Value::Number(7.0)]);
+            assert_eq!(args.len(), 1);
+            assert_eq!(args[0].value, Value::Number(7.0));
             calls += 1;
             Ok(Value::Number(10.0))
         };

@@ -14,12 +14,15 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use loom_parser::ast::{BodyItem, Choice, DialogueLine, Directive, Divert, DivertTarget};
+use loom_parser::ast::{
+    BodyItem, Choice, Conditional, DialogueLine, Directive, DirectiveBlock, Divert, DivertTarget,
+    Item,
+};
 
 use crate::bundle::{BeatRef, Bundle};
 use crate::directives::{self, DirectiveError, HandlerOutcome, Registry};
-use crate::expr::{Value, World};
-use crate::ledger::{ChoiceOption, Event, Ledger};
+use crate::expr::{self, Expr, Value, World};
+use crate::ledger::{self, ChoiceOption, Event, Ledger};
 use crate::resolver::ResolveError;
 
 /// The visible outcome of one [`Playhead::step`].
@@ -61,6 +64,13 @@ enum Yield {
     Return,
     End,
     Directive(Directive),
+    /// Conditional — at step time, find the first arm whose
+    /// condition expression is truthy and lower its body into the
+    /// queue head.
+    Conditional(Conditional),
+    /// A `<broadcast: …>`-style directive that runs first, then
+    /// lowers its body into the queue head.
+    DirectiveBlock(DirectiveBlock),
 }
 
 #[derive(Clone, Debug)]
@@ -87,6 +97,23 @@ pub struct Playhead {
     registry: Arc<Registry>,
     halted: bool,
     awaiting_choice: bool,
+    /// Parsed `let name = expr` bindings collected from every file
+    /// in the bundle (spec §12.1). Re-evaluated before each
+    /// expression read so dependent values stay current.
+    let_bindings: Vec<LetSlot>,
+    /// Project-global set of `*` (once-only) choice texts that have
+    /// already been picked. Sticky `+` choices are never added.
+    /// Filtering happens at choice-yield time in `step` (spec §5).
+    taken_once_only: std::collections::HashSet<String>,
+}
+
+#[derive(Debug)]
+struct LetSlot {
+    name: String,
+    expr: Expr,
+    /// Last evaluated value — kept so we only push a
+    /// `LetEvaluated` envelope when the value actually changes.
+    last: Option<Value>,
 }
 
 impl std::fmt::Debug for Playhead {
@@ -110,6 +137,7 @@ impl Playhead {
     /// Start a playhead with a caller-supplied directive registry.
     pub fn with_registry(bundle: Arc<Bundle>, registry: Arc<Registry>) -> Result<Self, PlayError> {
         let entry = bundle.entry.ok_or(PlayError::NoEntry)?;
+        let let_bindings = collect_let_bindings(&bundle);
         let mut p = Self {
             bundle,
             queue: VecDeque::new(),
@@ -119,6 +147,8 @@ impl Playhead {
             registry,
             halted: false,
             awaiting_choice: false,
+            let_bindings,
+            taken_once_only: std::collections::HashSet::new(),
         };
         p.enter_beat(entry);
         Ok(p)
@@ -169,16 +199,37 @@ impl Playhead {
             };
             match next {
                 Yield::Event(event) => {
-                    self.ledger.push(event.clone());
-                    return Ok(Step::Event(event));
+                    let expanded = self.expand_event_inlines(event)?;
+                    self.ledger.push(expanded.clone());
+                    return Ok(Step::Event(expanded));
                 }
                 Yield::Choice(options) => {
+                    // Drop `*` (once-only) options whose text the
+                    // playhead has already taken. `+` (sticky) options
+                    // always stay.
+                    let filtered: Vec<PendingChoice> = options
+                        .into_iter()
+                        .filter(|c| {
+                            c.option.sticky || !self.taken_once_only.contains(&c.option.text)
+                        })
+                        .collect();
+                    if filtered.is_empty() {
+                        // Every option has been exhausted — fall
+                        // through to the next yield without prompting.
+                        continue;
+                    }
+                    // Re-index the visible options so callers get a
+                    // contiguous 0..n list.
+                    let mut renumbered = filtered;
+                    for (i, c) in renumbered.iter_mut().enumerate() {
+                        c.option.index = i;
+                    }
                     self.awaiting_choice = true;
                     let opts: Vec<ChoiceOption> =
-                        options.iter().map(|c| c.option.clone()).collect();
+                        renumbered.iter().map(|c| c.option.clone()).collect();
                     // Re-park the choice at the head of the queue so
                     // it survives the pop above.
-                    self.queue.push_front(Yield::Choice(options));
+                    self.queue.push_front(Yield::Choice(renumbered));
                     let prompted = Event::ChoicePrompted {
                         options: opts.clone(),
                     };
@@ -224,7 +275,19 @@ impl Playhead {
                     if matches!(outcome, HandlerOutcome::Handled) {
                         let event = Event::Directive {
                             kind: call.kind.clone(),
-                            positional: positional.iter().map(Value::display).collect(),
+                            positional: call
+                                .positional
+                                .iter()
+                                .zip(positional.iter())
+                                .map(|(expr, value)| match (expr, value) {
+                                    // `<anchor: bell_seen>` — a path
+                                    // arg that didn't resolve in the
+                                    // world keeps its written name
+                                    // (so `played(bell_seen)` matches).
+                                    (Expr::Path(segs), Value::Null) => segs.join("."),
+                                    _ => value.display(),
+                                })
+                                .collect(),
                             named: named
                                 .iter()
                                 .map(|(k, v)| (k.clone(), v.display()))
@@ -240,8 +303,164 @@ impl Playhead {
                         return Ok(Step::Event(latest));
                     }
                 }
+                Yield::Conditional(cond) => {
+                    let chosen = self.resolve_conditional(&cond)?;
+                    if let Some(body) = chosen {
+                        let lowered = self.lower_body(&body);
+                        for y in lowered.into_iter().rev() {
+                            self.queue.push_front(y);
+                        }
+                    }
+                }
+                Yield::DirectiveBlock(block) => {
+                    // Run the leading directive's side effects first,
+                    // then lower the body. We push the body items
+                    // ahead of the queue so they execute after this
+                    // step's directive event surfaces.
+                    let lowered_body = self.lower_body(&block.body);
+                    for y in lowered_body.into_iter().rev() {
+                        self.queue.push_front(y);
+                    }
+                    // Re-enqueue the directive itself at the head so
+                    // the next loop iteration dispatches it.
+                    self.queue.push_front(Yield::Directive(block.directive));
+                }
             }
         }
+    }
+
+    fn resolve_conditional(
+        &mut self,
+        cond: &Conditional,
+    ) -> Result<Option<Vec<BodyItem>>, PlayError> {
+        self.refresh_lets()?;
+        for arm in &cond.arms {
+            let truthy = match &arm.condition {
+                None => true,
+                Some(expr_text) => self.eval_expression(expr_text)?.truthy(),
+            };
+            if truthy {
+                self.ledger.push(Event::ConditionalArm {
+                    condition: arm.condition.clone(),
+                });
+                return Ok(Some(arm.body.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Substitute `{expr}` chunks (spec §5 — the reader-facing
+    /// bracket) inside an event's text fields against the current
+    /// world + ledger.
+    fn expand_event_inlines(&mut self, event: Event) -> Result<Event, PlayError> {
+        match event {
+            Event::Action { text } => {
+                self.refresh_lets()?;
+                let text = self.expand_inline_text(&text)?;
+                Ok(Event::Action { text })
+            }
+            Event::Dialogue {
+                speaker,
+                parenthetical,
+                text,
+            } => {
+                self.refresh_lets()?;
+                let text = self.expand_inline_text(&text)?;
+                Ok(Event::Dialogue {
+                    speaker,
+                    parenthetical,
+                    text,
+                })
+            }
+            other => Ok(other),
+        }
+    }
+
+    /// Scan `source` for top-level `{…}` chunks and replace each
+    /// with the evaluated value's [`Value::display`] form. Braces
+    /// nest naively (one level of `{` inside a chunk is fine; deeper
+    /// nesting is rare in prose and is treated as raw text).
+    fn expand_inline_text(&self, source: &str) -> Result<String, PlayError> {
+        if !source.contains('{') {
+            return Ok(source.to_string());
+        }
+        let mut out = String::with_capacity(source.len());
+        let bytes = source.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            let c = bytes[i] as char;
+            if c == '{' {
+                if let Some(rel) = bytes[i + 1..].iter().position(|b| *b == b'}') {
+                    let inner = &source[i + 1..i + 1 + rel];
+                    match self.eval_expression(inner.trim()) {
+                        Ok(value) => out.push_str(&value.display()),
+                        Err(_) => {
+                            // Unresolvable — fall back to leaving the
+                            // original `{…}` chunk visible so the
+                            // writer can see what they typed.
+                            out.push('{');
+                            out.push_str(inner);
+                            out.push('}');
+                        }
+                    }
+                    i += 2 + rel;
+                    continue;
+                }
+            }
+            out.push(c);
+            i += 1;
+        }
+        Ok(out)
+    }
+
+    /// Parse + evaluate one expression string against the current
+    /// world. Ledger queries (`played(…)`, `visits(…)`, `since(…)`)
+    /// are resolved through [`crate::ledger::call_query`].
+    fn eval_expression(&self, source: &str) -> Result<Value, DirectiveError> {
+        let parsed = expr::parse(source).map_err(DirectiveError::from)?;
+        let value = expr::eval(&parsed, &self.world, &mut |name, args| {
+            ledger::call_query(&self.ledger, name, &args)
+        })
+        .map_err(DirectiveError::from)?;
+        Ok(value)
+    }
+
+    /// Re-evaluate every project-level `let` binding against the
+    /// current world. Each binding's value is written back to the
+    /// world under its name; a `LetEvaluated` envelope hits the
+    /// ledger when the value actually changes.
+    fn refresh_lets(&mut self) -> Result<(), PlayError> {
+        if self.let_bindings.is_empty() {
+            return Ok(());
+        }
+        // Two passes over the let list: enough for one level of
+        // dependency chain. Diamond / deep chains will need a
+        // proper topological sort, but Phase 4 keeps it simple — a
+        // second sweep catches the common `let a = …; let b = a + 1`
+        // case without paying for SCC analysis.
+        for _pass in 0..2 {
+            for slot_idx in 0..self.let_bindings.len() {
+                // Snapshot the parsed expression to avoid holding a
+                // borrow over `self.world` mutation.
+                let parsed = self.let_bindings[slot_idx].expr.clone();
+                let value = expr::eval(&parsed, &self.world, &mut |name, args| {
+                    ledger::call_query(&self.ledger, name, &args)
+                })
+                .map_err(DirectiveError::from)?;
+                let slot = &mut self.let_bindings[slot_idx];
+                let changed = slot.last.as_ref() != Some(&value);
+                slot.last = Some(value.clone());
+                let name = slot.name.clone();
+                self.world.set(name.clone(), value.clone());
+                if changed {
+                    self.ledger.push(Event::LetEvaluated {
+                        name,
+                        value: value.display(),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Select one of the choices offered by the most recent
@@ -266,6 +485,9 @@ impl Playhead {
         let chosen = pending
             .get(index)
             .ok_or(PlayError::ChoiceOutOfRange(index))?;
+        if !chosen.option.sticky {
+            self.taken_once_only.insert(chosen.option.text.clone());
+        }
         self.ledger.push(Event::ChoiceTaken {
             index,
             text: chosen.option.text.clone(),
@@ -388,6 +610,8 @@ fn lower_item(item: &BodyItem, out: &mut Vec<Yield>) {
             // beat still plays.
         }
         BodyItem::Divert(d) => lower_divert(d, out),
+        BodyItem::Conditional(c) => out.push(Yield::Conditional(c.clone())),
+        BodyItem::DirectiveBlock(b) => out.push(Yield::DirectiveBlock(b.clone())),
         BodyItem::Dialogue(block) => {
             let speaker = block.speaker.clone();
             // Phase-3 lowering: emit one Dialogue event per textual
@@ -442,6 +666,31 @@ fn lower_divert(d: &Divert, out: &mut Vec<Yield>) {
 #[allow(dead_code)]
 fn _frame_qualifier_unused(f: &Frame) -> &str {
     &f.file_qualifier
+}
+
+fn collect_let_bindings(bundle: &Bundle) -> Vec<LetSlot> {
+    let mut slots = Vec::new();
+    for entry in &bundle.files {
+        for item in &entry.file.items {
+            if let Item::LetBinding(binding) = item {
+                match expr::parse(&binding.expression) {
+                    Ok(parsed) => slots.push(LetSlot {
+                        name: binding.name.clone(),
+                        expr: parsed,
+                        last: None,
+                    }),
+                    Err(_) => {
+                        // A malformed `let` is a parser-level
+                        // problem; surface it via diagnostics rather
+                        // than failing playback. Phase 4 keeps the
+                        // playhead alive; Phase 5's static analysis
+                        // pass will reject the bundle.
+                    }
+                }
+            }
+        }
+    }
+    slots
 }
 
 #[cfg(test)]
