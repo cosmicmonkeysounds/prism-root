@@ -98,8 +98,9 @@ pub enum LineKind {
 /// parser handles via `terminates_paragraph` on the *next* non-blank
 /// line.
 pub fn scan(source: &str) -> (Vec<ScannedLine>, Vec<Diagnostic>) {
+    let (stripped, mut diagnostics) = crate::comments::strip(source);
+    let source = stripped.as_str();
     let mut lines = Vec::new();
-    let mut diagnostics = Vec::new();
     let mut byte: u32 = 0;
     for (line_idx, raw) in source.split_inclusive('\n').enumerate() {
         let line_start_byte = byte;
@@ -524,6 +525,65 @@ mod tests {
     fn tab_indent_warns() {
         let (_lines, diags) = scan("\tWREN\n");
         assert!(diags.iter().any(|d| d.code == Code::L1001TabIndent));
+    }
+
+    #[test]
+    fn line_comment_is_invisible_to_classifier() {
+        // The bare `//` line strips to whitespace, becomes blank, gets dropped.
+        let (lines, diags) = scan("// rough order: bell, beat\nWREN\n");
+        assert!(diags.is_empty());
+        assert_eq!(lines.len(), 1);
+        assert!(matches!(lines[0].kind, LineKind::Speaker(_)));
+    }
+
+    #[test]
+    fn trailing_line_comment_is_stripped_from_prose() {
+        let (lines, _) = scan("It rang. // pickup pace here\n");
+        assert_eq!(lines.len(), 1);
+        match &lines[0].kind {
+            LineKind::Prose(text) => assert_eq!(text, "It rang."),
+            other => panic!("expected prose, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn block_comment_does_not_eat_following_speaker() {
+        let (lines, diags) = scan("/* blocking sketch\nlives across lines */\nWREN\n");
+        assert!(diags.is_empty());
+        assert_eq!(lines.len(), 1);
+        assert!(matches!(lines[0].kind, LineKind::Speaker(_)));
+    }
+
+    #[test]
+    fn unterminated_block_comment_diagnoses() {
+        let (_lines, diags) = scan("/* never closed\nstill open\n");
+        assert!(diags
+            .iter()
+            .any(|d| d.code == Code::L1007UnterminatedBlockComment));
+    }
+
+    #[test]
+    fn url_in_prose_is_not_mistaken_for_comment() {
+        let (lines, _) = scan("See https://example.com/path for details.\n");
+        assert_eq!(lines.len(), 1);
+        match &lines[0].kind {
+            LineKind::Prose(text) => {
+                assert!(text.contains("https://example.com/path"));
+            }
+            other => panic!("expected prose, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn comment_inside_fence_is_preserved() {
+        let (lines, _) = scan("```note\n// stage manager: lights low\n```\n");
+        // Three fence lines (opener, content, closer) survive.
+        assert_eq!(lines.len(), 3);
+        // Middle line is a prose line carrying the literal `//`.
+        match &lines[1].kind {
+            LineKind::Prose(text) => assert!(text.starts_with("//")),
+            other => panic!("expected prose inside fence, got {other:?}"),
+        }
     }
 
     #[test]

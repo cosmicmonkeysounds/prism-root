@@ -107,6 +107,12 @@ pub mod markers {
     pub const SUPPRESSION_CLOSE: char = ']';
     pub const PARENTHETICAL_OPEN: char = '(';
     pub const PARENTHETICAL_CLOSE: char = ')';
+    /// `//` line comment opener (spec §6.1).
+    pub const LINE_COMMENT: &str = "//";
+    /// `/*` block comment opener (spec §6.1).
+    pub const BLOCK_COMMENT_OPEN: &str = "/*";
+    /// `*/` block comment closer (spec §6.1).
+    pub const BLOCK_COMMENT_CLOSE: &str = "*/";
 }
 
 /// Looks up a declaration keyword without allocating; a thin wrapper

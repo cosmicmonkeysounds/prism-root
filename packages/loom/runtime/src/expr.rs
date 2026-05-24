@@ -22,6 +22,7 @@ pub enum Value {
     Bool(bool),
     Number(f64),
     String(String),
+    List(Vec<Value>),
 }
 
 impl Value {
@@ -31,6 +32,7 @@ impl Value {
             Value::Bool(b) => *b,
             Value::Number(n) => *n != 0.0 && !n.is_nan(),
             Value::String(s) => !s.is_empty(),
+            Value::List(items) => !items.is_empty(),
         }
     }
 
@@ -39,6 +41,15 @@ impl Value {
             Value::Number(n) => Some(*n),
             Value::Bool(true) => Some(1.0),
             Value::Bool(false) => Some(0.0),
+            _ => None,
+        }
+    }
+
+    /// Borrow the list contents if `self` is a list. Used by
+    /// `<for:>` and the `count(…)` helper.
+    pub fn as_list(&self) -> Option<&[Value]> {
+        match self {
+            Value::List(items) => Some(items),
             _ => None,
         }
     }
@@ -55,6 +66,10 @@ impl Value {
                 }
             }
             Value::String(s) => s.clone(),
+            Value::List(items) => {
+                let inner: Vec<String> = items.iter().map(Value::display).collect();
+                format!("[{}]", inner.join(", "))
+            }
         }
     }
 }
@@ -91,6 +106,8 @@ pub enum Expr {
     String(String),
     /// Dotted path — `Wren.trust.Player`.
     Path(Vec<String>),
+    /// `[a, b, c]` list literal.
+    List(Vec<Expr>),
     Unary(UnOp, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Call(String, Vec<Expr>),
@@ -161,6 +178,13 @@ where
         Expr::Number(n) => Value::Number(*n),
         Expr::String(s) => Value::String(s.clone()),
         Expr::Path(segments) => world.get(&segments.join(".")),
+        Expr::List(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for it in items {
+                out.push(eval(it, world, call_fn)?);
+            }
+            Value::List(out)
+        }
         Expr::Unary(op, inner) => {
             let v = eval(inner, world, call_fn)?;
             match op {
@@ -297,6 +321,8 @@ enum Tok {
     Ge,
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     Comma,
     Dot,
 }
@@ -347,6 +373,8 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ExprError> {
             '>' => push_single(&mut out, Tok::Gt, start, &mut i),
             '(' => push_single(&mut out, Tok::LParen, start, &mut i),
             ')' => push_single(&mut out, Tok::RParen, start, &mut i),
+            '[' => push_single(&mut out, Tok::LBracket, start, &mut i),
+            ']' => push_single(&mut out, Tok::RBracket, start, &mut i),
             ',' => push_single(&mut out, Tok::Comma, start, &mut i),
             '.' => push_single(&mut out, Tok::Dot, start, &mut i),
             '"' | '\'' => {
@@ -478,6 +506,24 @@ impl Parser {
                     return Err(ExprError::Expected(")"));
                 }
                 Ok(inner)
+            }
+            Tok::LBracket => {
+                let mut items = Vec::new();
+                if !matches!(self.peek(), Some(Tok::RBracket)) {
+                    loop {
+                        items.push(self.parse_expr(0)?);
+                        if matches!(self.peek(), Some(Tok::Comma)) {
+                            self.bump();
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                let close = self.bump();
+                if !matches!(close.map(|t| t.kind), Some(Tok::RBracket)) {
+                    return Err(ExprError::Expected("]"));
+                }
+                Ok(Expr::List(items))
             }
             Tok::Ident(name) => {
                 // Call?

@@ -3261,6 +3261,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "clap",
+ "http-body-util",
+ "prism-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower 0.5.3",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "loom-syntax"
 version = "0.1.0"
 dependencies = [
@@ -3273,11 +3293,13 @@ name = "loom-wasm"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "getrandom 0.2.17",
  "loom-parser",
  "loom-syntax",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
+ "uuid",
  "wasm-bindgen",
 ]
 

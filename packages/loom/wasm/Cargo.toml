@@ -18,3 +18,23 @@ serde_json = { workspace = true }
 wasm-bindgen = { workspace = true }
 serde-wasm-bindgen = "0.6"
 console_error_panic_hook = { workspace = true }
+
+# `getrandom` and `uuid` are pulled in transitively through prism-core
+# (loom-parser/loom-runtime depend on it). On wasm32-unknown-unknown
+# both need their `js` feature flag enabled so they know how to source
+# entropy from the host — without it the build errors with
+# `use of unresolved module or unlinked crate 'imp'`. We activate
+# them here at the wasm leaf so unrelated crates aren't forced to
+# carry the feature.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { workspace = true, features = ["js"] }
+uuid = { workspace = true, features = ["js"] }
+
+# Disable wasm-pack's post-build wasm-opt pass — the bundled binary
+# fails to validate the output on macOS aarch64 with a bind error in
+# generational-box (transitive via prism-core). The unoptimized wasm
+# is ~2.2× larger but still under the editor's bundle budget, and
+# the parser tokens/diagnostics path is not on a hot loop.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+

@@ -105,7 +105,8 @@
     <li><a href="#project">A Loom project — folders, files, <code>main.loom</code></a></li>
     <li><a href="#imperative">The imperative weave</a></li>
     <li><a href="#brackets">Five brackets, five audiences</a></li>
-    <li><a href="#shape">The shape of a <code>.loom</code> file</a></li>
+    <li><a href="#shape">The shape of a <code>.loom</code> file</a>
+      <span class="label">— 6.1 <a href="#comments">Comments</a></span></li>
     <li><a href="#diverts">Diverts across files</a></li>
     <li><a href="#slots">Typed slots — the one generic mechanism</a></li>
     <li><a href="#composition">Three ways to reuse: inheritance, traits, composition</a></li>
@@ -445,6 +446,50 @@ the silence after the bell carries better than the dialogue.
   TIME</code>) sit anywhere in a beat body. They tell a director and a
   reader where they are; they do <em>not</em> define structure —
   <code>==</code> does that.
+</p>
+
+<h3 id="comments">6.1 Comments — <code>//</code> and <code>/* … */</code></h3>
+
+<p>
+  Loom borrows C-style comments — the one piece of authoring grammar
+  that is for the author alone, never the performer, the reader, the
+  runtime, or the production team. A comment is invisible to every
+  audience. It is the "scribbled in the margin in pencil" channel.
+</p>
+
+<ul>
+  <li><strong>Line comments</strong> — <code>//</code> followed by any
+    text, to the end of the line. The <code>//</code> must be at the
+    start of the line or preceded by whitespace, so URLs in dialogue
+    (<code>https://example.com</code>) stay verbatim.</li>
+  <li><strong>Block comments</strong> — <code>/* … */</code> may span
+    any number of lines. Same whitespace rule on the opener. An
+    unterminated <code>/*</code> is a hard error
+    (<code>L1007UnterminatedBlockComment</code>) — the parser will not
+    silently eat the rest of the file.</li>
+</ul>
+
+<pre>// rough order: bell, beat, lantern up, line
+WREN
+  (quietly)
+  It hasn't rung in three days. // pickup pace if Wren's actor is fast
+
+/*
+  blocking sketch from rehearsal 04-12:
+  Wren is upstage left at the rope. Player enters from SR on the bell.
+  Strike: lantern down on "rang".
+*/
+
+== ringing
+  -> bell_arc</pre>
+
+<p>
+  Comments are <em>not</em> recognised inside a <code>``` … ```</code>
+  production-metadata fence: the fence is its own out-of-band region
+  and a stage manager's note may legitimately contain
+  <code>//</code> or <code>/*</code> as prose. Use the fence for
+  anything you want a production team to read; use a comment for
+  anything you want only the next author to read.
 </p>
 
 <h2 id="diverts">7. Diverts across files</h2>

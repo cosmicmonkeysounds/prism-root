@@ -14,6 +14,8 @@ import { cpp } from '@codemirror/lang-cpp'
 import { java } from '@codemirror/lang-java'
 import { php } from '@codemirror/lang-php'
 import { vue } from '@codemirror/lang-vue'
+import { loomLanguage } from './loom-language'
+import { loomLint } from './loom-lint'
 
 export type LanguageId =
   | 'javascript'
@@ -43,6 +45,7 @@ export type LanguageId =
   | 'shell'
   | 'dockerfile'
   | 'vue'
+  | 'loom'
   | 'plaintext'
 
 const EXT_TO_LANG: Record<string, LanguageId> = {
@@ -96,6 +99,7 @@ const EXT_TO_LANG: Record<string, LanguageId> = {
   bash: 'shell',
   zsh: 'shell',
   fish: 'shell',
+  loom: 'loom',
 }
 
 const FILENAME_TO_LANG: Record<string, LanguageId> = {
@@ -146,6 +150,7 @@ const LANGUAGE_LABELS: Record<LanguageId, string> = {
   shell: 'Shell',
   dockerfile: 'Dockerfile',
   vue: 'Vue',
+  loom: 'Loom',
   plaintext: 'Plain Text',
 }
 
@@ -195,6 +200,8 @@ export function extensionForPath(path: string): Extension[] {
       return [php()]
     case 'vue':
       return [vue()]
+    case 'loom':
+      return [loomLanguage(), loomLint()]
     default:
       return []
   }

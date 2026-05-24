@@ -24,6 +24,9 @@ members = [
     "packages/loom/lsp",
     "packages/loom/syntax",
     "packages/loom/wasm",
+    # Multi-user backbone for the Loom web editor — axum server hosting
+    # per-workspace Loro CRDTs. See `docs/dev/loom-multiuser.md`.
+    "packages/loom/server",
     # Post-Slint render + DSL stack (see
     # `docs/dev/clay-migration-plan.md`). Both crates ship under
     # `MIT OR Apache-2.0`; existing crates stay on GPL.

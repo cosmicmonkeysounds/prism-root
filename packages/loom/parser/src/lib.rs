@@ -29,6 +29,7 @@
 
 pub mod ast;
 pub mod brackets;
+pub mod comments;
 pub mod diagnostics;
 pub mod directives;
 pub mod keywords;

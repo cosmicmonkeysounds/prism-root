@@ -867,6 +867,51 @@ CHARACTER Wren is Keeper, Combatant
     }
 
     #[test]
+    fn comments_are_invisible_to_the_parser() {
+        let src = "\
+// rough draft — pickup pace on the bell line
+== opening
+  cast: Wren, Player  // production: confirm with director
+
+/* blocking sketch:
+   Wren is upstage left at the rope.
+   Player enters from SR on the bell.
+*/
+
+WREN
+  (quietly)
+  It hasn't rung in three days. // confirm pickup on `rang`
+  -> ringing
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            other => panic!("expected beat, got {other:?}"),
+        };
+        assert_eq!(beat.name, "opening");
+        assert_eq!(beat.contract.get("cast").unwrap().value, "Wren, Player");
+        let dialogue = match &beat.body[0] {
+            BodyItem::Dialogue(d) => d,
+            other => panic!("expected dialogue, got {other:?}"),
+        };
+        assert_eq!(dialogue.speaker, "WREN");
+        // The trailing line comment must be stripped from the dialogue text.
+        match &dialogue.lines[0] {
+            DialogueLine::Text(t) => assert_eq!(t.value, "It hasn't rung in three days."),
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unterminated_block_comment_surfaces_in_parse() {
+        let (_file, diags) = parse("/* never closed\n== opening\n");
+        assert!(diags
+            .iter()
+            .any(|d| d.code == Code::L1007UnterminatedBlockComment));
+    }
+
+    #[test]
     fn metadata_fence_is_collected() {
         let (file, _) = parse("== opening\n```note\nThis felt long.\n```\n");
         let beat = match &file.items[0] {

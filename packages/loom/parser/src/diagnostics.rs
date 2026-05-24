@@ -31,6 +31,8 @@ pub enum Code {
     L1005UnterminatedDirective,
     /// A declaration line (`CHARACTER`, `TRAIT`, …) was missing a name.
     L1006UnnamedDeclaration,
+    /// A `/*` block comment opened but never closed before end of file.
+    L1007UnterminatedBlockComment,
     /// Dialogue lines appeared without a SPEAKER above them.
     L2001OrphanedDialogue,
     /// `<-` appeared outside any tunnel context. Parser-level: we
@@ -48,6 +50,7 @@ impl Code {
             Self::L1004UnnamedKnot => "L1004",
             Self::L1005UnterminatedDirective => "L1005",
             Self::L1006UnnamedDeclaration => "L1006",
+            Self::L1007UnterminatedBlockComment => "L1007",
             Self::L2001OrphanedDialogue => "L2001",
             Self::L2002BareTunnelReturn => "L2002",
         }

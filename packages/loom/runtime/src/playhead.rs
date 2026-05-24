@@ -59,8 +59,14 @@ pub enum PlayError {
 enum Yield {
     Event(Event),
     Choice(Vec<PendingChoice>),
-    Divert(DivertTarget),
-    Tunnel(DivertTarget),
+    Divert {
+        target: DivertTarget,
+        params: indexmap::IndexMap<String, String>,
+    },
+    Tunnel {
+        target: DivertTarget,
+        params: indexmap::IndexMap<String, String>,
+    },
     Return,
     End,
     Directive(Directive),
@@ -105,6 +111,9 @@ pub struct Playhead {
     /// already been picked. Sticky `+` choices are never added.
     /// Filtering happens at choice-yield time in `step` (spec §5).
     taken_once_only: std::collections::HashSet<String>,
+    /// Stack of saved queues, one per active tunnel call. A `<-`
+    /// pops the most recent entry and resumes the caller's queue.
+    pending_returns: Vec<VecDeque<Yield>>,
 }
 
 #[derive(Debug)]
@@ -149,6 +158,7 @@ impl Playhead {
             awaiting_choice: false,
             let_bindings,
             taken_once_only: std::collections::HashSet::new(),
+            pending_returns: Vec::new(),
         };
         p.enter_beat(entry);
         Ok(p)
@@ -236,23 +246,32 @@ impl Playhead {
                     self.ledger.push(prompted);
                     return Ok(Step::Choice(opts));
                 }
-                Yield::Divert(target) => {
+                Yield::Divert { target, params } => {
                     let beat_ref = self.resolve(&target)?;
                     let beat = self.bundle.beat(beat_ref).clone();
+                    self.bind_beat_params(&params)?;
                     self.ledger.push(Event::Diverted {
                         target: target.name.clone(),
                         beat: beat.name.clone(),
                     });
                     self.enter_beat(beat_ref);
                 }
-                Yield::Tunnel(target) => {
+                Yield::Tunnel { target, params } => {
                     let beat_ref = self.resolve(&target)?;
                     let beat = self.bundle.beat(beat_ref).clone();
+                    self.bind_beat_params(&params)?;
+                    // Snapshot the *current* queue so `<-` can restore
+                    // it. The tunnel target's body is lowered on top.
+                    let saved = std::mem::take(&mut self.queue);
                     self.ledger.push(Event::Tunneled {
                         target: target.name.clone(),
                         beat: beat.name.clone(),
                     });
                     self.enter_beat(beat_ref);
+                    // Re-park the saved continuation behind a Return
+                    // sentinel so the next `<-` pops the frame and
+                    // resumes the saved queue.
+                    self.pending_returns.push(saved);
                 }
                 Yield::Return => {
                     if self.stack.len() < 2 {
@@ -260,6 +279,16 @@ impl Playhead {
                     }
                     self.stack.pop();
                     self.ledger.push(Event::Returned);
+                    if let Some(saved) = self.pending_returns.pop() {
+                        // Append whatever's left of the called beat
+                        // (usually nothing) ahead of the saved queue,
+                        // so any straggler yields finish before resume.
+                        let mut resumed = saved;
+                        while let Some(y) = self.queue.pop_back() {
+                            resumed.push_front(y);
+                        }
+                        self.queue = resumed;
+                    }
                 }
                 Yield::End => {
                     return Ok(self.halt());
@@ -313,6 +342,45 @@ impl Playhead {
                     }
                 }
                 Yield::DirectiveBlock(block) => {
+                    if let Some((var, src)) = parse_for_directive(&block.directive.raw) {
+                        // `<for: x in expr>` — evaluate `expr`, then
+                        // for each element bind `x` and lower the
+                        // body. Iterations are unrolled in order; the
+                        // var slot keeps its final value when the loop
+                        // exits.
+                        self.refresh_lets()?;
+                        let value = self.eval_expression(&src)?;
+                        let items: Vec<Value> = match value {
+                            Value::List(items) => items,
+                            other => {
+                                // Single-value coercion: iterate once
+                                // with the value bound. Matches the
+                                // "list of LOCATION" feel of the spec
+                                // example without forcing brackets.
+                                vec![other]
+                            }
+                        };
+                        for item in items.iter().rev() {
+                            // Lowered for each iteration so the world
+                            // sees the binding at lower-time, but the
+                            // actual binding write happens at yield
+                            // time via a `BindThenLower` wrapper. To
+                            // keep this minimal we push a synthetic
+                            // set directive ahead of the body.
+                            let lowered_body = self.lower_body(&block.body);
+                            for y in lowered_body.into_iter().rev() {
+                                self.queue.push_front(y);
+                            }
+                            // Prepend a write of `var = item` so the
+                            // body sees it.
+                            let set_raw = format!("set: {} = {}", var, literal_for_value(item));
+                            self.queue.push_front(Yield::Directive(Directive {
+                                raw: set_raw,
+                                span: block.directive.span,
+                            }));
+                        }
+                        continue;
+                    }
                     // Run the leading directive's side effects first,
                     // then lower the body. We push the body items
                     // ahead of the queue so they execute after this
@@ -351,29 +419,68 @@ impl Playhead {
 
     /// Substitute `{expr}` chunks (spec §5 — the reader-facing
     /// bracket) inside an event's text fields against the current
-    /// world + ledger.
+    /// world + ledger. Inline `<kind: args>` directives are
+    /// extracted and dispatched first (they may set world values
+    /// that `{expr}` substitution then reads).
     fn expand_event_inlines(&mut self, event: Event) -> Result<Event, PlayError> {
         match event {
             Event::Action { text } => {
+                let cleaned = self.dispatch_inline_directives(&text)?;
                 self.refresh_lets()?;
-                let text = self.expand_inline_text(&text)?;
-                Ok(Event::Action { text })
+                let expanded = self.expand_inline_text(&cleaned)?;
+                Ok(Event::Action { text: expanded })
             }
             Event::Dialogue {
                 speaker,
                 parenthetical,
                 text,
             } => {
+                let cleaned = self.dispatch_inline_directives(&text)?;
                 self.refresh_lets()?;
-                let text = self.expand_inline_text(&text)?;
+                let expanded = self.expand_inline_text(&cleaned)?;
                 Ok(Event::Dialogue {
                     speaker,
                     parenthetical,
-                    text,
+                    text: expanded,
                 })
             }
             other => Ok(other),
         }
+    }
+
+    /// Pull `<kind: args>` chunks out of `source`, dispatch each
+    /// through the directive registry (firing their side effects
+    /// and ledger envelopes), and return the surrounding text.
+    fn dispatch_inline_directives(&mut self, source: &str) -> Result<String, PlayError> {
+        if !source.contains('<') {
+            return Ok(source.to_string());
+        }
+        let (cleaned, chunks) = split_inline_directives(source);
+        for raw in chunks {
+            let call = directives::parse(&raw)?;
+            let (outcome, positional, named) =
+                directives::dispatch(&call, &self.registry, &mut self.world, &mut self.ledger)?;
+            if matches!(outcome, HandlerOutcome::Handled) {
+                self.ledger.push(Event::Directive {
+                    kind: call.kind.clone(),
+                    positional: call
+                        .positional
+                        .iter()
+                        .zip(positional.iter())
+                        .map(|(expr, value)| match (expr, value) {
+                            (Expr::Path(segs), Value::Null) => segs.join("."),
+                            _ => value.display(),
+                        })
+                        .collect(),
+                    named: named
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.display()))
+                        .collect(),
+                });
+            }
+        }
+        // Collapse leftover double-spaces from chunk extraction.
+        Ok(collapse_whitespace(&cleaned))
     }
 
     /// Scan `source` for top-level `{…}` chunks and replace each
@@ -411,6 +518,34 @@ impl Playhead {
             i += 1;
         }
         Ok(out)
+    }
+
+    /// Evaluate each `with k: expr` value on a divert site against
+    /// the current world, then write the result under `k` (a flat
+    /// world key — Phase 5 doesn't shadow per-frame). Lets
+    /// `-> ask_about with topic: bell` make `topic` readable inside
+    /// `ask_about`'s body.
+    fn bind_beat_params(
+        &mut self,
+        params: &indexmap::IndexMap<String, String>,
+    ) -> Result<(), PlayError> {
+        if params.is_empty() {
+            return Ok(());
+        }
+        self.refresh_lets()?;
+        for (name, source) in params {
+            let value = match self.eval_expression(source) {
+                // A bare path that doesn't resolve in the world
+                // (`with topic: bell` — `bell` isn't a variable)
+                // falls back to the literal source text so the
+                // screenplay reads naturally.
+                Ok(Value::Null) => Value::String(source.trim().to_string()),
+                Ok(v) => v,
+                Err(_) => Value::String(source.trim().to_string()),
+            };
+            self.world.set(name.clone(), value);
+        }
+        Ok(())
     }
 
     /// Parse + evaluate one expression string against the current
@@ -654,8 +789,14 @@ fn lower_item(item: &BodyItem, out: &mut Vec<Yield>) {
 
 fn lower_divert(d: &Divert, out: &mut Vec<Yield>) {
     match d {
-        Divert::To { target, .. } => out.push(Yield::Divert(target.clone())),
-        Divert::Tunnel { target, .. } => out.push(Yield::Tunnel(target.clone())),
+        Divert::To { target, params, .. } => out.push(Yield::Divert {
+            target: target.clone(),
+            params: params.clone(),
+        }),
+        Divert::Tunnel { target, .. } => out.push(Yield::Tunnel {
+            target: target.clone(),
+            params: indexmap::IndexMap::new(),
+        }),
         Divert::Return { .. } => out.push(Yield::Return),
         Divert::End { .. } => out.push(Yield::End),
     }
@@ -666,6 +807,149 @@ fn lower_divert(d: &Divert, out: &mut Vec<Yield>) {
 #[allow(dead_code)]
 fn _frame_qualifier_unused(f: &Frame) -> &str {
     &f.file_qualifier
+}
+
+/// Recognise `for: x in expr` directive bodies. Returns `(var, expr)`
+/// when the syntax matches; `None` otherwise (the caller falls back
+/// to generic block-directive dispatch).
+fn parse_for_directive(raw: &str) -> Option<(String, String)> {
+    let trimmed = raw.trim_start();
+    let rest = trimmed.strip_prefix("for:")?;
+    let body = rest.trim();
+    // Find `in` as a word boundary.
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i + 2 < bytes.len() {
+        if &bytes[i..i + 2] == b"in"
+            && (i == 0 || bytes[i - 1].is_ascii_whitespace())
+            && (i + 2 < bytes.len() && bytes[i + 2].is_ascii_whitespace())
+        {
+            let var = body[..i].trim().to_string();
+            let expr = body[i + 2..].trim().to_string();
+            if !var.is_empty() && !expr.is_empty() {
+                return Some((var, expr));
+            }
+            return None;
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Re-spell a `Value` as expression source so it can ride inside a
+/// generated `<set: var = …>` directive. Strings are quoted; numbers
+/// / bools / null use their `display()` form; lists fall back to
+/// JSON-ish bracketed form.
+fn literal_for_value(value: &Value) -> String {
+    match value {
+        Value::String(s) => format!("'{}'", s.replace('\'', "\\'")),
+        Value::Null => "null".into(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(_) => value.display(),
+        Value::List(items) => {
+            let inner: Vec<String> = items.iter().map(literal_for_value).collect();
+            format!("[{}]", inner.join(", "))
+        }
+    }
+}
+
+/// Splits `<kind: args>` chunks out of `source`. Quoted strings
+/// keep `<` / `>` literal. Returns `(text_without_chunks, raw_chunks)`.
+fn split_inline_directives(source: &str) -> (String, Vec<String>) {
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut chunks: Vec<String> = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if let Some(q) = quote {
+            out.push(c);
+            if c == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '"' | '\'' => {
+                quote = Some(c);
+                out.push(c);
+                i += 1;
+            }
+            '<' => {
+                if let Some(end) = find_matching_angle_close(&source[i..]) {
+                    let inner = &source[i + 1..i + end];
+                    chunks.push(inner.to_string());
+                    i += end + 1;
+                    continue;
+                }
+                out.push(c);
+                i += 1;
+            }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    (out, chunks)
+}
+
+/// Given a slice starting with `<`, find the index of the matching
+/// `>` (depth-aware, quote-aware). `None` if unbalanced.
+fn find_matching_angle_close(slice: &str) -> Option<usize> {
+    let bytes = slice.as_bytes();
+    if bytes.first() != Some(&b'<') {
+        return None;
+    }
+    let mut depth = 1i32;
+    let mut quote: Option<char> = None;
+    let mut i = 1;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '"' | '\'' => quote = Some(c),
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Collapse runs of multiple spaces into one and trim trailing
+/// whitespace per line — used after stripping inline directive
+/// chunks so the dialogue reads naturally.
+fn collapse_whitespace(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last_space = false;
+    for ch in text.chars() {
+        if ch == ' ' {
+            if !last_space {
+                out.push(' ');
+            }
+            last_space = true;
+        } else {
+            out.push(ch);
+            last_space = false;
+        }
+    }
+    // Trim trailing/leading whitespace per overall string.
+    out.trim().to_string()
 }
 
 fn collect_let_bindings(bundle: &Bundle) -> Vec<LetSlot> {

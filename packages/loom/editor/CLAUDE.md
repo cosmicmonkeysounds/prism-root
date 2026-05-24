@@ -29,3 +29,20 @@ src/
 - Keep components small; put logic in `lib/` or `store/`.
 - No backend. Anything persistent goes through the FS handles the user grants.
 - Browser support: Chromium-based (File System Access API).
+
+## Loom integration
+
+`.loom` files are first-class. Highlighting + diagnostics flow through
+`packages/loom/wasm` (built with `pnpm wasm:build`, output to
+`src/loom-wasm/`):
+
+- `src/lib/loom-language.ts` — CodeMirror `StreamLanguage` mirroring
+  the Rust `loom_parser::lexer` line classifier. Token shapes match
+  the TextMate grammar shipped to Zed/VSCode by `loom_syntax::emit_tmgrammar`.
+- `src/lib/loom-lint.ts` — `linter()` extension that calls the
+  wasm-compiled real parser (`diagnose(source)`) and maps byte spans
+  to CodeMirror diagnostics. Loaded lazily on first `.loom` open.
+
+To regenerate the wasm bundle after editing `packages/loom/parser` or
+`packages/loom/wasm`, run `pnpm wasm:build` (release) or
+`pnpm wasm:build:dev` (faster compile, larger output).

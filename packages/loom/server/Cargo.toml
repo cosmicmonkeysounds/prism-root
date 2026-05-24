@@ -1,0 +1,40 @@
+[package]
+name = "loom-server"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Loom multi-user backbone — axum server hosting per-workspace Loro CRDTs over the prism-core relay module system. See docs/dev/loom-multiuser.md."
+
+[lib]
+name = "loom_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "loom-relayd"
+path = "src/bin/loom_relayd.rs"
+
+[dependencies]
+# Relay module system + the three modules Loom needs. We deliberately
+# depend on `prism-core` rather than `prism-relay` — the full relay
+# pulls `prism-builder` (SSR portals) and 14 modules we don't use.
+prism-core = { path = "../../prism-core", features = ["crdt"] }
+
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "net"] }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+http-body-util = "0.1"

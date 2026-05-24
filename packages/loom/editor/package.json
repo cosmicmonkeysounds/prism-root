@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "wasm:build": "cd ../wasm && wasm-pack build --target web --out-dir ../editor/src/loom-wasm --release",
+    "wasm:build:dev": "cd ../wasm && wasm-pack build --target web --out-dir ../editor/src/loom-wasm --dev"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.2",
