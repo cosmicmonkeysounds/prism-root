@@ -10,17 +10,17 @@ members = [
     "packages/prism-relay",
     "packages/prism-dock",
     "packages/prism-luau-derive",
-    # Loom storytelling-language LSP server. Stdio JSON-RPC; backed by
-    # `prism_core::language::loom`. Editors that speak LSP (Zed,
-    # Neovim, Helix, VSCode + `vscode-langservers-extracted`, …) get
-    # diagnostics + semantic-token highlights + hover + completion
-    # straight from the canonical parser.
-    "packages/prism-loom-lsp",
-    # Loom runtime — the playback engine. Compiles a parsed `RootNode`
-    # into a `LoomDatabase` (postcard-serializable bundle) and runs
-    # the playhead + ledger + resolver. Reactivity, scheduler tiers,
-    # and the faction simulator land in follow-up phases.
-    "packages/prism-loom-runtime",
+    # Loom v3 — the narrative scripting language. Four sibling crates
+    # under one folder (see `docs/dev/loom-v3.html`):
+    #   - parser   — lexer + AST + diagnostics for the `.loom` format
+    #   - runtime  — bundle, resolver, playhead, ledger, reactive graph,
+    #                scheduler, directive registry, Luau bridge
+    #   - lsp      — stdio JSON-RPC server (workspace-wide name index)
+    #   - syntax   — TextMate grammar + Zed / VSCode extension shells
+    "packages/loom/parser",
+    "packages/loom/runtime",
+    "packages/loom/lsp",
+    "packages/loom/syntax",
     # Post-Slint render + DSL stack (see
     # `docs/dev/clay-migration-plan.md`). Both crates ship under
     # `MIT OR Apache-2.0`; existing crates stay on GPL.
@@ -56,7 +56,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-ut
 # workspace pin so daemon + CLI can't drift.
 notify = "7"
 
-# LSP server runtime + protocol types. `prism-loom-lsp` is the only
+# LSP server runtime + protocol types. `packages/loom/lsp` is the only
 # crate that uses these today. `lsp-server` is the rust-analyzer
 # stdio JSON-RPC loop; `lsp-types` is the official protocol struct
 # definitions (`crossbeam-channel` rides along as a transitive

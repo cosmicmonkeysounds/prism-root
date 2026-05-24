@@ -1,0 +1,17 @@
+[package]
+name = "loom-parser"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Lexer, AST, and diagnostics for the Loom v3 narrative scripting language. See docs/dev/loom-v3.html for the spec."
+
+[lib]
+name = "loom_parser"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+indexmap = { workspace = true }
+prism-core = { path = "../../prism-core" }

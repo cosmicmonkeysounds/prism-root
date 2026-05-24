@@ -3225,6 +3225,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom-lsp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "loom-parser",
+ "lsp-server",
+ "lsp-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "loom-parser"
+version = "0.1.0"
+dependencies = [
+ "indexmap 2.14.0",
+ "prism-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "loom-runtime"
+version = "0.1.0"
+dependencies = [
+ "indexmap 2.14.0",
+ "loom-parser",
+ "postcard",
+ "prism-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "loom-syntax"
+version = "0.1.0"
+dependencies = [
+ "loom-parser",
+ "serde_json",
+]
+
+[[package]]
 name = "loro"
 version = "1.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4519,11 +4563,12 @@ dependencies = [
  "anyhow",
  "clap",
  "filetime",
+ "loom-lsp",
+ "loom-syntax",
  "notify",
  "prism-builder",
  "prism-core",
  "prism-daemon",
- "prism-loom-lsp",
  "prism-ui-runtime",
  "serde",
  "serde_json",
@@ -4610,29 +4655,6 @@ version = "0.1.0"
 dependencies = [
  "indexmap 2.14.0",
  "insta",
- "prism-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "prism-loom-lsp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lsp-server",
- "lsp-types",
- "prism-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "prism-loom-runtime"
-version = "0.1.0"
-dependencies = [
- "indexmap 2.14.0",
- "postcard",
  "prism-core",
  "serde",
  "serde_json",

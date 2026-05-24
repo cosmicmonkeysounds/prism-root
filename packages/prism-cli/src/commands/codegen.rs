@@ -30,10 +30,9 @@ pub enum CodegenKind {
     LuauTypes(LuauTypesArgs),
     /// Emit the TextMate grammar for the Loom storytelling language
     /// (`loom.tmLanguage.json`). The output is **derived** from
-    /// `prism_core::language::loom::keywords` — adding a keyword
-    /// there automatically extends the editor highlights on the next
-    /// run. By default writes to
-    /// `<workspace>/tools/loom-syntax/loom.tmLanguage.json`.
+    /// `loom_parser::keywords` — adding a keyword there automatically
+    /// extends the editor highlights on the next run. By default
+    /// writes to `<workspace>/packages/loom/syntax/loom.tmLanguage.json`.
     LoomTmgrammar(LoomTmgrammarArgs),
 }
 
@@ -50,7 +49,7 @@ pub struct LuauTypesArgs {
 #[derive(Debug, Args)]
 pub struct LoomTmgrammarArgs {
     /// Output file. Defaults to
-    /// `<workspace>/tools/loom-syntax/loom.tmLanguage.json`.
+    /// `<workspace>/packages/loom/syntax/loom.tmLanguage.json`.
     #[arg(long)]
     pub out: Option<PathBuf>,
     /// Print the generated grammar to stdout instead of writing it.
@@ -100,7 +99,7 @@ fn luau_types(args: &LuauTypesArgs, workspace: &Workspace, dry_run: bool) -> Res
 }
 
 fn loom_tmgrammar(args: &LoomTmgrammarArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
-    let grammar = prism_core::language::loom::tmgrammar::emit_tmgrammar();
+    let grammar = loom_syntax::emit_tmgrammar();
 
     if args.stdout || dry_run {
         println!("{grammar}");
@@ -114,7 +113,7 @@ fn loom_tmgrammar(args: &LoomTmgrammarArgs, workspace: &Workspace, dry_run: bool
     let canonical = args.out.clone().unwrap_or_else(|| {
         workspace
             .root()
-            .join("tools/loom-syntax/loom.tmLanguage.json")
+            .join("packages/loom/syntax/loom.tmLanguage.json")
     });
     write_grammar(&canonical, &grammar)?;
     println!("wrote {}", canonical.display());
@@ -122,7 +121,7 @@ fn loom_tmgrammar(args: &LoomTmgrammarArgs, workspace: &Workspace, dry_run: bool
     if args.out.is_none() {
         let vscode_bundle = workspace
             .root()
-            .join("tools/loom-syntax/vscode-loom/syntaxes/loom.tmLanguage.json");
+            .join("packages/loom/syntax/vscode-loom/syntaxes/loom.tmLanguage.json");
         if vscode_bundle.parent().is_some_and(|p| p.exists()) {
             write_grammar(&vscode_bundle, &grammar)?;
             println!("wrote {}", vscode_bundle.display());

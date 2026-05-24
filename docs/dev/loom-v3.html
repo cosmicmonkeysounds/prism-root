@@ -62,7 +62,7 @@
 </p>
 
 <div class="callout big good">
-  <strong>The three claims.</strong>
+  <strong>The four claims.</strong>
   <ol style="margin:0.5rem 0 0 1.2rem; padding:0;">
     <li><strong>Screenplay on the outside.</strong> Position,
       capitalisation, and indentation carry meaning. Quotes,
@@ -76,6 +76,18 @@
       coroutines, factions that hold collective state. Simulacra and
       Meridian are folded in as first-class declaration kinds, not
       bolted on.</li>
+    <li><strong>Traits compose behavior, not just properties.</strong>
+      A <code>TRAIT</code> packages property defaults <em>and</em>
+      hooks, generators, goals, and scenes — anything a CHARACTER can
+      hold. <code>is X, Y</code> mixes them in, defaults flow through,
+      anything declared on the child overrides by name. The "I wrote
+      five similar guards" problem stops at the first guard.</li>
+    <li><strong>Directives are Luau functions.</strong> <code>&lt;sfx:
+      bell&gt;</code> is a call to a function <code>sfx</code>. The
+      core registry ships the audio / lighting / state / control-flow
+      verbs out of the box; a studio adds its own by writing a Luau
+      function and registering it. Loom doesn't grow new keywords —
+      Luau grows new verbs.</li>
     <li><strong>A project is a folder of <code>.loom</code> files,
       rooted at <code>main.loom</code>.</strong> Beats live wherever
       they're easiest to write, characters live in their own files,
@@ -96,13 +108,13 @@
     <li><a href="#shape">The shape of a <code>.loom</code> file</a></li>
     <li><a href="#diverts">Diverts across files</a></li>
     <li><a href="#slots">Typed slots — the one generic mechanism</a></li>
-    <li><a href="#composition">Composition: <code>is</code></a></li>
+    <li><a href="#composition">Three ways to reuse: inheritance, traits, composition</a></li>
     <li><a href="#simulacra">Simulacra — characters as small simulations</a></li>
     <li><a href="#meridian">Meridian — stats, axes, pools, trees</a></li>
     <li><a href="#reactive">Reactive bindings: <code>let</code>, hooks, generators, scenes</a></li>
     <li><a href="#live">Live performance — participants, cohorts, improv, broadcasts</a></li>
-    <li><a href="#directives">Runtime directives — <code>&lt;…&gt;</code></a></li>
-    <li><a href="#metadata">Production metadata — <code>&lt;&lt;…&gt;&gt;</code></a></li>
+    <li><a href="#directives">Runtime directives — Luau function calls</a></li>
+    <li><a href="#metadata">Production metadata — <code>``` … ```</code></a></li>
     <li><a href="#example">Worked example: a small project across files</a></li>
     <li><a href="#migration">Migration from v2</a></li>
   </ol>
@@ -126,7 +138,7 @@
   <tr>
     <td><strong>Stage prompt book</strong> (Samuel French, BBC radio)</td>
     <td>The <em>parallel cue column</em>. Production metadata sits next to text, not inside it.
-      v3's <code>&lt;&lt;…&gt;&gt;</code> bracket is that column.</td>
+      v3's triple-backtick fence is that column.</td>
   </tr>
   <tr>
     <td><strong>Fountain</strong> (Maschwitz/August, 2012)</td>
@@ -193,8 +205,8 @@
   <li><strong>Brackets, when used, mean one thing each.</strong> Five
     shapes, five distinct jobs, no overlap. §5.</li>
   <li><strong>Printable on paper.</strong> Anything the runtime alone
-    cares about lives in <code>&lt;&lt;…&gt;&gt;</code> so a producer
-    can mark it as "ignore at the table read."</li>
+    cares about lives in a <code>``` … ```</code> fence so a
+    producer can mark it as "ignore at the table read."</li>
 </ol>
 
 <div class="callout">
@@ -259,7 +271,6 @@ my-show/
     a <code>-&gt;</code> followed by a beat name. The beat may live
     anywhere in the project. See §7.</li>
   <li><strong>Each file declares its own header.</strong>
-    <code>loom: 3</code> sets the parser version;
     <code>tags:</code> are file-scoped; everything else is project-wide.</li>
 </ul>
 
@@ -267,7 +278,6 @@ my-show/
 
 <pre><strong>main.loom</strong>
 # Saltmere
-loom: 3
 entry: opening
 
 CHARACTER Player is Visitor
@@ -381,23 +391,37 @@ WREN
 
   <div><code>&lt; … &gt;</code></div>
   <div>the runtime</div>
-  <div>side effect, control flow, anchor, query</div>
+  <div>Luau function call — side effect, control flow, anchor, query</div>
   <div><code>&lt;sfx: bell-toll&gt;</code><br><code>&lt;set: trust += 10&gt;</code><br><code>&lt;if: since(bell) &lt; 30s&gt;</code><br><code>&lt;broadcast: location(BellTower)&gt;</code></div>
 
-  <div><code>&lt;&lt; … &gt;&gt;</code></div>
+  <div><code>``` … ```</code></div>
   <div>the production team</div>
-  <div>sidecar metadata, ignored at runtime</div>
-  <div><code>&lt;&lt;warn lx14&gt;&gt;</code><br><code>&lt;&lt;blocking: cross DSR on "rang"&gt;&gt;</code><br><code>&lt;&lt;todo: revisit in act 3&gt;&gt;</code></div>
+  <div>sidecar metadata, ignored at runtime (markdown fence)</div>
+  <div><code>```warn lx14```</code><br><code>```blocking: cross DSR on "rang"```</code><br><code>```todo: revisit in act 3```</code></div>
 </div>
 
 <p>
-  The single-vs-double angle bracket split is the load-bearing
+  The angle-bracket / backtick-fence split is the load-bearing
   distinction. <em>Does the runtime do something with it?</em>
-  <code>&lt;sfx: bell&gt;</code> fires at the booth. <code>&lt;&lt;warn
-  lx14&gt;</code> is a note for the stage manager four lines ahead of
-  the cue. An author note about pacing is purely
-  <code>&lt;&lt;…&gt;&gt;</code>.
+  <code>&lt;sfx: bell&gt;</code> fires a Luau function at the booth.
+  <code>```warn lx14```</code> is a note for the stage manager four
+  lines ahead of the cue. An author note about pacing is purely
+  fenced.
 </p>
+
+<p>
+  The triple-backtick fence is borrowed from Markdown for a reason:
+  every writer who has used GitHub, Discord, Notion, or Obsidian
+  already knows what a backtick fence does — it's an
+  out-of-band region. Inline (<code>```warn lx14```</code> on one
+  line) and block forms both work:
+</p>
+
+<pre>```note
+This scene felt long at the table read. Try cutting the lantern beat;
+the silence after the bell carries better than the dialogue.
+```
+</pre>
 
 <h2 id="shape">6. The shape of a <code>.loom</code> file</h2>
 
@@ -503,8 +527,11 @@ CHARACTER Wren is Keeper               ← fills the slots, now concrete
 </pre>
 
 <p>
-  No <code>trait</code>, no <code>abstract</code>. Abstractness is a
-  consequence of unfilled slots. The same mechanism is used for:
+  No <code>abstract</code> keyword. Abstractness is a consequence of
+  unfilled slots — the compiler refuses to instantiate a declaration
+  with required holes. <code>TRAIT</code> (§9.1) makes that abstractness
+  intentional rather than incidental, but uses the same slot machinery.
+  The pattern shows up in four places:
 </p>
 
 <table>
@@ -521,13 +548,177 @@ CHARACTER Wren is Keeper               ← fills the slots, now concrete
       <td>each pass of the loop</td></tr>
 </table>
 
-<h2 id="composition">9. Composition: <code>is</code></h2>
+<h2 id="composition">9. Three ways to reuse: inheritance, traits, composition</h2>
 
 <p>
-  One verb. <code>is X, Y</code> pulls in the property declarations of
-  X and Y. Defaults flow into the child unless overridden; required
-  slots must be satisfied or the child stays abstract.
+  "Composition" in v3 means three different things, and they're easy
+  to confuse. Spelling them out:
 </p>
+
+<table>
+  <tr><th>Mechanism</th><th>Relationship</th><th>Syntax</th><th>Example</th></tr>
+  <tr>
+    <td><strong>Inheritance</strong></td>
+    <td><em>is-a</em></td>
+    <td><code>CHILD is PARENT</code> where PARENT is a CHARACTER</td>
+    <td><code>GoblinKing is Goblin</code> — a GoblinKing <em>is</em> a kind of Goblin</td>
+  </tr>
+  <tr>
+    <td><strong>Trait mixing</strong></td>
+    <td><em>can-do</em></td>
+    <td><code>CHILD is TRAIT</code> where TRAIT is a TRAIT</td>
+    <td><code>Goblin is Looter</code> — a Goblin <em>can be looted</em></td>
+  </tr>
+  <tr>
+    <td><strong>Property composition</strong></td>
+    <td><em>has-a</em></td>
+    <td><code>prop: Type = default</code></td>
+    <td><code>loot: LootBag = goblin_pouch</code> — a Goblin <em>has</em> a LootBag</td>
+  </tr>
+</table>
+
+<p>
+  All three play together. The loot-bag example walks through all of them:
+</p>
+
+<pre>ITEM LootBag                                 ← the thing being owned
+  contents: list of ITEM = []
+  gold:     int          = 0
+
+ITEM goblin_pouch is LootBag                 ← inheritance on an ITEM
+  contents: [rusty_dagger]
+  gold:     3
+
+ITEM royal_hoard is LootBag
+  contents: [crown, jeweled_dagger, royal_seal]
+  gold:     5000
+
+TRAIT Looter                                 ← can-do capability
+  loot: LootBag = empty_pouch                ← typed slot + default
+  on death
+    &lt;drop: loot, at: self.position&gt;
+
+CHARACTER Goblin is Humanoid, Combatant, Looter
+  hp:     20
+  attack: 4
+  loot:   goblin_pouch                       ← override Looter's default
+
+CHARACTER GoblinKing is Goblin               ← is-a Goblin (inheritance)
+  hp:     200
+  attack: 14
+  loot:   royal_hoard                        ← override Goblin's loot
+</pre>
+
+<p>
+  Three mechanisms, three jobs. <code>LootBag</code> is a separately
+  declared ITEM with its own inheritance lineage. <code>Looter</code>
+  is a trait that contributes a typed slot (the loot bag) and the
+  behavior that drops it on death. <code>Goblin</code> inherits from
+  Humanoid + Combatant (concrete templates) <em>and</em> mixes in
+  Looter (capability); it composes a <code>goblin_pouch</code> into
+  the <code>loot</code> slot. <code>GoblinKing</code> inherits from
+  <code>Goblin</code> and overrides the loot to a <code>royal_hoard</code>
+  — three words to spell the difference between a king and a footman.
+</p>
+
+<h3 id="is-shared">9.1 What <code>is</code> shares</h3>
+
+<p>
+  Whether the right-hand side of <code>is</code> is a CHARACTER, a
+  TRAIT, an ITEM, a STATS profile, a FACTION, or a SCENE, the
+  mechanism is identical: <code>is X, Y</code> pulls in
+  <em>everything</em> X and Y declare — properties with defaults,
+  hooks, generators, goals, scenes, even nested beats. Defaults flow
+  into the child unless overridden. Anything declared on the child
+  by name overrides the inherited version. Required slots must be
+  satisfied or the child stays abstract.
+</p>
+
+<p>
+  The split between CHARACTER and TRAIT is a <em>contract</em>, not a
+  mechanism: a TRAIT cannot be instantiated standalone (the runtime
+  refuses to <code>spawn</code> one). That's the whole difference.
+  Use CHARACTER when the thing is somebody; use TRAIT when the thing
+  is a capability bundle.
+</p>
+
+<h3 id="generic-loot">9.2 "Every NPC has a loot bag"</h3>
+
+<p>Two ways, pick the one that matches intent:</p>
+
+<pre><span style="color:#777">// Option A: put the slot on the base CHARACTER. Anyone who is an NPC has loot.</span>
+CHARACTER NPC
+  loot: LootBag = empty_pouch
+  ...
+
+CHARACTER Merchant is NPC
+  loot: merchant_purse
+
+CHARACTER Goblin is NPC, Combatant
+  loot: goblin_pouch
+
+<span style="color:#777">// Option B: put the slot on a trait. Anyone who can be looted has loot.</span>
+TRAIT Looter
+  loot: LootBag = empty_pouch
+  on death
+    &lt;drop: loot, at: self.position&gt;
+
+CHARACTER NPC is Looter            ← bake it into every NPC
+CHARACTER Merchant is NPC
+  loot: merchant_purse
+</pre>
+
+<p>
+  Option A is simpler — one slot, one inheritance edge. Option B
+  decouples the <em>capability</em> ("loseable loot when killed") from
+  the <em>identity</em> ("NPC"), which matters as soon as you want a
+  <code>BossEncounter</code> trait or a <code>Loyalist</code> trait
+  that <em>shouldn't</em> drop loot. Mix the trait where it belongs,
+  not where the inheritance happens to put it.
+</p>
+
+<div class="callout good">
+  <strong>You can — and usually should — use both at once.</strong>
+  The two options aren't exclusive. A mature project typically bakes
+  truly universal capabilities into the base CHARACTER and exposes
+  the rest as traits a character opts into:
+
+<pre>TRAIT Looter         ...   ← capability: can be looted
+TRAIT Conversational ...   ← capability: can be spoken to
+TRAIT Patrolling     ...   ← capability: walks a route
+
+CHARACTER NPC is Looter, Conversational     ← universals baked in
+  ...
+
+CHARACTER Goblin is NPC, Combatant          ← also fights
+  loot: goblin_pouch
+
+CHARACTER Loyalist is NPC                   ← still looter + conversational
+                                            ← no override needed
+
+CHARACTER Ghost is Conversational           ← skips NPC entirely
+                                            ← can talk, can't be looted
+</pre>
+
+  <p style="margin: 0.5rem 0 0 0;">
+    The <code>loot</code> slot is the same slot regardless of where
+    it came from. Once a trait or a parent has contributed it, it's
+    just a typed property on the character — children override it
+    the same way, the resolver sees it the same way, hooks read it
+    the same way. There is no runtime distinction between a
+    "trait-contributed" property and an "inherited" property.
+  </p>
+
+  <p style="margin: 0.5rem 0 0 0;">
+    Option B is more powerful because it allows opt-<em>out</em>
+    (<code>Ghost</code> simply doesn't <code>is Looter</code>), which
+    Option A can't do without forking the hierarchy. As soon as
+    you're reaching for traits, baking universals into a base
+    <code>CHARACTER</code> becomes the question "do I want this to
+    be optional later?" — and the safe answer is usually yes, so
+    traits win by default in mature projects.
+  </p>
+</div>
 
 <pre>CHARACTER Humanoid
   hp:    int = 100
@@ -543,7 +734,104 @@ CHARACTER Bandit is Humanoid, Combatant
                                        ← speed inherited from Humanoid (5)
 </pre>
 
-<p>Beats compose the same way; so do stats profiles, scenes, and factions.</p>
+<p>Beats compose the same way; so do stats profiles, scenes, factions, and traits.</p>
+
+<h3 id="trait">9.3 <code>TRAIT</code> — the mixin keyword in full</h3>
+
+<p>
+  <code>CHARACTER</code> exists to be instantiated as someone in the
+  world. <code>TRAIT</code> exists to be mixed into characters and
+  other traits. It looks identical — same body, same property syntax,
+  same hooks/generators/goals — but the resolver refuses to
+  instantiate one standalone. The point is to <em>reuse behavior</em>
+  without rewriting it.
+</p>
+
+<pre>TRAIT Talkative
+  chattiness: 0 to 100 = 60                  ← property with default
+
+  generator small_talk
+    tier: ambient
+    every random(45s, 2m)
+      &lt;if: chattiness &gt; 40&gt;
+        yield bark from SmalltalkLines
+
+  on meeting Player
+    &lt;set: knows.met_player := true&gt;
+    -&gt; greet as self
+
+TRAIT Patrolling
+  route: list of LOCATION                    ← required slot; no default
+
+  generator walk_route
+    tier: ambient
+    loop
+      for waypoint in route
+        &lt;goto: self → waypoint&gt;
+        wait until at(waypoint)
+        wait random(4s, 10s)
+
+  on cue alarm
+    &lt;goto: self → route.first&gt;             ← override-able by name
+
+CHARACTER Guard is Humanoid, Combatant, Patrolling, Talkative
+  hp:          80
+  attack:      6
+  chattiness:  30                            ← override Talkative's default
+  route:       [Gate, Wall, Courtyard]       ← satisfy Patrolling's slot
+
+CHARACTER ChattyGuard is Guard
+  chattiness:  90                            ← only the thing that's different
+                                             ← inherits route, hooks, generator
+</pre>
+
+<p>
+  Now <em>one</em> change to the <code>Patrolling</code> trait
+  re-routes every guard in the show. Adding a new
+  <code>VillageGuard</code> means writing the four lines that are
+  actually different, not re-deriving an NPC from scratch.
+</p>
+
+<h3 id="override">9.4 Overrides by name</h3>
+
+<p>
+  Everything inside a declaration body has a name — properties (their
+  key), hooks (the leading event clause, normalised), generators
+  (their identifier), goals (their identifier), scenes (their
+  identifier), nested beats (their knot name). A child that declares
+  the same name <em>replaces</em> the parent's version. To extend
+  rather than replace, the child names the parent and calls
+  <code>super</code>:
+</p>
+
+<pre>CHARACTER ChattyGuard is Guard
+  generator small_talk                        ← replaces Talkative.small_talk
+    tier: ambient
+    every random(15s, 45s)
+      yield bark from VeteranWarStories
+
+  on meeting Player
+    super                                     ← run inherited body first
+    GUARD
+      And try not to drip on the flagstones.
+</pre>
+
+<h3 id="conflict">9.5 Conflict resolution</h3>
+
+<p>
+  When two parents declare a property with different defaults
+  (<code>Humanoid.hp = 100</code>, <code>Veteran.hp = 140</code>), the
+  child must provide an explicit value. Without one the compiler emits
+  an <em>ambiguous slot</em> error. There is no method resolution
+  order to memorise — explicitness over magic.
+</p>
+
+<p>
+  Hooks compose by source order; if two traits register
+  <code>on meeting Player</code>, both bodies run in the order the
+  traits appear in the <code>is</code> clause. A child can suppress an
+  inherited hook by name: <code>on meeting Player: none</code>.
+</p>
 
 <h2 id="simulacra">10. Simulacra — characters as small simulations</h2>
 
@@ -994,34 +1282,124 @@ on participant enters BellTower
   op on the same store. The booth is just another client.
 </p>
 
-<h2 id="directives">14. Runtime directives — <code>&lt;…&gt;</code></h2>
+<h2 id="directives">14. Runtime directives — Luau function calls</h2>
 
 <p>
-  Every directive is <code>&lt;kind: args&gt;</code> (or
-  <code>&lt;kind&gt;</code> for nullary). Block-opening directives
-  have an indented body and end at dedent.
+  A directive <code>&lt;kind: args&gt;</code> is a call to a Luau
+  function named <code>kind</code>. The colon separates the function
+  name from its argument list; commas separate positional args; named
+  args use <code>name: value</code>. The runtime ships a core registry
+  of directive functions (audio, lighting, mutation, control flow,
+  scope) and Loom adopts whatever else a studio's Luau extensions
+  register.
+</p>
+
+<pre>// runtime/audio.luau
+directive sfx(name: string, fade: number?)
+  audio.play(name, { fade = fade or 0 })
+end
+
+directive cue(name: string)
+  bus:fire("cue", { name = name })
+end
+
+// studios/saltmere/extensions.luau
+directive flash(color: string, duration_ms: number)
+  lighting.flash(color, duration_ms)
+end
+
+directive heal(target: Character, amount: number)
+  target.health = math.min(target.health + amount, target.max_health)
+  ledger:append("Healed", { target = target.id, amount = amount })
+end
+</pre>
+
+<p>And in a beat:</p>
+
+<pre>WREN
+  (startled)
+  Lightning?&lt;flash: white, 200&gt;
+
+She raises the lantern.&lt;heal: Wren, 10&gt;
+</pre>
+
+<p>
+  No distinction between core and user-defined. The same registry, the
+  same dispatch. A Loom file that calls <code>&lt;flash:&gt;</code>
+  with no <code>flash</code> registered is a build error from the
+  resolver, identical to a missing function in any other language.
+</p>
+
+<h3 id="directive-args">14.1 The argument convention</h3>
+
+<p>
+  The Loom-side <code>&lt;kind: a, b, key: value&gt;</code> maps to
+  the Luau-side <code>kind(a, b, { key = value })</code> — positional
+  args first, named args collected into a trailing table. A bare
+  <code>&lt;kind&gt;</code> is a nullary call. Multi-line block-opening
+  directives pass their body as a Luau closure:
+</p>
+
+<pre>directive broadcast(scope: Scope, body: () -&gt; ())
+  with bus:scoped(scope) do
+    body()
+  end
+end
+
+// usage:
+&lt;broadcast: location(BellTower)&gt;
+  NARRATOR
+    The bell groans on its mounting.
+</pre>
+
+<h3 id="directive-syntactic">14.2 The small set of syntactic forms</h3>
+
+<p>
+  A few directives <em>cannot</em> be plain Luau functions because
+  they affect the parser's scope rules or the playhead's structure.
+  These are syntactic forms baked into the grammar; they happen to
+  share the <code>&lt;…&gt;</code> bracket for consistency but the
+  parser handles them, not a registry lookup.
 </p>
 
 <table>
-  <tr><th>Kind</th><th>Form</th><th>Effect</th></tr>
-  <tr><td><code>sfx</code></td><td><code>&lt;sfx: bell-toll&gt;</code></td><td>fire a sound effect</td></tr>
-  <tr><td><code>cue</code></td><td><code>&lt;cue: lights_up&gt;</code></td><td>fire a named crew cue (lighting, projection, machine)</td></tr>
-  <tr><td><code>set</code></td><td><code>&lt;set: trust += 10&gt;</code></td><td>mutate a var, knowledge, disposition, stat</td></tr>
-  <tr><td><code>fire</code></td><td><code>&lt;fire: bell_acknowledged&gt;</code></td><td>fire a named event onto the bus</td></tr>
-  <tr><td><code>anchor</code></td><td><code>&lt;anchor: bell_moment&gt;</code></td><td>name this point in the weave (tests, replays, links)</td></tr>
-  <tr><td><code>pause</code></td><td><code>&lt;pause: 2s&gt;</code></td><td>delay the next reveal</td></tr>
-  <tr><td><code>shuffle</code> / <code>cycle</code> / <code>once</code> / <code>random</code></td><td><code>&lt;shuffle: a | b | c&gt;</code></td><td>runtime selects from alternatives</td></tr>
-  <tr><td><code>if</code> / <code>else if</code> / <code>else</code></td><td>block</td><td>conditional branch</td></tr>
-  <tr><td><code>match</code></td><td>block</td><td>multi-arm switch over expression</td></tr>
-  <tr><td><code>for</code></td><td><code>&lt;for: x in xs&gt;</code></td><td>iteration block</td></tr>
-  <tr><td><code>each visit</code></td><td>block with <code>first</code> / <code>then</code> / <code>finally</code> arms</td><td>visit-counter-driven variation</td></tr>
-  <tr><td><code>after</code> / <code>otherwise</code></td><td>state-morphing block over a beat</td><td>once <code>cond</code> turns true, the <code>after</code> body replaces the section</td></tr>
-  <tr><td><code>spawn</code> / <code>cancel</code></td><td><code>&lt;spawn: HarborChorus&gt;</code></td><td>start / stop a generator or scene</td></tr>
-  <tr><td><code>goal</code></td><td><code>&lt;goal: Wren/find_keeper start&gt;</code></td><td>force a goal-machine transition</td></tr>
-  <tr><td><code>broadcast</code></td><td>block over scope expression</td><td>narrow the audience for a content block</td></tr>
-  <tr><td><code>enroll</code></td><td><code>&lt;enroll: Participant → Initiates&gt;</code></td><td>cohort membership</td></tr>
-  <tr><td><code>compose</code></td><td><code>&lt;compose: HarborThreat intensity: high&gt;</code></td><td>invoke a procedural-text grammar</td></tr>
+  <tr><th>Form</th><th>Why it's syntactic</th></tr>
+  <tr><td><code>&lt;if:&gt;</code> / <code>&lt;else if:&gt;</code> / <code>&lt;else&gt;</code></td>
+      <td>introduces conditional weave branches the playhead must traverse</td></tr>
+  <tr><td><code>&lt;match:&gt;</code></td>
+      <td>multi-arm dispatch over an expression; each arm is a weave branch</td></tr>
+  <tr><td><code>&lt;for:&gt;</code></td>
+      <td>introduces a loop variable into lexical scope</td></tr>
+  <tr><td><code>&lt;each visit&gt;</code> with <code>first</code> / <code>then</code> / <code>finally</code></td>
+      <td>visit counter drives arm selection — needs ledger access at parse time</td></tr>
+  <tr><td><code>&lt;after:&gt;</code> / <code>&lt;otherwise&gt;</code></td>
+      <td>state-morphing block: once <code>cond</code> turns true, the <code>after</code> body replaces the rest of the beat for this playhead</td></tr>
+  <tr><td><code>&lt;anchor:&gt;</code></td>
+      <td>names a position in the weave (tests jump here); needs static visibility</td></tr>
+  <tr><td><code>&lt;let:&gt;</code></td>
+      <td>introduces a binding into lexical scope</td></tr>
 </table>
+
+<p>
+  Everything else — <code>sfx</code>, <code>cue</code>, <code>set</code>,
+  <code>fire</code>, <code>pause</code>, <code>shuffle</code>,
+  <code>cycle</code>, <code>spawn</code>, <code>cancel</code>,
+  <code>goal</code>, <code>broadcast</code>, <code>enroll</code>,
+  <code>goto</code>, <code>compose</code> — ships as a Luau function
+  in the core registry, and any studio can replace, extend, or
+  shadow it.
+</p>
+
+<h3 id="directive-completion">14.3 LSP completion</h3>
+
+<p>
+  Because directives are registered functions, the LSP autocompletes
+  from <em>the project's loaded registry</em> — core + every Luau
+  extension on disk. Signature help shows the Luau function's
+  parameter list. Jump-to-definition lands on the
+  <code>directive kind(...)</code> declaration. Hover documentation is
+  whatever Luaudoc-style comment sits above the function.
+</p>
 
 <div class="callout">
   <strong>Anchors are first-class.</strong> <code>&lt;anchor: name&gt;</code>
@@ -1031,31 +1409,64 @@ on participant enters BellTower
   liberally — they're cheap.
 </div>
 
-<h2 id="metadata">15. Production metadata — <code>&lt;&lt;…&gt;&gt;</code></h2>
+<h2 id="metadata">15. Production metadata — <code>``` … ```</code></h2>
 
 <p>
-  The prompt-book column, lifted inline. The runtime parses it and
-  does nothing at production. It exists for stage managers, producers,
-  authors, and debuggers. The first token names the kind; tooling
-  filters on it.
+  The prompt-book column, lifted inline as a Markdown-style fenced
+  block. The runtime parses it and does nothing at production. It
+  exists for stage managers, producers, authors, and debuggers. The
+  first token names the kind; tooling filters on it.
 </p>
 
-<pre>&lt;&lt;warn lx14&gt;&gt;
-&lt;&lt;warn sq7&gt;&gt;
+<p>Two forms, identical in meaning, used as legibility dictates:</p>
+
+<ul>
+  <li><strong>Inline</strong> — one line, opening and closing fence
+    on the same line: <code>```warn lx14```</code>.</li>
+  <li><strong>Block</strong> — opening fence on its own line, free
+    text or further structure below, closing fence on its own line.</li>
+</ul>
+
+<pre>```warn lx14```
+```warn sq7```
 
 WREN
   (quietly)
   It hasn't rung in three days.
-  &lt;&lt;blocking: cross DSR on "rang"&gt;&gt;
+  ```blocking: cross DSR on "rang"```
 
-&lt;&lt;lx14 go&gt;&gt;
-&lt;&lt;sq7 go on "Mitch"&gt;&gt;
+```lx14 go```
+```sq7 go on "Mitch"```
 
-&lt;&lt;note: this scene felt long at the table read — try cutting the lantern beat&gt;&gt;
-&lt;&lt;todo: confirm with director that the silence after the bell holds&gt;&gt;
-&lt;&lt;break: trust &gt;= 80&gt;&gt;     ← debugger conditional breakpoint
-&lt;&lt;related: Wren/backstory&gt;&gt;
+```note
+This scene felt long at the table read. Try cutting the lantern beat;
+the silence after the bell carries more than the dialogue.
+```
+
+```todo: confirm with director that the silence after the bell holds```
+```break: trust &gt;= 80```                    ← debugger conditional breakpoint
+```related: Wren/backstory```
 </pre>
+
+<p>
+  Borrowing the Markdown fence has three immediate wins. First, every
+  writer who has touched GitHub, Discord, Notion, or Obsidian already
+  knows what triple-backticks do — an out-of-band region. Second,
+  syntax highlighters that don't know Loom still grey it out
+  correctly, because they treat it as a code fence. Third, the fence
+  language tag (the word after the opening backticks) is exactly the
+  metadata kind — <code>```warn</code> reads naturally as both
+  "this is a warn" and "this fence is tagged <code>warn</code>".
+</p>
+
+<p>
+  The first token inside the fence is the metadata <em>kind</em>;
+  tooling filters on it (<code>warn</code>, <code>cue</code>,
+  <code>blocking</code>, <code>note</code>, <code>todo</code>,
+  <code>break</code>, <code>related</code>, …). The kind set is open
+  — production teams invent conventions and the LSP suggests from the
+  workspace's history.
+</p>
 
 <h2 id="example">16. Worked example: a small project across files</h2>
 
@@ -1067,7 +1478,6 @@ WREN
 
 <pre><strong>main.loom</strong>
 # Saltmere
-loom: 3
 entry: opening
 
 let trusted = Wren.trusts.Player &gt; 50
@@ -1078,7 +1488,7 @@ let trusted = Wren.trusts.Player &gt; 50
 
 INT. LIGHTHOUSE - DAWN
 
-&lt;&lt;warn lx_dawn&gt;&gt;
+```warn lx_dawn```
 &lt;anchor: opening_top&gt;
 
 A bell rope swings in the gloom. Wren watches it from the doorway.
@@ -1088,7 +1498,7 @@ A bell rope swings in the gloom. Wren watches it from the doorway.
 WREN
   (quietly)
   It hasn't rung in three days.
-  &lt;&lt;blocking: cross to lantern on "three"&gt;&gt;
+  ```blocking: cross to lantern on "three"```
 
 She turns the lantern up.
 
@@ -1214,7 +1624,7 @@ PLAYER
 <div class="callout good">
   <strong>End state.</strong> A writer who has read Fountain reads
   these files as a screenplay. A stage manager reads
-  <code>&lt;&lt;…&gt;&gt;</code> as a prompt-book column. A developer
+  <code>``` … ```</code> as a prompt-book column. A developer
   reads <code>&lt;…&gt;</code> as runtime calls. A simulationist reads
   <code>CHARACTER</code>, <code>STATS</code>, <code>goal</code>,
   <code>on</code>, <code>generator</code> as a small simulation. A
@@ -1223,38 +1633,49 @@ PLAYER
   audiences, one folder.
 </div>
 
-<h2 id="migration">17. Migration from v2</h2>
+<h2 id="migration">17. Implementation notes</h2>
+
+<p>
+  v3 is the only Loom that ships. The v2 parser, runtime, LSP, syntax
+  tooling, and lesson corpus were deleted at the start of the v3
+  cutover — there is no version flag, no dual parser, no shared IR with
+  a legacy path. Anything from v2 worth keeping (Simulacra disposition,
+  Meridian primitives, ledger envelope shapes, the LSP's tmgrammar
+  scaffolding) is being re-grown inside the v3 design rather than
+  bridged.
+</p>
 
 <ol>
-  <li><strong>Two parsers, one runtime.</strong> v3 ships behind the
-    header property <code>loom: 3</code>. v2 files (no
-    <code>loom:</code> or <code>loom: 2</code>) keep parsing through
-    the v2 path. Both lower to the shared bundle IR.</li>
-  <li><strong>v2 desugars to v3 internally.</strong> <code>cast SPEAKER</code>
-    becomes a tiny <code>CHARACTER</code>; <code>:conversation</code>
-    becomes a file with an implicit <code>== root</code>;
-    <code>~</code>-prefixed actions become the matching
-    <code>&lt;set:&gt;</code> / <code>&lt;fire:&gt;</code> /
-    <code>&lt;cue:&gt;</code>; <code>{quietly}</code> emotion brackets
-    become <code>(quietly)</code> parentheticals; <code>$x</code>
-    becomes bare <code>x</code> under lexical resolution;
-    <code>@x</code>/<code>[[x]]</code> become bare capitalised names.
-    The Simulacra and Meridian semantics carry over unchanged — the
-    <em>names</em> change shape, not the model.</li>
-  <li><strong>Phased rollout.</strong> (a) Land v3 grammar behind the
-    flag, shared IR, existing tests green. (b) Port lessons 04
-    (declaring cast) and 20 (tiny story) to v3 as reference. (c) Add
-    v3-only lessons for typed slots, multi-file projects, the
-    reactive layer, the live layer. (d) Soft-deprecate v2 with parser
-    hints. (e) Remove v2 when examples and the LSP have caught up.</li>
+  <li><strong>Crate layout.</strong> Everything Loom lives under
+    <code>packages/loom/</code>: <code>parser</code> (lexer + AST +
+    diagnostics), <code>runtime</code> (bundle, resolver, playhead,
+    ledger, reactive graph, scheduler), <code>lsp</code> (stdio
+    JSON-RPC server backed by the parser + workspace index), and
+    <code>syntax</code> (the TextMate grammar plus the Zed / VSCode
+    extension scaffolding). The five-bracket discipline drives the
+    grammar and the scope names alike.</li>
+  <li><strong>Directive registry.</strong> The runtime ships a core
+    Luau registry under <code>packages/loom/runtime/src/builtins/</code>
+    (audio, lighting, mutation, control-flow, scope, anchor).
+    Studio-specific verbs land in a workspace's
+    <code>extensions/</code> folder and are loaded at boot.</li>
+  <li><strong>Project model.</strong> A project is a folder rooted at
+    <code>main.loom</code>; names resolve flat across the whole
+    workspace. The resolver indexes every <code>.loom</code> file on
+    load, and divert resolution errors loudly on ambiguity rather than
+    guessing (see §18).</li>
+  <li><strong>Reference examples.</strong> The lesson corpus is rebuilt
+    from scratch as v3-native — typed slots, multi-file projects, the
+    reactive layer, the live layer — under
+    <code>packages/loom/examples/</code>.</li>
   <li><strong>Tooling.</strong> The TextMate grammar at
-    <code>tools/loom-syntax/loom.tmLanguage.json</code> gains five
+    <code>packages/loom/syntax/loom.tmLanguage.json</code> carries five
     bracket scopes — <code>()</code>, <code>{}</code>, <code>[]</code>,
-    <code>&lt;…&gt;</code>, <code>&lt;&lt;…&gt;&gt;</code> — and a
-    cross-file divert resolver in the LSP. The LSP gains
-    project-aware name completion (every <code>CHARACTER</code>,
-    every beat, every anchor, every <code>&lt;&lt;todo:&gt;&gt;</code>
-    in the workspace).</li>
+    <code>&lt;…&gt;</code>, <code>``` … ```</code> — and the LSP carries
+    project-aware completion (every <code>CHARACTER</code>, every
+    <code>TRAIT</code>, every registered directive function, every
+    beat, every anchor, every <code>```todo```</code> fence in the
+    workspace).</li>
 </ol>
 
 <h2 id="open">18. Open questions</h2>

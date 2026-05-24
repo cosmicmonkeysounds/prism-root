@@ -1,0 +1,14 @@
+[package]
+name = "loom-syntax"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "TextMate grammar generator + Zed/VSCode extension shells for the Loom v3 narrative language."
+
+[lib]
+name = "loom_syntax"
+path = "src/lib.rs"
+
+[dependencies]
+serde_json = { workspace = true }
+loom-parser = { path = "../parser" }

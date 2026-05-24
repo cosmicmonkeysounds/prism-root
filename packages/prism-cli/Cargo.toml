@@ -49,9 +49,12 @@ prism-ui-runtime = { path = "../prism-ui-runtime" }
 # `prism loom lsp` runs the Loom Language Server Protocol
 # implementation in-process. Pulled here so the CLI binary itself
 # can host the server without spawning the separate
-# `prism-loom-lsp` binary — useful for editors (Zed, …) that
+# `loom-lsp` binary — useful for editors (Zed, …) that
 # accept any command line as their language-server launcher.
-prism-loom-lsp = { path = "../prism-loom-lsp" }
+loom-lsp = { path = "../loom/lsp" }
+# `prism codegen loom-tmgrammar` derives the TextMate grammar from
+# the parser's keyword table.
+loom-syntax = { path = "../loom/syntax" }
 
 [dev-dependencies]
 filetime = "0.2"

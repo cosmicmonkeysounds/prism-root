@@ -1,0 +1,19 @@
+[package]
+name = "loom-runtime"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Runtime for Loom v3 — bundle, resolver, playhead, ledger, reactive graph, scheduler, directive registry, and Luau bridge. See docs/dev/loom-v3.html."
+
+[lib]
+name = "loom_runtime"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+postcard = { workspace = true }
+indexmap = { workspace = true }
+thiserror = { workspace = true }
+loom-parser = { path = "../parser" }
+prism-core = { path = "../../prism-core" }
