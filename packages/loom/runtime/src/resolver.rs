@@ -101,7 +101,10 @@ impl Bundle {
             if files.len() == 1 {
                 let file_idx = files[0];
                 if let Some(beat_idx) = self.files[file_idx as usize].entry_beat_index() {
-                    return Ok(BeatRef { file: file_idx, beat: beat_idx });
+                    return Ok(BeatRef {
+                        file: file_idx,
+                        beat: beat_idx,
+                    });
                 }
             } else if files.len() > 1 {
                 return Err(ResolveError::Ambiguous {
@@ -110,7 +113,9 @@ impl Bundle {
                 });
             }
         }
-        Err(ResolveError::Unresolved { name: target.name.clone() })
+        Err(ResolveError::Unresolved {
+            name: target.name.clone(),
+        })
     }
 
     /// Resolve a file reference (used by the `#knot` form). When
@@ -224,20 +229,17 @@ mod tests {
             ("beats/a/ringing.loom", "== ringing\n\n.\n"),
             ("beats/b/ringing.loom", "== ringing\n\n.\n"),
         ]);
-        let r = bundle.resolve_divert(0, &qualified("a", "ringing")).unwrap();
-        assert!(bundle.files[r.file as usize]
-            .qualifier
-            .ends_with("/a"));
+        let r = bundle
+            .resolve_divert(0, &qualified("a", "ringing"))
+            .unwrap();
+        assert!(bundle.files[r.file as usize].qualifier.ends_with("/a"));
     }
 
     #[test]
     fn knot_form_finds_beat_in_file() {
         let bundle = Bundle::from_sources([
             ("main.loom", "entry: opening\n\n== opening\n\n.\n"),
-            (
-                "cast/Wren.loom",
-                "== greet\n\n.\n\n== backstory\n\n.\n",
-            ),
+            ("cast/Wren.loom", "== greet\n\n.\n\n== backstory\n\n.\n"),
         ]);
         let t = DivertTarget {
             qualifier: Some("cast".into()),
@@ -250,10 +252,7 @@ mod tests {
 
     #[test]
     fn unresolved_errors_loudly() {
-        let bundle = Bundle::from_sources([(
-            "main.loom",
-            "entry: opening\n\n== opening\n\n.\n",
-        )]);
+        let bundle = Bundle::from_sources([("main.loom", "entry: opening\n\n== opening\n\n.\n")]);
         match bundle.resolve_divert(0, &target("nowhere")) {
             Err(ResolveError::Unresolved { name }) => assert_eq!(name, "nowhere"),
             other => panic!("{other:?}"),

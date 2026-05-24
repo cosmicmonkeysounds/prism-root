@@ -14,7 +14,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use loom_parser::ast::{Beat, BodyItem, Choice, DialogueLine, Divert, DivertTarget};
+use loom_parser::ast::{BodyItem, Choice, DialogueLine, Divert, DivertTarget};
 
 use crate::bundle::{BeatRef, Bundle};
 use crate::ledger::{ChoiceOption, Event, Ledger};
@@ -137,11 +137,14 @@ impl Playhead {
                 }
                 Yield::Choice(options) => {
                     self.awaiting_choice = true;
-                    let opts: Vec<ChoiceOption> = options.iter().map(|c| c.option.clone()).collect();
+                    let opts: Vec<ChoiceOption> =
+                        options.iter().map(|c| c.option.clone()).collect();
                     // Re-park the choice at the head of the queue so
                     // it survives the pop above.
                     self.queue.push_front(Yield::Choice(options));
-                    let prompted = Event::ChoicePrompted { options: opts.clone() };
+                    let prompted = Event::ChoicePrompted {
+                        options: opts.clone(),
+                    };
                     self.ledger.push(prompted);
                     return Ok(Step::Choice(opts));
                 }
@@ -284,10 +287,13 @@ fn lower_choice(choice: &Choice, index: usize) -> PendingChoice {
     let mut body = choice.body.clone();
     if let Some(tail) = &choice.suppressed {
         let played = format!("{}{}", choice.text, tail);
-        body.insert(0, BodyItem::Action(loom_parser::ast::Located {
-            value: played,
-            span: choice.span,
-        }));
+        body.insert(
+            0,
+            BodyItem::Action(loom_parser::ast::Located {
+                value: played,
+                span: choice.span,
+            }),
+        );
     }
     PendingChoice {
         option: ChoiceOption {
@@ -301,9 +307,15 @@ fn lower_choice(choice: &Choice, index: usize) -> PendingChoice {
 
 fn lower_item(item: &BodyItem, out: &mut Vec<Yield>) {
     match item {
-        BodyItem::SceneHeading(l) => out.push(Yield::Event(Event::Scene { text: l.value.clone() })),
-        BodyItem::Action(l) => out.push(Yield::Event(Event::Action { text: l.value.clone() })),
-        BodyItem::Metadata(l) => out.push(Yield::Event(Event::Metadata { text: l.value.clone() })),
+        BodyItem::SceneHeading(l) => out.push(Yield::Event(Event::Scene {
+            text: l.value.clone(),
+        })),
+        BodyItem::Action(l) => out.push(Yield::Event(Event::Action {
+            text: l.value.clone(),
+        })),
+        BodyItem::Metadata(l) => out.push(Yield::Event(Event::Metadata {
+            text: l.value.clone(),
+        })),
         BodyItem::Directive(_) => {
             // Phase-3: directives are recognised but not dispatched.
             // Once the Luau bridge lands, this branch will lower to
@@ -407,7 +419,10 @@ mod tests {
     #[test]
     fn choice_then_divert() {
         let bundle = Arc::new(Bundle::from_sources([
-            ("main.loom", "entry: opening\n\n== opening\n\nIntro.\n\n* Go on.\n  -> next\n"),
+            (
+                "main.loom",
+                "entry: opening\n\n== opening\n\nIntro.\n\n* Go on.\n  -> next\n",
+            ),
             ("beats/next.loom", "== next\n\nDone.\n"),
         ]));
         let mut p = Playhead::new(bundle).unwrap();

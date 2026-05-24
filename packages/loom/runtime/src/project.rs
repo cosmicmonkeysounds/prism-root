@@ -81,7 +81,11 @@ impl Bundle {
                         });
                 }
             }
-            if entry.path.file_name().map(|n| n == "main.loom").unwrap_or(false)
+            if entry
+                .path
+                .file_name()
+                .map(|n| n == "main.loom")
+                .unwrap_or(false)
                 && entry.qualifier.is_empty()
             {
                 main_idx = Some(file_idx);
@@ -97,7 +101,10 @@ impl Bundle {
             Some(idx) => {
                 let main = &self.files[idx as usize];
                 if let Some(entry_prop) = main.file.header.properties.get("entry") {
-                    let candidates = beats_by_name.get(&entry_prop.value).cloned().unwrap_or_default();
+                    let candidates = beats_by_name
+                        .get(&entry_prop.value)
+                        .cloned()
+                        .unwrap_or_default();
                     if candidates.len() == 1 {
                         Some(candidates[0])
                     } else if candidates.is_empty() {
@@ -116,7 +123,8 @@ impl Bundle {
                     }
                 } else {
                     // No explicit entry: use main.loom's first beat.
-                    main.entry_beat_index().map(|b| BeatRef { file: idx, beat: b })
+                    main.entry_beat_index()
+                        .map(|b| BeatRef { file: idx, beat: b })
                         .or_else(|| {
                             project_diagnostics.push(ProjectDiagnostic::NoEntryBeat);
                             None
@@ -183,9 +191,16 @@ mod tests {
                 "main.loom",
                 "# Show\nentry: opening\n\n== opening\n  cast: Wren\n\n* Go.\n  -> ringing\n",
             ),
-            ("beats/ringing.loom", "== ringing\n  cast: Wren\n\nIt rings.\n"),
+            (
+                "beats/ringing.loom",
+                "== ringing\n  cast: Wren\n\nIt rings.\n",
+            ),
         ]);
-        assert!(bundle.project_diagnostics.is_empty(), "{:?}", bundle.project_diagnostics);
+        assert!(
+            bundle.project_diagnostics.is_empty(),
+            "{:?}",
+            bundle.project_diagnostics
+        );
         let entry = bundle.entry.unwrap();
         assert_eq!(bundle.beat(entry).name, "opening");
         assert!(bundle.beats_by_name.contains_key("ringing"));
@@ -195,15 +210,15 @@ mod tests {
     fn missing_main_reports_diagnostic() {
         let bundle = Bundle::from_sources([("solo.loom", "== solo\n\nHello.\n")]);
         assert!(bundle.entry.is_none());
-        assert!(bundle.project_diagnostics.contains(&ProjectDiagnostic::MissingMainFile));
+        assert!(bundle
+            .project_diagnostics
+            .contains(&ProjectDiagnostic::MissingMainFile));
     }
 
     #[test]
     fn entry_property_with_no_match_reports() {
-        let bundle = Bundle::from_sources([(
-            "main.loom",
-            "# Show\nentry: nope\n\n== opening\n\n.\n",
-        )]);
+        let bundle =
+            Bundle::from_sources([("main.loom", "# Show\nentry: nope\n\n== opening\n\n.\n")]);
         assert!(matches!(
             bundle.project_diagnostics[0],
             ProjectDiagnostic::EntryBeatUnresolved { .. }
@@ -212,10 +227,7 @@ mod tests {
 
     #[test]
     fn default_entry_falls_back_to_first_beat() {
-        let bundle = Bundle::from_sources([(
-            "main.loom",
-            "== first\n\n.\n\n== second\n\n.\n",
-        )]);
+        let bundle = Bundle::from_sources([("main.loom", "== first\n\n.\n\n== second\n\n.\n")]);
         assert!(bundle.project_diagnostics.is_empty());
         let entry = bundle.entry.unwrap();
         assert_eq!(bundle.beat(entry).name, "first");
