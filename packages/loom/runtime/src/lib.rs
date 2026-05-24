@@ -34,6 +34,7 @@
 pub mod builtins;
 pub mod bundle;
 pub mod directives;
+pub mod expr;
 pub mod ledger;
 pub mod live;
 pub mod meridian;
@@ -45,6 +46,8 @@ pub mod scheduler;
 pub mod simulacra;
 
 pub use bundle::{BeatIdx, BeatRef, Bundle, FileIdx, LoomFileEntry, ProjectDiagnostic};
+pub use directives::{DirectiveCall, DirectiveError, Registry};
+pub use expr::{Value, World};
 pub use ledger::{ChoiceOption, Event, Ledger};
 pub use playhead::{PlayError, Playhead, Step};
 pub use resolver::ResolveError;

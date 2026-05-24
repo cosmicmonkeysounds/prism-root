@@ -82,6 +82,11 @@ pub enum LineKind {
     /// Triple-backtick fence opener / closer / inline-pair. The
     /// parser groups multi-line fences.
     Fence { tail: String, inline_close: bool },
+    /// `<kind: args>` runtime directive on its own line. Stores the
+    /// inner text (without the `<`/`>`). Inline directives embedded in
+    /// dialogue / action text are split out by the parser in a later
+    /// phase.
+    Directive(String),
     /// Fallback: action prose or dialogue continuation. Disambiguated
     /// by the parser based on whether a speaker is currently active.
     Prose(String),
@@ -233,6 +238,14 @@ fn classify(text: &str, line: u32, start_byte: u32, diagnostics: &mut Vec<Diagno
                 text: body.trim_start().to_string(),
             };
         }
+    }
+
+    // Whole-line angle-bracket directive — `<kind: args>` or `<kind>`.
+    // Multi-line block-opening directives are handled by the parser via
+    // indent.
+    if text.starts_with('<') && text.ends_with('>') && text.len() >= 2 && text != "<-" {
+        let inner = &text[1..text.len() - 1];
+        return LineKind::Directive(inner.to_string());
     }
 
     // Triple-backtick fence.

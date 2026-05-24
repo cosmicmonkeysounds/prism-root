@@ -257,6 +257,13 @@ impl<'d> Parser<'d> {
                 *inline_close,
                 &line,
             ))),
+            LineKind::Directive(raw) => {
+                self.cursor += 1;
+                Some(BodyItem::Directive(crate::ast::Directive {
+                    raw: raw.clone(),
+                    span: line.span(),
+                }))
+            }
             LineKind::Prose(text) => {
                 // Action paragraph — accumulate consecutive prose
                 // lines at the same indent.
@@ -336,6 +343,15 @@ impl<'d> Parser<'d> {
                     let span = line.span();
                     lines.push(DialogueLine::Text(Located {
                         value: text.clone(),
+                        span,
+                    }));
+                    end = span.end;
+                    self.cursor += 1;
+                }
+                LineKind::Directive(raw) => {
+                    let span = line.span();
+                    lines.push(DialogueLine::Directive(crate::ast::Directive {
+                        raw: raw.clone(),
                         span,
                     }));
                     end = span.end;

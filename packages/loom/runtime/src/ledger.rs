@@ -53,6 +53,23 @@ pub enum Event {
     Returned,
     /// A `-> END` (or otherwise exhausted) playhead halted.
     Ended,
+    /// A directive call resolved against the registry. The generic
+    /// envelope — `sfx`, `cue`, `pause`, `anchor` reach the consumer
+    /// through this variant. `set` and `fire` use the more specific
+    /// `WorldSet` / `Fired` variants below so consumers don't have to
+    /// re-parse the call.
+    Directive {
+        kind: String,
+        positional: Vec<String>,
+        named: Vec<(String, String)>,
+    },
+    /// `<set: path OP rhs>` resolved and applied to the World scope.
+    WorldSet { path: String, value: String },
+    /// `<fire: name, ...>` pushed a named event onto the ledger.
+    Fired {
+        name: String,
+        payload: Vec<(String, String)>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

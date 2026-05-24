@@ -14,9 +14,11 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use loom_parser::ast::{BodyItem, Choice, DialogueLine, Divert, DivertTarget};
+use loom_parser::ast::{BodyItem, Choice, DialogueLine, Directive, Divert, DivertTarget};
 
 use crate::bundle::{BeatRef, Bundle};
+use crate::directives::{self, DirectiveError, HandlerOutcome, Registry};
+use crate::expr::{Value, World};
 use crate::ledger::{ChoiceOption, Event, Ledger};
 use crate::resolver::ResolveError;
 
@@ -31,7 +33,7 @@ pub enum Step {
     Ended,
 }
 
-#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Clone, Debug, thiserror::Error, PartialEq)]
 pub enum PlayError {
     #[error("project has no resolvable entry beat")]
     NoEntry,
@@ -43,6 +45,8 @@ pub enum PlayError {
     ChoiceOutOfRange(usize),
     #[error("<- tunnel return with no tunnel frame on the stack")]
     BareReturn,
+    #[error(transparent)]
+    Directive(#[from] DirectiveError),
 }
 
 /// Internal queue entry — the unit the playhead lowers body items
@@ -56,6 +60,7 @@ enum Yield {
     Tunnel(DivertTarget),
     Return,
     End,
+    Directive(Directive),
 }
 
 #[derive(Clone, Debug)]
@@ -73,25 +78,45 @@ struct Frame {
     file_qualifier: String,
 }
 
-#[derive(Debug)]
 pub struct Playhead {
     bundle: Arc<Bundle>,
     queue: VecDeque<Yield>,
     stack: Vec<Frame>,
     ledger: Ledger,
+    world: World,
+    registry: Arc<Registry>,
     halted: bool,
     awaiting_choice: bool,
 }
 
+impl std::fmt::Debug for Playhead {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Playhead")
+            .field("stack_depth", &self.stack.len())
+            .field("queue_len", &self.queue.len())
+            .field("halted", &self.halted)
+            .field("awaiting_choice", &self.awaiting_choice)
+            .finish()
+    }
+}
+
 impl Playhead {
-    /// Start a new playhead at the bundle's entry beat.
+    /// Start a new playhead at the bundle's entry beat with the
+    /// builtin directive registry.
     pub fn new(bundle: Arc<Bundle>) -> Result<Self, PlayError> {
+        Self::with_registry(bundle, Arc::new(Registry::with_builtins()))
+    }
+
+    /// Start a playhead with a caller-supplied directive registry.
+    pub fn with_registry(bundle: Arc<Bundle>, registry: Arc<Registry>) -> Result<Self, PlayError> {
         let entry = bundle.entry.ok_or(PlayError::NoEntry)?;
         let mut p = Self {
             bundle,
             queue: VecDeque::new(),
             stack: Vec::new(),
             ledger: Ledger::default(),
+            world: World::new(),
+            registry,
             halted: false,
             awaiting_choice: false,
         };
@@ -101,6 +126,18 @@ impl Playhead {
 
     pub fn ledger(&self) -> &Ledger {
         &self.ledger
+    }
+
+    pub fn world(&self) -> &World {
+        &self.world
+    }
+
+    pub fn world_mut(&mut self) -> &mut World {
+        &mut self.world
+    }
+
+    pub fn registry(&self) -> &Registry {
+        &self.registry
     }
 
     pub fn halted(&self) -> bool {
@@ -175,6 +212,33 @@ impl Playhead {
                 }
                 Yield::End => {
                     return Ok(self.halt());
+                }
+                Yield::Directive(directive) => {
+                    let call = directives::parse(&directive.raw)?;
+                    let (outcome, positional, named) = directives::dispatch(
+                        &call,
+                        &self.registry,
+                        &mut self.world,
+                        &mut self.ledger,
+                    )?;
+                    if matches!(outcome, HandlerOutcome::Handled) {
+                        let event = Event::Directive {
+                            kind: call.kind.clone(),
+                            positional: positional.iter().map(Value::display).collect(),
+                            named: named
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.display()))
+                                .collect(),
+                        };
+                        self.ledger.push(event.clone());
+                        return Ok(Step::Event(event));
+                    }
+                    // Suppressed handlers (set, fire) already pushed
+                    // their own event; surface the most recent one to
+                    // the caller so `step()` still yields visible work.
+                    if let Some(latest) = self.ledger.events().last().cloned() {
+                        return Ok(Step::Event(latest));
+                    }
                 }
             }
         }
@@ -316,11 +380,7 @@ fn lower_item(item: &BodyItem, out: &mut Vec<Yield>) {
         BodyItem::Metadata(l) => out.push(Yield::Event(Event::Metadata {
             text: l.value.clone(),
         })),
-        BodyItem::Directive(_) => {
-            // Phase-3: directives are recognised but not dispatched.
-            // Once the Luau bridge lands, this branch will lower to
-            // `Yield::Directive` + a registry lookup.
-        }
+        BodyItem::Directive(d) => out.push(Yield::Directive(d.clone())),
         BodyItem::Choice(_) => {
             // Choices are grouped one level up in `lower_body`;
             // reaching this arm means the grouping logic missed an
@@ -350,7 +410,7 @@ fn lower_item(item: &BodyItem, out: &mut Vec<Yield>) {
                     DialogueLine::Parenthetical(p) => {
                         current_paren = Some(p.value.clone());
                     }
-                    DialogueLine::Directive(_) => {}
+                    DialogueLine::Directive(d) => out.push(Yield::Directive(d.clone())),
                     DialogueLine::Divert(d) => lower_divert(d, out),
                 }
             }
