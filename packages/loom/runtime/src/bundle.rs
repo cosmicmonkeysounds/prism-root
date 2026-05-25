@@ -5,11 +5,11 @@
 //! Construction (parsing + indexing) lives in [`crate::project`];
 //! resolution lives in [`crate::resolver`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use loom_parser::ast::{
-    Beat, CohortBody, GeneratorBody, Item, LocationBody, LoomFile, SceneBody,
+    Beat, CharacterBody, CohortBody, GeneratorBody, Item, LocationBody, LoomFile, SceneBody,
 };
 use loom_parser::Diagnostic;
 
@@ -77,6 +77,13 @@ pub enum ProjectDiagnostic {
     /// `main.loom` had no `entry:` property and the file declares
     /// no beats — the runtime has nothing to play.
     NoEntryBeat,
+    /// A child CHARACTER inherits from two parents that both supply a
+    /// default for the same slot, and the child doesn't override. The
+    /// runtime can't pick one without losing information (spec §9.5).
+    AmbiguousSlot {
+        character: String,
+        prop: String,
+    },
 }
 
 /// One compiled Loom project.
@@ -227,54 +234,236 @@ impl Bundle {
                 }
             }
         }
-        // Pass 2: CHARACTER + TRAIT.
-        let empty_world = World::new();
+        // Pass 2: CHARACTER + TRAIT. Collect raw declarations first so
+        // we can resolve `is X, Y` mixin merges before compile (spec
+        // §9). TRAITs and parent CHARACTERs both contribute defaults;
+        // the child wins on every slot it declared itself. An
+        // unresolved conflict between two parents on the *same* slot
+        // surfaces as `ProjectDiagnostic::AmbiguousSlot`.
+        let mut raw_decls: HashMap<String, (CharacterBody, Vec<String>, bool)> = HashMap::new();
+        // Source order — used to compose hooks left-to-right.
+        let mut decl_order: Vec<String> = Vec::new();
         for entry in &self.files {
             for item in &entry.file.items {
                 if let Item::Declaration(decl) = item {
                     if matches!(decl.kind, DeclarationKind::Character | DeclarationKind::Trait) {
                         if let Some(body) = &decl.character {
-                            let state = CharacterState::compile(
+                            let is_trait = matches!(decl.kind, DeclarationKind::Trait);
+                            if !raw_decls.contains_key(&decl.name) {
+                                decl_order.push(decl.name.clone());
+                            }
+                            raw_decls.insert(
                                 decl.name.clone(),
-                                decl.mixin.clone(),
-                                body,
-                                &self.stats_profiles,
-                                &empty_world,
+                                (body.clone(), decl.mixin.clone(), is_trait),
                             );
-                            self.characters.insert(decl.name.clone(), state);
                         }
                     }
                 }
             }
         }
-        // Character-bound generators (spec §10.5): walk the parser
-        // ASTs since `CharacterState` may not surface raw bodies.
+        let empty_world = World::new();
+        let mut merged: HashMap<String, CharacterBody> = HashMap::new();
+        for name in &decl_order {
+            let merged_body = merge_character(
+                name,
+                &raw_decls,
+                &mut merged,
+                &mut self.project_diagnostics,
+                &mut HashSet::new(),
+            );
+            merged.insert(name.clone(), merged_body);
+        }
+        for name in &decl_order {
+            let (_, inherits, is_trait) = raw_decls.get(name).cloned().unwrap();
+            let merged_body = merged.get(name).cloned().unwrap_or_default();
+            // Skip standalone TRAITs from the runtime character index —
+            // they exist only as mixins. The resolver already rejects
+            // spawning a TRAIT, but leaving them out of `characters`
+            // keeps publish() / hooks / goals scoped to real actors.
+            if is_trait {
+                continue;
+            }
+            let state = CharacterState::compile(
+                name.clone(),
+                inherits,
+                &merged_body,
+                &self.stats_profiles,
+                &empty_world,
+            );
+            self.characters.insert(name.clone(), state);
+        }
+        // Character-bound generators (spec §10.5): use merged bodies
+        // so inherited TRAIT / parent generators are spawned on the
+        // child character too.
         self.bound_generators.clear();
-        for entry in &self.files {
-            for item in &entry.file.items {
-                if let Item::Declaration(decl) = item {
-                    if matches!(decl.kind, DeclarationKind::Character | DeclarationKind::Trait) {
-                        if let Some(body) = &decl.character {
-                            let mut bound = Vec::new();
-                            for gen in &body.generators {
-                                let synth = GeneratorBody {
-                                    tier: gen.tier.clone(),
-                                    priority: gen.priority,
-                                    start_when: None,
-                                    body: gen.body.clone(),
-                                };
-                                let qualified = format!("{}.{}", decl.name, gen.name);
-                                bound.push(crate::coroutine::lower_generator(
-                                    &qualified, &synth,
-                                ));
-                            }
-                            if !bound.is_empty() {
-                                self.bound_generators.insert(decl.name.clone(), bound);
-                            }
-                        }
-                    }
-                }
+        for name in &decl_order {
+            let (_, _, is_trait) = raw_decls.get(name).cloned().unwrap();
+            if is_trait {
+                continue;
+            }
+            let Some(body) = merged.get(name) else { continue };
+            let mut bound = Vec::new();
+            for gen in &body.generators {
+                let synth = GeneratorBody {
+                    tier: gen.tier.clone(),
+                    priority: gen.priority,
+                    start_when: None,
+                    body: gen.body.clone(),
+                };
+                let qualified = format!("{}.{}", name, gen.name);
+                bound.push(crate::coroutine::lower_generator(&qualified, &synth));
+            }
+            if !bound.is_empty() {
+                self.bound_generators.insert(name.clone(), bound);
             }
         }
     }
+}
+
+/// Recursively merge a character's declared body with each parent in
+/// its `inherits` list (left-to-right). The merge is conservative:
+/// * Properties the child declared win.
+/// * Properties only the child *doesn't* declare are pulled from a
+///   parent. When two parents disagree on the same default the
+///   conflict is reported as `ProjectDiagnostic::AmbiguousSlot` and
+///   the first parent's value is kept so playback still works.
+/// * Hooks compose by source order — every parent's hooks plus the
+///   child's are concatenated (spec §9 — multiple `on meeting Player`
+///   bodies all run).
+/// * Disposition / knowledge / goals / generators / reacts fall back
+///   to source-order concatenation, deduplicated by name where each
+///   collection has one.
+fn merge_character(
+    name: &str,
+    raw: &HashMap<String, (CharacterBody, Vec<String>, bool)>,
+    merged_cache: &mut HashMap<String, CharacterBody>,
+    diagnostics: &mut Vec<ProjectDiagnostic>,
+    visiting: &mut HashSet<String>,
+) -> CharacterBody {
+    if visiting.contains(name) {
+        // Cycle — return whatever's already cached or the bare body.
+        return merged_cache
+            .get(name)
+            .cloned()
+            .or_else(|| raw.get(name).map(|(b, _, _)| b.clone()))
+            .unwrap_or_default();
+    }
+    if let Some(b) = merged_cache.get(name) {
+        return b.clone();
+    }
+    visiting.insert(name.to_string());
+    let Some((own, inherits, _)) = raw.get(name).cloned() else {
+        visiting.remove(name);
+        return CharacterBody::default();
+    };
+    let mut merged_body = CharacterBody::default();
+
+    // Walk parents left-to-right so the earlier parent wins ties.
+    let mut parent_property_sources: HashMap<String, String> = HashMap::new();
+    for parent_name in &inherits {
+        let parent_body = merge_character(parent_name, raw, merged_cache, diagnostics, visiting);
+        // Properties: pull each parent default only if the child hasn't
+        // declared it. Track which parent supplied each so we can
+        // diagnose ambiguous slots when a second parent disagrees.
+        for (k, v) in &parent_body.properties {
+            if own.properties.contains_key(k) {
+                continue;
+            }
+            if let Some(existing_parent) = parent_property_sources.get(k) {
+                let existing = merged_body.properties.get(k).map(|p| p.value.clone());
+                let other = Some(v.value.clone());
+                if existing != other {
+                    diagnostics.push(ProjectDiagnostic::AmbiguousSlot {
+                        character: name.to_string(),
+                        prop: k.clone(),
+                    });
+                }
+                let _ = existing_parent;
+                continue;
+            }
+            merged_body.properties.insert(k.clone(), v.clone());
+            parent_property_sources.insert(k.clone(), parent_name.clone());
+        }
+        // stats_profile from a parent only when child doesn't pick one.
+        if merged_body.stats_profile.is_none() && own.stats_profile.is_none() {
+            merged_body.stats_profile = parent_body.stats_profile.clone();
+        }
+        // Disposition: append parent's axes for `(verb, target)` pairs
+        // the child + earlier parents haven't covered.
+        for d in &parent_body.disposition {
+            let exists = merged_body
+                .disposition
+                .iter()
+                .any(|e| e.verb == d.verb && e.target == d.target)
+                || own
+                    .disposition
+                    .iter()
+                    .any(|e| e.verb == d.verb && e.target == d.target);
+            if !exists {
+                merged_body.disposition.push(d.clone());
+            }
+        }
+        // Knowledge: dedup by name.
+        for k in &parent_body.knowledge {
+            let exists = merged_body.knowledge.iter().any(|e| e.name == k.name)
+                || own.knowledge.iter().any(|e| e.name == k.name);
+            if !exists {
+                merged_body.knowledge.push(k.clone());
+            }
+        }
+        // Goals: dedup by name.
+        for g in &parent_body.goals {
+            let exists = merged_body.goals.iter().any(|e| e.name == g.name)
+                || own.goals.iter().any(|e| e.name == g.name);
+            if !exists {
+                merged_body.goals.push(g.clone());
+            }
+        }
+        // Generators: dedup by name.
+        for g in &parent_body.generators {
+            let exists = merged_body.generators.iter().any(|e| e.name == g.name)
+                || own.generators.iter().any(|e| e.name == g.name);
+            if !exists {
+                merged_body.generators.push(g.clone());
+            }
+        }
+        // Reacts: simple concat, no dedup (different conditions can
+        // both fire).
+        for r in &parent_body.reacts {
+            merged_body.reacts.push(r.clone());
+        }
+        // Hooks: append in source order so every parent's body runs.
+        for h in &parent_body.hooks {
+            merged_body.hooks.push(h.clone());
+        }
+    }
+
+    // Now layer the child's own declarations on top — child wins.
+    for (k, v) in &own.properties {
+        merged_body.properties.insert(k.clone(), v.clone());
+    }
+    if own.stats_profile.is_some() {
+        merged_body.stats_profile = own.stats_profile.clone();
+    }
+    for d in &own.disposition {
+        merged_body.disposition.push(d.clone());
+    }
+    for k in &own.knowledge {
+        merged_body.knowledge.push(k.clone());
+    }
+    for g in &own.goals {
+        merged_body.goals.push(g.clone());
+    }
+    for g in &own.generators {
+        merged_body.generators.push(g.clone());
+    }
+    for r in &own.reacts {
+        merged_body.reacts.push(r.clone());
+    }
+    for h in &own.hooks {
+        merged_body.hooks.push(h.clone());
+    }
+
+    visiting.remove(name);
+    merged_body
 }

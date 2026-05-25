@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { useSession } from "@/store/session";
+import { pickDirectory } from "@/lib/fs";
 
 export function CloudPanel() {
     const relayUrl = useSession((s) => s.relayUrl);
@@ -41,6 +42,8 @@ export function CloudPanel() {
                     <WorkspaceList />
                 </Section>
             )}
+
+            {token && <LinkSection />}
 
             <div className="mt-auto px-3 py-2 text-xs text-zinc-500 flex items-center gap-2">
                 <StatusDot status={status} />
@@ -338,6 +341,87 @@ function WorkspaceList() {
             </form>
             {err && <p className="text-xs text-rose-400">{err}</p>}
         </div>
+    );
+}
+
+function LinkSection() {
+    const active = useSession((s) => s.active);
+    const bindFolder = useSession((s) => s.bindFolder);
+    const unbindFolder = useSession((s) => s.unbindFolder);
+    const [busy, setBusy] = useState<null | "bind" | "unbind">(null);
+    const [err, setErr] = useState<string | null>(null);
+
+    if (!active) return null;
+    const linked = active.linkedFolder;
+
+    const onBind = async () => {
+        setErr(null);
+        let root: FileSystemDirectoryHandle;
+        try {
+            root = await pickDirectory();
+        } catch {
+            return;
+        }
+        setBusy("bind");
+        try {
+            await bindFolder(root);
+        } catch (e) {
+            setErr(e instanceof Error ? e.message : String(e));
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const onUnbind = async () => {
+        setBusy("unbind");
+        setErr(null);
+        try {
+            await unbindFolder();
+        } catch (e) {
+            setErr(e instanceof Error ? e.message : String(e));
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    return (
+        <Section title="Local folder">
+            {linked ? (
+                <div className="flex flex-col gap-2">
+                    <div className="text-xs text-zinc-300 truncate" title={linked.root.name}>
+                        Bound to <strong>{linked.root.name}</strong>
+                    </div>
+                    <button
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={() => void onUnbind()}
+                        className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-500 rounded"
+                    >
+                        {busy === "unbind" ? "Unbinding…" : "Unbind folder"}
+                    </button>
+                    <p className="text-[11px] text-zinc-500">
+                        File edits round-trip to disk; outside changes flow
+                        back into the workspace.
+                    </p>
+                </div>
+            ) : (
+                <div className="flex flex-col gap-2">
+                    <button
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={() => void onBind()}
+                        className="px-2 py-1 text-xs bg-blue-600/80 hover:bg-blue-600 disabled:bg-zinc-800 disabled:text-zinc-500 rounded"
+                    >
+                        {busy === "bind" ? "Binding…" : "Bind to local folder…"}
+                    </button>
+                    <p className="text-[11px] text-zinc-500">
+                        Pick a folder on disk; files become real files and
+                        stay in sync with this workspace.
+                    </p>
+                </div>
+            )}
+            {err && <p className="text-xs text-rose-400">{err}</p>}
+        </Section>
     );
 }
 

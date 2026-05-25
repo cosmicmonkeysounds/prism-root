@@ -1,12 +1,14 @@
 # Loom — Multi-User Backbone
 
-Status: **Phases 1–5 landed.** WebSocket sync + presence are live on
+Status: **Phases 1–7 landed.** WebSocket sync + presence are live on
 `/ws`; the client wasm (`loom-wasm::LoomDoc`) and TS glue
-(`editor/src/lib/{sync,auth,presence,cm-loro}.ts`) round-trip edits
-against the server. The Zustand workspace store still owns IDB / FSA
-persistence — the CRDT-as-canonical-store swap is the remaining piece
-deferred to a Phase 4 follow-up. Co-authoring (v1) is the scope;
-co-playing plus richer transcript/session features land in v2.
+(`editor/src/lib/{sync,auth,presence,cm-loro,workspaces,export,project}.ts`)
+round-trip edits against the server. The React editor ships Cloud,
+Remote, and Play sidebar panels driving the multi-user + co-playing
+flows. The local FSA + remote workspace models are unified by
+`LoomFolderBridge` (an Obsidian-style folder ↔ LoomDoc bridge) +
+`.loom-workspace.json` manifest. Phase 7 hosts `loom_runtime::Playhead`
+server-side and broadcasts the transcript over `/ws`.
 
 ## Goal
 
@@ -211,16 +213,68 @@ snapshot and rebroadcasts to other subscribers.
 - Client side (debounced selection → envelope, CodeMirror remote
   carets) lands with Phase 4.
 
-### Phase 6 — File System Access fallback
+### Phase 6 — File System Access fallback *(landed)*
 
-- Keep FSA as **export**: download a tarball / write workspace to
-  local folder. Not the canonical store.
+- `editor/src/lib/export.ts` — `exportWorkspaceToFolder(doc, dir)`
+  walks `doc.listFiles()` and materialises every path under a
+  user-picked FSA directory, creating intermediate folders.
+  `importFolderIntoWorkspace(doc, dir)` is the inverse: a recursive
+  FSA walk that calls `doc.setText(path, body)` per leaf, with
+  configurable prefix skips (`.git/`, `node_modules/`, `dist/`,
+  `target/` by default).
+- The Remote toolbar now hosts "Import…" / "Export…" buttons that
+  drive these helpers via `pickDirectory()`. Status messages surface
+  inline; the in-flight button disables to prevent overlapping runs.
+- The relay's CRDT stays the canonical store — FSA is strictly a
+  copy-out / copy-in seam, mirroring the spec's "FSA becomes
+  export-only" intent.
 
-### Phase 7+ — v2
+### Phase 7 — co-playing *(landed)*
 
-- `loom-runtime` execution server-side, presented as a new relay module
-  hosting `Playhead`s with player events flowing over the same WS.
-- `prism-core::network::session::transcript` integration for replay.
+- `loom-server/src/play.rs` — `PlayHub` registers one `PlaySession`
+  per workspace, owning a `loom_runtime::Playhead` advanced via
+  `play-choice`. `play-start` carries the workspace's current file
+  sources (`Vec<(path, source)>`), so the server doesn't need to
+  introspect the opaque CRDT snapshot — clients ship their materialised
+  view at session start.
+- Wire envelopes added to `ws.rs`: `play-start`, `play-choice`,
+  `play-stop` (incoming), `play-state` (outgoing — broadcasts the full
+  transcript + pending choices to every workspace subscriber).
+- `editor/src/components/cloud/PlayPanel.tsx` renders the transcript
+  (Action, Dialogue, Scene, ChoiceTaken, Ended) plus the current
+  choice prompt; `useSession.{startPlay,sendChoice,stopPlay}` drives
+  the WS verbs.
+- Dock surfaces the Play panel under ⌘⇧P alongside Cloud / Remote.
+
+### Unification — folder ↔ workspace bridge *(landed)*
+
+- `editor/src/lib/project.ts`:
+  - **Manifest.** `.loom-workspace.json` carries the workspace id +
+    relay URL so opening the folder later re-anchors the same
+    multi-user session.
+  - **`seedDocFromFolder`** reads every file on disk into the LoomDoc
+    on first link (subsequent re-binds skip the seed and let the
+    bridge reconcile from both sides).
+  - **`LoomFolderBridge`** is the bidirectional sync:
+    - LoomDoc commit → write changed paths to disk (debounced) + clean
+      up files removed in the doc.
+    - `FileSystemObserver` change → splice the new content back into
+      the LoomDoc (recursive watch, with a `writing` counter that
+      suppresses our own write echoes).
+- `useSession.bindFolder` / `unbindFolder` + a Cloud-panel "Local
+  folder" section drive the lifecycle. The folder stays canonical-
+  feeling (Obsidian); the relay stays the wire layer (git-like remote).
+- This was modelled on Prism's [Project Vault](./project-vault.md) but
+  simplified — files on disk **are** the data (no `.loom-data/` blob
+  store, no GraphObject layer). The CRDT only mirrors the folder for
+  sync; persistence is the folder itself.
+
+### Phase 8+ — future
+
+- Persistent server-side workspaces (today's `CollectionHost` is
+  in-memory; first restart drops state).
+- Transcript replay via `prism-core::network::session::transcript`.
+- DID-based auth + federation.
 
 ## What "active" means at each phase
 

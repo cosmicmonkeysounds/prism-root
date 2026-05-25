@@ -3263,6 +3263,8 @@ dependencies = [
  "clap",
  "futures-util",
  "http-body-util",
+ "loom-parser",
+ "loom-runtime",
  "prism-core",
  "serde",
  "serde_json",

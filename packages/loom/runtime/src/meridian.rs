@@ -69,11 +69,18 @@ pub struct AxisState {
     /// curve threshold is crossed.
     pub level: u32,
     /// `level * level * 50` style curve expression. Only consulted for
-    /// `xp_curve`.
+    /// `xp_curve` and `use_tracking`.
     pub curve_expression: Option<String>,
     /// `<fire: level_up>` style directive text emitted when `level`
     /// increments. Surfaced to the playhead as a deferred event.
     pub on_advance: Option<String>,
+    /// Available budget for `point_buy` axes (spec §11). Starts at 0;
+    /// callers seed it with [`StatsInstance::grant_points`].
+    pub points_remaining: f64,
+    /// Optional ordered milestone names for `milestone` axes. Each
+    /// `advance` bumps `level` and moves to the next name; when the
+    /// list is empty levels are unnamed.
+    pub milestones: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -256,7 +263,11 @@ impl StatsInstance {
 
     /// Advance an axis. For `xp_curve` axes, `delta` is added to xp
     /// and `level` bumps each time the curve threshold is crossed.
-    /// For `narrative_trigger`, every call bumps level by 1.
+    /// For `narrative_trigger` and `milestone`, every call bumps level
+    /// by 1 (delta floor). `use_tracking` accumulates `delta` into
+    /// progress and crosses the curve in the same way as `xp_curve`.
+    /// `point_buy` / `sdk_controlled` are externally driven — see
+    /// [`Self::spend_points`] / [`Self::set_axis_level`].
     /// Returns the number of levels gained.
     pub fn advance_axis(&mut self, name: &str, delta: f64) -> u32 {
         let Some(axis) = self.axes.get_mut(name) else {
@@ -264,7 +275,7 @@ impl StatsInstance {
         };
         let mut gained = 0u32;
         match axis.mode {
-            AxisMode::XpCurve => {
+            AxisMode::XpCurve | AxisMode::UseTracking => {
                 axis.progress += delta;
                 loop {
                     let next_level = (axis.level + 1) as f64;
@@ -291,22 +302,81 @@ impl StatsInstance {
                     }
                 }
             }
-            AxisMode::NarrativeTrigger | AxisMode::Milestone => {
+            AxisMode::NarrativeTrigger => {
                 let bump = delta.max(1.0).floor() as u32;
                 axis.level += bump;
                 gained = bump;
             }
-            AxisMode::UseTracking => {
-                axis.progress += delta;
-                gained = 0;
+            AxisMode::Milestone => {
+                // Milestone always advances exactly one position per
+                // call regardless of `delta`. Skip if we've already
+                // reached the end of the named list.
+                if axis.milestones.is_empty()
+                    || (axis.level as usize) < axis.milestones.len()
+                {
+                    axis.level += 1;
+                    gained = 1;
+                }
             }
             AxisMode::PointBuy | AxisMode::SdkControlled => {
-                // Mode is recognised but the actual driver isn't
-                // implemented yet. TODO(spec §11): point-buy budget +
-                // SDK pump callback.
+                // Externally driven; explicit directives advance.
             }
         }
         gained
+    }
+
+    /// `<axis: name spend N>` — point-buy budget consumer. Returns
+    /// `true` when `cost` was within the remaining points and `level`
+    /// was bumped by 1; `false` when the spend was rejected.
+    pub fn spend_points(&mut self, name: &str, cost: f64) -> bool {
+        let Some(axis) = self.axes.get_mut(name) else {
+            return false;
+        };
+        if !matches!(axis.mode, AxisMode::PointBuy) {
+            return false;
+        }
+        if cost <= axis.points_remaining {
+            axis.points_remaining -= cost;
+            axis.level += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Top up the point-buy budget for an axis. No-op for other modes.
+    pub fn grant_points(&mut self, name: &str, amount: f64) {
+        if let Some(axis) = self.axes.get_mut(name) {
+            if matches!(axis.mode, AxisMode::PointBuy) {
+                axis.points_remaining += amount;
+            }
+        }
+    }
+
+    /// `<axis: name set N>` — `sdk_controlled` external write. Rejects
+    /// the write when the axis isn't in `sdk_controlled` mode.
+    /// Returns `true` on success.
+    pub fn set_axis_level(&mut self, name: &str, level: u32) -> bool {
+        let Some(axis) = self.axes.get_mut(name) else {
+            return false;
+        };
+        if !matches!(axis.mode, AxisMode::SdkControlled) {
+            return false;
+        }
+        axis.level = level;
+        true
+    }
+
+    /// Look up the milestone name at the axis's current `level`, if
+    /// the axis was declared with an ordered milestone list. `level`
+    /// is treated 1-indexed (level 0 = before the first milestone).
+    pub fn milestone_at(&self, name: &str) -> Option<&str> {
+        let axis = self.axes.get(name)?;
+        if axis.level == 0 {
+            return None;
+        }
+        let idx = (axis.level - 1) as usize;
+        axis.milestones.get(idx).map(|s| s.as_str())
     }
 }
 
@@ -535,6 +605,85 @@ mod tests {
         let gained = inst.advance_axis("level", 1.0);
         assert_eq!(gained, 1);
         assert_eq!(inst.axes.get("level").unwrap().level, 1);
+    }
+
+    fn axis_only_profile(mode: &str, curve: Option<&str>) -> StatsProfile {
+        StatsProfile::from_body(
+            "P",
+            &StatsBody {
+                axes: vec![AxisDecl {
+                    name: "skill".into(),
+                    mode: Some(mode.into()),
+                    curve: curve.map(|s| s.to_string()),
+                    on_advance: None,
+                    span: span(),
+                }],
+                ..StatsBody::default()
+            },
+        )
+    }
+
+    #[test]
+    fn use_tracking_levels_on_curve() {
+        let profile = axis_only_profile("use_tracking", Some("level * 10"));
+        let mut inst = StatsInstance::from_profile(&profile, &World::new());
+        // Below threshold (next-level = 1, threshold = 10).
+        let gained = inst.advance_axis("skill", 5.0);
+        assert_eq!(gained, 0);
+        assert_eq!(inst.axes.get("skill").unwrap().level, 0);
+        // Cross.
+        let gained = inst.advance_axis("skill", 6.0);
+        assert_eq!(gained, 1);
+        assert_eq!(inst.axes.get("skill").unwrap().level, 1);
+    }
+
+    #[test]
+    fn point_buy_rejects_when_insufficient() {
+        let profile = axis_only_profile("point_buy", None);
+        let mut inst = StatsInstance::from_profile(&profile, &World::new());
+        // Empty budget → rejected.
+        assert!(!inst.spend_points("skill", 1.0));
+        assert_eq!(inst.axes.get("skill").unwrap().level, 0);
+        // Top up and spend.
+        inst.grant_points("skill", 3.0);
+        assert!(inst.spend_points("skill", 2.0));
+        assert_eq!(inst.axes.get("skill").unwrap().level, 1);
+        assert_eq!(inst.axes.get("skill").unwrap().points_remaining, 1.0);
+        // Second spend over budget → reject.
+        assert!(!inst.spend_points("skill", 2.0));
+        assert_eq!(inst.axes.get("skill").unwrap().level, 1);
+        // advance_axis is a no-op for point_buy.
+        assert_eq!(inst.advance_axis("skill", 5.0), 0);
+    }
+
+    #[test]
+    fn milestone_advances_one_per_call_with_names() {
+        let profile = axis_only_profile("milestone", None);
+        let mut inst = StatsInstance::from_profile(&profile, &World::new());
+        // Seed the milestone list as the runtime would once the parser
+        // surfaces it (spec §11): `milestones: novice, journeyman, …`.
+        let axis = inst.axes.get_mut("skill").unwrap();
+        axis.milestones = vec!["novice".into(), "journeyman".into(), "master".into()];
+        // Each advance bumps one milestone regardless of delta.
+        assert_eq!(inst.advance_axis("skill", 5.0), 1);
+        assert_eq!(inst.milestone_at("skill"), Some("novice"));
+        assert_eq!(inst.advance_axis("skill", 1.0), 1);
+        assert_eq!(inst.milestone_at("skill"), Some("journeyman"));
+    }
+
+    #[test]
+    fn sdk_controlled_only_via_explicit_set() {
+        let profile = axis_only_profile("sdk_controlled", None);
+        let mut inst = StatsInstance::from_profile(&profile, &World::new());
+        // No automatic progression.
+        assert_eq!(inst.advance_axis("skill", 99.0), 0);
+        assert_eq!(inst.axes.get("skill").unwrap().level, 0);
+        assert!(inst.set_axis_level("skill", 7));
+        assert_eq!(inst.axes.get("skill").unwrap().level, 7);
+        // Wrong mode → rejected.
+        let profile2 = axis_only_profile("narrative_trigger", None);
+        let mut inst2 = StatsInstance::from_profile(&profile2, &World::new());
+        assert!(!inst2.set_axis_level("skill", 3));
     }
 
     #[test]

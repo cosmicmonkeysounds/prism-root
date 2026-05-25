@@ -27,10 +27,12 @@ use prism_core::network::relay::modules::{
 pub mod auth;
 pub mod error;
 pub mod extractors;
+pub mod play;
 pub mod routes;
 pub mod workspaces;
 pub mod ws;
 
+use play::PlayHub;
 use workspaces::WorkspaceRegistry;
 use ws::WsHub;
 
@@ -40,6 +42,8 @@ pub struct LoomRelayState {
     pub relay: Arc<RelayInstance>,
     pub workspaces: WorkspaceRegistry,
     pub ws_hub: WsHub,
+    /// Phase 7 — server-hosted Loom play sessions.
+    pub play: PlayHub,
     pub relay_did: String,
     pub started_at: String,
 }
@@ -64,6 +68,7 @@ impl LoomRelayState {
             relay: Arc::new(relay),
             workspaces: WorkspaceRegistry::new(),
             ws_hub: WsHub::new(),
+            play: PlayHub::new(),
             relay_did,
             started_at: now_rfc3339(),
         }

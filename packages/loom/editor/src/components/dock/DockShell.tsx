@@ -16,6 +16,7 @@ const SHORTCUTS: Record<PanelId, { combo: string; label: string }> = {
   canvas: { combo: 'mod+j', label: '⌘J' },
   cloud: { combo: 'mod+k', label: '⌘K' },
   remote: { combo: 'mod+2', label: '⌘2' },
+  play: { combo: 'mod+shift+p', label: '⌘⇧P' },
 }
 
 function positionFor(api: DockviewApi, id: PanelId): AddPanelPositionOptions | undefined {
@@ -46,6 +47,11 @@ function positionFor(api: DockviewApi, id: PanelId): AddPanelPositionOptions | u
   if (id === 'remote') {
     if (editor) return { referencePanel: editor.id, direction: 'within' }
     if (canvas) return { referencePanel: canvas.id, direction: 'above' }
+    return undefined
+  }
+  if (id === 'play') {
+    if (remote) return { referencePanel: remote.id, direction: 'right' }
+    if (editor) return { referencePanel: editor.id, direction: 'right' }
     return undefined
   }
   // canvas
@@ -141,6 +147,13 @@ function PanelIcon({ id }: { id: PanelId }) {
       </svg>
     )
   }
+  if (id === 'play') {
+    return (
+      <svg {...common} aria-hidden>
+        <polygon points="6 4 20 12 6 20 6 4" />
+      </svg>
+    )
+  }
   return (
     <svg {...common} aria-hidden>
       <circle cx="6" cy="6" r="2.5" />
@@ -232,6 +245,7 @@ export function DockShell() {
       else if (k === '1' && !e.shiftKey) target = 'editor'
       else if (k === '2' && !e.shiftKey) target = 'remote'
       else if (k === 'k' && !e.shiftKey) target = 'cloud'
+      else if (k === 'p' && e.shiftKey) target = 'play'
       if (!target) return
       e.preventDefault()
       toggle(target)

@@ -13,6 +13,7 @@ import {
   CanvasPanel,
   CloudPanelHost,
   RemotePanel,
+  PlayPanelHost,
 } from './panels'
 
 export type PanelId =
@@ -22,6 +23,7 @@ export type PanelId =
   | 'canvas'
   | 'cloud'
   | 'remote'
+  | 'play'
 
 export const PANEL_TITLES: Record<PanelId, string> = {
   files: 'Files',
@@ -30,6 +32,7 @@ export const PANEL_TITLES: Record<PanelId, string> = {
   canvas: 'Canvas',
   cloud: 'Cloud',
   remote: 'Remote',
+  play: 'Play',
 }
 
 export const PANEL_ORDER: PanelId[] = [
@@ -38,6 +41,7 @@ export const PANEL_ORDER: PanelId[] = [
   'cloud',
   'editor',
   'remote',
+  'play',
   'canvas',
 ]
 
@@ -51,4 +55,5 @@ export const panelComponents: Record<
   canvas: CanvasPanel,
   cloud: CloudPanelHost,
   remote: RemotePanel,
+  play: PlayPanelHost,
 }

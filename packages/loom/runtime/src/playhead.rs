@@ -117,6 +117,14 @@ pub struct Playhead {
     /// Compiled characters, cloned from the bundle so the playhead
     /// can mutate disposition/knowledge without borrowing the bundle.
     characters: std::collections::HashMap<String, crate::simulacra::CharacterState>,
+    /// Index into `ledger.events()` of the next event the hook drain
+    /// will inspect. Bumped each time `drain_hooks` runs so a single
+    /// envelope can never fire the same hook twice.
+    hook_cursor: usize,
+    /// Coroutine scheduler — owns every `<spawn: NAME>` that the
+    /// playhead launches. Ticked once per playhead `step` so ambient
+    /// generators interleave with the visible beat (spec §12.5).
+    scheduler: crate::scheduler::Scheduler,
 }
 
 #[derive(Debug)]
@@ -172,6 +180,8 @@ impl Playhead {
             taken_once_only: std::collections::HashSet::new(),
             pending_returns: Vec::new(),
             characters,
+            hook_cursor: 0,
+            scheduler: crate::scheduler::Scheduler::new(),
         };
         p.enter_beat(entry);
         Ok(p)
@@ -250,6 +260,11 @@ impl Playhead {
         }
 
         loop {
+            // Drain hook reactions to anything the previous iteration
+            // wrote to the ledger before pulling the next yield off
+            // the queue. Hooks lower into queue-front Yields so they
+            // run before the playhead returns to the caller.
+            self.drain_hooks();
             let next = match self.queue.pop_front() {
                 Some(y) => y,
                 None => {
@@ -345,6 +360,42 @@ impl Playhead {
                 }
                 Yield::Directive(directive) => {
                     let call = directives::parse(&directive.raw)?;
+                    // `<spawn: Name [with k: v]>` — start a SCENE or
+                    // GENERATOR coroutine at its declared tier.
+                    if call.kind == "spawn" {
+                        if let Some(name) = call
+                            .positional
+                            .first()
+                            .map(|e| coroutine_name_from_expr(e))
+                        {
+                            if self.spawn_coroutine(&name, &call.named)? {
+                                if let Some(latest) = self.ledger.events().last().cloned() {
+                                    return Ok(Step::Event(latest));
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    // `<run: Name [with k: v]>` — synchronous variant:
+                    // drive the coroutine to completion inline before
+                    // yielding the next visible step. The return value
+                    // (if any) is written to `World["__last_run"]` so
+                    // host code or follow-up `let` bindings can read it.
+                    if call.kind == "run" {
+                        if let Some(name) = call
+                            .positional
+                            .first()
+                            .map(|e| coroutine_name_from_expr(e))
+                        {
+                            if let Some(value) = self.run_coroutine(&name, &call.named)? {
+                                self.world.set("__last_run", value);
+                                if let Some(latest) = self.ledger.events().last().cloned() {
+                                    return Ok(Step::Event(latest));
+                                }
+                                continue;
+                            }
+                        }
+                    }
                     // Route `<set: Character.knows.X …>` /
                     // `<set: Character.trusts.Target …>` through the
                     // character store; if the path matches we surface
@@ -752,6 +803,186 @@ impl Playhead {
         Step::Ended
     }
 
+    /// Construct + register a coroutine for a SCENE / GENERATOR
+    /// looked up by name. Returns `true` when the name matched.
+    fn spawn_coroutine(
+        &mut self,
+        name: &str,
+        named: &indexmap::IndexMap<String, Expr>,
+    ) -> Result<bool, PlayError> {
+        let Some((program, tier, priority)) = self.lookup_coroutine(name) else {
+            return Ok(false);
+        };
+        let id = self.scheduler.next_id();
+        let mut coroutine = crate::coroutine::Coroutine::new(id, program, tier, priority);
+        let mut args: std::collections::HashMap<String, Value> =
+            std::collections::HashMap::new();
+        for (k, e) in named {
+            let v = expr::eval(e, &self.world, &mut |n, _| {
+                Err(expr::ExprError::UnknownFunction(n.into()))
+            })
+            .map_err(DirectiveError::from)?;
+            args.insert(k.clone(), v);
+        }
+        coroutine.bind_args(args);
+        self.scheduler.spawn(coroutine, &mut self.ledger);
+        Ok(true)
+    }
+
+    /// Synchronously drive a coroutine to completion inline. Returns
+    /// the coroutine's return value when it terminates. Yields and
+    /// waits push their normal envelopes onto the ledger; predicate
+    /// waits are evaluated against the live world snapshot.
+    fn run_coroutine(
+        &mut self,
+        name: &str,
+        named: &indexmap::IndexMap<String, Expr>,
+    ) -> Result<Option<Value>, PlayError> {
+        let Some((program, tier, priority)) = self.lookup_coroutine(name) else {
+            return Ok(None);
+        };
+        let id = self.scheduler.next_id();
+        let mut coroutine = crate::coroutine::Coroutine::new(id, program, tier, priority);
+        let mut args: std::collections::HashMap<String, Value> =
+            std::collections::HashMap::new();
+        for (k, e) in named {
+            let v = expr::eval(e, &self.world, &mut |n, _| {
+                Err(expr::ExprError::UnknownFunction(n.into()))
+            })
+            .map_err(DirectiveError::from)?;
+            args.insert(k.clone(), v);
+        }
+        coroutine.bind_args(args);
+        // Mark the spawn so observers can audit the lifecycle.
+        self.ledger.push(Event::SceneSpawned {
+            scene: name.to_string(),
+            coroutine: id,
+            tier: tier.name().into(),
+        });
+        // Drive until terminal status — bounded by a step budget to
+        // keep a runaway `loop` from hanging the playhead.
+        let mut steps = 0usize;
+        let limit = 10_000usize;
+        loop {
+            if steps >= limit {
+                break;
+            }
+            steps += 1;
+            match coroutine.step(&mut self.world, &mut self.ledger) {
+                crate::coroutine::CoroutineStatus::Running
+                | crate::coroutine::CoroutineStatus::Yielded => {}
+                crate::coroutine::CoroutineStatus::Waiting { .. } => {
+                    // Predicate / duration wait: skip duration sleeps
+                    // (this is the synchronous form) and re-poll
+                    // predicates on the next iteration.
+                    continue;
+                }
+                crate::coroutine::CoroutineStatus::Returned { value } => {
+                    return Ok(Some(value.unwrap_or(Value::Null)));
+                }
+            }
+        }
+        Ok(Some(Value::Null))
+    }
+
+    /// Resolve a SCENE / GENERATOR name into a fresh `Program` clone
+    /// + its declared tier + priority.
+    fn lookup_coroutine(
+        &self,
+        name: &str,
+    ) -> Option<(crate::coroutine::Program, crate::coroutine::Tier, f64)> {
+        if let Some(scene_body) = self.bundle.scenes.get(name) {
+            let program = self
+                .bundle
+                .scene_programs
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| crate::coroutine::lower_scene(name, scene_body));
+            let tier = scene_body
+                .tier
+                .as_deref()
+                .map(crate::coroutine::Tier::parse)
+                .unwrap_or_default();
+            let priority = scene_body.priority.unwrap_or(0.5);
+            return Some((program, tier, priority));
+        }
+        if let Some(gen_body) = self.bundle.generators.get(name) {
+            let program = self
+                .bundle
+                .generator_programs
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| crate::coroutine::lower_generator(name, gen_body));
+            let tier = gen_body
+                .tier
+                .as_deref()
+                .map(crate::coroutine::Tier::parse)
+                .unwrap_or_default();
+            let priority = gen_body.priority.unwrap_or(0.3);
+            return Some((program, tier, priority));
+        }
+        None
+    }
+
+    /// Borrow the scheduler driving any in-flight `<spawn:>`
+    /// coroutines.
+    pub fn scheduler(&self) -> &crate::scheduler::Scheduler {
+        &self.scheduler
+    }
+
+    /// Inspect ledger events written since the last drain, derive
+    /// `HookEvent`s from them, and lower any matched character hook
+    /// bodies onto the front of the playhead queue. Threshold-cross
+    /// hooks fire at most once per crossing (handled by the
+    /// character's `threshold_memory`); `meeting X` hooks are
+    /// one-shot per character. Bodies execute *before* the next
+    /// user-facing step.
+    fn drain_hooks(&mut self) {
+        if self.characters.is_empty() {
+            return;
+        }
+        let end = self.ledger.events().len();
+        if self.hook_cursor >= end {
+            return;
+        }
+        // Snapshot the events to inspect so we don't alias the ledger
+        // borrow with the character mutation below.
+        let events: Vec<Event> = self.ledger.events()[self.hook_cursor..end].to_vec();
+        self.hook_cursor = end;
+
+        let mut to_lower: Vec<Vec<loom_parser::ast::RawLine>> = Vec::new();
+        for event in &events {
+            // For each derived HookEvent, walk every character once.
+            let derived: Vec<crate::simulacra::HookEvent<'_>> = derive_hook_events(event);
+            for hook_event in &derived {
+                let names: Vec<String> = self.characters.keys().cloned().collect();
+                for name in &names {
+                    let Some(character) = self.characters.get_mut(name) else {
+                        continue;
+                    };
+                    let hits = character.match_hooks(hook_event);
+                    for idx in hits {
+                        if let Some(sub) = character.hooks.get(idx) {
+                            to_lower.push(sub.body.clone());
+                        }
+                    }
+                }
+            }
+        }
+        if to_lower.is_empty() {
+            return;
+        }
+        // Lower each matched hook body into Yields and push to the
+        // *front* of the queue, preserving source order.
+        let mut lowered: Vec<Yield> = Vec::new();
+        for body in &to_lower {
+            lowered.extend(lower_raw_lines(body));
+        }
+        for y in lowered.into_iter().rev() {
+            self.queue.push_front(y);
+        }
+    }
+
     /// Walk a beat body and lower it into a flat `Vec<Yield>`.
     /// Consecutive `Choice` items collapse into one `Yield::Choice`
     /// (one prompt with all options).
@@ -1032,6 +1263,144 @@ fn collapse_whitespace(text: &str) -> String {
     out.trim().to_string()
 }
 
+/// Recover the SCENE / GENERATOR name from a `spawn` / `run`
+/// positional. Both forms accept a bare identifier (`HarborChorus`),
+/// a dotted path (`Wren.investigate`), or a quoted string literal.
+fn coroutine_name_from_expr(expr: &Expr) -> String {
+    match expr {
+        Expr::Path(segs) => segs.join("."),
+        Expr::String(s) => s.clone(),
+        other => {
+            // Fallback to expression display so the lookup still has a
+            // chance — Number / Bool / null all stringify cleanly.
+            let v = expr::eval(other, &World::new(), &mut |n, _| {
+                Err(expr::ExprError::UnknownFunction(n.into()))
+            })
+            .ok();
+            v.map(|v| v.display()).unwrap_or_default()
+        }
+    }
+}
+
+/// Derive zero or more [`crate::simulacra::HookEvent`]s from one
+/// ledger envelope. The lifetimes ride on the input event so the
+/// caller can re-borrow it for matching.
+fn derive_hook_events(event: &Event) -> Vec<crate::simulacra::HookEvent<'_>> {
+    use crate::simulacra::HookEvent as HE;
+    let mut out = Vec::new();
+    match event {
+        Event::Directive {
+            kind, positional, ..
+        } => match kind.as_str() {
+            "cue" => {
+                if let Some(name) = positional.first() {
+                    out.push(HE::Cue(name.as_str()));
+                }
+            }
+            "meet" => {
+                if let Some(name) = positional.first() {
+                    out.push(HE::Meeting(name.as_str()));
+                }
+            }
+            _ => {}
+        },
+        Event::Fired { name, .. } => {
+            out.push(HE::Fired(name.as_str()));
+        }
+        Event::WorldSet { path, value } => {
+            // `Wren.trusts.Player` → threshold cross. Surface the new
+            // numeric value so the character's threshold_memory edge-
+            // detects the crossing.
+            let segments: Vec<&str> = path.split('.').collect();
+            if segments.len() == 3
+                && matches!(segments[1], "trusts" | "respects" | "fears")
+            {
+                if let Ok(n) = value.parse::<f64>() {
+                    out.push(HE::DispositionPasses {
+                        verb: segments[1],
+                        target: segments[2],
+                        value: n,
+                    });
+                }
+            }
+        }
+        Event::ParticipantEnteredLocation { location, .. } => {
+            out.push(HE::Enters(location.as_str()));
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Lower a hook body (`Vec<RawLine>`) into a flat `Vec<Yield>`.
+/// Recognises:
+/// * `-> beat [as Speaker]` → `Yield::Divert`
+/// * `<kind: args>` → `Yield::Directive`
+/// * Anything else → an action event.
+///
+/// Multi-segment lines (e.g. a parenthetical performer direction)
+/// land as plain action text — the hook layer doesn't try to re-parse
+/// dialogue blocks.
+fn lower_raw_lines(lines: &[loom_parser::ast::RawLine]) -> Vec<Yield> {
+    let mut out = Vec::new();
+    for line in lines {
+        let text = line.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        if let Some(rest) = text.strip_prefix("-> ") {
+            // `-> target` or `-> target as Speaker`. The `as` rider
+            // is currently a hint for the booth display — bind it as
+            // a `speaker` world write so the divert body can read it
+            // back if needed.
+            let (target_part, speaker) = match rest.find(" as ") {
+                Some(idx) => (rest[..idx].trim(), Some(rest[idx + 4..].trim().to_string())),
+                None => (rest.trim(), None),
+            };
+            if target_part == "END" {
+                out.push(Yield::End);
+                continue;
+            }
+            if let Some(spk) = speaker {
+                let mut params = indexmap::IndexMap::new();
+                params.insert("speaker".to_string(), spk);
+                out.push(Yield::Divert {
+                    target: DivertTarget {
+                        name: target_part.to_string(),
+                        qualifier: None,
+                        knot: None,
+                    },
+                    params,
+                });
+            } else {
+                out.push(Yield::Divert {
+                    target: DivertTarget {
+                        name: target_part.to_string(),
+                        qualifier: None,
+                        knot: None,
+                    },
+                    params: indexmap::IndexMap::new(),
+                });
+            }
+            continue;
+        }
+        if let Some(stripped) = text.strip_prefix('<') {
+            if let Some(end) = stripped.find('>') {
+                let raw = stripped[..end].to_string();
+                out.push(Yield::Directive(Directive {
+                    raw,
+                    span: line.span,
+                }));
+                continue;
+            }
+        }
+        out.push(Yield::Event(Event::Action {
+            text: text.to_string(),
+        }));
+    }
+    out
+}
+
 fn collect_let_bindings(bundle: &Bundle) -> Vec<LetSlot> {
     let mut slots = Vec::new();
     for entry in &bundle.files {
@@ -1111,6 +1480,124 @@ mod tests {
         assert!(matches!(mid, Step::Event(Event::Action { text }) if text == "Done."));
         let end = p.step().unwrap();
         assert_eq!(end, Step::Ended);
+    }
+
+    #[test]
+    fn threshold_hook_drains_before_next_step() {
+        // Wren trusts Player at 30/100; the hook fires on `trust passes
+        // 60`. After the `<set:>` directive lands, the next step()
+        // must drain the hook *before* returning the next visible
+        // event.
+        let src = "
+CHARACTER Wren
+  trusts Player: 30 of 100
+  on trust passes 60
+    A bell tolls in the distance.
+
+== opening
+<set: Wren.trusts.Player += 50>
+
+Beat over.
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        let mut texts: Vec<String> = Vec::new();
+        loop {
+            match p.step().unwrap() {
+                Step::Event(Event::Action { text }) => texts.push(text),
+                Step::Ended => break,
+                Step::Choice(_) => panic!("no choices in this fixture"),
+                _ => {}
+            }
+        }
+        // The hook body's action must appear *before* the post-set
+        // beat tail.
+        let bell_idx = texts
+            .iter()
+            .position(|t| t.contains("bell tolls"))
+            .expect("hook body should have emitted");
+        let beat_idx = texts
+            .iter()
+            .position(|t| t.contains("Beat over"))
+            .expect("beat tail should have emitted");
+        assert!(
+            bell_idx < beat_idx,
+            "hook should drain before next beat step: texts={texts:?}"
+        );
+    }
+
+    #[test]
+    fn spawn_directive_registers_coroutine() {
+        let src = "
+GENERATOR HarborChorus
+  tier: ambient
+  yield bark from Quiet night.|Stars are out.
+
+== opening
+<spawn: HarborChorus>
+
+Curtain.
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        loop {
+            match p.step().unwrap() {
+                Step::Ended => break,
+                Step::Choice(_) => panic!("no choices"),
+                _ => {}
+            }
+        }
+        // The scheduler ought to have observed exactly one SceneSpawned
+        // for the named generator.
+        let spawned = p
+            .ledger()
+            .events()
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    Event::SceneSpawned { scene, .. } if scene == "HarborChorus"
+                )
+            })
+            .count();
+        assert_eq!(spawned, 1, "spawn should register one coroutine");
+    }
+
+    #[test]
+    fn run_directive_drives_coroutine_to_return() {
+        let src = "
+SCENE investigate
+  return clue
+
+== opening
+<run: investigate>
+
+Done.
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        loop {
+            match p.step().unwrap() {
+                Step::Ended => break,
+                Step::Choice(_) => panic!("no choices"),
+                _ => {}
+            }
+        }
+        // SceneCompleted with the returned value must show up.
+        let completed = p.ledger().events().iter().any(|e| {
+            matches!(
+                e,
+                Event::SceneCompleted { scene, value, .. }
+                    if scene == "investigate" && value == "clue"
+            )
+        });
+        assert!(
+            completed,
+            "run should have driven the coroutine to SceneCompleted (events: {:?})",
+            p.ledger().events()
+        );
+        // The synchronous form stashes the return value on the world.
+        assert_eq!(p.world().get("__last_run"), Value::String("clue".into()));
     }
 
     #[test]

@@ -19,6 +19,11 @@ path = "src/bin/loom_relayd.rs"
 # pulls `prism-builder` (SSR portals) and 14 modules we don't use.
 prism-core = { path = "../../prism-core", features = ["crdt"] }
 
+# Phase 7 — server-hosted play sessions. `Bundle::from_sources` +
+# `Playhead::step` drive the co-playing flow inside `play.rs`.
+loom-runtime = { path = "../runtime" }
+loom-parser = { path = "../parser" }
+
 axum = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "net"] }
 tower = { workspace = true }

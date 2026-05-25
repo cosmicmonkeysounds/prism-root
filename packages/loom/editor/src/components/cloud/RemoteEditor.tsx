@@ -20,6 +20,11 @@ import { indentationMarkers } from "@replit/codemirror-indentation-markers";
 import clsx from "clsx";
 import { extensionForPath } from "@/lib/language";
 import { loomBinding } from "@/lib/cm-loro";
+import {
+    exportWorkspaceToFolder,
+    importFolderIntoWorkspace,
+} from "@/lib/export";
+import { pickDirectory } from "@/lib/fs";
 import { useSession } from "@/store/session";
 import { useSettings } from "@/store/settings";
 
@@ -120,8 +125,66 @@ function FileRail() {
 
 function Toolbar({ peerCount }: { peerCount: number }) {
     const meta = useSession((s) => s.active?.meta);
+    const doc = useSession((s) => s.active?.doc ?? null);
+    const refresh = useSession((s) => s.refreshActiveFiles);
     const close = useSession((s) => s.closeWorkspace);
+    const [busy, setBusy] = useState<null | "export" | "import">(null);
+    const [status, setStatus] = useState<string | null>(null);
+
     if (!meta) return null;
+
+    const onExport = async () => {
+        if (!doc || busy) return;
+        let dir: FileSystemDirectoryHandle;
+        try {
+            dir = await pickDirectory();
+        } catch {
+            return; // user cancelled
+        }
+        setBusy("export");
+        setStatus("Exporting…");
+        try {
+            const res = await exportWorkspaceToFolder(doc, dir);
+            setStatus(
+                `Exported ${res.filesWritten} file${res.filesWritten === 1 ? "" : "s"}.`,
+            );
+        } catch (err) {
+            setStatus(err instanceof Error ? err.message : String(err));
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const onImport = async () => {
+        if (!doc || busy) return;
+        let dir: FileSystemDirectoryHandle;
+        try {
+            dir = await pickDirectory();
+        } catch {
+            return;
+        }
+        setBusy("import");
+        setStatus("Importing…");
+        try {
+            const res = await importFolderIntoWorkspace(doc, dir, {
+                skipPrefixes: [
+                    ".git/",
+                    "node_modules/",
+                    "dist/",
+                    "target/",
+                ],
+            });
+            refresh();
+            setStatus(
+                `Imported ${res.filesRead} file${res.filesRead === 1 ? "" : "s"}.`,
+            );
+        } catch (err) {
+            setStatus(err instanceof Error ? err.message : String(err));
+        } finally {
+            setBusy(null);
+        }
+    };
+
     return (
         <div className="h-9 px-3 flex items-center gap-3 border-b border-white/10 text-xs">
             <span className="font-medium text-zinc-200 truncate">
@@ -130,6 +193,14 @@ function Toolbar({ peerCount }: { peerCount: number }) {
             <span className="text-zinc-500 truncate" title={meta.id}>
                 {meta.id}
             </span>
+            {status && (
+                <span
+                    className="text-zinc-400 truncate"
+                    title={status}
+                >
+                    {status}
+                </span>
+            )}
             <span className="ml-auto text-zinc-400">
                 {peerCount === 0
                     ? "Just you"
@@ -137,6 +208,18 @@ function Toolbar({ peerCount }: { peerCount: number }) {
                       ? "1 peer"
                       : `${peerCount} peers`}
             </span>
+            <ToolbarButton
+                label="Import…"
+                onClick={onImport}
+                disabled={busy !== null}
+                title="Read a local folder into this workspace"
+            />
+            <ToolbarButton
+                label="Export…"
+                onClick={onExport}
+                disabled={busy !== null}
+                title="Write this workspace's files to a local folder"
+            />
             <button
                 type="button"
                 onClick={close}
@@ -145,6 +228,35 @@ function Toolbar({ peerCount }: { peerCount: number }) {
                 Close
             </button>
         </div>
+    );
+}
+
+function ToolbarButton({
+    label,
+    onClick,
+    disabled,
+    title,
+}: {
+    label: string;
+    onClick: () => void;
+    disabled?: boolean;
+    title?: string;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            disabled={disabled}
+            title={title}
+            className={clsx(
+                "px-2 py-0.5 rounded border border-white/10",
+                disabled
+                    ? "text-zinc-600"
+                    : "text-zinc-300 hover:text-zinc-100 hover:border-white/20",
+            )}
+        >
+            {label}
+        </button>
     );
 }
 

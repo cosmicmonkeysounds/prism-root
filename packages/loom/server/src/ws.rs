@@ -70,7 +70,30 @@ enum Incoming {
         workspace: String,
         state: Box<PresenceState>,
     },
+    /// Phase 7 — start a play session by uploading the workspace's
+    /// current files. Server builds a `Bundle`, instantiates a
+    /// `Playhead`, advances to the first choice / end, and broadcasts
+    /// `play-state`.
+    PlayStart {
+        workspace: String,
+        files: Vec<PlayFile>,
+    },
+    /// Phase 7 — advance the active session by index.
+    PlayChoice {
+        workspace: String,
+        index: usize,
+    },
+    /// Phase 7 — tear the session down.
+    PlayStop {
+        workspace: String,
+    },
     Ping,
+}
+
+#[derive(Debug, Deserialize)]
+struct PlayFile {
+    path: String,
+    source: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +104,8 @@ enum Outgoing {
     Snapshot { workspace: String, bytes: String },
     Update { workspace: String, bytes: String },
     Presence { workspace: String, peers: Vec<PresenceState> },
+    /// Phase 7 — current state of a co-play session.
+    PlayState(crate::play::PlayStateSnapshot),
     Pong,
 }
 
@@ -453,6 +478,91 @@ async fn handle_socket(socket: WebSocket, state: Arc<LoomRelayState>) {
                     from_peer: peer_id.clone(),
                     message: msg,
                 });
+            }
+            Incoming::PlayStart { workspace, files } => {
+                let Some(session) = auth.as_ref() else {
+                    let _ = out_tx.send(
+                        Outgoing::Error {
+                            message: "play-start before auth".into(),
+                        }
+                        .to_ws(),
+                    );
+                    continue;
+                };
+                let Some(hub) = subs.get(&workspace).cloned() else {
+                    let _ = out_tx.send(
+                        Outgoing::Error {
+                            message: format!("play-start for unsubscribed workspace {workspace}"),
+                        }
+                        .to_ws(),
+                    );
+                    continue;
+                };
+                let sources: Vec<(String, String)> = files
+                    .into_iter()
+                    .map(|f| (f.path, f.source))
+                    .collect();
+                match state.play.start(workspace.clone(), sources, session.subject.clone()) {
+                    Ok(snap) => {
+                        let msg = Outgoing::PlayState(snap);
+                        let _ = out_tx.send(msg.to_ws());
+                        let _ = hub.tx.send(WsBroadcast {
+                            from_peer: peer_id.clone(),
+                            message: msg,
+                        });
+                    }
+                    Err(e) => {
+                        let _ = out_tx.send(
+                            Outgoing::Error {
+                                message: format!("play-start: {e}"),
+                            }
+                            .to_ws(),
+                        );
+                    }
+                }
+            }
+            Incoming::PlayChoice { workspace, index } => {
+                if auth.is_none() {
+                    let _ = out_tx.send(
+                        Outgoing::Error {
+                            message: "play-choice before auth".into(),
+                        }
+                        .to_ws(),
+                    );
+                    continue;
+                }
+                let Some(hub) = subs.get(&workspace).cloned() else {
+                    let _ = out_tx.send(
+                        Outgoing::Error {
+                            message: format!("play-choice for unsubscribed workspace {workspace}"),
+                        }
+                        .to_ws(),
+                    );
+                    continue;
+                };
+                match state.play.choose(&workspace, index) {
+                    Ok(snap) => {
+                        let msg = Outgoing::PlayState(snap);
+                        let _ = out_tx.send(msg.to_ws());
+                        let _ = hub.tx.send(WsBroadcast {
+                            from_peer: peer_id.clone(),
+                            message: msg,
+                        });
+                    }
+                    Err(e) => {
+                        let _ = out_tx.send(
+                            Outgoing::Error {
+                                message: format!("play-choice: {e}"),
+                            }
+                            .to_ws(),
+                        );
+                    }
+                }
+            }
+            Incoming::PlayStop { workspace } => {
+                state.play.stop(&workspace);
+                // No broadcast — clients just stop receiving updates;
+                // a fresh `play-start` will re-broadcast.
             }
         }
     }

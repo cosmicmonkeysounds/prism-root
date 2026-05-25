@@ -15,10 +15,18 @@ import {
     loadUsername,
 } from "@/lib/auth";
 import { PresenceTracker, type PresenceState } from "@/lib/presence";
-import { LoomSyncClient } from "@/lib/sync";
+import { LoomSyncClient, type PlayStatePayload } from "@/lib/sync";
 import { LoomWorkspaceClient, wsUrlFromRelay } from "@/lib/workspaces";
 import type { WorkspaceMeta } from "@/lib/workspaces";
 import type { LoomDoc } from "@/loom-wasm/loom_wasm";
+import {
+    LoomFolderBridge,
+    linkManifest,
+    readManifest,
+    seedDocFromFolder,
+    unlinkManifest,
+    type LoomProjectManifest,
+} from "@/lib/project";
 
 const DEFAULT_RELAY = "http://127.0.0.1:7878";
 const RELAY_KEY = "loom.relayUrl";
@@ -37,6 +45,15 @@ export interface ActiveWorkspace {
     files: string[];
     activePath: string | null;
     peers: PresenceState[];
+    /** Local folder bound to this workspace, when one is linked. */
+    linkedFolder: LinkedFolder | null;
+    /** Phase 7 — current server-hosted play session, if any. */
+    play: PlayStatePayload | null;
+}
+
+export interface LinkedFolder {
+    root: FileSystemDirectoryHandle;
+    manifest: LoomProjectManifest;
 }
 
 interface SessionState {
@@ -84,6 +101,23 @@ interface SessionState {
 
     /** Create an empty `.loom` file inside the active workspace. */
     createFile: (path: string) => void;
+
+    /**
+     * Bind a local folder to the active workspace. Writes a manifest
+     * into the folder, seeds the doc from on-disk files, and starts
+     * the bidirectional bridge. Idempotent.
+     */
+    bindFolder: (root: FileSystemDirectoryHandle) => Promise<void>;
+
+    /** Tear down the bridge + clear the manifest's workspace binding. */
+    unbindFolder: () => Promise<void>;
+
+    /** Phase 7 — start a play session against the active workspace. */
+    startPlay: () => void;
+    /** Phase 7 — advance an active session by choice index. */
+    sendChoice: (index: number) => void;
+    /** Phase 7 — tear the active session down. */
+    stopPlay: () => void;
 }
 
 let wasmPromise: Promise<typeof import("@/loom-wasm/loom_wasm")> | null = null;
@@ -199,6 +233,13 @@ export const useSession = create<SessionState>((set, get) => {
                 url: wsUrlFromRelay(state.relayUrl),
                 token: state.token,
                 presence: state.presence,
+                onPlayState: (play) => {
+                    set((s) =>
+                        s.active && s.active.meta.id === play.workspace
+                            ? { active: { ...s.active, play } }
+                            : s,
+                    );
+                },
                 onError: (err) => set({ error: err.message }),
             });
             try {
@@ -287,6 +328,8 @@ export const useSession = create<SessionState>((set, get) => {
                 files: [],
                 activePath: null,
                 peers: [],
+                linkedFolder: null,
+                play: null,
             };
             set({ active });
 
@@ -319,6 +362,101 @@ export const useSession = create<SessionState>((set, get) => {
             get().refreshActiveFiles();
         },
 
+        bindFolder: async (root) => {
+            const state = get();
+            if (!state.active) throw new Error("no active workspace");
+            const existing = await readManifest(root);
+            const manifest = await linkManifest(
+                root,
+                state.active.meta.id,
+                state.relayUrl,
+            );
+            // Seed only when this folder hasn't been Loom-aware before
+            // — subsequent re-binds inherit the existing on-disk state
+            // and let the bridge's bidirectional flow reconcile.
+            if (!existing) {
+                await seedDocFromFolder(root, state.active.doc);
+            }
+            const bridge = new LoomFolderBridge(root, state.active.doc, {
+                onError: (err) => set({ error: err.message }),
+            });
+            bridge.start();
+            set((s) => {
+                if (!s.active) return s;
+                // Replace any prior bridge.
+                const prior = (
+                    s.active as ActiveWorkspace & {
+                        __bridge?: LoomFolderBridge;
+                    }
+                ).__bridge;
+                prior?.dispose();
+                const nextActive: ActiveWorkspace = {
+                    ...s.active,
+                    linkedFolder: { root, manifest },
+                };
+                (
+                    nextActive as ActiveWorkspace & {
+                        __bridge?: LoomFolderBridge;
+                    }
+                ).__bridge = bridge;
+                return { active: nextActive };
+            });
+            get().refreshActiveFiles();
+        },
+
+        startPlay: () => {
+            const state = get();
+            if (!state.active || !state.sync) return;
+            const files = state.active.doc.listFiles().map((p) => {
+                const path = String(p);
+                return { path, source: state.active!.doc.getText(path) ?? "" };
+            });
+            state.sync.startPlay(state.active.meta.id, files);
+        },
+
+        sendChoice: (index) => {
+            const state = get();
+            if (!state.active || !state.sync) return;
+            state.sync.sendChoice(state.active.meta.id, index);
+        },
+
+        stopPlay: () => {
+            const state = get();
+            if (!state.active || !state.sync) return;
+            state.sync.stopPlay(state.active.meta.id);
+            set((s) =>
+                s.active ? { active: { ...s.active, play: null } } : s,
+            );
+        },
+
+        unbindFolder: async () => {
+            const state = get();
+            if (!state.active?.linkedFolder) return;
+            const root = state.active.linkedFolder.root;
+            const bridge = (
+                state.active as ActiveWorkspace & {
+                    __bridge?: LoomFolderBridge;
+                }
+            ).__bridge;
+            bridge?.dispose();
+            await unlinkManifest(root).catch(() => {
+                /* swallow — folder may be read-only */
+            });
+            set((s) => {
+                if (!s.active) return s;
+                const nextActive: ActiveWorkspace = {
+                    ...s.active,
+                    linkedFolder: null,
+                };
+                (
+                    nextActive as ActiveWorkspace & {
+                        __bridge?: LoomFolderBridge;
+                    }
+                ).__bridge = undefined;
+                return { active: nextActive };
+            });
+        },
+
         closeWorkspace: () => {
             const state = get();
             if (!state.active) return;
@@ -328,6 +466,12 @@ export const useSession = create<SessionState>((set, get) => {
                 }
             ).__cleanup;
             cleanup?.();
+            const bridge = (
+                state.active as ActiveWorkspace & {
+                    __bridge?: LoomFolderBridge;
+                }
+            ).__bridge;
+            bridge?.dispose();
             state.sync?.unsubscribe(state.active.meta.id);
             set({ active: null });
         },

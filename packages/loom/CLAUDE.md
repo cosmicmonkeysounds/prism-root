@@ -72,11 +72,40 @@ ledger events. `BroadcastScope` is an algebraic expression
 against the stage's live membership. `broadcast` and `enroll` are
 registered as core directive builtins.
 
-Still to come: SCENE / GENERATOR coroutines, tiered scheduler,
-booth live-patching UX (spec §13.4), the four remaining axis modes
+SCENE / GENERATOR coroutines + tiered scheduler landed 2026-05-25:
+`loom_parser` recognises top-level `SCENE name(params)` declarations
+with labelled inner state blocks (lowered to `SceneBody.states`) and
+top-level `GENERATOR` declarations with `tier:` / `priority:` / `on
+boot` metadata (lowered to `GeneratorBody`). `loom_runtime::coroutine`
+lowers both into a flat `Program` of opcodes (`YieldBark`, `YieldChance`,
+`WaitUntil`, `WaitDuration`, `Goto`, `Return`, `LoopHead`, `ForBegin`/
+`ForEnd`, `EmitLine`) and the three-tier `Scheduler` (focal ≈ 16ms,
+active ≈ 100ms, ambient ≈ 2s budgets) drives them round-robin with
+focal stealing from active/ambient under load. The bundle pre-lowers
+every SCENE/GENERATOR into `bundle.scene_programs` / `generator_programs`
+/ `bound_generators` (character-bound, qualified `Character.generator`).
+Hook drain at playhead yield points + `spawn`/`run` directive wiring
+remain TODO at `packages/loom/runtime/src/playhead.rs` (see follow-up
+task).
+
+LSP request loop landed 2026-05-25: `loom_lsp` runs a stdio JSON-RPC
+loop backed by a `Workspace` index that reparses on every
+`textDocument/didChange` and rebuilds project-wide indices
+(characters, traits, beats, anchors, ```todo``` fences). Handlers:
+`textDocument/completion` (divert targets / directives / `is` mixins
+— spec §14.3), `textDocument/hover` (directive signature stubs,
+character property summaries, beat cast+setting), `textDocument/
+definition` (jump from divert / cue to declaration), `textDocument/
+documentSymbol` (per-file outline). Diagnostics flow straight from
+`loom_parser::Diagnostic` to `publishDiagnostics`.
+
+Still to come: hook-drain at playhead yield (the `match_hooks` work),
+spawn/run directive wiring through the playhead, booth live-patching
+UX (spec §13.4), the four remaining axis modes
 (`use_tracking` / `point_buy` / `milestone` / `sdk_controlled` — see
 TODO at `packages/loom/runtime/src/meridian.rs` ~`AxisMode::PointBuy`),
-and the LSP request loop.
+TRAIT mixin merge into CHARACTER bodies, and CodeMirror remote-cursor
+preservation in `editor/src/lib/cm-loro.ts`.
 
 ## Multi-user (Phases 1–5 landed)
 

@@ -135,7 +135,7 @@ pub enum Tier {
 }
 
 impl Tier {
-    pub fn from_str(s: &str) -> Tier {
+    pub fn parse(s: &str) -> Tier {
         match s.trim() {
             "focal" => Tier::Focal,
             "active" => Tier::Active,

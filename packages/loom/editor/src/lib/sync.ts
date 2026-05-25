@@ -13,6 +13,24 @@ import type { PresenceState, PresenceTracker } from "./presence";
 
 // ── envelope shapes (mirror `prism-core::network::relay::message`) ──
 
+/**
+ * Phase 7 — server-side play. The transcript is opaque to the wire
+ * layer (it's `loom_runtime::ledger::Event[]`); consumers cast or
+ * re-derive as needed.
+ */
+export interface PlayStatePayload {
+    workspace: string;
+    transcript: unknown[];
+    choices: { index: number; text: string; sticky: boolean }[];
+    ended: boolean;
+    starter: string;
+}
+
+export interface PlayFile {
+    path: string;
+    source: string;
+}
+
 type Envelope =
     | { kind: "auth"; payload: { token: string } }
     | { kind: "auth-ok"; payload: { did: string } }
@@ -29,6 +47,13 @@ type Envelope =
               peers?: PresenceState[];
           };
       }
+    | {
+          kind: "play-start";
+          payload: { workspace: string; files: PlayFile[] };
+      }
+    | { kind: "play-choice"; payload: { workspace: string; index: number } }
+    | { kind: "play-stop"; payload: { workspace: string } }
+    | { kind: "play-state"; payload: PlayStatePayload }
     | { kind: "ping"; payload?: Record<string, never> }
     | { kind: "pong"; payload?: Record<string, never> };
 
@@ -39,6 +64,8 @@ export interface LoomSyncOptions {
     token: string;
     /** Optional shared presence cache. */
     presence?: PresenceTracker;
+    /** Phase 7 — invoked on every `play-state` envelope. */
+    onPlayState?: (state: PlayStatePayload) => void;
     /** Connection / protocol error sink. */
     onError?: (err: Error) => void;
     /** Debounce window for outgoing update batches (default 50ms). */
@@ -152,6 +179,30 @@ export class LoomSyncClient {
         });
     }
 
+    /** Phase 7 — start (or replace) a server-side play session. */
+    startPlay(workspaceId: string, files: PlayFile[]): void {
+        this.sendEnvelope({
+            kind: "play-start",
+            payload: { workspace: workspaceId, files },
+        });
+    }
+
+    /** Phase 7 — advance the server's play session by selecting a choice. */
+    sendChoice(workspaceId: string, index: number): void {
+        this.sendEnvelope({
+            kind: "play-choice",
+            payload: { workspace: workspaceId, index },
+        });
+    }
+
+    /** Phase 7 — tear down the active play session. */
+    stopPlay(workspaceId: string): void {
+        this.sendEnvelope({
+            kind: "play-stop",
+            payload: { workspace: workspaceId },
+        });
+    }
+
     close(): void {
         this.closed = true;
         for (const id of Array.from(this.subs.keys())) this.unsubscribe(id);
@@ -200,6 +251,10 @@ export class LoomSyncClient {
                         env.payload.state,
                     );
                 }
+                return;
+            }
+            case "play-state": {
+                this.opts.onPlayState?.(env.payload);
                 return;
             }
             case "ping":
