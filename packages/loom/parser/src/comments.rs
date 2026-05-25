@@ -46,11 +46,10 @@ pub fn strip(source: &str) -> (String, Vec<Diagnostic>) {
         if in_block.is_none() {
             let trimmed = raw_line.trim_start_matches([' ', '\t']);
             let trimmed_clean = trimmed.trim_end_matches('\n').trim_end_matches('\r');
-            if trimmed_clean.starts_with("```") {
+            if let Some(rest) = trimmed_clean.strip_prefix("```") {
                 if in_fence {
                     in_fence = false;
                 } else {
-                    let rest = &trimmed_clean[3..];
                     let inline_close = rest.ends_with("```") && rest.len() >= 3;
                     if !inline_close {
                         in_fence = true;
@@ -96,10 +95,7 @@ pub fn strip(source: &str) -> (String, Vec<Diagnostic>) {
                 continue;
             }
 
-            if c == b'/'
-                && bytes.get(i + 1) == Some(&b'/')
-                && opener_boundary_ok(bytes, i)
-            {
+            if c == b'/' && bytes.get(i + 1) == Some(&b'/') && opener_boundary_ok(bytes, i) {
                 // Line comment — replace through end of line, keep \n.
                 while i < bytes.len() && bytes[i] != b'\n' {
                     if bytes[i] == b'\r' {
@@ -112,10 +108,7 @@ pub fn strip(source: &str) -> (String, Vec<Diagnostic>) {
                 continue;
             }
 
-            if c == b'/'
-                && bytes.get(i + 1) == Some(&b'*')
-                && opener_boundary_ok(bytes, i)
-            {
+            if c == b'/' && bytes.get(i + 1) == Some(&b'*') && opener_boundary_ok(bytes, i) {
                 let col = i as u32;
                 in_block = Some((line_idx, col, line_start_byte + col));
                 out.push(b' ');
@@ -149,8 +142,7 @@ pub fn strip(source: &str) -> (String, Vec<Diagnostic>) {
     // SAFETY: we only replaced single ASCII bytes with single ASCII
     // bytes (` ` / `\r` / `\n`); the bytes we copied through were the
     // original UTF-8, so the buffer is still valid UTF-8.
-    let stripped =
-        String::from_utf8(out).expect("strip_comments preserves UTF-8 by construction");
+    let stripped = String::from_utf8(out).expect("strip_comments preserves UTF-8 by construction");
     (stripped, diagnostics)
 }
 
@@ -221,6 +213,8 @@ mod tests {
         // 10 bytes of comment (the `é` contributes two bytes) + " end\n".
         assert_eq!(out.len(), "/* café */ end\n".len());
         assert!(out.ends_with(" end\n"));
-        assert!(out.chars().all(|c| c == ' ' || c.is_ascii() && !c.is_control() || c == '\n'));
+        assert!(out
+            .chars()
+            .all(|c| c == ' ' || c.is_ascii() && !c.is_control() || c == '\n'));
     }
 }

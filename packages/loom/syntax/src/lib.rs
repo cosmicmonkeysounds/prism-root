@@ -43,7 +43,11 @@ pub fn emit_tmgrammar() -> String {
 fn top_level_patterns() -> serde_json::Value {
     use serde_json::json;
     json!([
+        // Fences win over comments: a stage manager's note inside a
+        // `` ``` ... ``` `` block is allowed to contain `//`.
         { "include": "#metadata-fence" },
+        { "include": "#line-comment" },
+        { "include": "#block-comment" },
         { "include": "#header" },
         { "include": "#knot-marker" },
         { "include": "#declaration-opener" },
@@ -303,6 +307,35 @@ fn repository() -> serde_json::Value {
         }),
     );
 
+    // // line comment (spec §6.1). The `(?:^|\\s)` lookbehind keeps
+    // URLs like `https://example.com` intact — the `//` there is
+    // preceded by `:`, not whitespace.
+    rep.insert(
+        "line-comment".into(),
+        json!({
+            "match": "(?:^|(?<=\\s))(//.*)$",
+            "captures": {
+                "1": { "name": "comment.line.double-slash.loom" }
+            }
+        }),
+    );
+
+    // /* … */ block comment (spec §6.1). Same boundary rule.
+    rep.insert(
+        "block-comment".into(),
+        json!({
+            "begin": "(?:^|(?<=\\s))(/\\*)",
+            "beginCaptures": {
+                "1": { "name": "punctuation.definition.comment.begin.loom" }
+            },
+            "end": "(\\*/)",
+            "endCaptures": {
+                "1": { "name": "punctuation.definition.comment.end.loom" }
+            },
+            "name": "comment.block.loom"
+        }),
+    );
+
     // ```fence … ``` production-metadata sidecar
     rep.insert(
         "metadata-fence".into(),
@@ -426,6 +459,22 @@ mod tests {
                 walk(sub, out);
             }
         }
+    }
+
+    #[test]
+    fn comment_scopes_are_emitted() {
+        let g = parsed_grammar();
+        let repo = g["repository"].as_object().unwrap();
+        let line = &repo["line-comment"];
+        assert!(line["match"].as_str().unwrap().contains("//"));
+        assert_eq!(
+            line["captures"]["1"]["name"],
+            "comment.line.double-slash.loom"
+        );
+        let block = &repo["block-comment"];
+        assert!(block["begin"].as_str().unwrap().contains("/\\*"));
+        assert!(block["end"].as_str().unwrap().contains("\\*/"));
+        assert_eq!(block["name"], "comment.block.loom");
     }
 
     #[test]

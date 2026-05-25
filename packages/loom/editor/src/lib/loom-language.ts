@@ -56,18 +56,41 @@ const CONTRACT_KEYS = new Set([
   'next',
 ])
 
+type StreamLike = { pos: number; string: string }
+
+/** `//` / `/*` only open comments at the start of the line or after
+ *  whitespace — mirrors the Rust pre-pass in `loom_parser::comments`. */
+function commentBoundaryOk(stream: StreamLike): boolean {
+  if (stream.pos === 0) return true
+  const prev = stream.string.charAt(stream.pos - 1)
+  return prev === ' ' || prev === '\t'
+}
+
 type LoomState = {
   inFence: boolean
+  inBlockComment: boolean
 }
 
 const parser: StreamParser<LoomState> = {
   name: 'loom',
 
   startState() {
-    return { inFence: false }
+    return { inFence: false, inBlockComment: false }
   },
 
   token(stream, state) {
+    // ── inside a /* … */ block comment ─────────────────────────────
+    if (state.inBlockComment) {
+      while (!stream.eol()) {
+        if (stream.match('*/')) {
+          state.inBlockComment = false
+          return 'comment'
+        }
+        stream.next()
+      }
+      return 'comment'
+    }
+
     // ── inside a ``` fence ─────────────────────────────────────────
     if (state.inFence) {
       if (stream.sol() && stream.match(/```\s*$/)) {
@@ -82,6 +105,17 @@ const parser: StreamParser<LoomState> = {
     if (stream.sol()) {
       stream.eatSpace()
       const rest = stream.string.slice(stream.pos)
+
+      // Whole-line // comment.
+      if (stream.match(/^\/\/.*$/)) {
+        return 'comment'
+      }
+
+      // Block comment opener at start of line.
+      if (stream.match('/*')) {
+        state.inBlockComment = true
+        return 'comment'
+      }
 
       // ```fence opener (possibly with a tag)
       if (stream.match(/```[a-zA-Z0-9_-]*\s*$/)) {
@@ -146,6 +180,18 @@ const parser: StreamParser<LoomState> = {
 
     // ── inline tokens ──────────────────────────────────────────────
 
+    // Inline line + block comments — only when preceded by whitespace,
+    // so `https://example.com` stays prose.
+    if (commentBoundaryOk(stream)) {
+      if (stream.match(/^\/\/.*$/)) {
+        return 'comment'
+      }
+      if (stream.match('/*')) {
+        state.inBlockComment = true
+        return 'comment'
+      }
+    }
+
     // <directive ...>
     if (stream.match(/^<[^>\n]+>/)) {
       const matched = stream.current()
@@ -182,7 +228,7 @@ const parser: StreamParser<LoomState> = {
   },
 
   languageData: {
-    commentTokens: { line: '//' },
+    commentTokens: { line: '//', block: { open: '/*', close: '*/' } },
     indentOnInput: /^\s*[*+-]\s/,
   },
 }

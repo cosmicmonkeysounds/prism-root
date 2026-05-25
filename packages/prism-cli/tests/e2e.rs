@@ -253,7 +253,14 @@ fn dev_all_dry_run_prints_combined_build_then_labeled_commands() {
     assert!(!s.contains("cargo run --package"), "{s}");
     assert!(s.contains("python3 -m http.server"), "{s}");
     assert!(!s.contains("trunk"), "{s}");
-    assert!(!s.contains("wasm32-unknown-emscripten"), "{s}");
+    // The wasm-daemon sidecar (a separate `[daemon-wasm-build]` step)
+    // legitimately targets `wasm32-unknown-emscripten`. The retired
+    // path we still want to forbid is the old trunk-era shell build
+    // against emscripten.
+    assert!(
+        !s.contains("wasm32-unknown-emscripten --package prism-shell"),
+        "{s}"
+    );
 }
 
 #[test]
