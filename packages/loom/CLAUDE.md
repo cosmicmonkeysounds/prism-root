@@ -44,8 +44,36 @@ attribute / axis (`xp_curve` + `narrative_trigger`) / pool (`max` /
 (`Wren.strength`, `Wren.level`, `Wren.health`, `Wren.health.max`,
 `Wren.damage`, `Wren.tree.armsman_1`).
 
+Phase 5 (Luau bridge) landed 2026-05-25: `loom_runtime::LuauRegistry`
+owns an `mlua::Lua` state with a `loom` global (read/write views into
+`World` + `Ledger`) and dispatches every non-syntactic directive
+(`sfx`, `cue`, `spawn`, `cancel`, `goal`, `broadcast`, `enroll`,
+`goto`, `compose`, `heal`, `flash`) through a single Luau call
+following the spec §14.1 argument convention (positional first,
+single trailing table for named args). Extension authors write
+`directive name(args) … end` in a `.luau` file and load it via
+`LuauRegistry::load_extension`. The syntactic forms
+(`if`/`else`/`match`/`for`/`each visit`/`after`/`otherwise`/
+`anchor`/`let`/`set`/`fire`/`shuffle`/`cycle`) stay hand-handled in
+the playhead — they affect playhead structure, not user-callable
+side effects.
+
+Live-performance layer landed 2026-05-25: `loom_parser` recognises
+COHORT / LOCATION structured bodies (label, capacity, ambient,
+contains) and the `(improv duration: …, advance on: …)` parenthetical
+attached to dialogue cues (spec §13.3). `loom_runtime::LiveStage`
+owns participants, cohorts, locations, and an `ImprovController`
+with pluggable advancement (`all` / `any` / `quorum(N)`),
+emitting `ParticipantJoined` / `ParticipantEnteredLocation` /
+`CohortEnrolled` / `ImprovBeatStarted` / `ImprovBeatAdvanced`
+ledger events. `BroadcastScope` is an algebraic expression
+(`participant(X) | cohort(X) | location(X)` joined with `and` /
+`but`) parsed from `<broadcast: …>` directive bodies and evaluated
+against the stage's live membership. `broadcast` and `enroll` are
+registered as core directive builtins.
+
 Still to come: SCENE / GENERATOR coroutines, tiered scheduler,
-live-performance layer, Luau bridge, the four remaining axis modes
+booth live-patching UX (spec §13.4), the four remaining axis modes
 (`use_tracking` / `point_buy` / `milestone` / `sdk_controlled` — see
 TODO at `packages/loom/runtime/src/meridian.rs` ~`AxisMode::PointBuy`),
 and the LSP request loop.

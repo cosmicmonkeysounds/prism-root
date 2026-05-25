@@ -108,6 +108,21 @@ pub enum Event {
         coroutine: u64,
         reason: String,
     },
+    /// A live participant joined the show (spec §13.1).
+    ParticipantJoined { id: String },
+    /// A participant was removed from the stage (booth-side retire).
+    ParticipantRetired { id: String },
+    /// A participant entered a LOCATION (spec §13.1).
+    ParticipantEnteredLocation { id: String, location: String },
+    /// A participant was enrolled into a COHORT (spec §13.1).
+    CohortEnrolled { id: String, cohort: String },
+    /// An improv beat started — the playhead is now holding on the
+    /// controller until a signal advances it or it times out.
+    ImprovBeatStarted { handle: u64 },
+    /// An improv beat advanced — either a signal satisfied the
+    /// declared quorum or the duration elapsed (`reason` describes
+    /// which).
+    ImprovBeatAdvanced { handle: u64, reason: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

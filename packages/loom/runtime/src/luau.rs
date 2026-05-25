@@ -23,9 +23,8 @@
 //! link the Luau toolchain, swapping the feature to `lua54` will keep
 //! the bridge working without changing any of the Rust call sites.
 
-use std::cell::RefCell;
 use std::path::Path;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use indexmap::IndexMap;
 use mlua::{Function, Lua, MultiValue, Table, Value as LuaValue, Variadic};
@@ -78,7 +77,13 @@ impl DispatchSlot {
     }
 }
 
-type Slot = Rc<RefCell<Option<DispatchSlot>>>;
+type Slot = Arc<Mutex<Option<DispatchSlot>>>;
+
+// SAFETY: the raw pointers in `DispatchSlot` are only dereferenced
+// while [`LuauRegistry::dispatch`] sits on the call stack on the
+// thread that owns the exclusive borrows. The slot is wrapped in a
+// `Mutex`, so no two threads can observe the pointers simultaneously.
+unsafe impl Send for DispatchSlot {}
 
 /// The Luau-backed directive registry. Owns a single `mlua::Lua` and
 /// the slot used to pass borrows in/out of callbacks.
@@ -91,7 +96,7 @@ impl LuauRegistry {
     /// Build a fresh registry with the `loom` global wired up.
     pub fn new() -> Result<Self, DirectiveError> {
         let lua = Lua::new();
-        let slot: Slot = Rc::new(RefCell::new(None));
+        let slot: Slot = Arc::new(Mutex::new(None));
         install_loom_global(&lua, &slot)?;
         let reg = Self { lua, slot };
         Ok(reg)
@@ -107,7 +112,7 @@ impl LuauRegistry {
     /// Register a Rust closure under `name`. Used by `register_core_builtins`.
     pub fn register_rust<F>(&mut self, name: &str, f: F) -> Result<(), DirectiveError>
     where
-        F: Fn(&Lua, Variadic<LuaValue>) -> mlua::Result<LuaValue> + 'static,
+        F: Fn(&Lua, Variadic<LuaValue>) -> mlua::Result<LuaValue> + Send + 'static,
     {
         let func = self.lua.create_function(f).map_err(map_lua_err)?;
         let registry: Table = self.lua.globals().get("_loom").map_err(map_lua_err)?;
@@ -168,7 +173,7 @@ impl LuauRegistry {
 
         // Stash mutable refs in the slot for the duration of the call.
         {
-            let mut g = self.slot.borrow_mut();
+            let mut g = self.slot.lock().unwrap();
             *g = Some(DispatchSlot {
                 world: world as *mut World,
                 ledger: ledger as *mut Ledger,
@@ -180,13 +185,14 @@ impl LuauRegistry {
 
         let suppress = self
             .slot
-            .borrow()
+            .lock()
+            .unwrap()
             .as_ref()
             .map(|s| s.suppress)
             .unwrap_or(false);
 
         // Clear the slot before bubbling any error.
-        *self.slot.borrow_mut() = None;
+        *self.slot.lock().unwrap() = None;
 
         result?;
         let outcome = if suppress {
@@ -213,7 +219,7 @@ impl LuauRegistry {
         };
         // Args are already evaluated in ctx; bypass evaluation.
         {
-            let mut g = self.slot.borrow_mut();
+            let mut g = self.slot.lock().unwrap();
             *g = Some(DispatchSlot {
                 world: ctx.world as *mut World,
                 ledger: ctx.ledger as *mut Ledger,
@@ -228,20 +234,18 @@ impl LuauRegistry {
         );
         let suppress = self
             .slot
-            .borrow()
+            .lock()
+            .unwrap()
             .as_ref()
             .map(|s| s.suppress)
             .unwrap_or(false);
-        *self.slot.borrow_mut() = None;
+        *self.slot.lock().unwrap() = None;
         result?;
+        let _ = &call;
         Ok(if suppress {
             HandlerOutcome::Suppressed
         } else {
             HandlerOutcome::Handled
-        })
-        .map(|o| {
-            let _ = &call;
-            o
         })
     }
 
@@ -385,7 +389,7 @@ fn install_loom_global(lua: &Lua, slot: &Slot) -> Result<(), DirectiveError> {
         let slot = slot.clone();
         let f = lua
             .create_function(move |lua, path: String| {
-                let g = slot.borrow();
+                let g = slot.lock().unwrap();
                 let Some(ds) = g.as_ref() else {
                     return Ok(LuaValue::Nil);
                 };
@@ -403,7 +407,7 @@ fn install_loom_global(lua: &Lua, slot: &Slot) -> Result<(), DirectiveError> {
         let slot = slot.clone();
         let f = lua
             .create_function(move |_, (path, value): (String, LuaValue)| {
-                let g = slot.borrow();
+                let g = slot.lock().unwrap();
                 let Some(ds) = g.as_ref() else {
                     return Ok(());
                 };
@@ -420,7 +424,7 @@ fn install_loom_global(lua: &Lua, slot: &Slot) -> Result<(), DirectiveError> {
         let slot = slot.clone();
         let f = lua
             .create_function(move |_, (path, op, rhs): (String, String, LuaValue)| {
-                let g = slot.borrow();
+                let g = slot.lock().unwrap();
                 let Some(ds) = g.as_ref() else {
                     return Ok(());
                 };
@@ -451,7 +455,7 @@ fn install_loom_global(lua: &Lua, slot: &Slot) -> Result<(), DirectiveError> {
         let slot = slot.clone();
         let f = lua
             .create_function(move |_, (name, payload): (String, Option<Table>)| {
-                let g = slot.borrow();
+                let g = slot.lock().unwrap();
                 let Some(ds) = g.as_ref() else {
                     return Ok(());
                 };
@@ -483,7 +487,7 @@ fn install_loom_global(lua: &Lua, slot: &Slot) -> Result<(), DirectiveError> {
         let slot = slot.clone();
         let f = lua
             .create_function(move |_, ()| {
-                if let Some(ds) = slot.borrow_mut().as_mut() {
+                if let Some(ds) = slot.lock().unwrap().as_mut() {
                     ds.suppress = true;
                 }
                 Ok(())

@@ -1,0 +1,31 @@
+# Bell Tower
+entry: opening
+
+COHORT Initiates
+  label: The Initiates
+  capacity: 24
+
+COHORT Singers
+  label: The Singers
+  capacity: 8
+
+LOCATION BellTower
+  label: The Bell Tower
+  ambient: bell-loop
+  capacity: 8
+
+LOCATION Nave
+  label: The Nave
+  capacity: 32
+
+== opening
+
+BELLKEEPER
+  (improv duration: 45s, advance on: any [pedal, speech(let us begin), gesture(Bow)])
+  (Greet warmly. Find out why they came.)
+
+<broadcast: cohort(Singers) and location(BellTower)>
+  NARRATOR
+    The bell groans on its mounting.
+
+-> END

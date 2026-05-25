@@ -184,9 +184,21 @@ snapshot and rebroadcasts to other subscribers.
   splices change-set deltas into the `LoomDoc` and replays remote
   commits back into the editor. Cursor stability across remote edits
   is out of scope for this round.
-- **Deferred**: swapping the Zustand workspace store to read from
-  `doc.get_text(path)` and route writes through CRDT ops. The
-  capability is exposed; consumers can opt in incrementally.
+- **Parallel cloud flow (landed)**: rather than swap the existing
+  Zustand `workspace.ts` store wholesale, the editor now ships a
+  sibling `session.ts` Zustand store + a Cloud sidebar panel
+  (`components/cloud/CloudPanel.tsx`) + a Remote editor panel
+  (`components/cloud/RemoteEditor.tsx`). The local FSA flow stays
+  intact; signing in through Cloud, picking a workspace, and
+  switching to the Remote panel routes the editor through `loomBinding`
+  + `LoomDoc`. The dock's `panels.tsx` was split into a pure-component
+  module plus `panel-registry.ts` to satisfy
+  `react-refresh/only-export-components`.
+- **Still deferred**: collapsing the two stores into one. Today users
+  pick "local file root" or "remote workspace" at the panel level;
+  cross-flow operations (drag a remote workspace's file out to the
+  filesystem, or vice versa) are out of scope until we know how the
+  divergent ACL/persistence rules should merge.
 
 ### Phase 5 — Presence *(server landed)*
 

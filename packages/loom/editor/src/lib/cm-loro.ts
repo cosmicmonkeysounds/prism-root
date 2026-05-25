@@ -52,11 +52,12 @@ function viewPlugin(opts: LoomBindingOptions) {
 class LoomBindingPlugin {
     private handle: SubscriptionHandle;
     private applying = false;
+    private readonly view: EditorView;
+    private readonly opts: LoomBindingOptions;
 
-    constructor(
-        private readonly view: EditorView,
-        private readonly opts: LoomBindingOptions,
-    ) {
+    constructor(view: EditorView, opts: LoomBindingOptions) {
+        this.view = view;
+        this.opts = opts;
         // Seed the editor with whatever the doc has, then watch.
         const initial = opts.doc.getText(opts.path);
         if (initial != null && initial !== view.state.doc.toString()) {

@@ -17,16 +17,26 @@ export interface AuthClientOptions {
 }
 
 export class LoomAuthClient {
-    constructor(private readonly opts: AuthClientOptions) {}
+    private readonly opts: AuthClientOptions;
+
+    constructor(opts: AuthClientOptions) {
+        this.opts = opts;
+    }
 
     async register(username: string, password: string): Promise<AuthResponse> {
-        const res = await this.post("/api/auth/register", { username, password });
+        const res = await this.post<AuthResponse>("/api/auth/register", {
+            username,
+            password,
+        });
         this.persist(res);
         return res;
     }
 
     async login(username: string, password: string): Promise<AuthResponse> {
-        const res = await this.post("/api/auth/login", { username, password });
+        const res = await this.post<AuthResponse>("/api/auth/login", {
+            username,
+            password,
+        });
         this.persist(res);
         return res;
     }

@@ -25,6 +25,13 @@ pub fn register(registry: &mut Registry) {
     registry.register("anchor", Generic);
     registry.register("fire", FireHandler);
     registry.register("set", SetHandler);
+    // Live-performance core directives (spec §13). Implementations
+    // are intentionally surface-level — they push the generic envelope
+    // through the ledger; the live-layer mutations are routed by the
+    // playhead through `LiveStage` directly so this stays a Luau-
+    // friendly seam.
+    registry.register("broadcast", Generic);
+    registry.register("enroll", Generic);
 }
 
 /// Default handler — surfaces the call as an `Event::Directive`

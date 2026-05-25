@@ -33,6 +33,7 @@
 
 pub mod builtins;
 pub mod bundle;
+pub mod coroutine;
 pub mod directives;
 pub mod luau;
 pub mod expr;
@@ -47,10 +48,16 @@ pub mod scheduler;
 pub mod simulacra;
 
 pub use bundle::{BeatIdx, BeatRef, Bundle, FileIdx, LoomFileEntry, ProjectDiagnostic};
+pub use coroutine::{Coroutine, CoroutineStatus, Program as CoroutineProgram, Tier};
 pub use directives::{DirectiveCall, DirectiveError, Registry};
+pub use scheduler::{Budgets, Cadence, Scheduler};
 pub use luau::{register_core_builtins, LuauRegistry};
 pub use expr::{Value, World};
 pub use ledger::{ChoiceOption, Event, Ledger};
+pub use live::{
+    parse_broadcast_scope, BroadcastScope, Cohort, ImprovController, ImprovHandle, ImprovOutcome,
+    LiveError, LiveStage, Location, Participant, ParticipantId,
+};
 pub use meridian::{AxisMode, AxisState, PoolState, StatsInstance, StatsProfile, Tree};
 pub use playhead::{PlayError, Playhead, Step};
 pub use resolver::ResolveError;

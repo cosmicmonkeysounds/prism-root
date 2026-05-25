@@ -8,9 +8,12 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use loom_parser::ast::{Beat, Item, LoomFile};
+use loom_parser::ast::{
+    Beat, CohortBody, GeneratorBody, Item, LocationBody, LoomFile, SceneBody,
+};
 use loom_parser::Diagnostic;
 
+use crate::coroutine::Program;
 use crate::expr::World;
 use crate::meridian::{StatsProfile, Tree};
 use crate::simulacra::CharacterState;
@@ -101,6 +104,21 @@ pub struct Bundle {
     pub stats_profiles: HashMap<String, StatsProfile>,
     /// Compiled TREE declarations (spec §11), keyed by name.
     pub trees: HashMap<String, Tree>,
+    /// Top-level SCENE declarations (spec §12.3), keyed by name.
+    pub scenes: HashMap<String, SceneBody>,
+    /// Top-level GENERATOR declarations (spec §12.4), keyed by name.
+    pub generators: HashMap<String, GeneratorBody>,
+    /// Lowered SCENE programs ready for the scheduler.
+    pub scene_programs: HashMap<String, Program>,
+    /// Lowered top-level GENERATOR programs.
+    pub generator_programs: HashMap<String, Program>,
+    /// Character-bound generators, derived from
+    /// [`CharacterState::generators`].
+    pub bound_generators: HashMap<String, Vec<Program>>,
+    /// COHORT declarations (spec §13.1), keyed by name.
+    pub cohorts: HashMap<String, CohortBody>,
+    /// LOCATION declarations (spec §13.1), keyed by name.
+    pub locations: HashMap<String, LocationBody>,
 }
 
 impl Bundle {
@@ -154,6 +172,61 @@ impl Bundle {
                 }
             }
         }
+        // SCENE + top-level GENERATOR — independent of stats /
+        // characters; lower while we still have a borrow on the
+        // file ASTs.
+        self.scenes.clear();
+        self.generators.clear();
+        self.scene_programs.clear();
+        self.generator_programs.clear();
+        self.cohorts.clear();
+        self.locations.clear();
+        for entry in &self.files {
+            for item in &entry.file.items {
+                if let Item::Declaration(decl) = item {
+                    match decl.kind {
+                        DeclarationKind::Cohort => {
+                            if let Some(body) = &decl.cohort {
+                                self.cohorts.insert(decl.name.clone(), body.clone());
+                            }
+                        }
+                        DeclarationKind::Location => {
+                            if let Some(body) = &decl.location {
+                                self.locations.insert(decl.name.clone(), body.clone());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        for entry in &self.files {
+            for item in &entry.file.items {
+                if let Item::Declaration(decl) = item {
+                    match decl.kind {
+                        DeclarationKind::Scene => {
+                            if let Some(body) = &decl.scene {
+                                self.scenes.insert(decl.name.clone(), body.clone());
+                                self.scene_programs.insert(
+                                    decl.name.clone(),
+                                    crate::coroutine::lower_scene(&decl.name, body),
+                                );
+                            }
+                        }
+                        DeclarationKind::Generator => {
+                            if let Some(body) = &decl.generator {
+                                self.generators.insert(decl.name.clone(), body.clone());
+                                self.generator_programs.insert(
+                                    decl.name.clone(),
+                                    crate::coroutine::lower_generator(&decl.name, body),
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
         // Pass 2: CHARACTER + TRAIT.
         let empty_world = World::new();
         for entry in &self.files {
@@ -169,6 +242,35 @@ impl Bundle {
                                 &empty_world,
                             );
                             self.characters.insert(decl.name.clone(), state);
+                        }
+                    }
+                }
+            }
+        }
+        // Character-bound generators (spec §10.5): walk the parser
+        // ASTs since `CharacterState` may not surface raw bodies.
+        self.bound_generators.clear();
+        for entry in &self.files {
+            for item in &entry.file.items {
+                if let Item::Declaration(decl) = item {
+                    if matches!(decl.kind, DeclarationKind::Character | DeclarationKind::Trait) {
+                        if let Some(body) = &decl.character {
+                            let mut bound = Vec::new();
+                            for gen in &body.generators {
+                                let synth = GeneratorBody {
+                                    tier: gen.tier.clone(),
+                                    priority: gen.priority,
+                                    start_when: None,
+                                    body: gen.body.clone(),
+                                };
+                                let qualified = format!("{}.{}", decl.name, gen.name);
+                                bound.push(crate::coroutine::lower_generator(
+                                    &qualified, &synth,
+                                ));
+                            }
+                            if !bound.is_empty() {
+                                self.bound_generators.insert(decl.name.clone(), bound);
+                            }
                         }
                     }
                 }

@@ -7,19 +7,22 @@ import {
   type AddPanelPositionOptions,
   type DockviewReadyEvent,
 } from 'dockview-react'
-import { panelComponents, PANEL_ORDER, PANEL_TITLES, type PanelId } from './panels'
+import { panelComponents, PANEL_ORDER, PANEL_TITLES, type PanelId } from './panel-registry'
 
 const SHORTCUTS: Record<PanelId, { combo: string; label: string }> = {
   files: { combo: 'mod+b', label: '⌘B' },
   search: { combo: 'mod+shift+f', label: '⌘⇧F' },
   editor: { combo: 'mod+1', label: '⌘1' },
   canvas: { combo: 'mod+j', label: '⌘J' },
+  cloud: { combo: 'mod+k', label: '⌘K' },
+  remote: { combo: 'mod+2', label: '⌘2' },
 }
 
 function positionFor(api: DockviewApi, id: PanelId): AddPanelPositionOptions | undefined {
   const editor = api.getPanel('editor')
   const canvas = api.getPanel('canvas')
   const files = api.getPanel('files')
+  const remote = api.getPanel('remote')
 
   if (id === 'files') {
     const ref = editor ?? canvas
@@ -30,12 +33,23 @@ function positionFor(api: DockviewApi, id: PanelId): AddPanelPositionOptions | u
     const ref = editor ?? canvas
     return ref ? { referencePanel: ref.id, direction: 'left' } : undefined
   }
+  if (id === 'cloud') {
+    if (files) return { referencePanel: files.id, direction: 'within' }
+    const ref = editor ?? canvas
+    return ref ? { referencePanel: ref.id, direction: 'left' } : undefined
+  }
   if (id === 'editor') {
     if (canvas) return { referencePanel: canvas.id, direction: 'above' }
     if (files) return { referencePanel: files.id, direction: 'right' }
     return undefined
   }
+  if (id === 'remote') {
+    if (editor) return { referencePanel: editor.id, direction: 'within' }
+    if (canvas) return { referencePanel: canvas.id, direction: 'above' }
+    return undefined
+  }
   // canvas
+  if (remote) return { referencePanel: remote.id, direction: 'below' }
   if (editor) return { referencePanel: editor.id, direction: 'below' }
   if (files) return { referencePanel: files.id, direction: 'right' }
   return undefined
@@ -108,6 +122,22 @@ function PanelIcon({ id }: { id: PanelId }) {
         <path d="M4 4h16v16H4z" />
         <path d="M4 9h16" />
         <path d="M9 4v16" />
+      </svg>
+    )
+  }
+  if (id === 'cloud') {
+    return (
+      <svg {...common} aria-hidden>
+        <path d="M7 18a5 5 0 1 1 .8-9.94A6 6 0 0 1 19 12a4 4 0 0 1-1 7.87" />
+      </svg>
+    )
+  }
+  if (id === 'remote') {
+    return (
+      <svg {...common} aria-hidden>
+        <circle cx="12" cy="12" r="3" />
+        <path d="M3 12a9 9 0 0 1 18 0" />
+        <path d="M5 17a7 7 0 0 1 14 0" />
       </svg>
     )
   }
@@ -200,6 +230,8 @@ export function DockShell() {
       else if (k === 'f' && e.shiftKey) target = 'search'
       else if (k === 'j' && !e.shiftKey) target = 'canvas'
       else if (k === '1' && !e.shiftKey) target = 'editor'
+      else if (k === '2' && !e.shiftKey) target = 'remote'
+      else if (k === 'k' && !e.shiftKey) target = 'cloud'
       if (!target) return
       e.preventDefault()
       toggle(target)

@@ -1,0 +1,30 @@
+# Guard Patrol
+
+entry: opening
+
+SCENE patrol(character)
+  loop
+    wait until character.spotted_intruder
+    -> investigate
+
+SCENE investigate(character)
+  approach
+    -> examine
+
+  examine
+    wait until character.deduction > 60
+    -> confront
+
+  confront
+    return clue
+
+GENERATOR HarborChorus
+  tier:     ambient
+  priority: 0.3
+
+  loop
+    yield bark from Quiet night. | Stars are out. | Tide's calm.
+
+== opening
+
+The lighthouse hums.

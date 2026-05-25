@@ -1225,6 +1225,192 @@ TREE WarriorPath
     }
 
     #[test]
+    fn cohort_lowers_capacity_and_label() {
+        let src = "\
+COHORT Initiates
+  label: The Initiates
+  capacity: 24
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let decl = match &file.items[0] {
+            Item::Declaration(d) => d,
+            _ => panic!(),
+        };
+        let body = decl.cohort.as_ref().expect("cohort body lowered");
+        assert_eq!(body.label.as_deref(), Some("The Initiates"));
+        assert_eq!(body.capacity, Some(24));
+    }
+
+    #[test]
+    fn cohort_without_capacity_emits_diagnostic() {
+        let (_file, diags) = parse("COHORT Singers\n  label: The Singers\n");
+        assert!(diags.iter().any(|d| d.code == Code::L1142CohortNoCapacity));
+    }
+
+    #[test]
+    fn location_lowers_ambient_contains_capacity() {
+        let src = "\
+LOCATION BellTower
+  label: The Bell Tower
+  ambient: bell-loop
+  capacity: 8
+  contains: Nave, Belfry
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let decl = match &file.items[0] {
+            Item::Declaration(d) => d,
+            _ => panic!(),
+        };
+        let body = decl.location.as_ref().expect("location body lowered");
+        assert_eq!(body.ambient.as_deref(), Some("bell-loop"));
+        assert_eq!(body.capacity, Some(8));
+        assert_eq!(body.contains, vec!["Nave", "Belfry"]);
+    }
+
+    #[test]
+    fn improv_parenthetical_attaches_to_dialogue() {
+        let src = "\
+== opening
+
+BELLKEEPER
+  (improv duration: 45s, advance on: any [pedal, speech(anchor phrase), gesture(Bow)])
+  (Greet warmly.)
+  -> next_beat
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            _ => panic!(),
+        };
+        let dialogue = match &beat.body[0] {
+            BodyItem::Dialogue(d) => d,
+            other => panic!("expected dialogue, got {other:?}"),
+        };
+        let improv = dialogue.improv.as_ref().expect("improv directive parsed");
+        let dur = improv.duration.as_ref().expect("duration parsed");
+        assert_eq!(dur.value, 45.0);
+        assert_eq!(dur.unit, crate::ast::ImprovDurationUnit::Seconds);
+        assert_eq!(improv.advance_on.len(), 3);
+        assert_eq!(improv.quorum, crate::ast::QuorumOp::Any);
+        assert!(matches!(
+            improv.advance_on[0],
+            crate::ast::AdvanceSignal::Pedal
+        ));
+        match &improv.advance_on[1] {
+            crate::ast::AdvanceSignal::Speech { anchor } => {
+                assert_eq!(anchor, "anchor phrase")
+            }
+            other => panic!("expected speech signal, got {other:?}"),
+        }
+        // Trailing direction lands in `parenthetical`.
+        assert_eq!(dialogue.parenthetical.as_deref(), Some("Greet warmly."));
+    }
+
+    #[test]
+    fn improv_quorum_n_parses() {
+        let src = "\
+== opening
+
+WREN
+  (improv duration: 30s, advance on: quorum(2) [pedal, gesture(Bow)])
+  -> END
+";
+        let (file, _) = parse(src);
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            _ => panic!(),
+        };
+        let dialogue = match &beat.body[0] {
+            BodyItem::Dialogue(d) => d,
+            _ => panic!(),
+        };
+        let improv = dialogue.improv.as_ref().unwrap();
+        assert_eq!(improv.quorum, crate::ast::QuorumOp::N(2));
+    }
+
+    #[test]
+    fn improv_missing_duration_emits_diagnostic() {
+        let src = "\
+== opening
+
+WREN
+  (improv advance on: any [pedal])
+  -> END
+";
+        let (_file, diags) = parse(src);
+        assert!(diags
+            .iter()
+            .any(|d| d.code == Code::L1140ImprovMissingDuration));
+    }
+
+    #[test]
+    fn scene_with_multiple_states() {
+        let src = "\
+SCENE investigate(character)
+  approach
+    wait until character.at(Player.position)
+    -> examine
+
+  examine
+    wait until character.deduction > 60
+    -> confront
+
+  confront
+    return clue
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let decl = match &file.items[0] {
+            Item::Declaration(d) => d,
+            _ => panic!(),
+        };
+        assert_eq!(decl.name, "investigate");
+        let scene = decl.scene.as_ref().expect("scene body lowered");
+        assert_eq!(scene.params, vec!["character".to_string()]);
+        assert_eq!(scene.states.len(), 3);
+        assert_eq!(scene.states[0].name, "approach");
+        assert_eq!(scene.states[2].name, "confront");
+    }
+
+    #[test]
+    fn top_level_generator_with_tier_and_priority() {
+        let src = "\
+GENERATOR HarborChorus
+  tier:     ambient
+  priority: 0.3
+
+  loop
+    wait random(20s, 60s)
+    yield bark from Quiet night. | Stars are out. | Tide's calm.
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let decl = match &file.items[0] {
+            Item::Declaration(d) => d,
+            _ => panic!(),
+        };
+        let gen = decl.generator.as_ref().expect("generator body lowered");
+        assert_eq!(gen.tier.as_deref(), Some("ambient"));
+        assert_eq!(gen.priority, Some(0.3));
+        assert!(gen
+            .body
+            .iter()
+            .any(|l| l.text.trim().starts_with("yield bark from")));
+    }
+
+    #[test]
+    fn empty_generator_body_diagnoses() {
+        let src = "GENERATOR Empty\n  tier: ambient\n";
+        let (_, diags) = parse(src);
+        assert!(diags
+            .iter()
+            .any(|d| d.code == Code::L1131GeneratorMissingBody));
+    }
+
+    #[test]
     fn metadata_fence_is_collected() {
         let (file, _) = parse("== opening\n```note\nThis felt long.\n```\n");
         let beat = match &file.items[0] {

@@ -60,8 +60,11 @@ export class LoomSyncClient {
     private readonly outbox: string[] = [];
     private readonly subs = new Map<string, Subscription>();
     private closed = false;
+    private readonly opts: LoomSyncOptions;
 
-    constructor(private readonly opts: LoomSyncOptions) {}
+    constructor(opts: LoomSyncOptions) {
+        this.opts = opts;
+    }
 
     connect(): Promise<void> {
         return new Promise((resolve, reject) => {
