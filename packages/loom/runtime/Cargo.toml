@@ -15,5 +15,6 @@ serde_json = { workspace = true }
 postcard = { workspace = true }
 indexmap = { workspace = true }
 thiserror = { workspace = true }
+mlua = { workspace = true }
 loom-parser = { path = "../parser" }
 prism-core = { path = "../../prism-core" }

@@ -30,6 +30,7 @@
 pub mod ast;
 pub mod brackets;
 pub mod comments;
+pub mod decl_body;
 pub mod diagnostics;
 pub mod directives;
 pub mod keywords;

@@ -45,7 +45,14 @@ pub struct PropertyValue {
 
 /// Top-level item in a file. Declarations and beats can interleave
 /// freely (spec §3: "any declaration may live in any file").
+///
+/// `Declaration` carries the structured Simulacra / Meridian bodies
+/// inline (spec §10, §11) so the enum's footprint is dominated by it;
+/// boxing would force every consumer to thread `&Declaration` indirection
+/// for no real win. Top-level items are heap-allocated in a `Vec` so the
+/// per-variant size delta does not appear in stack frames.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 pub enum Item {
     Declaration(Declaration),
     LetBinding(LetBinding),
@@ -55,10 +62,10 @@ pub enum Item {
 /// A declaration block — `CHARACTER`, `TRAIT`, `ITEM`, `LOCATION`,
 /// `FACTION`, `STATS`, `TREE`, `GENERATOR`, `SCENE`, `COHORT`.
 ///
-/// Phase-2: the body is captured as raw indented text. The §9 mixin
-/// resolver, §10 Simulacra body, §11 Meridian primitives, §12.3
-/// Scene state machine, and §12.4 Generator coroutines are all
-/// produced from this raw body in subsequent phases.
+/// The raw body is always kept (for inheritance / unknown-kind
+/// passthrough). Structured sub-ASTs are attached for kinds the
+/// parser knows how to lower (CHARACTER / TRAIT → [`CharacterBody`];
+/// STATS → [`StatsBody`]; TREE → [`TreeBody`]).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Declaration {
     pub kind: DeclarationKind,
@@ -68,6 +75,329 @@ pub struct Declaration {
     /// Raw indented body lines, with their leading whitespace
     /// preserved relative to the opener's column.
     pub body: Vec<RawLine>,
+    /// Structured body for CHARACTER and TRAIT (spec §10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character: Option<CharacterBody>,
+    /// Structured body for STATS (spec §11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stats: Option<StatsBody>,
+    /// Structured body for TREE (spec §11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<TreeBody>,
+    /// Structured body for top-level SCENE (spec §12.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scene: Option<SceneBody>,
+    /// Structured body for top-level GENERATOR (spec §12.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generator: Option<GeneratorBody>,
+    /// Structured body for COHORT (spec §13.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cohort: Option<CohortBody>,
+    /// Structured body for LOCATION (spec §13.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<LocationBody>,
+    pub span: Span,
+}
+
+/// Structured COHORT body (spec §13.1). A cohort is a named group
+/// of participants — `Initiates`, `Singers`, … — that broadcast
+/// scopes and enroll directives target.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CohortBody {
+    /// `label:` — programme / booth-facing display name.
+    pub label: Option<String>,
+    /// Soft cap on enrolled participants; `None` is unbounded.
+    pub capacity: Option<u32>,
+    /// All `key: value` properties in source order, including the
+    /// recognised `label:` / `capacity:` keys (kept for round-trip).
+    pub properties: IndexMap<String, PropertyValue>,
+}
+
+/// Structured LOCATION body (spec §13.1). A location is a named
+/// place the show treats as first-class: ambient cues, capacity,
+/// nesting (`contains:`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct LocationBody {
+    pub label: Option<String>,
+    /// `ambient: bell-loop` — ambient cue tag bound to this place.
+    pub ambient: Option<String>,
+    /// `contains: BellTower, Nave` — child locations (parsed as a
+    /// comma-separated list of bare names).
+    pub contains: Vec<String>,
+    /// `capacity:` — soft cap on co-located participants.
+    pub capacity: Option<u32>,
+    pub properties: IndexMap<String, PropertyValue>,
+}
+
+/// One `(improv duration: 45s, advance on: any [pedal, …])`
+/// parenthetical attached to a dialogue cue (spec §13.3).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImprovDirective {
+    /// Cap on the beat's duration. `None` means "wait for a signal
+    /// indefinitely" — practical only with `quorum: all`.
+    pub duration: Option<ImprovDuration>,
+    /// Quorum semantics — `all`, `any` (default), or `quorum(N)`.
+    pub quorum: QuorumOp,
+    /// Signals that may advance the beat.
+    pub advance_on: Vec<AdvanceSignal>,
+    pub span: Span,
+}
+
+/// Numeric duration `45s` / `200ms` / `2m` (spec §13.3).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct ImprovDuration {
+    pub value: f64,
+    pub unit: ImprovDurationUnit,
+}
+
+impl ImprovDuration {
+    /// Convert to a wall-clock `Duration`.
+    pub fn to_std(self) -> std::time::Duration {
+        let secs = match self.unit {
+            ImprovDurationUnit::Ms => self.value / 1000.0,
+            ImprovDurationUnit::Seconds => self.value,
+            ImprovDurationUnit::Minutes => self.value * 60.0,
+        };
+        std::time::Duration::from_secs_f64(secs.max(0.0))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ImprovDurationUnit {
+    Ms,
+    #[default]
+    Seconds,
+    Minutes,
+}
+
+/// One signal that can advance an improv beat (spec §13.3).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AdvanceSignal {
+    /// `pedal` — stage pedal / button press.
+    Pedal,
+    /// `speech(anchor phrase)` — speech-recognition keyword.
+    Speech { anchor: String },
+    /// `gesture(Bow)` — named gesture recogniser.
+    Gesture { name: String },
+}
+
+/// `all` / `any` / `quorum(N)` advance semantics (spec §13.3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QuorumOp {
+    /// Every signal in `advance_on` must arrive before the beat
+    /// advances.
+    All,
+    /// The first matching signal wins (default).
+    #[default]
+    Any,
+    /// `quorum(N)` — N matching signals required.
+    N(u32),
+}
+
+/// Structured CHARACTER / TRAIT body (spec §10).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CharacterBody {
+    /// Free-form property lines: `voice: female_alto`, `hp: 80`,
+    /// `loot: goblin_pouch`, including the special `stats: Combat`
+    /// reference that is also surfaced as [`Self::stats_profile`].
+    pub properties: IndexMap<String, PropertyValue>,
+    /// `stats: Combat` — name of the STATS profile this character
+    /// instantiates. Sugar over `properties["stats"]`.
+    pub stats_profile: Option<String>,
+    /// `trusts X: N of M [mirror …]` etc.
+    pub disposition: Vec<DispositionAxis>,
+    /// `reacts <cond> → <tag>`.
+    pub reacts: Vec<ReactClause>,
+    /// `knows:` block, one entry per typed slot.
+    pub knowledge: Vec<KnowledgeField>,
+    /// `goal name` blocks.
+    pub goals: Vec<GoalDecl>,
+    /// `on <event>` hook blocks.
+    pub hooks: Vec<HookDecl>,
+    /// `generator name` blocks declared inside the character.
+    pub generators: Vec<GeneratorDecl>,
+}
+
+/// `trusts Player: 30 of 100 [mirror Player.trusts.Wren]` (spec §10.1).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DispositionAxis {
+    /// `trusts` / `respects` / `fears` — the verb token.
+    pub verb: String,
+    /// The target character name.
+    pub target: String,
+    pub current: f64,
+    pub max: f64,
+    pub mirror: Option<String>,
+    pub span: Span,
+}
+
+/// `reacts trust > 60 → warm` (spec §10.1).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReactClause {
+    pub condition: String,
+    pub tag: String,
+    pub span: Span,
+}
+
+/// One row of a `knows:` block (spec §10.2).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct KnowledgeField {
+    pub name: String,
+    /// Raw type spelling — `bool`, `text?`, `unknown | suspects | confirmed`.
+    pub type_spec: String,
+    /// Raw default expression text, if `= …` was given.
+    pub default: Option<String>,
+    pub span: Span,
+}
+
+/// A `goal name` block (spec §10.3).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct GoalDecl {
+    pub name: String,
+    pub priority: Option<f64>,
+    pub active_when: Option<String>,
+    pub completes_when: Option<String>,
+    pub fails_when: Option<String>,
+    pub drives: Option<String>,
+    pub on_complete: Option<String>,
+    pub on_fail: Option<String>,
+    pub span: Span,
+}
+
+/// An `on <event>` hook (spec §10.4).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HookDecl {
+    /// The leading event clause, normalised — whitespace collapsed,
+    /// `on ` prefix stripped. Examples: `meeting Player`,
+    /// `trust passes 80`, `cue bell_strike_loud`, `Time.hour == 22`,
+    /// `Participant enters Lighthouse`, `event bell_acknowledged`.
+    pub event: String,
+    /// Indented body — raw lines preserved so playhead / scheduler
+    /// can lower them later (typically diverts + directives).
+    pub body: Vec<RawLine>,
+    pub span: Span,
+}
+
+/// A `generator name` block — character-bound or top-level (spec §10.5, §12.4).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct GeneratorDecl {
+    pub name: String,
+    /// `tier: ambient | active | focal`.
+    pub tier: Option<String>,
+    pub priority: Option<f64>,
+    /// Raw indented body lines (the at/every/when/loop machinery is
+    /// lowered by the scheduler at runtime).
+    pub body: Vec<RawLine>,
+    pub span: Span,
+}
+
+/// Structured top-level SCENE body (spec §12.3).
+///
+/// A SCENE is a multi-step labelled coroutine. The default
+/// (unnamed) state collects body items that appear before any
+/// labelled sub-state opener; `states` carries each labelled state.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SceneBody {
+    /// Parameter list from the opener line, e.g.
+    /// `SCENE patrol(character, route)` → `["character", "route"]`.
+    pub params: Vec<String>,
+    /// `tier: focal | active | ambient` (spec §12.5).
+    pub tier: Option<String>,
+    /// `priority: <number>` (spec §12.5).
+    pub priority: Option<f64>,
+    /// Body items that appear before any labelled state opener —
+    /// the implicit entry sequence. For single-state scenes this is
+    /// the whole body.
+    pub entry: Vec<RawLine>,
+    /// Labelled inner states (`approach`, `examine`, `confront`, …).
+    pub states: Vec<SceneState>,
+}
+
+/// One labelled state inside a [`SceneBody`].
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SceneState {
+    pub name: String,
+    pub body: Vec<RawLine>,
+    pub span: Span,
+}
+
+/// Structured top-level GENERATOR body (spec §12.4).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct GeneratorBody {
+    pub tier: Option<String>,
+    pub priority: Option<f64>,
+    /// `on boot` / `on <event>` start gating. When `None` the
+    /// generator is spawned automatically when the bundle loads.
+    pub start_when: Option<String>,
+    /// Raw indented body — the at/every/loop machinery is lowered
+    /// by the coroutine runtime.
+    pub body: Vec<RawLine>,
+}
+
+/// Structured STATS body (spec §11).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct StatsBody {
+    pub attributes: Vec<AttributeDecl>,
+    pub axes: Vec<AxisDecl>,
+    pub pools: Vec<PoolDecl>,
+    pub stats: Vec<StatExprDecl>,
+}
+
+/// `attribute strength = 10, range 1 to 30` (spec §11).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AttributeDecl {
+    pub name: String,
+    pub default: f64,
+    pub min: f64,
+    pub max: f64,
+    pub span: Span,
+}
+
+/// `axis name { mode: …, curve: … }` (spec §11).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AxisDecl {
+    pub name: String,
+    /// `xp_curve` / `use_tracking` / `point_buy` / `milestone` /
+    /// `narrative_trigger` / `sdk_controlled`.
+    pub mode: Option<String>,
+    pub curve: Option<String>,
+    /// `on advance: …` — raw directive text.
+    pub on_advance: Option<String>,
+    pub span: Span,
+}
+
+/// `pool name { max:, regen:, cost: }` (spec §11).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PoolDecl {
+    pub name: String,
+    pub max: Option<String>,
+    pub regen: Option<String>,
+    pub cost: Option<String>,
+    pub span: Span,
+}
+
+/// `stat name = expr` — computed stat (spec §11).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StatExprDecl {
+    pub name: String,
+    pub expression: String,
+    pub span: Span,
+}
+
+/// Structured TREE body (spec §11).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TreeBody {
+    pub nodes: Vec<TreeNodeDecl>,
+}
+
+/// `node name { cost, requires, effect }` (spec §11).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TreeNodeDecl {
+    pub name: String,
+    pub cost: Option<String>,
+    pub requires: Option<String>,
+    /// `effect: …` lines — there can be more than one.
+    pub effects: Vec<String>,
     pub span: Span,
 }
 
@@ -200,6 +530,13 @@ pub struct DialogueBlock {
     /// speaker. Additional inline parens inside the dialogue body
     /// appear in `lines` as `DialogueLine::Parenthetical`.
     pub parenthetical: Option<String>,
+    /// `(improv duration: 45s, advance on: any [pedal, …])` block
+    /// attached to the speaker (spec §13.3). Parsed out of the
+    /// leading parenthetical when it opens with `improv`. The
+    /// trailing `(directions to the performer)` lives in
+    /// [`Self::parenthetical`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub improv: Option<ImprovDirective>,
     pub lines: Vec<DialogueLine>,
     pub span: Span,
 }

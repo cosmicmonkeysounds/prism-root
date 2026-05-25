@@ -316,6 +316,13 @@ pub trait Handler: Send + Sync {
 #[derive(Default)]
 pub struct Registry {
     handlers: HashMap<String, Box<dyn Handler>>,
+    /// Optional Luau bridge (spec §14). Consulted *after* the
+    /// trait-object handler map, so the syntactic-form fast paths
+    /// (`set`, `fire`, `anchor`, `pause`) remain hand-handled while
+    /// every other directive (`sfx`, `cue`, `spawn`, `heal`, …) and
+    /// any extension-author `directive name(args) end` definition is
+    /// served from Lua.
+    pub(crate) luau: Option<crate::luau::LuauRegistry>,
 }
 
 impl Registry {
@@ -327,6 +334,11 @@ impl Registry {
     }
     pub fn contains(&self, name: &str) -> bool {
         self.handlers.contains_key(name)
+            || self
+                .luau
+                .as_ref()
+                .map(|l| l.contains(name))
+                .unwrap_or(false)
     }
     pub fn get(&self, name: &str) -> Option<&dyn Handler> {
         self.handlers.get(name).map(|h| h.as_ref())
@@ -334,7 +346,23 @@ impl Registry {
     pub fn with_builtins() -> Self {
         let mut r = Self::new();
         crate::builtins::register(&mut r);
+        // Best-effort: attach a Luau registry with the core
+        // non-syntactic directives. If the Luau state fails to
+        // initialise the registry still works for Rust handlers.
+        if let Ok(luau) = crate::luau::LuauRegistry::with_core_builtins() {
+            r.luau = Some(luau);
+        }
         r
+    }
+    /// Attach a pre-built Luau registry (extension loading, custom
+    /// `loom` globals, …). Replaces any existing one.
+    pub fn with_luau(mut self, luau: crate::luau::LuauRegistry) -> Self {
+        self.luau = Some(luau);
+        self
+    }
+    /// Borrow the Luau registry if one is attached.
+    pub fn luau(&self) -> Option<&crate::luau::LuauRegistry> {
+        self.luau.as_ref()
     }
 }
 
@@ -351,9 +379,20 @@ pub fn dispatch(
     world: &mut World,
     ledger: &mut Ledger,
 ) -> Result<DispatchResult, DirectiveError> {
-    let handler = registry
-        .get(&call.kind)
-        .ok_or_else(|| DirectiveError::UnknownKind(call.kind.clone()))?;
+    // Trait-object handlers (syntactic-form fast paths + legacy
+    // Rust handlers) win. If the kind is not in the handler map but
+    // is in the Luau registry, route there.
+    let handler = match registry.get(&call.kind) {
+        Some(h) => h,
+        None => {
+            if let Some(luau) = registry.luau() {
+                if luau.contains(&call.kind) {
+                    return luau.dispatch(call, world, ledger);
+                }
+            }
+            return Err(DirectiveError::UnknownKind(call.kind.clone()));
+        }
+    };
 
     let positional = eval_args(&call.positional, world)?;
     let named = eval_named(&call.named, world)?;

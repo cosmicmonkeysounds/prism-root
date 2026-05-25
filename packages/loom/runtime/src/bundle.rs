@@ -11,6 +11,10 @@ use std::path::PathBuf;
 use loom_parser::ast::{Beat, Item, LoomFile};
 use loom_parser::Diagnostic;
 
+use crate::expr::World;
+use crate::meridian::{StatsProfile, Tree};
+use crate::simulacra::CharacterState;
+
 /// Index into [`Bundle::files`].
 pub type FileIdx = u32;
 /// Index of a [`Beat`] inside a file's `items` list.
@@ -89,6 +93,14 @@ pub struct Bundle {
     /// resolvable entry.
     pub entry: Option<BeatRef>,
     pub project_diagnostics: Vec<ProjectDiagnostic>,
+    /// Compiled CHARACTER / TRAIT bodies (spec §10), keyed by name.
+    /// TRAITs land in the same map so inheritance lookups don't need
+    /// a second index; the resolver refuses to spawn a TRAIT standalone.
+    pub characters: HashMap<String, CharacterState>,
+    /// Compiled STATS profiles (spec §11), keyed by name.
+    pub stats_profiles: HashMap<String, StatsProfile>,
+    /// Compiled TREE declarations (spec §11), keyed by name.
+    pub trees: HashMap<String, Tree>,
 }
 
 impl Bundle {
@@ -108,5 +120,59 @@ impl Bundle {
         self.files
             .iter()
             .flat_map(|f| f.diagnostics.iter().map(move |d| (f, d)))
+    }
+
+    /// Pre-populate `characters`, `stats_profiles`, and `trees` from
+    /// the parsed file ASTs. Idempotent — clears existing maps first
+    /// so callers can re-run after mutating `files`.
+    pub fn rebuild_simulacra(&mut self) {
+        use loom_parser::ast::DeclarationKind;
+        self.characters.clear();
+        self.stats_profiles.clear();
+        self.trees.clear();
+        // Pass 1: STATS + TREE — characters depend on profiles.
+        for entry in &self.files {
+            for item in &entry.file.items {
+                if let Item::Declaration(decl) = item {
+                    match decl.kind {
+                        DeclarationKind::Stats => {
+                            if let Some(body) = &decl.stats {
+                                self.stats_profiles.insert(
+                                    decl.name.clone(),
+                                    StatsProfile::from_body(decl.name.clone(), body),
+                                );
+                            }
+                        }
+                        DeclarationKind::Tree => {
+                            if let Some(body) = &decl.tree {
+                                self.trees
+                                    .insert(decl.name.clone(), Tree::from_body(decl.name.clone(), body));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        // Pass 2: CHARACTER + TRAIT.
+        let empty_world = World::new();
+        for entry in &self.files {
+            for item in &entry.file.items {
+                if let Item::Declaration(decl) = item {
+                    if matches!(decl.kind, DeclarationKind::Character | DeclarationKind::Trait) {
+                        if let Some(body) = &decl.character {
+                            let state = CharacterState::compile(
+                                decl.name.clone(),
+                                decl.mixin.clone(),
+                                body,
+                                &self.stats_profiles,
+                                &empty_world,
+                            );
+                            self.characters.insert(decl.name.clone(), state);
+                        }
+                    }
+                }
+            }
+        }
     }
 }

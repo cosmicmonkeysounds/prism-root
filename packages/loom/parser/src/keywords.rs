@@ -90,6 +90,85 @@ pub const SCENE_HEADING_PREFIXES: &[&str] = &["INT.", "EXT.", "INT/EXT", "INT./E
 /// target).
 pub const RESERVED_INLINE: &[&str] = &["let", "is", "with", "END"];
 
+/// Live-performance vocabulary (spec §13) — keywords the editor
+/// highlights distinctly so authors can read participant flow,
+/// broadcast scopes, and improv directives at a glance. The parser
+/// matches these positionally (inside dialogue parentheticals,
+/// COHORT / LOCATION bodies, and CHARACTER hook clauses).
+pub const LIVE_KEYWORDS: &[&str] = &[
+    "participant",
+    "Participant",
+    "enters",
+    "exits",
+    "joins",
+    "cohort",
+    "location",
+    "but",
+    "and",
+    "improv",
+    "duration",
+    "advance",
+    "on",
+    "quorum",
+    "all",
+    "any",
+    "pedal",
+    "speech",
+    "gesture",
+    "broadcast",
+    "enroll",
+];
+
+/// Inline keywords that introduce structured sub-blocks inside a
+/// CHARACTER / TRAIT / STATS / TREE body (spec §10, §11). Used by the
+/// TextMate emitter so authoring tools can highlight them distinctly
+/// from arbitrary author-defined property keys.
+pub const SIMULACRA_KEYWORDS: &[&str] = &[
+    "trusts",
+    "respects",
+    "fears",
+    "reacts",
+    "knows",
+    "mirror",
+    "of",
+    "goal",
+    "priority",
+    "active when",
+    "completes when",
+    "fails when",
+    "drives",
+    "on complete",
+    "on fail",
+    "generator",
+    "tier",
+    "spawn",
+    "run",
+    "wait",
+    "yield",
+    "loop",
+    "return",
+    "every",
+    "at",
+    "when",
+];
+
+/// Meridian primitive openers (spec §11).
+pub const MERIDIAN_KEYWORDS: &[&str] = &[
+    "attribute",
+    "axis",
+    "pool",
+    "stat",
+    "node",
+    "mode",
+    "curve",
+    "max",
+    "regen",
+    "cost",
+    "requires",
+    "effect",
+    "range",
+];
+
 /// Stable line-marker glyphs the lexer dispatches on (spec §2, §5).
 pub mod markers {
     pub const HEADING: &str = "#";

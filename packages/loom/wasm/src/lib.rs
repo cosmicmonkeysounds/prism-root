@@ -18,6 +18,9 @@
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
+pub mod loom_doc;
+pub use loom_doc::{LoomDoc, SubscriptionHandle};
+
 #[wasm_bindgen(start)]
 pub fn init() {
     // Surface Rust panics as readable JS console errors during dev.

@@ -40,10 +40,6 @@ pub fn parse(source: &str) -> (LoomFile, Vec<Diagnostic>) {
 struct Parser<'d> {
     lines: Vec<ScannedLine>,
     cursor: usize,
-    /// Reserved for Phase-3 structural diagnostics. Currently unused;
-    /// the line-classifier in `lexer` is responsible for every
-    /// diagnostic surfaced today.
-    #[allow(dead_code)]
     diagnostics: &'d mut Vec<Diagnostic>,
 }
 
@@ -54,7 +50,9 @@ impl<'d> Parser<'d> {
         while let Some(line) = self.peek() {
             match &line.kind {
                 LineKind::DeclarationOpener { .. } => {
-                    items.push(Item::Declaration(self.parse_declaration()));
+                    let mut decl = self.parse_declaration();
+                    crate::decl_body::lower(&mut decl, self.diagnostics);
+                    items.push(Item::Declaration(decl));
                 }
                 LineKind::LetBinding { .. } => {
                     items.push(Item::LetBinding(self.parse_let_binding()));
@@ -147,6 +145,13 @@ impl<'d> Parser<'d> {
             name,
             mixin,
             body,
+            character: None,
+            stats: None,
+            tree: None,
+            scene: None,
+            generator: None,
+            cohort: None,
+            location: None,
             span: Span::new(opener.span().start, end),
         }
     }
@@ -319,6 +324,7 @@ impl<'d> Parser<'d> {
         self.cursor += 1;
         let body_indent_floor = opener.indent + 1;
         let mut parenthetical = None;
+        let mut improv: Option<crate::ast::ImprovDirective> = None;
         let mut lines = Vec::new();
         let mut end = opener.span().end;
 
@@ -329,7 +335,21 @@ impl<'d> Parser<'d> {
             match &line.kind {
                 LineKind::Parenthetical(text) => {
                     let span = line.span();
-                    if parenthetical.is_none() && lines.is_empty() {
+                    let text_owned = text.clone();
+                    let trimmed_owned = text_owned.trim_start().to_string();
+                    // `(improv duration: 45s, advance on: …)` —
+                    // recognised structurally as the live-improv
+                    // directive (spec §13.3) when it leads the
+                    // dialogue. Subsequent parentheticals fall into
+                    // the standard performer-direction slot.
+                    if improv.is_none() && trimmed_owned.starts_with("improv") {
+                        let directive = parse_improv_parenthetical(
+                            &trimmed_owned,
+                            span,
+                            self.diagnostics,
+                        );
+                        improv = Some(directive);
+                    } else if parenthetical.is_none() && lines.is_empty() {
                         parenthetical = Some(text.clone());
                     } else {
                         lines.push(DialogueLine::Parenthetical(Located {
@@ -377,6 +397,7 @@ impl<'d> Parser<'d> {
         DialogueBlock {
             speaker,
             parenthetical,
+            improv,
             lines,
             span: Span::new(opener.span().start, end),
         }
@@ -673,6 +694,165 @@ fn parse_divert_params(text: &str) -> IndexMap<String, String> {
 #[allow(dead_code)]
 fn _code_used_in_diagnostics(_: Code) {}
 
+/// Parse the interior of an `(improv …)` parenthetical attached to a
+/// dialogue cue (spec §13.3). The leading `improv` token has already
+/// been recognised by the caller; the body is a comma-separated set
+/// of `key: value` chunks — currently `duration: <Ns|Nms|Nm>` and
+/// `advance on: <quorum> [<signal>, …]`.
+fn parse_improv_parenthetical(
+    text: &str,
+    span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> ImprovDirective {
+    let rest = text
+        .trim_start()
+        .strip_prefix("improv")
+        .unwrap_or(text)
+        .trim();
+    let mut duration = None;
+    let mut quorum = QuorumOp::Any;
+    let mut advance_on = Vec::new();
+
+    for chunk in split_improv_top_level(rest) {
+        let chunk = chunk.trim();
+        if chunk.is_empty() {
+            continue;
+        }
+        if let Some(rest) = chunk.strip_prefix("duration:") {
+            duration = parse_improv_duration(rest.trim());
+        } else if let Some(rest) = chunk.strip_prefix("advance on:") {
+            let (q, signals) = parse_advance_on(rest.trim(), span, diagnostics);
+            quorum = q;
+            advance_on = signals;
+        }
+    }
+    if duration.is_none() {
+        diagnostics.push(Diagnostic::error(
+            Code::L1140ImprovMissingDuration,
+            span,
+            "`(improv …)` is missing a `duration:` field",
+        ));
+    }
+    ImprovDirective {
+        duration,
+        quorum,
+        advance_on,
+        span,
+    }
+}
+
+/// Comma-split the improv body but respect bracket depth so
+/// `advance on: any [a, b, c]` stays intact.
+fn split_improv_top_level(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let bytes = text.as_bytes();
+    let mut depth = 0i32;
+    let mut last = 0usize;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b as char {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(&text[last..i]);
+                last = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&text[last..]);
+    out
+}
+
+fn parse_improv_duration(raw: &str) -> Option<ImprovDuration> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let split = raw
+        .char_indices()
+        .find(|(_, c)| c.is_ascii_alphabetic())
+        .map(|(i, _)| i);
+    let (num_part, unit_part) = match split {
+        Some(idx) => (&raw[..idx], raw[idx..].trim()),
+        None => (raw, "s"),
+    };
+    let value: f64 = num_part.trim().parse().ok()?;
+    let unit = match unit_part {
+        "ms" => ImprovDurationUnit::Ms,
+        "m" | "min" => ImprovDurationUnit::Minutes,
+        _ => ImprovDurationUnit::Seconds,
+    };
+    Some(ImprovDuration { value, unit })
+}
+
+fn parse_advance_on(
+    raw: &str,
+    span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> (QuorumOp, Vec<AdvanceSignal>) {
+    let raw = raw.trim();
+    let (quorum, list_text) = if let Some(rest) = raw.strip_prefix("all") {
+        (QuorumOp::All, rest.trim_start())
+    } else if let Some(rest) = raw.strip_prefix("any") {
+        (QuorumOp::Any, rest.trim_start())
+    } else if let Some(rest) = raw.strip_prefix("quorum") {
+        let rest = rest.trim_start();
+        let (n, after) = if let Some(stripped) = rest.strip_prefix('(') {
+            let end = stripped.find(')').unwrap_or(stripped.len());
+            let n: u32 = stripped[..end].trim().parse().unwrap_or(0);
+            let after_idx = end.saturating_add(1).min(stripped.len());
+            (n, &stripped[after_idx..])
+        } else {
+            (0, rest)
+        };
+        (QuorumOp::N(n), after.trim_start())
+    } else {
+        (QuorumOp::Any, raw)
+    };
+    let inside = list_text
+        .trim()
+        .strip_prefix('[')
+        .and_then(|s| s.rsplit_once(']').map(|(head, _)| head))
+        .unwrap_or(list_text);
+    let mut signals = Vec::new();
+    for chunk in split_improv_top_level(inside) {
+        let chunk = chunk.trim();
+        if chunk.is_empty() {
+            continue;
+        }
+        if let Some(sig) = parse_advance_signal(chunk) {
+            signals.push(sig);
+        } else {
+            diagnostics.push(Diagnostic::error(
+                Code::L1141ImprovBadSignal,
+                span,
+                format!("unknown advance signal `{chunk}`"),
+            ));
+        }
+    }
+    (quorum, signals)
+}
+
+fn parse_advance_signal(text: &str) -> Option<AdvanceSignal> {
+    let text = text.trim();
+    if text == "pedal" {
+        return Some(AdvanceSignal::Pedal);
+    }
+    if let Some(rest) = text.strip_prefix("speech") {
+        let inner = rest.trim().strip_prefix('(')?.strip_suffix(')')?;
+        return Some(AdvanceSignal::Speech {
+            anchor: inner.trim().to_string(),
+        });
+    }
+    if let Some(rest) = text.strip_prefix("gesture") {
+        let inner = rest.trim().strip_prefix('(')?.strip_suffix(')')?;
+        return Some(AdvanceSignal::Gesture {
+            name: inner.trim().to_string(),
+        });
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -909,6 +1089,139 @@ WREN
         assert!(diags
             .iter()
             .any(|d| d.code == Code::L1007UnterminatedBlockComment));
+    }
+
+    #[test]
+    fn character_body_lowers_disposition_and_knowledge() {
+        let src = "\
+CHARACTER Wren is Keeper
+  voice: female_alto
+  hp: 80
+  trusts Player: 30 of 100
+  respects Player: 50 of 100 mirror Player.respects.Wren
+  reacts trust > 60 -> warm
+  knows:
+    met_player: bool = false
+    bell_origin: unknown | suspects | confirmed = unknown
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let decl = match &file.items[0] {
+            Item::Declaration(d) => d,
+            _ => panic!(),
+        };
+        let body = decl.character.as_ref().expect("character body lowered");
+        assert_eq!(body.properties.get("voice").unwrap().value, "female_alto");
+        assert_eq!(body.disposition.len(), 2);
+        assert_eq!(body.disposition[0].verb, "trusts");
+        assert_eq!(body.disposition[0].target, "Player");
+        assert_eq!(body.disposition[0].current, 30.0);
+        assert_eq!(body.disposition[0].max, 100.0);
+        assert_eq!(
+            body.disposition[1].mirror.as_deref(),
+            Some("Player.respects.Wren")
+        );
+        assert_eq!(body.reacts.len(), 1);
+        assert_eq!(body.reacts[0].tag, "warm");
+        assert_eq!(body.knowledge.len(), 2);
+        assert_eq!(body.knowledge[0].name, "met_player");
+        assert_eq!(body.knowledge[0].default.as_deref(), Some("false"));
+    }
+
+    #[test]
+    fn character_goal_and_threshold_hook() {
+        let src = "\
+CHARACTER Wren
+  goal find_keeper
+    priority: 0.8
+    active when: Time.hour > 6
+    completes when: Wren.knows.saw_the_keeper
+    drives: search_routine
+  on trust passes 80
+    -> reveal_secret as Wren
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let decl = match &file.items[0] {
+            Item::Declaration(d) => d,
+            _ => panic!(),
+        };
+        let body = decl.character.as_ref().unwrap();
+        assert_eq!(body.goals.len(), 1);
+        let g = &body.goals[0];
+        assert_eq!(g.name, "find_keeper");
+        assert_eq!(g.priority, Some(0.8));
+        assert_eq!(g.active_when.as_deref(), Some("Time.hour > 6"));
+        assert_eq!(g.drives.as_deref(), Some("search_routine"));
+        assert_eq!(body.hooks.len(), 1);
+        assert_eq!(body.hooks[0].event, "trust passes 80");
+        assert!(!body.hooks[0].body.is_empty());
+    }
+
+    #[test]
+    fn stats_profile_lowers_primitives() {
+        let src = "\
+STATS Combat
+  attribute strength = 10, range 1 to 30
+  axis level
+    mode: xp_curve
+    curve: level * level * 50
+  pool health
+    max: max_health
+    regen: 2/s
+  stat max_health = 50 + strength * 5
+  stat damage = 8 + strength * 0.5
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let decl = match &file.items[0] {
+            Item::Declaration(d) => d,
+            _ => panic!(),
+        };
+        let s = decl.stats.as_ref().expect("stats body lowered");
+        assert_eq!(s.attributes.len(), 1);
+        assert_eq!(s.attributes[0].name, "strength");
+        assert_eq!(s.attributes[0].default, 10.0);
+        assert_eq!(s.attributes[0].min, 1.0);
+        assert_eq!(s.attributes[0].max, 30.0);
+        assert_eq!(s.axes.len(), 1);
+        assert_eq!(s.axes[0].mode.as_deref(), Some("xp_curve"));
+        assert_eq!(s.pools.len(), 1);
+        assert_eq!(s.pools[0].max.as_deref(), Some("max_health"));
+        assert_eq!(s.stats.len(), 2);
+        assert_eq!(s.stats[1].name, "damage");
+    }
+
+    #[test]
+    fn tree_lowers_nodes() {
+        let src = "\
+TREE WarriorPath
+  node armsman_1
+    cost: skill_points: 1
+    requires: axis(one_handed) >= 20
+    effect: stat(damage) += 5
+  node armsman_2
+    requires: node(armsman_1)
+    effect: stat(damage) += 5
+    effect: ability PowerAttack
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let decl = match &file.items[0] {
+            Item::Declaration(d) => d,
+            _ => panic!(),
+        };
+        let t = decl.tree.as_ref().expect("tree body lowered");
+        assert_eq!(t.nodes.len(), 2);
+        assert_eq!(t.nodes[0].name, "armsman_1");
+        assert_eq!(t.nodes[1].effects.len(), 2);
+    }
+
+    #[test]
+    fn axis_without_mode_emits_diagnostic() {
+        let src = "STATS Combat\n  axis level\n    curve: x\n";
+        let (_file, diags) = parse(src);
+        assert!(diags.iter().any(|d| d.code == Code::L1110AxisMissingMode));
     }
 
     #[test]

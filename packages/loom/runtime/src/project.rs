@@ -137,6 +137,7 @@ impl Bundle {
         self.files_by_stem = files_by_stem;
         self.entry = entry;
         self.project_diagnostics = project_diagnostics;
+        self.rebuild_simulacra();
     }
 }
 

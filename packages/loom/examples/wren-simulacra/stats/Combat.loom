@@ -1,0 +1,13 @@
+STATS Combat
+  attribute strength = 10, range 1 to 30
+
+  axis level
+    mode: xp_curve
+    curve: level * level * 50
+
+  pool health
+    max: max_health
+    regen: 2/s when not in_combat
+
+  stat max_health = 50 + strength * 5
+  stat damage = 8 + strength * 0.5

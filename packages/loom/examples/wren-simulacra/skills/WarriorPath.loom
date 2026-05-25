@@ -1,0 +1,8 @@
+TREE WarriorPath
+  node armsman_1
+    cost: 1
+    effect: stat(damage) += 5
+  node armsman_2
+    cost: 1
+    requires: node(armsman_1)
+    effect: stat(damage) += 5

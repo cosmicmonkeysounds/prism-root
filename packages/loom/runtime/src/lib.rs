@@ -34,6 +34,7 @@
 pub mod builtins;
 pub mod bundle;
 pub mod directives;
+pub mod luau;
 pub mod expr;
 pub mod ledger;
 pub mod live;
@@ -47,7 +48,13 @@ pub mod simulacra;
 
 pub use bundle::{BeatIdx, BeatRef, Bundle, FileIdx, LoomFileEntry, ProjectDiagnostic};
 pub use directives::{DirectiveCall, DirectiveError, Registry};
+pub use luau::{register_core_builtins, LuauRegistry};
 pub use expr::{Value, World};
 pub use ledger::{ChoiceOption, Event, Ledger};
+pub use meridian::{AxisMode, AxisState, PoolState, StatsInstance, StatsProfile, Tree};
 pub use playhead::{PlayError, Playhead, Step};
 pub use resolver::ResolveError;
+pub use simulacra::{
+    AxisValue, CharacterState, GoalEvent, GoalState, GoalStatus, HookEvent, HookSubscription,
+    SetOp,
+};

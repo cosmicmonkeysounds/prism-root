@@ -1,0 +1,42 @@
+# Wren Simulacra
+entry: opening
+
+CHARACTER Wren is Keeper
+  stats: Combat
+  hp: 80
+  trusts Player: 30 of 100
+  reacts trust > 60 -> warm
+
+  knows:
+    met_player: bool = false
+    saw_the_keeper: bool = false
+
+  goal find_keeper
+    priority: 0.8
+    active when: true
+    completes when: Wren.knows.saw_the_keeper
+
+  on trust passes 80
+    -> reveal_secret
+
+== opening
+  cast: Wren, Player
+  setting: Lighthouse
+
+WREN
+  You came.
+
+* Earn trust.
+  -> earn
+* Leave.
+  -> END
+
+== earn
+  cast: Wren, Player
+
+<set: Wren.trusts.Player += 60>
+
+WREN
+  Now you understand.
+
+-> END

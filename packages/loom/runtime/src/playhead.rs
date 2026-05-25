@@ -114,6 +114,9 @@ pub struct Playhead {
     /// Stack of saved queues, one per active tunnel call. A `<-`
     /// pops the most recent entry and resumes the caller's queue.
     pending_returns: Vec<VecDeque<Yield>>,
+    /// Compiled characters, cloned from the bundle so the playhead
+    /// can mutate disposition/knowledge without borrowing the bundle.
+    characters: std::collections::HashMap<String, crate::simulacra::CharacterState>,
 }
 
 #[derive(Debug)]
@@ -147,21 +150,68 @@ impl Playhead {
     pub fn with_registry(bundle: Arc<Bundle>, registry: Arc<Registry>) -> Result<Self, PlayError> {
         let entry = bundle.entry.ok_or(PlayError::NoEntry)?;
         let let_bindings = collect_let_bindings(&bundle);
+        let mut world = World::new();
+        // Publish every character's namespace before the playhead
+        // starts so dotted-path reads (`Wren.trusts.Player`,
+        // `Wren.health.max`) resolve from beat one.
+        for character in bundle.characters.values() {
+            character.publish(&mut world);
+        }
+        let characters: std::collections::HashMap<String, crate::simulacra::CharacterState> =
+            bundle.characters.clone();
         let mut p = Self {
             bundle,
             queue: VecDeque::new(),
             stack: Vec::new(),
             ledger: Ledger::default(),
-            world: World::new(),
+            world,
             registry,
             halted: false,
             awaiting_choice: false,
             let_bindings,
             taken_once_only: std::collections::HashSet::new(),
             pending_returns: Vec::new(),
+            characters,
         };
         p.enter_beat(entry);
         Ok(p)
+    }
+
+    /// Borrow a compiled CHARACTER / TRAIT by name (spec §10).
+    pub fn character(&self, name: &str) -> Option<&crate::simulacra::CharacterState> {
+        self.characters.get(name)
+    }
+
+    /// Mutate a compiled CHARACTER by name. Caller is responsible for
+    /// republishing into the world if the change is visible there.
+    pub fn character_mut(&mut self, name: &str) -> Option<&mut crate::simulacra::CharacterState> {
+        self.characters.get_mut(name)
+    }
+
+    /// Apply a `<set: path OP rhs>` mutation through the character
+    /// store first. When the path resolves to a character's
+    /// disposition or knowledge slot the character is updated and
+    /// republished into the world; otherwise this returns `false` so
+    /// the generic `World` set falls through.
+    pub fn route_set_through_character(
+        &mut self,
+        path: &[String],
+        value: &crate::expr::Value,
+        op: crate::simulacra::SetOp,
+    ) -> bool {
+        if path.len() < 3 {
+            return false;
+        }
+        let owner = path[0].clone();
+        let Some(character) = self.characters.get_mut(&owner) else {
+            return false;
+        };
+        if character.apply_set(path, value, op) {
+            character.refresh_own_reacts(&self.world);
+            character.publish(&mut self.world);
+            return true;
+        }
+        false
     }
 
     pub fn ledger(&self) -> &Ledger {
@@ -295,6 +345,36 @@ impl Playhead {
                 }
                 Yield::Directive(directive) => {
                     let call = directives::parse(&directive.raw)?;
+                    // Route `<set: Character.knows.X …>` /
+                    // `<set: Character.trusts.Target …>` through the
+                    // character store; if the path matches we surface
+                    // the world mutation as a `WorldSet` envelope and
+                    // *skip* the generic SetHandler so it doesn't
+                    // double-apply the compound op (spec §10.2).
+                    if let Some(assign) = &call.assign {
+                        let rhs_value = expr::eval(&assign.rhs, &self.world, &mut |n, _| {
+                            Err(expr::ExprError::UnknownFunction(n.into()))
+                        })
+                        .map_err(crate::directives::DirectiveError::from)?;
+                        let op = match assign.op {
+                            crate::directives::AssignOp::Set => crate::simulacra::SetOp::Assign,
+                            crate::directives::AssignOp::AddAssign => crate::simulacra::SetOp::Add,
+                            crate::directives::AssignOp::SubAssign => crate::simulacra::SetOp::Sub,
+                            _ => crate::simulacra::SetOp::Assign,
+                        };
+                        if self.route_set_through_character(&assign.path, &rhs_value, op) {
+                            let key = assign.path.join(".");
+                            let new_value = self.world.get(&key);
+                            self.ledger.push(Event::WorldSet {
+                                path: key,
+                                value: new_value.display(),
+                            });
+                            if let Some(latest) = self.ledger.events().last().cloned() {
+                                return Ok(Step::Event(latest));
+                            }
+                            continue;
+                        }
+                    }
                     let (outcome, positional, named) = directives::dispatch(
                         &call,
                         &self.registry,

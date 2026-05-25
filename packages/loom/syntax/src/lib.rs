@@ -17,8 +17,8 @@
 
 use loom_parser::ast::DeclarationKind;
 use loom_parser::keywords::{
-    declarations_with_kind, BUILTIN_DIRECTIVES, CONTRACT_KEYS, RESERVED_INLINE,
-    SYNTACTIC_DIRECTIVES,
+    declarations_with_kind, BUILTIN_DIRECTIVES, CONTRACT_KEYS, MERIDIAN_KEYWORDS, RESERVED_INLINE,
+    SIMULACRA_KEYWORDS, SYNTACTIC_DIRECTIVES,
 };
 
 /// Emit the canonical `loom.tmLanguage.json` as a serialised JSON
@@ -60,6 +60,8 @@ fn top_level_patterns() -> serde_json::Value {
         { "include": "#parenthetical" },
         { "include": "#speaker" },
         { "include": "#contract-key" },
+        { "include": "#simulacra-keyword" },
+        { "include": "#meridian-keyword" },
         { "include": "#property" },
         { "include": "#interpolation" },
     ])
@@ -77,6 +79,8 @@ fn repository() -> serde_json::Value {
     let builtin_alternation = BUILTIN_DIRECTIVES.join("|");
     let contract_alternation = CONTRACT_KEYS.join("|").replace(' ', "\\\\s+");
     let reserved_alternation = RESERVED_INLINE.join("|");
+    let simulacra_alternation = SIMULACRA_KEYWORDS.join("|").replace(' ', "\\\\s+");
+    let meridian_alternation = MERIDIAN_KEYWORDS.join("|");
 
     let mut rep = serde_json::Map::new();
 
@@ -274,6 +278,26 @@ fn repository() -> serde_json::Value {
                 "1": { "name": "keyword.other.contract.loom" },
                 "2": { "name": "punctuation.separator.key-value.loom" }
             }
+        }),
+    );
+
+    // Simulacra body keywords (spec §10): trusts/respects/fears,
+    // reacts, knows, goal, on complete / on fail, generator, …
+    rep.insert(
+        "simulacra-keyword".into(),
+        json!({
+            "match": format!("\\b({})\\b", simulacra_alternation),
+            "name": "keyword.other.simulacra.loom"
+        }),
+    );
+
+    // Meridian primitives (spec §11): attribute / axis / pool / stat
+    // / node / mode / curve / max / regen / cost / requires / effect.
+    rep.insert(
+        "meridian-keyword".into(),
+        json!({
+            "match": format!("\\b({})\\b", meridian_alternation),
+            "name": "keyword.other.meridian.loom"
         }),
     );
 

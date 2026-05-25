@@ -68,7 +68,7 @@ notify = "7"
 # definitions (`crossbeam-channel` rides along as a transitive
 # dependency of `lsp-server`).
 lsp-server = "0.7"
-lsp-types = "0.97"
+lsp-types = "0.95"
 
 # HTTP stack for `prism-relay` (Sovereign Portal SSR) and `prism-daemon`'s
 # `transport-http` feature. axum is the idiomatic Rust web framework and

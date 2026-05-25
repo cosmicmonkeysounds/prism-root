@@ -1,7 +1,12 @@
 # Loom — Multi-User Backbone
 
-Status: **Phase 1 in progress.** Co-authoring (v1) is the scope; co-playing
-plus richer transcript/session features land in v2.
+Status: **Phases 1–5 landed.** WebSocket sync + presence are live on
+`/ws`; the client wasm (`loom-wasm::LoomDoc`) and TS glue
+(`editor/src/lib/{sync,auth,presence,cm-loro}.ts`) round-trip edits
+against the server. The Zustand workspace store still owns IDB / FSA
+persistence — the CRDT-as-canonical-store swap is the remaining piece
+deferred to a Phase 4 follow-up. Co-authoring (v1) is the scope;
+co-playing plus richer transcript/session features land in v2.
 
 ## Goal
 
@@ -145,32 +150,54 @@ snapshot and rebroadcasts to other subscribers.
 - Wire `/api/tokens/*` to the `CapabilityTokenManager` capability.
 - Sessions: signed token in `Authorization: Bearer ...`.
 
-### Phase 3 — WebSocket sync
+### Phase 3 — WebSocket sync *(landed)*
 
-- `/ws` handler with `auth → subscribe → update` loop.
-- One subscriber set per workspace + a tokio broadcast channel for
-  fan-out.
-- Server reconstructs the doc on import via `LoroDoc::import`.
+- `/ws` handler with `auth → subscribe → update` loop (`packages/loom/server/src/ws.rs`).
+- One `WorkspaceHub` per workspace inside `WsHub`, each holding a
+  `tokio::sync::broadcast::Sender<WsBroadcast>` (cap 1024).
+- Auth accepts both session tokens (scope `session`) and capability
+  tokens whose `scope` matches the subscribed workspace — share-link
+  guests join the same socket the owner does.
+- The opaque-blob `CollectionHost::import_snapshot` stays the server's
+  canonical store; clients merge locally once Phase 4 lands `LoroDoc`.
 - Backpressure + reconnection are deferred to Phase 4 once we have
   real numbers.
 
-### Phase 4 — Client wasm + TS glue
+### Phase 4 — Client wasm + TS glue *(landed; store swap deferred)*
 
-- Extend `loom-wasm`:
-  - `LoomDoc` — wraps `LoroDoc`, exposes `import_snapshot`,
-    `export_update_since`, `apply_update`, `subscribe`, accessors for
-    `LoroText`.
-- TypeScript WebSocket client (`packages/loom/editor/src/lib/sync.ts`)
-  that knows the envelopes.
-- Swap the Zustand workspace store: reads come from `doc.getText(path)`,
-  writes go through CRDT ops, CodeMirror gets a Loro binding extension.
+- `loom-wasm::LoomDoc` (`packages/loom/wasm/src/loom_doc.rs`) — wraps
+  `loro::LoroDoc`, exposes `import_snapshot` / `export_snapshot` /
+  `export_updates_since(vv)` / `current_version` / `apply_update` /
+  `subscribe`, plus file CRUD on the `files: LoroMap` child
+  (`get_text` / `set_text` / `splice_text` / `delete_file` /
+  `rename_file` / `list_files`).
+- `editor/src/lib/sync.ts` — `LoomSyncClient` over the native
+  `WebSocket`. Sends `auth → subscribe`, debounces local commits
+  (50ms default) into `update` envelopes via `export_updates_since`,
+  applies remote `snapshot` / `update` / `presence` envelopes.
+- `editor/src/lib/auth.ts` — REST wrapper for `/api/auth/{register,
+  login,change}`; persists the session token under `loom.sessionToken`.
+- `editor/src/lib/presence.ts` — `PresenceTracker` (framework-free
+  observable) that the sync client feeds with server presence
+  envelopes.
+- `editor/src/lib/cm-loro.ts` — minimal CodeMirror 6 extension that
+  splices change-set deltas into the `LoomDoc` and replays remote
+  commits back into the editor. Cursor stability across remote edits
+  is out of scope for this round.
+- **Deferred**: swapping the Zustand workspace store to read from
+  `doc.get_text(path)` and route writes through CRDT ops. The
+  capability is exposed; consumers can opt in incrementally.
 
-### Phase 5 — Presence
+### Phase 5 — Presence *(server landed)*
 
-- Client publishes `{ userId, cursor: { file, line, col } }` on every
-  selection change (debounced).
-- Server fans out via `presence` envelope.
-- CodeMirror shows remote carets via a decoration set.
+- Server side rides the same `/ws` connection: each `WorkspaceHub`
+  carries a `RwLock<HashMap<peer_id, PresenceState>>` keyed by a
+  uuid-per-connection. Every `presence` envelope replaces that peer's
+  entry and broadcasts the full peer list (originator included) so
+  the joiner sees their own caret reflected.
+- Departures are emitted on `unsubscribe` and on socket teardown.
+- Client side (debounced selection → envelope, CodeMirror remote
+  carets) lands with Phase 4.
 
 ### Phase 6 — File System Access fallback
 

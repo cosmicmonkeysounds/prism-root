@@ -76,6 +76,38 @@ pub enum Event {
     ConditionalArm { condition: Option<String> },
     /// A top-level `let` binding was (re-)evaluated.
     LetEvaluated { name: String, value: String },
+    /// A `spawn` / `run` constructed a new coroutine (spec §12.3).
+    SceneSpawned {
+        scene: String,
+        coroutine: u64,
+        tier: String,
+    },
+    /// One coroutine step advanced a SCENE through a state
+    /// transition (`-> state`).
+    SceneAdvanced {
+        scene: String,
+        coroutine: u64,
+        state: String,
+    },
+    /// A SCENE returned and the coroutine completed (spec §12.3).
+    SceneCompleted {
+        scene: String,
+        coroutine: u64,
+        value: String,
+    },
+    /// A GENERATOR or SCENE coroutine yielded ambient content
+    /// (`yield bark from list`, `yield with_chance(p) body`).
+    GeneratorYielded {
+        generator: String,
+        coroutine: u64,
+        text: String,
+    },
+    /// A coroutine is parked on a `wait` until its predicate clears
+    /// or its duration elapses (spec §12.3).
+    CoroutineWaiting {
+        coroutine: u64,
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,5 +1,7 @@
 //! HTTP route handlers. Each submodule owns one cluster of endpoints.
-//! Phase 1 ships only the health probe; auth, workspaces, tokens, and
-//! the `/ws` upgrade follow in Phases 2 and 3.
+//! The `/ws` upgrade lands in Phase 3 alongside CRDT sync.
 
+pub mod auth;
 pub mod health;
+pub mod tokens;
+pub mod workspaces;

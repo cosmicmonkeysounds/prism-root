@@ -29,12 +29,25 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+base64 = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+# WebSocket support — `axum` already enables its `ws` feature at the
+# workspace level (see root `Cargo.toml`). `futures-util` backs the
+# split-sink / split-stream pattern the `/ws` handler uses. Crate-local
+# rather than workspace-level — no other crate needs it today.
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }
 http-body-util = "0.1"
+# Real WebSocket client for the Phase 3 integration tests. `axum`'s
+# `oneshot` plumbing can't drive a true upgrade handshake, so the WS
+# suite spins up `axum::serve` on `127.0.0.1:0` and connects via
+# `tokio_tungstenite`.
+tokio-tungstenite = "0.24"
