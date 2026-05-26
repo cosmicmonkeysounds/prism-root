@@ -106,11 +106,7 @@ impl Workspace {
     /// `textDocument/publishDiagnostics`.
     pub fn diagnostics_for(&self, uri: &Url) -> Option<PublishDiagnosticsParams> {
         let doc = self.docs.get(uri)?;
-        let diagnostics = doc
-            .diagnostics
-            .iter()
-            .map(to_lsp_diagnostic)
-            .collect();
+        let diagnostics = doc.diagnostics.iter().map(to_lsp_diagnostic).collect();
         Some(PublishDiagnosticsParams {
             uri: uri.clone(),
             diagnostics,

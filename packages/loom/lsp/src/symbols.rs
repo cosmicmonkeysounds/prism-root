@@ -1,8 +1,8 @@
 //! Document symbol tree: beats, characters, traits, stats profiles,
 //! scenes, generators per file.
 
-use lsp_types::{DocumentSymbol, DocumentSymbolResponse, SymbolKind, Url};
 use loom_parser::ast::{DeclarationKind, Item};
+use lsp_types::{DocumentSymbol, DocumentSymbolResponse, SymbolKind, Url};
 
 use crate::workspace::{span_to_range, Workspace};
 

@@ -235,6 +235,70 @@ mod tests {
     }
 
     #[test]
+    fn required_slot_emits_diagnostic_and_skips_instantiation() {
+        let bundle = Bundle::from_sources([(
+            "main.loom",
+            "# Show\nentry: opening\n\n== opening\n  cast: Keeper\n\nDone.\n\nCHARACTER Keeper\n  voice: any\n",
+        )]);
+        assert!(bundle.project_diagnostics.iter().any(|d| matches!(
+            d,
+            ProjectDiagnostic::RequiredSlotUnfilled { character, slot }
+                if character == "Keeper" && slot == "voice"
+        )));
+        assert!(!bundle.characters.contains_key("Keeper"));
+    }
+
+    #[test]
+    fn child_character_fills_required_slot_from_parent() {
+        let bundle = Bundle::from_sources([(
+            "main.loom",
+            "# Show\nentry: opening\n\n== opening\n\nDone.\n\nCHARACTER Keeper\n  voice: any\n\nCHARACTER Wren is Keeper\n  voice: female_alto\n",
+        )]);
+        // Wren fills voice; Keeper does not.
+        assert!(bundle.characters.contains_key("Wren"));
+        assert!(bundle.project_diagnostics.iter().any(|d| matches!(
+            d,
+            ProjectDiagnostic::RequiredSlotUnfilled { character, .. } if character == "Keeper"
+        )));
+    }
+
+    #[test]
+    fn item_inherits_parent_properties() {
+        let bundle = Bundle::from_sources([(
+            "main.loom",
+            "# Show\nentry: opening\n\n== opening\n\nDone.\n\nITEM LootBag\n  contents: list of ITEM = []\n  gold:     int          = 0\n\nITEM goblin_pouch is LootBag\n  gold:     3\n",
+        )]);
+        assert!(
+            bundle.project_diagnostics.is_empty(),
+            "{:?}",
+            bundle.project_diagnostics
+        );
+        let pouch = bundle.items.get("goblin_pouch").expect("pouch present");
+        // contents inherited from LootBag, gold overridden to 3.
+        let names: Vec<_> = pouch.properties.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"contents"));
+        assert!(names.contains(&"gold"));
+        let gold = pouch.properties.iter().find(|p| p.name == "gold").unwrap();
+        // Override carries the literal `3` as either the raw type
+        // spelling (when the line was `gold: 3`) or the default.
+        let value = gold
+            .default
+            .clone()
+            .or_else(|| gold.raw_type.clone())
+            .unwrap_or_default();
+        assert_eq!(value, "3");
+    }
+
+    #[test]
+    fn faction_parses_into_bundle() {
+        let bundle = Bundle::from_sources([(
+            "main.loom",
+            "# Show\nentry: opening\n\n== opening\n\nDone.\n\nFACTION Guild\n  members: list of CHARACTER = []\n",
+        )]);
+        assert!(bundle.factions.contains_key("Guild"));
+    }
+
+    #[test]
     fn split_stem_and_qualifier_handles_nested_paths() {
         let (stem, qual) = split_stem_and_qualifier(Path::new("beats/act_two/revelation.loom"));
         assert_eq!(stem, "revelation");

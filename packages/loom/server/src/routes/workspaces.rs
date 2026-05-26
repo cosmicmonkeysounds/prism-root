@@ -96,10 +96,7 @@ pub async fn get_snapshot(
     if meta.owner != auth.username {
         return Err(ApiError::Forbidden);
     }
-    let bytes = state
-        .collections()
-        .export_snapshot(&id)
-        .unwrap_or_default();
+    let bytes = state.collections().export_snapshot(&id).unwrap_or_default();
     Ok(Bytes::from(bytes))
 }
 

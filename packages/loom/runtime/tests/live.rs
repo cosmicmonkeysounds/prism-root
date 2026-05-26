@@ -7,10 +7,10 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use loom_parser::ast::{AdvanceSignal, ImprovDirective, ImprovDuration, ImprovDurationUnit, QuorumOp};
-use loom_runtime::{
-    parse_broadcast_scope, Bundle, ImprovOutcome, Ledger, LiveStage,
+use loom_parser::ast::{
+    AdvanceSignal, ImprovDirective, ImprovDuration, ImprovDurationUnit, QuorumOp,
 };
+use loom_runtime::{parse_broadcast_scope, Bundle, ImprovOutcome, Ledger, LiveStage};
 
 fn example_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -49,10 +49,13 @@ fn bell_tower_drives_a_live_stage_through_broadcast() {
     }
     stage.enroll("alice", "Singers", &mut ledger).unwrap();
     stage.enroll("bob", "Singers", &mut ledger).unwrap();
-    stage.participant_enters("alice", "BellTower", &mut ledger).unwrap();
-    stage.participant_enters("carol", "BellTower", &mut ledger).unwrap();
-    let scope =
-        parse_broadcast_scope("cohort(Singers) and location(BellTower)").unwrap();
+    stage
+        .participant_enters("alice", "BellTower", &mut ledger)
+        .unwrap();
+    stage
+        .participant_enters("carol", "BellTower", &mut ledger)
+        .unwrap();
+    let scope = parse_broadcast_scope("cohort(Singers) and location(BellTower)").unwrap();
     let hits = scope.evaluate(&stage);
     assert_eq!(hits.len(), 1);
     assert!(hits.contains("alice"));

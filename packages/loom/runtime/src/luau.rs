@@ -92,6 +92,21 @@ pub struct LuauRegistry {
     slot: Slot,
 }
 
+// SAFETY: `mlua::Lua` without the workspace-wide `send` feature is
+// `!Send` + `!Sync` because the underlying Lua state is
+// single-threaded. We do **not** turn on `send` workspace-wide — that
+// would force `prism-core`'s `Rc<RefCell<…>>`-backed bindings and the
+// `prism-ui-runtime` closures that capture them into a
+// `Send`-compatible shape, which is a workspace-spanning refactor not
+// in scope here. The callers we ship — `loom-runtime` tests
+// (synchronous, single thread) and `loom-server::play::PlaySession`
+// (always behind an `RwLock<PlaySession>` and only touched from one
+// tokio task at a time) — uphold the same single-threaded exclusion
+// contract. If a future caller shares a `LuauRegistry` across threads
+// concurrently, this contract is the invariant they must keep.
+unsafe impl Send for LuauRegistry {}
+unsafe impl Sync for LuauRegistry {}
+
 impl LuauRegistry {
     /// Build a fresh registry with the `loom` global wired up.
     pub fn new() -> Result<Self, DirectiveError> {
@@ -226,12 +241,7 @@ impl LuauRegistry {
                 suppress: false,
             });
         }
-        let result = self.invoke(
-            ctx.kind,
-            ctx.positional,
-            ctx.named,
-            ctx.assign,
-        );
+        let result = self.invoke(ctx.kind, ctx.positional, ctx.named, ctx.assign);
         let suppress = self
             .slot
             .lock()
@@ -258,9 +268,9 @@ impl LuauRegistry {
     ) -> Result<(), DirectiveError> {
         let registry: Table = self.lua.globals().get("_loom").map_err(map_lua_err)?;
         let handlers: Table = registry.get("handlers").map_err(map_lua_err)?;
-        let func: Function = handlers.get(name).map_err(|_| {
-            DirectiveError::UnknownKind(name.to_string())
-        })?;
+        let func: Function = handlers
+            .get(name)
+            .map_err(|_| DirectiveError::UnknownKind(name.to_string()))?;
 
         let mut args: Vec<LuaValue> = Vec::new();
         // Spec §14.1: positional first.
@@ -272,11 +282,8 @@ impl LuauRegistry {
         if !named.is_empty() || assign.is_some() {
             let t = self.lua.create_table().map_err(map_lua_err)?;
             for (k, v) in named {
-                t.set(
-                    k.as_str(),
-                    value_to_lua(&self.lua, v).map_err(map_lua_err)?,
-                )
-                .map_err(map_lua_err)?;
+                t.set(k.as_str(), value_to_lua(&self.lua, v).map_err(map_lua_err)?)
+                    .map_err(map_lua_err)?;
             }
             if let Some(a) = assign {
                 t.set("path", a.path.join(".")).map_err(map_lua_err)?;
@@ -465,7 +472,9 @@ fn install_loom_global(lua: &Lua, slot: &Slot) -> Result<(), DirectiveError> {
                     for pair in t.pairs::<LuaValue, LuaValue>() {
                         let (k, v) = pair.map_err(mlua::Error::external)?;
                         let key = match k {
-                            LuaValue::String(s) => s.to_str().map(|s| s.to_string()).unwrap_or_default(),
+                            LuaValue::String(s) => {
+                                s.to_str().map(|s| s.to_string()).unwrap_or_default()
+                            }
                             other => format!("{other:?}"),
                         };
                         entries.push((key, lua_to_value(&v).display()));
@@ -540,7 +549,16 @@ pub fn register_core_builtins(reg: &mut LuauRegistry) -> Result<(), DirectiveErr
     // (`set`, `fire`, `pause`, `anchor` are syntactic forms — they live
     // in the trait-object registry and never reach Luau.)
     for name in [
-        "sfx", "cue", "spawn", "cancel", "goal", "broadcast", "enroll", "goto", "compose", "heal",
+        "sfx",
+        "cue",
+        "spawn",
+        "cancel",
+        "goal",
+        "broadcast",
+        "enroll",
+        "goto",
+        "compose",
+        "heal",
         "flash",
     ] {
         reg.register_rust(name, |_, _: Variadic<LuaValue>| Ok(LuaValue::Nil))?;

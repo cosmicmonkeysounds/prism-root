@@ -99,29 +99,136 @@ definition` (jump from divert / cue to declaration), `textDocument/
 documentSymbol` (per-file outline). Diagnostics flow straight from
 `loom_parser::Diagnostic` to `publishDiagnostics`.
 
-Still to come: hook-drain at playhead yield (the `match_hooks` work),
-spawn/run directive wiring through the playhead, booth live-patching
-UX (spec §13.4), the four remaining axis modes
-(`use_tracking` / `point_buy` / `milestone` / `sdk_controlled` — see
-TODO at `packages/loom/runtime/src/meridian.rs` ~`AxisMode::PointBuy`),
-TRAIT mixin merge into CHARACTER bodies, and CodeMirror remote-cursor
-preservation in `editor/src/lib/cm-loro.ts`.
+Syntactic-form fillers landed 2026-05-25: `<match: expr>` dispatches
+to the first bare-word arm matching the scrutinee's display form
+(falls through silently when no arm matches); `<each visit>` picks
+`first` / `then` / `finally` based on the enclosing beat's visit
+count (1→first, 2→then, 3+→finally); `<after: cond> … <otherwise>`
+latches the post-condition body to subsequent visits via per-beat
+`Event::AfterLatched`; `<let: name = expr>` introduces an inline
+scope-local binding into the surrounding world scope; `<shuffle: a |
+b | c>` emits a deterministic pseudo-random variant (ledger-length
+modulo until the workspace adds the `rand` crate); `<cycle: a | b |
+c>` advances a per-anchor counter keyed by the directive's source
+byte offset and emits variants in order.
 
-## Multi-user (Phases 1–5 landed)
+Typed-slot grammar + ITEM/FACTION composition landed 2026-05-25:
+`loom_parser` lifts every property line (`voice: any`,
+`home: any of LOCATION`, `range 0 to 100 = 50`,
+`unknown | suspects | confirmed`, `list of RUMOUR`,
+`map of CHARACTER to int`, `text?`) into a structured `SlotType` on
+the new `Property` carrier (spec §8). ITEM and FACTION are first-class
+kinds now (`ItemBody` / `FactionBody`) with `is X, Y` inheritance
+resolved by a shared `merge_properties`; `Bundle::items` /
+`Bundle::factions` index the merged result. Beats split their
+parameter list at parse time (`== ask_about(topic, NPC)` →
+`Beat.params == ["topic", "NPC"]`) so diagnostics + LSP completion
+have the declared param surface. Spec §8's required-hole rule is
+enforced at materialisation: `Bundle::rebuild_simulacra` skips any
+CHARACTER whose inherited + own typed slots leave an unfilled
+`any`-shaped hole and reports
+`ProjectDiagnostic::RequiredSlotUnfilled { character, slot }`.
+Answer-slot fill at divert call sites (spec §7 + §16) is captured
+into `Divert::To::slots` — an indented `<name>:` block under the
+divert lowers as a `Vec<BodyItem>` keyed by slot name; the
+matching beat-side `slot: <name>` line lands as
+`BodyItem::SlotPlaceholder` ready for `<match:>` arm expansion
+(playhead wiring is a follow-up — TODO at `lower_item`).
+
+Expression + scoping closures landed 2026-05-25: list comprehensions
+(`[c for c in Characters where c.faction == Player.faction]`, spec
+§12.1) parse + evaluate through the native expression engine, with
+virtual world collections (`Characters` / `Participants` / `Items`)
+published via `World::set_collection`. Ledger queries grew the
+scoped `since(scope, name)` form and `last(target, speaker)` lookup
+(spec §12.2). Coroutines lower `at 6am` / `at noon` / `at 6:30am`
+into a `Step::WaitUntilClock` opcode that polls `Time.hour` /
+`Time.minute` (spec §10.5), and GENERATOR `start_when` is wired into
+`Program.start_when` so the coroutine sits in `Waiting` until the
+predicate clears. Multi-speaker cues (`DOCKHAND | FISHER`) split
+into `DialogueBlock.speakers: Vec<String>` and ride alongside
+`Event::Dialogue.speakers` so live booths can address every
+performer. Beat-scope modifier `-> orientation as Participant`
+parses into `Divert::To.scope_as` and the playhead overlays
+`<scope>.<name>` aliases when evaluating expressions inside the
+scoped beat (spec §13.1). Parser surface for `milestones:` on axis
+declarations populates `AxisDecl.milestones`, which threads through
+to `AxisState.milestones` at instance time.
+
+Simulacra composition + hook coverage landed 2026-05-26: hook events
+grew the symmetric `on <verb> drops below N` downward-cross kind, the
+`on Participant exits LOCATION` pair to `enters`, and the top-level
+`on participant joins` hook fed by `Event::ParticipantJoined`. The
+exits derivation is synthesised at hook-drain time from consecutive
+`ParticipantEnteredLocation` envelopes (the live stage owns the
+state). CHARACTER / TRAIT inheritance learned `on <event>: none`
+suppression (spec §9.5) and a `super` body marker (spec §9.4) — both
+resolved at `Bundle::rebuild_simulacra` merge time so the runtime
+hook list is already composed. Knowledge writes are schema-validated
+at `apply_set` time: `bool` and sum (`unknown | suspects | confirmed`)
+slots reject out-of-band values via `DirectiveError::BadArgs`, and a
+new `Event::KnowledgeChanged { character, field, value }` envelope
+replaces the generic `WorldSet` for `Character.knows.*` writes
+(spec §10.2). Non-knowledge writes keep `WorldSet` so disposition
+threshold crossings continue to fire.
+
+Still to come: booth live-patching UX (spec §13.4), `<run:>` as a
+true awaiting form (today it's a synchronous inline drive — fine for
+the §16 worked example, but a real `Step::Awaiting(CoroutineHandle)`
+seam is needed once a scenario needs the playhead to interleave
+visible steps with a long-running coroutine), proper `rand` wiring
+for `<shuffle:>` (today it picks deterministically from ledger
+length), beat-local / scene-local / `local let` scope-stack lifetime
+tracking on the playhead (today every `let` is project-global), and
+CodeMirror remote-cursor preservation in `editor/src/lib/cm-loro.ts`.
+
+## Multi-user (Phases 1–8 landed)
 
 `loom-server` is the sibling crate that backs collaborative authoring
 of `.loom` projects. It depends only on `prism-core` (not `prism-relay`)
-so the binary stays small. Phase 1 (module wiring + `/api/health`),
-Phase 2 (auth + multi-workspace REST + capability tokens), Phase 3
-(WebSocket sync over `/ws`, broadcast fan-out), Phase 5 (server-side
-presence fan-out on the same socket), and Phase 4 (client glue:
-`loom-wasm::LoomDoc` wraps `loro::LoroDoc`; `editor/src/lib/sync.ts`
-speaks the envelope protocol over `WebSocket`; `editor/src/lib/auth.ts`
-+ `presence.ts` + a minimal `cm-loro.ts` CodeMirror binding) are in.
-The Zustand workspace store still owns IDB / FSA persistence — the
-`LoomDoc` capability is exposed but not yet the canonical store; that
-swap is a follow-up. Full roadmap:
-[`docs/dev/loom-multiuser.md`](../../docs/dev/loom-multiuser.md).
+so the binary stays small. Phases 1–5 cover the wire layer (module
+wiring + `/api/health`, auth + multi-workspace REST + capability
+tokens, WebSocket sync, presence fan-out, client glue), Phase 6 adds
+the FSA export/import fallback, Phase 7 hosts the play loop server-side,
+and **Phase 8** turns the relay into a single-binary deployment: it
+serves the React editor's `dist/` alongside the API / WS routes, and
+the editor defaults to `window.location.origin` when same-origin. Full
+roadmap: [`docs/dev/loom-multiuser.md`](../../docs/dev/loom-multiuser.md).
 
-Run locally: `cargo run -p loom-server --bin loom-relayd` (defaults to
-`127.0.0.1:7878`).
+### Self-hosting the editor (Phase 8)
+
+A complete Loom deployment is one binary:
+
+```
+prism loom build            # vite build + cargo build -p loom-server
+prism loom serve            # boots loom-relayd serving editor + API + /ws
+# → open http://127.0.0.1:7878 in any browser, register, author
+```
+
+Useful flags on `prism loom serve`:
+
+- `--bind 0.0.0.0:7878` — accept connections from the LAN.
+- `--editor-dist <path>` — override the default
+  `packages/loom/editor/dist`.
+- `--cors permissive` — opt in to cross-origin requests (only needed
+  when driving the relay from the Vite dev server on `:5173`).
+- `--build` / `--ship` — rebuild first; `--ship` switches to the
+  release-profile binary.
+
+Equivalent bare-cargo invocation (no CLI wrapper): `cargo run -p
+loom-server --bin loom-relayd -- --editor-dist
+packages/loom/editor/dist`.
+
+### Dev-loop (no self-hosting)
+
+Two-process flow when iterating on the React editor itself:
+
+```
+pnpm --filter loom-app dev    # Vite at :5173 (HMR)
+cargo run -p loom-server --bin loom-relayd -- --cors permissive
+                              # API + WS at :7878
+```
+
+The editor detects it's running on a dev port (`:5173` / `:4173`) and
+points at `127.0.0.1:7878`; the relay's permissive CORS layer lets the
+browser complete the cross-origin handshake.

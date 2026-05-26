@@ -55,8 +55,10 @@ pub enum LineKind {
     /// `key: value` — a property line in the header *or* the
     /// contract zone under a `==` opener.
     Property { key: String, value: String },
-    /// `== knot_name` (with optional trailing whitespace).
-    KnotMarker(String),
+    /// `== knot_name` with optional `(param, …)` parameter list
+    /// (spec §8). Stored as a struct so the parser can pull the
+    /// declared param names into `Beat::params`.
+    KnotMarker { name: String, params: Vec<String> },
     /// `INT.` / `EXT.` Fountain-style scene heading.
     SceneHeading(String),
     /// `let name = expr`.
@@ -178,7 +180,8 @@ fn classify(text: &str, line: u32, start_byte: u32, diagnostics: &mut Vec<Diagno
 
     // Knot marker: `== name`.
     if let Some(rest) = text.strip_prefix("==") {
-        let name = rest.trim().to_string();
+        let raw = rest.trim();
+        let (name, params) = split_knot_name_and_params(raw);
         if name.is_empty() {
             diagnostics.push(Diagnostic::error(
                 Code::L1004UnnamedKnot,
@@ -186,7 +189,7 @@ fn classify(text: &str, line: u32, start_byte: u32, diagnostics: &mut Vec<Diagno
                 "`==` knot marker is missing a name",
             ));
         }
-        return LineKind::KnotMarker(name);
+        return LineKind::KnotMarker { name, params };
     }
 
     // Scene heading: `INT.`, `EXT.`, `INT./EXT.`, `I/E`.
@@ -358,6 +361,25 @@ fn is_property_key_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'
 }
 
+/// Split `ask_about(topic, NPC)` into `("ask_about", ["topic", "NPC"])`.
+/// A bare name without parens yields an empty parameter list.
+fn split_knot_name_and_params(raw: &str) -> (String, Vec<String>) {
+    let raw = raw.trim();
+    if let Some(open) = raw.find('(') {
+        let name = raw[..open].trim().to_string();
+        let tail = &raw[open + 1..];
+        let close = tail.rfind(')').unwrap_or(tail.len());
+        let params: Vec<String> = tail[..close]
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        (name, params)
+    } else {
+        (raw.to_string(), Vec::new())
+    }
+}
+
 fn is_speaker_line(text: &str) -> bool {
     let mut saw_letter = false;
     for ch in text.chars() {
@@ -429,7 +451,17 @@ mod tests {
     fn knot_marker() {
         assert_eq!(
             first("== opening\n"),
-            LineKind::KnotMarker("opening".into())
+            LineKind::KnotMarker {
+                name: "opening".into(),
+                params: Vec::new(),
+            }
+        );
+        assert_eq!(
+            first("== ask_about(topic, NPC)\n"),
+            LineKind::KnotMarker {
+                name: "ask_about".into(),
+                params: vec!["topic".into(), "NPC".into()],
+            }
         );
     }
 

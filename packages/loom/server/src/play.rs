@@ -67,8 +67,7 @@ impl PlaySession {
         starter: String,
     ) -> Result<Self, PlayError> {
         let bundle = Arc::new(Bundle::from_sources(files));
-        let playhead =
-            Playhead::new(bundle).map_err(|e| PlayError::Init(e.to_string()))?;
+        let playhead = Playhead::new(bundle).map_err(|e| PlayError::Init(e.to_string()))?;
         let mut s = Self {
             workspace,
             starter,
@@ -152,11 +151,7 @@ impl PlayHub {
 
     /// Advance a session by selecting a choice. Returns the post-step
     /// snapshot.
-    pub fn choose(
-        &self,
-        workspace: &str,
-        index: usize,
-    ) -> Result<PlayStateSnapshot, PlayError> {
+    pub fn choose(&self, workspace: &str, index: usize) -> Result<PlayStateSnapshot, PlayError> {
         let session = self
             .sessions
             .read()
@@ -182,11 +177,7 @@ impl PlayHub {
     /// Tear down the session — broadcast-end is the caller's
     /// responsibility.
     pub fn stop(&self, workspace: &str) -> bool {
-        self.sessions
-            .write()
-            .unwrap()
-            .remove(workspace)
-            .is_some()
+        self.sessions.write().unwrap().remove(workspace).is_some()
     }
 }
 
@@ -226,7 +217,10 @@ WREN
         assert_eq!(snap.starter, "alice");
         assert!(!snap.ended);
         assert_eq!(snap.choices.len(), 2);
-        assert!(snap.transcript.iter().any(|e| matches!(e, Event::Action { .. })));
+        assert!(snap
+            .transcript
+            .iter()
+            .any(|e| matches!(e, Event::Action { .. })));
     }
 
     #[test]

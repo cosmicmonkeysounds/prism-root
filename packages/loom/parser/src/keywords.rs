@@ -88,7 +88,7 @@ pub const SCENE_HEADING_PREFIXES: &[&str] = &["INT.", "EXT.", "INT/EXT", "INT./E
 /// Reserved keyword words that appear *inside* lines (not as openers):
 /// `let`, `is` (mixin), `with` (divert parameters), `END` (divert
 /// target).
-pub const RESERVED_INLINE: &[&str] = &["let", "is", "with", "END"];
+pub const RESERVED_INLINE: &[&str] = &["let", "is", "with", "END", "super", "none"];
 
 /// Live-performance vocabulary (spec §13) — keywords the editor
 /// highlights distinctly so authors can read participant flow,
@@ -101,6 +101,9 @@ pub const LIVE_KEYWORDS: &[&str] = &[
     "enters",
     "exits",
     "joins",
+    "passes",
+    "drops",
+    "below",
     "cohort",
     "location",
     "but",

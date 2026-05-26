@@ -71,7 +71,9 @@ impl LoomDoc {
     #[wasm_bindgen(js_name = exportUpdatesSince)]
     pub fn export_updates_since(&self, version: Option<Vec<u8>>) -> Result<Vec<u8>, JsError> {
         let vv = match version {
-            Some(bytes) => VersionVector::decode(&bytes).map_err(|e| JsError::new(&e.to_string()))?,
+            Some(bytes) => {
+                VersionVector::decode(&bytes).map_err(|e| JsError::new(&e.to_string()))?
+            }
             None => VersionVector::default(),
         };
         self.doc
@@ -175,8 +177,7 @@ impl LoomDoc {
     pub fn delete_file(&self, path: &str) -> Result<(), JsError> {
         let map = self.files_map();
         if map.get(path).is_some() {
-            map.delete(path)
-                .map_err(|e| JsError::new(&e.to_string()))?;
+            map.delete(path).map_err(|e| JsError::new(&e.to_string()))?;
             self.doc.commit();
         }
         Ok(())
@@ -206,8 +207,7 @@ impl LoomDoc {
             dst.insert(0, &body)
                 .map_err(|e| JsError::new(&e.to_string()))?;
         }
-        map.delete(from)
-            .map_err(|e| JsError::new(&e.to_string()))?;
+        map.delete(from).map_err(|e| JsError::new(&e.to_string()))?;
         self.doc.commit();
         Ok(())
     }
@@ -337,4 +337,3 @@ mod tests {
         assert_eq!(doc.get_text("a.loom").as_deref(), Some("abXYZef"));
     }
 }
-

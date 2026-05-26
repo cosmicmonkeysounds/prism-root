@@ -111,10 +111,7 @@ Hi.
     let mut sched = Scheduler::new();
     let mut world = World::new();
     let mut ledger = Ledger::default();
-    sched.spawn(
-        Coroutine::new(1, program, Tier::Ambient, 0.3),
-        &mut ledger,
-    );
+    sched.spawn(Coroutine::new(1, program, Tier::Ambient, 0.3), &mut ledger);
     sched.tick(Instant::now(), &mut world, &mut ledger);
     assert!(
         ledger.events().iter().any(|e| matches!(

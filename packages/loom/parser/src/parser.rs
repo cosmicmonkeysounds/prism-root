@@ -57,7 +57,7 @@ impl<'d> Parser<'d> {
                 LineKind::LetBinding { .. } => {
                     items.push(Item::LetBinding(self.parse_let_binding()));
                 }
-                LineKind::KnotMarker(_) => {
+                LineKind::KnotMarker { .. } => {
                     items.push(Item::Beat(self.parse_beat()));
                 }
                 // Anything else outside a beat is silently skipped
@@ -152,6 +152,8 @@ impl<'d> Parser<'d> {
             generator: None,
             cohort: None,
             location: None,
+            item: None,
+            faction: None,
             span: Span::new(opener.span().start, end),
         }
     }
@@ -172,8 +174,8 @@ impl<'d> Parser<'d> {
 
     fn parse_beat(&mut self) -> Beat {
         let opener = self.lines[self.cursor].clone();
-        let name = match &opener.kind {
-            LineKind::KnotMarker(name) => name.clone(),
+        let (name, params) = match &opener.kind {
+            LineKind::KnotMarker { name, params } => (name.clone(), params.clone()),
             _ => unreachable!(),
         };
         self.cursor += 1;
@@ -184,7 +186,7 @@ impl<'d> Parser<'d> {
         let mut end = opener.span().end;
         while let Some(line) = self.peek() {
             match &line.kind {
-                LineKind::KnotMarker(_) => break,
+                LineKind::KnotMarker { .. } => break,
                 LineKind::DeclarationOpener { .. } if line.indent <= body_indent_floor => break,
                 _ => {}
             }
@@ -198,6 +200,7 @@ impl<'d> Parser<'d> {
 
         Beat {
             name,
+            params,
             contract,
             body,
             span: Span::new(opener.span().start, end),
@@ -251,7 +254,15 @@ impl<'d> Parser<'d> {
             ))),
             LineKind::DivertLine(target) => {
                 self.cursor += 1;
-                Some(BodyItem::Divert(parse_divert_text(target, line.span())))
+                let mut divert = parse_divert_text(target, line.span());
+                // Spec §7 + §16: an indented `<name>:` block directly
+                // under a parameterised divert is an answer-slot fill.
+                // Consume into `Divert::To::slots` so the playhead can
+                // expand `slot: <name>` placeholders at the call site.
+                if let Divert::To { slots, .. } = &mut divert {
+                    self.collect_divert_slots(line.indent, slots);
+                }
+                Some(BodyItem::Divert(divert))
             }
             LineKind::TunnelReturn => {
                 self.cursor += 1;
@@ -263,13 +274,27 @@ impl<'d> Parser<'d> {
                 &line,
             ))),
             LineKind::Directive(raw) => {
-                // Only `<if: cond>` opens a NEW conditional chain.
-                // `<else if:>` / `<else>` are consumed as siblings
-                // inside `parse_conditional`. A bare `<else>` with no
-                // preceding `<if:>` falls through to the plain
-                // Directive path.
-                if raw.trim_start().starts_with("if:") {
+                let trimmed = raw.trim_start();
+                if trimmed.starts_with("if:") {
                     Some(BodyItem::Conditional(self.parse_conditional(&line)))
+                } else if trimmed.starts_with("match:") {
+                    Some(BodyItem::Match(self.parse_match(&line)))
+                } else if trimmed == "each visit" || trimmed.starts_with("each visit") {
+                    Some(BodyItem::EachVisit(self.parse_each_visit(&line)))
+                } else if trimmed.starts_with("after:") {
+                    Some(BodyItem::AfterMorph(self.parse_after_morph(&line)))
+                } else if trimmed.starts_with("let:") {
+                    self.cursor += 1;
+                    let rest = trimmed.trim_start_matches("let:").trim();
+                    let (name, expression) = match rest.split_once('=') {
+                        Some((n, e)) => (n.trim().to_string(), e.trim().to_string()),
+                        None => (rest.to_string(), String::new()),
+                    };
+                    Some(BodyItem::InlineLet(crate::ast::InlineLet {
+                        name,
+                        expression,
+                        span: line.span(),
+                    }))
                 } else if self.directive_has_body(&line) {
                     Some(BodyItem::DirectiveBlock(
                         self.parse_directive_block(raw.clone(), &line),
@@ -309,6 +334,17 @@ impl<'d> Parser<'d> {
             // continued contract or an inline divert parameter; the
             // contract zone is captured up-front by `parse_contract`
             // so leftover ones are skipped.
+            //
+            // Exception: `slot: <name>` (spec §7 + §16) — a
+            // placeholder the playhead expands using the
+            // call-site-provided slot fill.
+            LineKind::Property { key, value } if key == "slot" && !value.is_empty() => {
+                self.cursor += 1;
+                Some(BodyItem::SlotPlaceholder(SlotPlaceholder {
+                    name: value.clone(),
+                    span: line.span(),
+                }))
+            }
             LineKind::Property { .. } => {
                 self.cursor += 1;
                 None
@@ -316,7 +352,7 @@ impl<'d> Parser<'d> {
             LineKind::LetBinding { .. }
             | LineKind::Heading(_)
             | LineKind::DeclarationOpener { .. }
-            | LineKind::KnotMarker(_) => None,
+            | LineKind::KnotMarker { .. } => None,
         }
     }
 
@@ -343,11 +379,8 @@ impl<'d> Parser<'d> {
                     // dialogue. Subsequent parentheticals fall into
                     // the standard performer-direction slot.
                     if improv.is_none() && trimmed_owned.starts_with("improv") {
-                        let directive = parse_improv_parenthetical(
-                            &trimmed_owned,
-                            span,
-                            self.diagnostics,
-                        );
+                        let directive =
+                            parse_improv_parenthetical(&trimmed_owned, span, self.diagnostics);
                         improv = Some(directive);
                     } else if parenthetical.is_none() && lines.is_empty() {
                         parenthetical = Some(text.clone());
@@ -394,8 +427,16 @@ impl<'d> Parser<'d> {
             }
         }
 
+        // Split `DOCKHAND | FISHER` into its component performers so
+        // the runtime can address all addressed speakers (spec §16).
+        let speakers: Vec<String> = speaker
+            .split('|')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
         DialogueBlock {
             speaker,
+            speakers,
             parenthetical,
             improv,
             lines,
@@ -568,6 +609,237 @@ impl<'d> Parser<'d> {
         }
     }
 
+    /// Parse a `<match: expr>` block (spec §14.2).
+    fn parse_match(&mut self, opener: &ScannedLine) -> MatchBlock {
+        let opener_indent = opener.indent;
+        let raw = match &opener.kind {
+            LineKind::Directive(r) => r.clone(),
+            _ => unreachable!(),
+        };
+        let scrutinee = raw
+            .trim_start()
+            .trim_start_matches("match:")
+            .trim()
+            .to_string();
+        self.cursor += 1;
+
+        let arm_indent = match self.peek() {
+            Some(line) if line.indent > opener_indent => line.indent,
+            _ => opener_indent + 1,
+        };
+        let mut arms = Vec::new();
+        let mut end = opener.span().end;
+        while let Some(line) = self.peek().cloned() {
+            if line.indent <= opener_indent {
+                break;
+            }
+            if line.indent != arm_indent {
+                self.cursor += 1;
+                continue;
+            }
+            let pattern = match &line.kind {
+                LineKind::Prose(t) | LineKind::SceneHeading(t) => t.clone(),
+                LineKind::Speaker(t) => t.clone(),
+                LineKind::Property { key, value } => {
+                    if value.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{key}: {value}")
+                    }
+                }
+                _ => break,
+            };
+            let arm_start = line.span().start;
+            self.cursor += 1;
+            let mut body = Vec::new();
+            let mut arm_end = line.span().end;
+            while let Some(child) = self.peek() {
+                if child.indent <= arm_indent {
+                    break;
+                }
+                if let Some(item) = self.parse_body_item(arm_indent) {
+                    arm_end = body_item_end(&item).unwrap_or(arm_end);
+                    body.push(item);
+                } else {
+                    self.cursor += 1;
+                }
+            }
+            end = arm_end;
+            arms.push(MatchArm {
+                pattern: pattern.trim().to_string(),
+                body,
+                span: Span::new(arm_start, arm_end),
+            });
+        }
+        MatchBlock {
+            scrutinee,
+            arms,
+            span: Span::new(opener.span().start, end),
+        }
+    }
+
+    /// Parse `<each visit>` with `first` / `then` / `finally` arms.
+    fn parse_each_visit(&mut self, opener: &ScannedLine) -> EachVisit {
+        let opener_indent = opener.indent;
+        self.cursor += 1;
+        let arm_indent = match self.peek() {
+            Some(line) if line.indent > opener_indent => line.indent,
+            _ => opener_indent + 1,
+        };
+        let mut out = EachVisit {
+            span: opener.span(),
+            ..EachVisit::default()
+        };
+        let mut end = opener.span().end;
+        while let Some(line) = self.peek().cloned() {
+            if line.indent <= opener_indent {
+                break;
+            }
+            if line.indent != arm_indent {
+                self.cursor += 1;
+                continue;
+            }
+            let label = match &line.kind {
+                LineKind::Prose(t) | LineKind::SceneHeading(t) => t.trim().to_string(),
+                LineKind::Speaker(t) => t.trim().to_string(),
+                _ => break,
+            };
+            self.cursor += 1;
+            let mut body = Vec::new();
+            let mut arm_end = line.span().end;
+            while let Some(child) = self.peek() {
+                if child.indent <= arm_indent {
+                    break;
+                }
+                if let Some(item) = self.parse_body_item(arm_indent) {
+                    arm_end = body_item_end(&item).unwrap_or(arm_end);
+                    body.push(item);
+                } else {
+                    self.cursor += 1;
+                }
+            }
+            end = arm_end;
+            match label.as_str() {
+                "first" => out.first = body,
+                "then" => out.then = body,
+                "finally" => out.finally = body,
+                _ => {}
+            }
+        }
+        out.span = Span::new(opener.span().start, end);
+        out
+    }
+
+    /// Parse a `<after: cond> … <otherwise> …` morph pair.
+    fn parse_after_morph(&mut self, opener: &ScannedLine) -> AfterMorph {
+        let opener_indent = opener.indent;
+        let raw = match &opener.kind {
+            LineKind::Directive(r) => r.clone(),
+            _ => unreachable!(),
+        };
+        let condition = raw
+            .trim_start()
+            .trim_start_matches("after:")
+            .trim()
+            .to_string();
+        let start = opener.span().start;
+        self.cursor += 1;
+        let body_indent_floor = opener_indent + 1;
+        let mut after_body = Vec::new();
+        let mut end = opener.span().end;
+        while let Some(child) = self.peek() {
+            if child.indent < body_indent_floor {
+                break;
+            }
+            if let Some(item) = self.parse_body_item(body_indent_floor) {
+                end = body_item_end(&item).unwrap_or(end);
+                after_body.push(item);
+            } else {
+                self.cursor += 1;
+            }
+        }
+        let mut otherwise_body = Vec::new();
+        if let Some(line) = self.peek().cloned() {
+            if line.indent == opener_indent {
+                if let LineKind::Directive(d) = &line.kind {
+                    if d.trim() == "otherwise" {
+                        self.cursor += 1;
+                        while let Some(child) = self.peek() {
+                            if child.indent < body_indent_floor {
+                                break;
+                            }
+                            if let Some(item) = self.parse_body_item(body_indent_floor) {
+                                end = body_item_end(&item).unwrap_or(end);
+                                otherwise_body.push(item);
+                            } else {
+                                self.cursor += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        AfterMorph {
+            condition,
+            after: after_body,
+            otherwise: otherwise_body,
+            span: Span::new(start, end),
+        }
+    }
+
+    /// Consume answer-slot fills attached to a divert (spec §7 + §16).
+    /// The expected shape is:
+    ///
+    /// ```text
+    /// -> ask_about with topic: bell
+    ///   answer:
+    ///     WREN
+    ///       The bell rings when the keeper is in danger.
+    /// ```
+    ///
+    /// Each `<name>:` line directly indented under the divert opens a
+    /// new slot fill; its indented body is parsed as a regular
+    /// `BodyItem` sequence so dialogue / diverts / directives all work
+    /// inside a fill.
+    fn collect_divert_slots(
+        &mut self,
+        opener_indent: u32,
+        slots: &mut IndexMap<String, Vec<BodyItem>>,
+    ) {
+        let slot_indent_floor = opener_indent + 1;
+        while let Some(line) = self.peek().cloned() {
+            if line.indent < slot_indent_floor {
+                break;
+            }
+            // Only `<name>:` property-shaped lines open a slot.
+            let (key, value) = match &line.kind {
+                LineKind::Property { key, value } => (key.clone(), value.clone()),
+                _ => break,
+            };
+            // Spec restricts slot openers to bare `<name>:` with no
+            // inline value. A value-bearing property is a runtime
+            // mistake, not a slot opener — leave it for the contract /
+            // body to surface its own error.
+            if !value.is_empty() {
+                break;
+            }
+            self.cursor += 1;
+            let body_indent_floor = line.indent + 1;
+            let mut body = Vec::new();
+            while let Some(child) = self.peek() {
+                if child.indent < body_indent_floor {
+                    break;
+                }
+                if let Some(item) = self.parse_body_item(body_indent_floor) {
+                    body.push(item);
+                } else {
+                    self.cursor += 1;
+                }
+            }
+            slots.insert(key, body);
+        }
+    }
+
     fn parse_directive_block(&mut self, raw: String, opener: &ScannedLine) -> DirectiveBlock {
         self.cursor += 1;
         let body_indent_floor = opener.indent + 1;
@@ -605,7 +877,12 @@ fn body_item_end(item: &BodyItem) -> Option<Position> {
         BodyItem::Directive(d) => d.span.end,
         BodyItem::Metadata(l) => l.span.end,
         BodyItem::Conditional(c) => c.span.end,
+        BodyItem::Match(m) => m.span.end,
+        BodyItem::EachVisit(e) => e.span.end,
+        BodyItem::AfterMorph(a) => a.span.end,
+        BodyItem::InlineLet(l) => l.span.end,
         BodyItem::DirectiveBlock(d) => d.span.end,
+        BodyItem::SlotPlaceholder(s) => s.span.end,
     })
 }
 
@@ -643,6 +920,20 @@ fn parse_divert_text(text: &str, span: Span) -> Divert {
             return Divert::Tunnel { target, span };
         }
     }
+    // Strip a trailing `as <ident>` (beat scope modifier, spec §13.1)
+    // before splitting on ` with ` so the with-params don't swallow it.
+    let (text, scope_as) = match text.rfind(" as ") {
+        Some(idx) => {
+            let head = text[..idx].trim_end();
+            let tail = text[idx + 4..].trim();
+            if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                (head, Some(tail.to_string()))
+            } else {
+                (text, None)
+            }
+        }
+        None => (text, None),
+    };
     let (head, params_text) = match text.find(" with ") {
         Some(idx) => (&text[..idx], Some(&text[idx + 6..])),
         None => (text, None),
@@ -652,6 +943,8 @@ fn parse_divert_text(text: &str, span: Span) -> Divert {
     Divert::To {
         target,
         params,
+        slots: IndexMap::new(),
+        scope_as,
         span,
     }
 }
@@ -1225,6 +1518,146 @@ TREE WarriorPath
     }
 
     #[test]
+    fn axis_milestones_list_is_parsed() {
+        let src = "\
+STATS Combat
+  axis level
+    mode: milestone
+    milestones: tutorial, novice, adept, expert, master
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let decl = match &file.items[0] {
+            Item::Declaration(d) => d,
+            _ => panic!("expected STATS declaration"),
+        };
+        let stats = decl.stats.as_ref().expect("STATS body lowered");
+        let axis = &stats.axes[0];
+        assert_eq!(axis.mode.as_deref(), Some("milestone"));
+        assert_eq!(
+            axis.milestones,
+            vec![
+                "tutorial".to_string(),
+                "novice".into(),
+                "adept".into(),
+                "expert".into(),
+                "master".into(),
+            ]
+        );
+    }
+
+    #[test]
+    fn item_lowers_inherits_and_typed_properties() {
+        let src = "\
+ITEM LootBag
+  contents: list of ITEM = []
+  gold:     int          = 0
+
+ITEM goblin_pouch is LootBag
+  contents: [rusty_dagger]
+  gold:     3
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let bag = match &file.items[0] {
+            Item::Declaration(d) => d.item.as_ref().expect("LootBag body lowered"),
+            _ => panic!(),
+        };
+        assert_eq!(bag.inherits.len(), 0);
+        assert_eq!(bag.properties.len(), 2);
+        assert_eq!(bag.properties[0].name, "contents");
+        assert!(matches!(
+            bag.properties[0].slot_type,
+            Some(SlotType::ListOf(_))
+        ));
+        assert_eq!(bag.properties[1].name, "gold");
+        assert_eq!(bag.properties[1].default.as_deref(), Some("0"));
+
+        let pouch = match &file.items[1] {
+            Item::Declaration(d) => d.item.as_ref().expect("pouch body lowered"),
+            _ => panic!(),
+        };
+        assert_eq!(pouch.inherits, vec!["LootBag"]);
+    }
+
+    #[test]
+    fn faction_lowers_typed_properties() {
+        let src = "\
+FACTION KeepersGuild
+  members:    list of CHARACTER = []
+  reputation: 0 to 100 = 50
+  ledger:     map of CHARACTER to int = {}
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let f = match &file.items[0] {
+            Item::Declaration(d) => d.faction.as_ref().expect("faction lowered"),
+            _ => panic!(),
+        };
+        assert_eq!(f.properties.len(), 3);
+        assert_eq!(f.properties[0].name, "members");
+        assert!(matches!(
+            f.properties[0].slot_type,
+            Some(SlotType::ListOf(_))
+        ));
+        match &f.properties[1].slot_type {
+            Some(SlotType::Range {
+                lo,
+                hi,
+                default: Some(d),
+            }) => {
+                assert_eq!(*lo, 0.0);
+                assert_eq!(*hi, 100.0);
+                assert_eq!(*d, 50.0);
+            }
+            other => panic!("expected Range, got {other:?}"),
+        }
+        assert!(matches!(
+            f.properties[2].slot_type,
+            Some(SlotType::MapOf { .. })
+        ));
+    }
+
+    #[test]
+    fn character_typed_properties_capture_any_slot() {
+        let src = "\
+CHARACTER Keeper
+  voice: any
+  home:  any of LOCATION
+  reputation: 0 to 100 = 50
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let body = match &file.items[0] {
+            Item::Declaration(d) => d.character.as_ref().unwrap(),
+            _ => panic!(),
+        };
+        let names: Vec<_> = body
+            .typed_properties
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert!(names.contains(&"voice"));
+        assert!(names.contains(&"home"));
+        assert!(names.contains(&"reputation"));
+        let voice = body
+            .typed_properties
+            .iter()
+            .find(|p| p.name == "voice")
+            .unwrap();
+        assert!(matches!(voice.slot_type, Some(SlotType::Any)));
+        let home = body
+            .typed_properties
+            .iter()
+            .find(|p| p.name == "home")
+            .unwrap();
+        match &home.slot_type {
+            Some(SlotType::AnyOf(k)) => assert_eq!(k, "LOCATION"),
+            other => panic!("expected AnyOf, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn cohort_lowers_capacity_and_label() {
         let src = "\
 COHORT Initiates
@@ -1423,5 +1856,183 @@ GENERATOR HarborChorus
         };
         assert!(meta.value.contains("note"));
         assert!(meta.value.contains("This felt long."));
+    }
+
+    #[test]
+    fn match_block_collects_arms() {
+        let src = "\
+== opening
+
+<match: NPC.knows.bell_origin>
+  confirmed
+    NPC
+      I know.
+  suspects
+    NPC
+      A hunch.
+  unknown
+    NPC
+      I do not know.
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            _ => panic!(),
+        };
+        let m = match &beat.body[0] {
+            BodyItem::Match(m) => m,
+            other => panic!("expected match, got {other:?}"),
+        };
+        assert_eq!(m.scrutinee, "NPC.knows.bell_origin");
+        assert_eq!(m.arms.len(), 3);
+        assert_eq!(m.arms[0].pattern, "confirmed");
+        assert_eq!(m.arms[2].pattern, "unknown");
+        assert_eq!(m.arms[0].body.len(), 1);
+    }
+
+    #[test]
+    fn each_visit_with_three_arms() {
+        let src = "\
+== opening
+
+<each visit>
+  first
+    First time prose.
+  then
+    Subsequent prose.
+  finally
+    After visits.
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            _ => panic!(),
+        };
+        let each = match &beat.body[0] {
+            BodyItem::EachVisit(e) => e,
+            other => panic!("expected each visit, got {other:?}"),
+        };
+        assert_eq!(each.first.len(), 1);
+        assert_eq!(each.then.len(), 1);
+        assert_eq!(each.finally.len(), 1);
+    }
+
+    #[test]
+    fn after_otherwise_pair_parses() {
+        let src = "\
+== opening
+
+<after: bell_rung>
+  WREN
+    You rang it.
+<otherwise>
+  WREN
+    Not yet.
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            _ => panic!(),
+        };
+        let morph = match &beat.body[0] {
+            BodyItem::AfterMorph(m) => m,
+            other => panic!("expected after-morph, got {other:?}"),
+        };
+        assert_eq!(morph.condition, "bell_rung");
+        assert_eq!(morph.after.len(), 1);
+        assert_eq!(morph.otherwise.len(), 1);
+    }
+
+    #[test]
+    fn beat_param_list_lands_on_beat_params() {
+        let (file, diags) = parse("== ask_about(topic, NPC)\n  cast: Wren\n\nDone.\n");
+        assert!(diags.is_empty(), "{diags:?}");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            _ => panic!(),
+        };
+        assert_eq!(beat.name, "ask_about");
+        assert_eq!(beat.params, vec!["topic".to_string(), "NPC".to_string()]);
+    }
+
+    #[test]
+    fn divert_with_answer_slot_fill() {
+        let src = "\
+== opening
+
+* Ask.
+  -> ask_about with topic: bell, NPC: Wren
+    answer:
+      WREN
+        The bell rings when the keeper is in danger.
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            _ => panic!(),
+        };
+        let choice = match &beat.body[0] {
+            BodyItem::Choice(c) => c,
+            _ => panic!(),
+        };
+        let divert = match &choice.body[0] {
+            BodyItem::Divert(d) => d,
+            _ => panic!(),
+        };
+        let slots = match divert {
+            Divert::To { slots, .. } => slots,
+            _ => panic!("expected To divert"),
+        };
+        assert_eq!(slots.len(), 1);
+        let answer = slots.get("answer").expect("answer slot present");
+        assert_eq!(answer.len(), 1);
+        assert!(matches!(answer[0], BodyItem::Dialogue(_)));
+    }
+
+    #[test]
+    fn slot_placeholder_recognised_inside_beat_body() {
+        let src = "\
+== ask_about(topic)
+  cast: NPC, Player
+
+slot: answer
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            _ => panic!(),
+        };
+        let slot = match &beat.body[0] {
+            BodyItem::SlotPlaceholder(s) => s,
+            other => panic!("expected slot placeholder, got {other:?}"),
+        };
+        assert_eq!(slot.name, "answer");
+    }
+
+    #[test]
+    fn inline_let_directive_parses() {
+        let src = "\
+== opening
+<let: x = 42>
+
+Done.
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            _ => panic!(),
+        };
+        let let_item = match &beat.body[0] {
+            BodyItem::InlineLet(l) => l,
+            other => panic!("expected inline-let, got {other:?}"),
+        };
+        assert_eq!(let_item.name, "x");
+        assert_eq!(let_item.expression, "42");
     }
 }

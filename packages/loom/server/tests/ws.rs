@@ -95,10 +95,7 @@ async fn send_json<S>(stream: &mut S, value: Value)
 where
     S: SinkExt<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
 {
-    stream
-        .send(Message::Text(value.to_string()))
-        .await
-        .unwrap();
+    stream.send(Message::Text(value.to_string())).await.unwrap();
 }
 
 async fn recv_json<S>(stream: &mut S) -> Value
@@ -133,15 +130,22 @@ where
 #[tokio::test]
 async fn update_round_trip_between_two_clients() {
     let (addr, _state) = spawn_server().await;
-    let (token, workspace_id) =
-        register_and_create(addr, "alice", "hunter2", "Shared").await;
+    let (token, workspace_id) = register_and_create(addr, "alice", "hunter2", "Shared").await;
 
     let mut a = connect_ws(addr).await;
     let mut b = connect_ws(addr).await;
 
-    send_json(&mut a, json!({ "kind": "auth", "payload": { "token": token } })).await;
+    send_json(
+        &mut a,
+        json!({ "kind": "auth", "payload": { "token": token } }),
+    )
+    .await;
     assert_eq!(recv_json(&mut a).await["kind"], "auth-ok");
-    send_json(&mut b, json!({ "kind": "auth", "payload": { "token": token } })).await;
+    send_json(
+        &mut b,
+        json!({ "kind": "auth", "payload": { "token": token } }),
+    )
+    .await;
     assert_eq!(recv_json(&mut b).await["kind"], "auth-ok");
 
     send_json(
@@ -181,8 +185,7 @@ async fn update_round_trip_between_two_clients() {
 #[tokio::test]
 async fn presence_fans_out_peer_list() {
     let (addr, _state) = spawn_server().await;
-    let (token, workspace_id) =
-        register_and_create(addr, "bob", "p@ss", "Presence").await;
+    let (token, workspace_id) = register_and_create(addr, "bob", "p@ss", "Presence").await;
 
     let mut a = connect_ws(addr).await;
     let mut b = connect_ws(addr).await;
@@ -245,8 +248,7 @@ async fn subscribe_without_auth_errors() {
 #[tokio::test]
 async fn non_owner_subscribe_forbidden() {
     let (addr, _state) = spawn_server().await;
-    let (_token, workspace_id) =
-        register_and_create(addr, "carol", "secret", "Private").await;
+    let (_token, workspace_id) = register_and_create(addr, "carol", "secret", "Private").await;
     // Second user registers but doesn't own the workspace.
     let other = reqwest_like_post(
         addr,

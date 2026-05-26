@@ -83,7 +83,9 @@ impl ImprovHandle {
     /// entries. Speech / gesture compare on their anchor / name; the
     /// `Pedal` variant matches unconditionally.
     pub fn matches(&self, signal: &AdvanceSignal) -> bool {
-        self.advance_on.iter().any(|s| signals_equivalent(s, signal))
+        self.advance_on
+            .iter()
+            .any(|s| signals_equivalent(s, signal))
     }
 }
 
@@ -151,10 +153,12 @@ impl ImprovController {
         handle.received.push(signal);
         let advanced = match handle.quorum {
             QuorumOp::Any => true,
-            QuorumOp::All => handle
-                .advance_on
-                .iter()
-                .all(|need| handle.received.iter().any(|got| signals_equivalent(got, need))),
+            QuorumOp::All => handle.advance_on.iter().all(|need| {
+                handle
+                    .received
+                    .iter()
+                    .any(|got| signals_equivalent(got, need))
+            }),
             QuorumOp::N(n) => handle.received.len() as u32 >= n,
         };
         if advanced {
@@ -232,8 +236,16 @@ impl BroadcastScope {
                 .get(name)
                 .map(|l| l.occupants.clone())
                 .unwrap_or_default(),
-            Self::And(a, b) => a.evaluate(stage).intersection(&b.evaluate(stage)).cloned().collect(),
-            Self::But(a, b) => a.evaluate(stage).difference(&b.evaluate(stage)).cloned().collect(),
+            Self::And(a, b) => a
+                .evaluate(stage)
+                .intersection(&b.evaluate(stage))
+                .cloned()
+                .collect(),
+            Self::But(a, b) => a
+                .evaluate(stage)
+                .difference(&b.evaluate(stage))
+                .cloned()
+                .collect(),
         }
     }
 }
@@ -342,12 +354,7 @@ impl LiveStage {
 
     /// Enroll a participant into `cohort`. Idempotent. Fires
     /// `CohortEnrolled`.
-    pub fn enroll(
-        &mut self,
-        id: &str,
-        cohort: &str,
-        ledger: &mut Ledger,
-    ) -> Result<(), LiveError> {
+    pub fn enroll(&mut self, id: &str, cohort: &str, ledger: &mut Ledger) -> Result<(), LiveError> {
         let Some(participant) = self.participants.get_mut(id) else {
             return Err(LiveError::UnknownParticipant(id.to_string()));
         };
@@ -449,7 +456,10 @@ impl<'a> ScopeParser<'a> {
         if self.rest().starts_with(word) {
             // Word boundary so `andrew` isn't read as `and`+`rew`.
             let after = self.rest()[word.len()..].chars().next();
-            if after.map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false) {
+            if after
+                .map(|c| c.is_alphanumeric() || c == '_')
+                .unwrap_or(false)
+            {
                 return false;
             }
             self.pos += word.len();
@@ -481,9 +491,18 @@ impl<'a> ScopeParser<'a> {
             return Ok(BroadcastScope::All);
         }
         for (head, ctor) in [
-            ("participant", BroadcastScope::Participant as fn(String) -> BroadcastScope),
-            ("cohort", BroadcastScope::Cohort as fn(String) -> BroadcastScope),
-            ("location", BroadcastScope::Location as fn(String) -> BroadcastScope),
+            (
+                "participant",
+                BroadcastScope::Participant as fn(String) -> BroadcastScope,
+            ),
+            (
+                "cohort",
+                BroadcastScope::Cohort as fn(String) -> BroadcastScope,
+            ),
+            (
+                "location",
+                BroadcastScope::Location as fn(String) -> BroadcastScope,
+            ),
         ] {
             if self.rest().starts_with(head) {
                 let after_idx = head.len();
@@ -554,7 +573,9 @@ mod tests {
         let mut ledger = Ledger::default();
         stage.participant_joins("A", &mut ledger);
         stage.participant_enters("A", "Nave", &mut ledger).unwrap();
-        stage.participant_enters("A", "BellTower", &mut ledger).unwrap();
+        stage
+            .participant_enters("A", "BellTower", &mut ledger)
+            .unwrap();
         assert!(!stage.locations["Nave"].occupants.contains("A"));
         assert!(stage.locations["BellTower"].occupants.contains("A"));
         assert_eq!(
@@ -584,8 +605,12 @@ mod tests {
         }
         stage.enroll("A", "Singers", &mut ledger).unwrap();
         stage.enroll("B", "Singers", &mut ledger).unwrap();
-        stage.participant_enters("A", "BellTower", &mut ledger).unwrap();
-        stage.participant_enters("C", "BellTower", &mut ledger).unwrap();
+        stage
+            .participant_enters("A", "BellTower", &mut ledger)
+            .unwrap();
+        stage
+            .participant_enters("C", "BellTower", &mut ledger)
+            .unwrap();
         let scope = parse_broadcast_scope("cohort(Singers) and location(BellTower)").unwrap();
         let hit = scope.evaluate(&stage);
         assert_eq!(hit, std::iter::once("A".to_string()).collect());
@@ -597,10 +622,13 @@ mod tests {
         let mut ledger = Ledger::default();
         stage.participant_joins("A", &mut ledger);
         stage.participant_joins("B", &mut ledger);
-        stage.participant_enters("A", "BellTower", &mut ledger).unwrap();
-        stage.participant_enters("B", "BellTower", &mut ledger).unwrap();
-        let scope =
-            parse_broadcast_scope("location(BellTower) but participant(B)").unwrap();
+        stage
+            .participant_enters("A", "BellTower", &mut ledger)
+            .unwrap();
+        stage
+            .participant_enters("B", "BellTower", &mut ledger)
+            .unwrap();
+        let scope = parse_broadcast_scope("location(BellTower) but participant(B)").unwrap();
         let hit = scope.evaluate(&stage);
         assert_eq!(hit, std::iter::once("A".to_string()).collect());
     }
@@ -610,7 +638,12 @@ mod tests {
         let dir = improv(
             45.0,
             QuorumOp::Any,
-            vec![AdvanceSignal::Pedal, AdvanceSignal::Speech { anchor: "ok".into() }],
+            vec![
+                AdvanceSignal::Pedal,
+                AdvanceSignal::Speech {
+                    anchor: "ok".into(),
+                },
+            ],
         );
         let now = Instant::now();
         let mut ctrl = ImprovController::new();
@@ -624,7 +657,10 @@ mod tests {
         let dir = improv(
             45.0,
             QuorumOp::N(2),
-            vec![AdvanceSignal::Pedal, AdvanceSignal::Gesture { name: "Bow".into() }],
+            vec![
+                AdvanceSignal::Pedal,
+                AdvanceSignal::Gesture { name: "Bow".into() },
+            ],
         );
         let mut ctrl = ImprovController::new();
         let id = ctrl.start(&dir, Instant::now());

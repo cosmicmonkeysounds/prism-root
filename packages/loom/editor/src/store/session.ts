@@ -28,8 +28,35 @@ import {
     type LoomProjectManifest,
 } from "@/lib/project";
 
-const DEFAULT_RELAY = "http://127.0.0.1:7878";
+const FALLBACK_RELAY = "http://127.0.0.1:7878";
 const RELAY_KEY = "loom.relayUrl";
+
+/**
+ * Default relay URL. Phase 8 — when the editor is served by the relay
+ * itself (single-binary deployment) the relay lives at the same origin
+ * as the page, so we point at `window.location.origin`. When we're
+ * loaded from a Vite dev server (`:5173` / `:4173`) or somewhere else
+ * that obviously isn't the relay, we fall back to the canonical
+ * `127.0.0.1:7878` so `prism loom dev` works out of the box.
+ */
+function defaultRelayUrl(): string {
+    if (typeof window === "undefined") return FALLBACK_RELAY;
+    try {
+        const origin = window.location.origin;
+        if (!origin || origin === "null") return FALLBACK_RELAY;
+        const url = new URL(origin);
+        // Anything that looks like a Vite/preview dev server — fall
+        // through to the canonical local relay.
+        const devPorts = new Set(["5173", "4173", "3000", "8080"]);
+        if (devPorts.has(url.port)) return FALLBACK_RELAY;
+        if (url.protocol !== "http:" && url.protocol !== "https:") {
+            return FALLBACK_RELAY;
+        }
+        return origin;
+    } catch {
+        return FALLBACK_RELAY;
+    }
+}
 
 export type SessionStatus =
     | "idle"
@@ -137,9 +164,9 @@ async function loadWasm(): Promise<typeof import("@/loom-wasm/loom_wasm")> {
 
 function persistedRelay(): string {
     try {
-        return localStorage.getItem(RELAY_KEY) ?? DEFAULT_RELAY;
+        return localStorage.getItem(RELAY_KEY) ?? defaultRelayUrl();
     } catch {
-        return DEFAULT_RELAY;
+        return defaultRelayUrl();
     }
 }
 

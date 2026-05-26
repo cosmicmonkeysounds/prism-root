@@ -161,6 +161,7 @@ impl StatsInstance {
                         .unwrap_or_default(),
                     curve_expression: axis.curve.clone(),
                     on_advance: axis.on_advance.clone(),
+                    milestones: axis.milestones.clone(),
                     ..AxisState::default()
                 },
             );
@@ -232,10 +233,7 @@ impl StatsInstance {
         }
         for (k, axis) in &self.axes {
             world.set(format!("{prefix}.{k}"), Value::Number(axis.level as f64));
-            world.set(
-                format!("{prefix}.{k}.xp"),
-                Value::Number(axis.progress),
-            );
+            world.set(format!("{prefix}.{k}.xp"), Value::Number(axis.progress));
         }
         for (k, pool) in &self.pools {
             world.set(format!("{prefix}.{k}"), Value::Number(pool.current));
@@ -311,9 +309,7 @@ impl StatsInstance {
                 // Milestone always advances exactly one position per
                 // call regardless of `delta`. Skip if we've already
                 // reached the end of the named list.
-                if axis.milestones.is_empty()
-                    || (axis.level as usize) < axis.milestones.len()
-                {
+                if axis.milestones.is_empty() || (axis.level as usize) < axis.milestones.len() {
                     axis.level += 1;
                     gained = 1;
                 }
@@ -428,10 +424,7 @@ fn parse_regen(text: &str) -> (f64, bool) {
         return (0.0, false);
     }
     let (rate_part, gate) = match text.find(" when ") {
-        Some(idx) => (
-            text[..idx].trim(),
-            Some(text[idx + 6..].trim().to_string()),
-        ),
+        Some(idx) => (text[..idx].trim(), Some(text[idx + 6..].trim().to_string())),
         None => (text, None),
     };
     let rate = if let Some(num) = rate_part.strip_suffix("/s") {
@@ -536,6 +529,7 @@ mod tests {
                 mode: Some("xp_curve".into()),
                 curve: Some("level * level * 50".into()),
                 on_advance: None,
+                milestones: Vec::new(),
                 span: span(),
             }],
             pools: vec![PoolDecl {
@@ -616,6 +610,7 @@ mod tests {
                     mode: Some(mode.into()),
                     curve: curve.map(|s| s.to_string()),
                     on_advance: None,
+                    milestones: Vec::new(),
                     span: span(),
                 }],
                 ..StatsBody::default()

@@ -25,13 +25,8 @@ pub fn hover_at(ws: &Workspace, uri: &Url, pos: Position) -> Option<Hover> {
 
     // Directive head: `<name…` token immediately follows `<`.
     if let Some(open) = line[..start].rfind('<') {
-        if line[open + 1..start].trim().is_empty()
-            && DIRECTIVES.contains(&token)
-        {
-            return Some(markdown(
-                format!("`<{token}: …>` — directive"),
-                Some(range),
-            ));
+        if line[open + 1..start].trim().is_empty() && DIRECTIVES.contains(&token) {
+            return Some(markdown(format!("`<{token}: …>` — directive"), Some(range)));
         }
     }
 

@@ -77,9 +77,15 @@ impl Value {
 /// Read/write scope used by [`eval`] and the `set` builtin. Names are
 /// flat dotted paths (`Wren.trust`) — Phase 4 doesn't need a nested
 /// object model.
+///
+/// `collections` exposes virtual list values for project-wide groups
+/// (`Characters`, `Participants`, `Items`) so list comprehensions and
+/// `count(...)` see the live population without requiring authors to
+/// hand-maintain a list (spec §12.1).
 #[derive(Clone, Debug, Default)]
 pub struct World {
     values: BTreeMap<String, Value>,
+    collections: BTreeMap<String, Value>,
 }
 
 impl World {
@@ -87,13 +93,30 @@ impl World {
         Self::default()
     }
     pub fn get(&self, key: &str) -> Value {
-        self.values.get(key).cloned().unwrap_or(Value::Null)
+        if let Some(v) = self.values.get(key) {
+            return v.clone();
+        }
+        if let Some(v) = self.collections.get(key) {
+            return v.clone();
+        }
+        Value::Null
     }
     pub fn set(&mut self, key: impl Into<String>, value: Value) {
         self.values.insert(key.into(), value);
     }
     pub fn entries(&self) -> impl Iterator<Item = (&String, &Value)> {
         self.values.iter()
+    }
+    /// Publish a virtual collection name — `Characters`, `Participants`,
+    /// `Items` — that list comprehensions can iterate over (spec §12.1).
+    pub fn set_collection(&mut self, key: impl Into<String>, value: Value) {
+        self.collections.insert(key.into(), value);
+    }
+    /// Read a virtual collection if one is registered. Returns `None`
+    /// when the name is unknown (the regular `get` path then falls
+    /// back to `Null`).
+    pub fn collection(&self, key: &str) -> Option<&Value> {
+        self.collections.get(key)
     }
 }
 
@@ -111,6 +134,15 @@ pub enum Expr {
     Unary(UnOp, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Call(String, Vec<Expr>),
+    /// `[ value for var in source ( where filter )? ]` — list
+    /// comprehension over a list-valued `source` expression (spec
+    /// §12.1).
+    ListComp {
+        value: Box<Expr>,
+        var: String,
+        source: Box<Expr>,
+        filter: Option<Box<Expr>>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -172,21 +204,37 @@ pub fn eval<F>(expr: &Expr, world: &World, call_fn: &mut F) -> Result<Value, Exp
 where
     F: FnMut(&str, Vec<CallArg<'_>>) -> Result<Value, ExprError>,
 {
+    eval_scoped(expr, world, &[], call_fn)
+}
+
+/// One local binding pair — used by list comprehensions to overlay
+/// `var` over the world while evaluating the value / filter sub-expr.
+type LocalScope<'a> = &'a [(&'a str, &'a Value)];
+
+fn eval_scoped<F>(
+    expr: &Expr,
+    world: &World,
+    locals: LocalScope<'_>,
+    call_fn: &mut F,
+) -> Result<Value, ExprError>
+where
+    F: FnMut(&str, Vec<CallArg<'_>>) -> Result<Value, ExprError>,
+{
     Ok(match expr {
         Expr::Null => Value::Null,
         Expr::Bool(b) => Value::Bool(*b),
         Expr::Number(n) => Value::Number(*n),
         Expr::String(s) => Value::String(s.clone()),
-        Expr::Path(segments) => world.get(&segments.join(".")),
+        Expr::Path(segments) => resolve_path(segments, world, locals),
         Expr::List(items) => {
             let mut out = Vec::with_capacity(items.len());
             for it in items {
-                out.push(eval(it, world, call_fn)?);
+                out.push(eval_scoped(it, world, locals, call_fn)?);
             }
             Value::List(out)
         }
         Expr::Unary(op, inner) => {
-            let v = eval(inner, world, call_fn)?;
+            let v = eval_scoped(inner, world, locals, call_fn)?;
             match op {
                 UnOp::Neg => Value::Number(-v.as_number().unwrap_or(0.0)),
                 UnOp::Not => Value::Bool(!v.truthy()),
@@ -195,7 +243,7 @@ where
         Expr::Binary(op, l, r) => {
             // Short-circuit logical ops.
             if matches!(op, BinOp::And | BinOp::Or) {
-                let lv = eval(l, world, call_fn)?;
+                let lv = eval_scoped(l, world, locals, call_fn)?;
                 let lt = lv.truthy();
                 if matches!(op, BinOp::And) && !lt {
                     return Ok(Value::Bool(false));
@@ -203,21 +251,87 @@ where
                 if matches!(op, BinOp::Or) && lt {
                     return Ok(Value::Bool(true));
                 }
-                return Ok(Value::Bool(eval(r, world, call_fn)?.truthy()));
+                return Ok(Value::Bool(
+                    eval_scoped(r, world, locals, call_fn)?.truthy(),
+                ));
             }
-            let lv = eval(l, world, call_fn)?;
-            let rv = eval(r, world, call_fn)?;
+            let lv = eval_scoped(l, world, locals, call_fn)?;
+            let rv = eval_scoped(r, world, locals, call_fn)?;
             eval_binary(*op, lv, rv)
         }
         Expr::Call(name, args) => {
             let mut packed: Vec<CallArg<'_>> = Vec::with_capacity(args.len());
             for a in args {
-                let value = eval(a, world, call_fn)?;
+                let value = eval_scoped(a, world, locals, call_fn)?;
                 packed.push(CallArg { expr: a, value });
             }
             call_fn(name, packed)?
         }
+        Expr::ListComp {
+            value,
+            var,
+            source,
+            filter,
+        } => {
+            // Evaluate the source — must be a list (collections like
+            // `Characters` / `Participants` resolve through
+            // `World::collection`, plain world entries fall through).
+            let src_value = eval_scoped(source, world, locals, call_fn)?;
+            let items: Vec<Value> = match src_value {
+                Value::List(items) => items,
+                _ => Vec::new(),
+            };
+            let mut out = Vec::with_capacity(items.len());
+            for item in &items {
+                // Build a new scope chain layered on top of the
+                // caller's. The slice borrows live across the inner
+                // eval_scoped call without aliasing the world.
+                let extended: [(&str, &Value); 1] = [(var.as_str(), item)];
+                // Concatenate by allocating a vec — comprehensions are
+                // never on a hot loop. The slice is rebuilt every
+                // iteration with this iteration's borrow.
+                let mut combined: Vec<(&str, &Value)> = locals.to_vec();
+                combined.extend_from_slice(&extended);
+                if let Some(filter_expr) = filter {
+                    let ok = eval_scoped(filter_expr, world, &combined, call_fn)?.truthy();
+                    if !ok {
+                        continue;
+                    }
+                }
+                out.push(eval_scoped(value, world, &combined, call_fn)?);
+            }
+            Value::List(out)
+        }
     })
+}
+
+/// Resolve a dotted path, checking local scope first (for list
+/// comprehension iteration variables and beat-scope aliases) then the
+/// world. The local can either name the full path head (`c` matching
+/// `c.faction`) or the exact full dotted name.
+fn resolve_path(segments: &[String], world: &World, locals: LocalScope<'_>) -> Value {
+    let head = segments.first().map(String::as_str).unwrap_or("");
+    for (name, value) in locals.iter().rev() {
+        if *name == head {
+            if segments.len() == 1 {
+                return (*value).clone();
+            }
+            // Walk the rest of the path through the bound value's
+            // nested form: today a comprehension binds a struct-ish
+            // value as a flat string id (e.g. character name), so we
+            // re-route to the world using `<id>.<rest>`.
+            if let Value::String(id) = value {
+                let key = std::iter::once(id.as_str())
+                    .chain(segments.iter().skip(1).map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(".");
+                return world.get(&key);
+            }
+            // List/number/bool binds don't carry dotted children.
+            return (*value).clone();
+        }
+    }
+    world.get(&segments.join("."))
 }
 
 /// One argument passed to a `call_fn`. Carries both the parsed AST
@@ -325,6 +439,9 @@ enum Tok {
     RBracket,
     Comma,
     Dot,
+    For,
+    In,
+    Where,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -426,6 +543,9 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ExprError> {
                     "and" => Tok::And,
                     "or" => Tok::Or,
                     "not" => Tok::Bang,
+                    "for" => Tok::For,
+                    "in" => Tok::In,
+                    "where" => Tok::Where,
                     other => Tok::Ident(other.to_string()),
                 };
                 out.push(Token { kind, start });
@@ -508,16 +628,50 @@ impl Parser {
                 Ok(inner)
             }
             Tok::LBracket => {
-                let mut items = Vec::new();
-                if !matches!(self.peek(), Some(Tok::RBracket)) {
-                    loop {
-                        items.push(self.parse_expr(0)?);
-                        if matches!(self.peek(), Some(Tok::Comma)) {
-                            self.bump();
-                            continue;
-                        }
+                // Empty list — `[]`.
+                if matches!(self.peek(), Some(Tok::RBracket)) {
+                    self.bump();
+                    return Ok(Expr::List(Vec::new()));
+                }
+                // Parse one expression: this is either the value of a
+                // comprehension or the first element of a literal list.
+                let first = self.parse_expr(0)?;
+                // Comprehension: `value for var in source [where filter]`.
+                if matches!(self.peek(), Some(Tok::For)) {
+                    self.bump();
+                    let var = match self.bump().map(|t| t.kind) {
+                        Some(Tok::Ident(name)) => name,
+                        _ => return Err(ExprError::Expected("identifier after `for`")),
+                    };
+                    if !matches!(self.peek(), Some(Tok::In)) {
+                        return Err(ExprError::Expected("`in`"));
+                    }
+                    self.bump();
+                    let source = self.parse_expr(0)?;
+                    let filter = if matches!(self.peek(), Some(Tok::Where)) {
+                        self.bump();
+                        Some(Box::new(self.parse_expr(0)?))
+                    } else {
+                        None
+                    };
+                    let close = self.bump();
+                    if !matches!(close.map(|t| t.kind), Some(Tok::RBracket)) {
+                        return Err(ExprError::Expected("]"));
+                    }
+                    return Ok(Expr::ListComp {
+                        value: Box::new(first),
+                        var,
+                        source: Box::new(source),
+                        filter,
+                    });
+                }
+                let mut items = vec![first];
+                while matches!(self.peek(), Some(Tok::Comma)) {
+                    self.bump();
+                    if matches!(self.peek(), Some(Tok::RBracket)) {
                         break;
                     }
+                    items.push(self.parse_expr(0)?);
                 }
                 let close = self.bump();
                 if !matches!(close.map(|t| t.kind), Some(Tok::RBracket)) {
@@ -629,6 +783,54 @@ mod tests {
         let w = World::new();
         assert_eq!(ev("'hi ' + 'there'", &w), Value::String("hi there".into()));
         assert_eq!(ev("'n=' + 3", &w), Value::String("n=3".into()));
+    }
+
+    #[test]
+    fn list_comprehension_filters_and_maps() {
+        // Publish a virtual `Characters` collection naming three
+        // characters; for each, the world carries a `<name>.faction`.
+        let mut w = World::new();
+        w.set_collection(
+            "Characters",
+            Value::List(vec![
+                Value::String("Wren".into()),
+                Value::String("Fisher".into()),
+                Value::String("Mara".into()),
+            ]),
+        );
+        w.set("Player.faction", Value::String("dawn".into()));
+        w.set("Wren.faction", Value::String("dawn".into()));
+        w.set("Fisher.faction", Value::String("dusk".into()));
+        w.set("Mara.faction", Value::String("dawn".into()));
+        let parsed = parse("[c for c in Characters where c.faction == Player.faction]").unwrap();
+        let v = eval(&parsed, &w, &mut no_calls()).unwrap();
+        let names: Vec<String> = match v {
+            Value::List(items) => items.into_iter().map(|v| v.display()).collect(),
+            other => panic!("expected list, got {other:?}"),
+        };
+        assert_eq!(names, vec!["Wren".to_string(), "Mara".to_string()]);
+    }
+
+    #[test]
+    fn list_comprehension_chains_through_let_results() {
+        // A list literal can stand in for a previously-bound `let`.
+        let mut w = World::new();
+        w.set(
+            "nearby",
+            Value::List(vec![
+                Value::String("Wren".into()),
+                Value::String("Fisher".into()),
+            ]),
+        );
+        w.set("Wren.disposition.Player", Value::String("hostile".into()));
+        w.set("Fisher.disposition.Player", Value::String("warm".into()));
+        let parsed = parse("[c for c in nearby where c.disposition.Player == 'hostile']").unwrap();
+        let v = eval(&parsed, &w, &mut no_calls()).unwrap();
+        let names: Vec<String> = match v {
+            Value::List(items) => items.into_iter().map(|v| v.display()).collect(),
+            other => panic!("expected list, got {other:?}"),
+        };
+        assert_eq!(names, vec!["Wren".to_string()]);
     }
 
     #[test]

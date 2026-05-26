@@ -9,9 +9,9 @@
 
 use crate::ast::{
     AttributeDecl, AxisDecl, CharacterBody, CohortBody, Declaration, DeclarationKind,
-    DispositionAxis, GeneratorBody, GeneratorDecl, GoalDecl, HookDecl, KnowledgeField,
-    LocationBody, PoolDecl, PropertyValue, RawLine, ReactClause, SceneBody, SceneState,
-    StatExprDecl, StatsBody, TreeBody, TreeNodeDecl,
+    DispositionAxis, FactionBody, GeneratorBody, GeneratorDecl, GoalDecl, HookDecl, ItemBody,
+    KnowledgeField, LocationBody, PoolDecl, Property, PropertyValue, RawLine, ReactClause,
+    SceneBody, SceneState, SlotType, StatExprDecl, StatsBody, TreeBody, TreeNodeDecl,
 };
 use crate::diagnostics::{Code, Diagnostic};
 use crate::source::Span;
@@ -46,8 +46,164 @@ pub fn lower(decl: &mut Declaration, diagnostics: &mut Vec<Diagnostic>) {
         DeclarationKind::Location => {
             decl.location = Some(lower_location(&decl.body));
         }
-        _ => {}
+        DeclarationKind::Item => {
+            decl.item = Some(ItemBody {
+                inherits: decl.mixin.clone(),
+                properties: lower_typed_properties(&decl.body),
+            });
+        }
+        DeclarationKind::Faction => {
+            decl.faction = Some(FactionBody {
+                inherits: decl.mixin.clone(),
+                properties: lower_typed_properties(&decl.body),
+            });
+        }
     }
+}
+
+/// Lower a flat list of `name: <type> [= default]` raw lines into
+/// structured [`Property`] entries (spec §8). Unknown shapes still
+/// round-trip via [`Property::raw_type`] + [`Property::default`].
+fn lower_typed_properties(body: &[RawLine]) -> Vec<Property> {
+    let base_indent = body.first().map(|l| l.indent).unwrap_or(0);
+    let mut out = Vec::new();
+    for line in body {
+        if line.indent != base_indent {
+            continue;
+        }
+        let text = line.text.trim();
+        if let Some(prop) = parse_typed_property(text, line.span) {
+            out.push(prop);
+        }
+    }
+    out
+}
+
+/// Parse one `name: <type-spec> [= default]` line (spec §8). The
+/// type spelling is recognised structurally so the runtime can
+/// check abstractness without re-lexing; the raw text is kept for
+/// shapes the parser doesn't yet model.
+pub(crate) fn parse_typed_property(text: &str, span: Span) -> Option<Property> {
+    let colon = text.find(':')?;
+    let name = text[..colon].trim();
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return None;
+    }
+    let rest = text[colon + 1..].trim();
+    // `0 to 100 = 50` shape — split type / default on the *first*
+    // `=` that isn't part of a `==`. Most slot types don't include
+    // an `=` themselves, so a naive split is correct here.
+    let (type_part, default_part) = match split_type_and_default(rest) {
+        Some((t, d)) => (t.to_string(), Some(d.to_string())),
+        None => (rest.to_string(), None),
+    };
+    let slot_type = parse_slot_type(&type_part, default_part.as_deref());
+    Some(Property {
+        name: name.to_string(),
+        slot_type,
+        default: default_part,
+        raw_type: if type_part.is_empty() {
+            None
+        } else {
+            Some(type_part)
+        },
+        span,
+    })
+}
+
+fn split_type_and_default(rest: &str) -> Option<(&str, &str)> {
+    // Honour `range 0 to 100 = 50` — the default is the part after
+    // the *last* top-level `=`. Track bracket depth so default
+    // expressions containing `[a = b]` survive.
+    let bytes = rest.as_bytes();
+    let mut depth = 0i32;
+    let mut last_eq: Option<usize> = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b as char {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            '=' if depth == 0 => {
+                // Skip `==` operator.
+                if bytes.get(i + 1) == Some(&b'=') || (i > 0 && bytes[i - 1] == b'=') {
+                    continue;
+                }
+                last_eq = Some(i);
+            }
+            _ => {}
+        }
+    }
+    let idx = last_eq?;
+    Some((rest[..idx].trim(), rest[idx + 1..].trim()))
+}
+
+/// Recognise a slot type. Falls back to `Concrete(name)` for any
+/// bare identifier, `None` for empty input.
+pub(crate) fn parse_slot_type(raw: &str, default_text: Option<&str>) -> Option<SlotType> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    // `text?` — optional wrapper.
+    if let Some(inner) = raw.strip_suffix('?') {
+        let inner = parse_slot_type(inner.trim(), None)?;
+        return Some(SlotType::Optional(Box::new(inner)));
+    }
+    // `list of X` / `map of K to V`.
+    if let Some(rest) = raw.strip_prefix("list of ") {
+        let inner = parse_slot_type(rest.trim(), None)
+            .unwrap_or_else(|| SlotType::Concrete(rest.trim().to_string()));
+        return Some(SlotType::ListOf(Box::new(inner)));
+    }
+    if let Some(rest) = raw.strip_prefix("map of ") {
+        if let Some((k, v)) = rest.split_once(" to ") {
+            let key = parse_slot_type(k.trim(), None)
+                .unwrap_or_else(|| SlotType::Concrete(k.trim().to_string()));
+            let value = parse_slot_type(v.trim(), None)
+                .unwrap_or_else(|| SlotType::Concrete(v.trim().to_string()));
+            return Some(SlotType::MapOf {
+                key: Box::new(key),
+                value: Box::new(value),
+            });
+        }
+    }
+    // `any` / `any of LOCATION`.
+    if raw == "any" {
+        return Some(SlotType::Any);
+    }
+    if let Some(rest) = raw.strip_prefix("any of ") {
+        return Some(SlotType::AnyOf(rest.trim().to_string()));
+    }
+    // `range LO to HI` or bare `LO to HI` (numeric range).
+    let range_body = raw.strip_prefix("range ").unwrap_or(raw);
+    if let Some((lo_s, hi_s)) = range_body.split_once(" to ") {
+        if let (Ok(lo), Ok(hi)) = (lo_s.trim().parse::<f64>(), hi_s.trim().parse::<f64>()) {
+            let default = default_text.and_then(|d| d.trim().parse::<f64>().ok());
+            return Some(SlotType::Range { lo, hi, default });
+        }
+    }
+    // Sum: `a | b | c` (at least two pipes).
+    if raw.contains('|') {
+        let parts: Vec<String> = raw
+            .split('|')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if parts.len() >= 2 {
+            return Some(SlotType::Sum(parts));
+        }
+    }
+    // Bare type name — must look like an identifier.
+    if raw
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Some(SlotType::Concrete(raw.to_string()));
+    }
+    None
 }
 
 // ---------------------------------------------------------------------
@@ -231,7 +387,10 @@ fn is_state_label(text: &str) -> bool {
     {
         return false;
     }
-    text.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
+    text.chars()
+        .next()
+        .map(|c| c.is_ascii_alphabetic() || c == '_')
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------
@@ -345,18 +504,30 @@ fn lower_character(body: &[RawLine], diagnostics: &mut Vec<Diagnostic>) -> Chara
             continue;
         }
 
-        // `on <event>` hook.
+        // `on <event>` hook. The `: none` suffix (spec §9.5) marks
+        // the hook as a child-side suppressor — at bundle-merge time
+        // any inherited hook with the same event clause is dropped.
         if let Some(rest) = text.strip_prefix("on ") {
-            let event = rest.trim().to_string();
+            let rest = rest.trim();
+            let (event_text, suppressed) = match strip_suppression(rest) {
+                Some(stripped) => (stripped.to_string(), true),
+                None => (rest.to_string(), false),
+            };
             let span_start = line.span.start;
             let mut hook = HookDecl {
-                event,
+                event: event_text,
                 body: Vec::new(),
+                suppressed,
                 span: line.span,
             };
             i += 1;
+            // A suppressor has no body of its own; still consume any
+            // accidentally-indented continuation so we don't trip the
+            // base-indent walker below.
             while i < body.len() && body[i].indent > base_indent {
-                hook.body.push(body[i].clone());
+                if !suppressed {
+                    hook.body.push(body[i].clone());
+                }
                 hook.span = Span::new(span_start, body[i].span.end);
                 i += 1;
             }
@@ -408,7 +579,9 @@ fn lower_character(body: &[RawLine], diagnostics: &mut Vec<Diagnostic>) -> Chara
         if let Some((verb, rest)) = strip_disposition_verb(text) {
             match parse_disposition(verb, rest, line.span) {
                 Ok(axis) => out.disposition.push(axis),
-                Err(code) => diagnostics.push(Diagnostic::error(code, line.span, code_message(code))),
+                Err(code) => {
+                    diagnostics.push(Diagnostic::error(code, line.span, code_message(code)))
+                }
             }
             i += 1;
             continue;
@@ -426,6 +599,12 @@ fn lower_character(body: &[RawLine], diagnostics: &mut Vec<Diagnostic>) -> Chara
                     span: line.span,
                 },
             );
+            // Mirror into the typed-slot view (spec §8). Spelled
+            // out separately so the existing string-keyed
+            // `properties` map keeps round-trip parity.
+            if let Some(prop) = parse_typed_property(text, line.span) {
+                out.typed_properties.push(prop);
+            }
             i += 1;
             continue;
         }
@@ -435,6 +614,17 @@ fn lower_character(body: &[RawLine], diagnostics: &mut Vec<Diagnostic>) -> Chara
         i += 1;
     }
     out
+}
+
+/// Detect the `: none` suppression suffix on a hook event clause
+/// (spec §9.5). Returns the event text with the suffix stripped when
+/// present, or `None` otherwise.
+fn strip_suppression(text: &str) -> Option<&str> {
+    let trimmed = text.trim_end();
+    let stripped = trimmed.strip_suffix("none")?;
+    let head = stripped.trim_end();
+    let head = head.strip_suffix(':')?;
+    Some(head.trim_end())
 }
 
 fn strip_disposition_verb(text: &str) -> Option<(&'static str, &str)> {
@@ -464,8 +654,12 @@ fn parse_disposition(verb: &str, rest: &str, span: Span) -> Result<DispositionAx
     };
     let (current, max) = match amount_part.split_once(" of ") {
         Some((l, r)) => (
-            l.trim().parse::<f64>().map_err(|_| Code::L1101MalformedDispositionAmount)?,
-            r.trim().parse::<f64>().map_err(|_| Code::L1101MalformedDispositionAmount)?,
+            l.trim()
+                .parse::<f64>()
+                .map_err(|_| Code::L1101MalformedDispositionAmount)?,
+            r.trim()
+                .parse::<f64>()
+                .map_err(|_| Code::L1101MalformedDispositionAmount)?,
         ),
         None => return Err(Code::L1101MalformedDispositionAmount),
     };
@@ -481,19 +675,27 @@ fn parse_disposition(verb: &str, rest: &str, span: Span) -> Result<DispositionAx
 
 fn parse_react_clause(text: &str, span: Span) -> Option<ReactClause> {
     // Allow both `→` and `->`.
-    let sep_index = text.find('→').map(|i| (i, '→'.len_utf8())).or_else(|| {
-        text.find("->").map(|i| (i, 2))
-    })?;
+    let sep_index = text
+        .find('→')
+        .map(|i| (i, '→'.len_utf8()))
+        .or_else(|| text.find("->").map(|i| (i, 2)))?;
     let (cond_part, tag_part) = (&text[..sep_index.0], &text[sep_index.0 + sep_index.1..]);
     let condition = cond_part.trim().to_string();
     let tag = tag_part.trim().to_string();
     if condition.is_empty() || tag.is_empty() {
         return None;
     }
-    Some(ReactClause { condition, tag, span })
+    Some(ReactClause {
+        condition,
+        tag,
+        span,
+    })
 }
 
-fn parse_knowledge_field(line: &RawLine, diagnostics: &mut Vec<Diagnostic>) -> Option<KnowledgeField> {
+fn parse_knowledge_field(
+    line: &RawLine,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<KnowledgeField> {
     let text = line.text.trim();
     let colon = text.find(':');
     let colon = match colon {
@@ -558,7 +760,11 @@ fn strip_keyed<'a>(text: &'a str, key: &str) -> Option<&'a str> {
 fn split_property(text: &str) -> Option<(&str, &str)> {
     let colon = text.find(':')?;
     let key = text[..colon].trim();
-    if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if key.is_empty()
+        || !key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         return None;
     }
     Some((key, text[colon + 1..].trim()))
@@ -618,6 +824,14 @@ fn lower_stats(body: &[RawLine], diagnostics: &mut Vec<Diagnostic>) -> StatsBody
                     axis.curve = Some(v.to_string());
                 } else if let Some(v) = strip_keyed(inner, "on advance:") {
                     axis.on_advance = Some(v.to_string());
+                } else if let Some(v) = strip_keyed(inner, "milestones:") {
+                    // `milestones: tutorial, novice, adept, expert, master`
+                    // (spec §11) — comma-split, trimmed, blanks dropped.
+                    axis.milestones = v
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
                 }
                 axis.span = Span::new(axis.span.start, body[i].span.end);
                 i += 1;

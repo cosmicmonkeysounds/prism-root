@@ -117,7 +117,12 @@ fn main_file_parses_cleanly() {
             BodyItem::Divert(_) => "divert",
             BodyItem::Directive(_) => "directive",
             BodyItem::Conditional(_) => "conditional",
+            BodyItem::Match(_) => "match",
+            BodyItem::EachVisit(_) => "each-visit",
+            BodyItem::AfterMorph(_) => "after-morph",
+            BodyItem::InlineLet(_) => "inline-let",
             BodyItem::DirectiveBlock(_) => "directive-block",
+            BodyItem::SlotPlaceholder(_) => "slot-placeholder",
         });
     }
     assert_eq!(

@@ -96,7 +96,98 @@ pub struct Declaration {
     /// Structured body for LOCATION (spec §13.1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<LocationBody>,
+    /// Structured body for ITEM (spec §9). An ITEM is a typed
+    /// composable kind that participates in `is` inheritance just
+    /// like CHARACTER / TRAIT (spec §9.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<ItemBody>,
+    /// Structured body for FACTION (spec §9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faction: Option<FactionBody>,
     pub span: Span,
+}
+
+/// Structured ITEM body (spec §9). ITEMs are kinds with
+/// inheritance; their bodies are typed property lists.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ItemBody {
+    /// `is X, Y` parents — same shape as CHARACTER mixins.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inherits: Vec<String>,
+    pub properties: Vec<Property>,
+}
+
+/// Structured FACTION body (spec §9). Same shape as [`ItemBody`].
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct FactionBody {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inherits: Vec<String>,
+    pub properties: Vec<Property>,
+}
+
+/// A typed property — `name: <slot-type> [= default]` — as it
+/// appears inside ITEM / FACTION / CHARACTER / TRAIT bodies
+/// (spec §8).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Property {
+    pub name: String,
+    /// Structured type, when the parser recognises the shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot_type: Option<SlotType>,
+    /// Raw default expression text, parsed lazily by the runtime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    /// Raw type spelling — kept so unknown shapes still round-trip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_type: Option<String>,
+    pub span: Span,
+}
+
+/// Typed-slot grammar (spec §8). `Any` / `AnyOf` / `Range` mark
+/// required holes; `Optional` / `ListOf` / `Concrete` / `Sum`
+/// resolve to a value.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum SlotType {
+    /// `any` — required, free-form.
+    Any,
+    /// `any of LOCATION` — required, narrowed to a kind.
+    AnyOf(String),
+    /// `range LO to HI [ = N ]`. Also accepted without the leading
+    /// `range` keyword: `0 to 100 = 50`.
+    Range {
+        lo: f64,
+        hi: f64,
+        default: Option<f64>,
+    },
+    /// Bare type name (`LootBag`, `int`, `text`).
+    Concrete(String),
+    /// `unknown | suspects | confirmed` — closed enumeration.
+    Sum(Vec<String>),
+    /// `text?` — the inner type with an implicit null.
+    Optional(Box<SlotType>),
+    /// `list of RUMOUR`.
+    ListOf(Box<SlotType>),
+    /// `map of KEY to VALUE`.
+    MapOf {
+        key: Box<SlotType>,
+        value: Box<SlotType>,
+    },
+}
+
+impl SlotType {
+    /// Required-slot check (spec §8). A slot is *required* when it
+    /// names an unfilled `any`-shaped hole.
+    pub fn is_required_hole(&self, has_default: bool) -> bool {
+        if has_default {
+            return false;
+        }
+        match self {
+            Self::Any | Self::AnyOf(_) => true,
+            Self::Range { default, .. } => default.is_none(),
+            Self::Optional(_) => false,
+            _ => false,
+        }
+    }
 }
 
 /// Structured COHORT body (spec §13.1). A cohort is a named group
@@ -216,6 +307,14 @@ pub struct CharacterBody {
     pub hooks: Vec<HookDecl>,
     /// `generator name` blocks declared inside the character.
     pub generators: Vec<GeneratorDecl>,
+    /// Typed-slot view of [`Self::properties`] (spec §8). Each
+    /// entry mirrors a `key: value` line from the body but
+    /// carries the structured [`SlotType`] when the parser
+    /// recognised the right-hand spelling. Required (`any` /
+    /// `any of …` / `range … to …`) slots without an inherited
+    /// fill mark the character as abstract (spec §8 + §9).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub typed_properties: Vec<Property>,
 }
 
 /// `trusts Player: 30 of 100 [mirror Player.trusts.Wren]` (spec §10.1).
@@ -275,6 +374,11 @@ pub struct HookDecl {
     /// Indented body — raw lines preserved so playhead / scheduler
     /// can lower them later (typically diverts + directives).
     pub body: Vec<RawLine>,
+    /// `on <event>: none` suppression marker (spec §9.5). When a
+    /// child declares this form, the bundle's inheritance merge
+    /// drops any inherited hook whose event clause matches.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suppressed: bool,
     pub span: Span,
 }
 
@@ -363,6 +467,10 @@ pub struct AxisDecl {
     pub curve: Option<String>,
     /// `on advance: …` — raw directive text.
     pub on_advance: Option<String>,
+    /// `milestones: tutorial, novice, …` — ordered milestone names
+    /// for `milestone`-mode axes (spec §11). Empty when omitted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub milestones: Vec<String>,
     pub span: Span,
 }
 
@@ -464,6 +572,11 @@ pub struct LetBinding {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Beat {
     pub name: String,
+    /// Declared parameter names — `== ask_about(topic, NPC)` →
+    /// `["topic", "NPC"]` (spec §8). Empty when the knot was
+    /// declared without parentheses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<String>,
     /// `cast:`, `setting:`, `with topic:`, … contract properties.
     pub contract: IndexMap<String, PropertyValue>,
     pub body: Vec<BodyItem>,
@@ -492,10 +605,72 @@ pub enum BodyItem {
     Metadata(Located<String>),
     /// `<if: cond> … <else if: cond> … <else> …` syntactic form (spec §14.2).
     Conditional(Conditional),
+    /// `<match: expr>` multi-arm dispatch (spec §14.2).
+    Match(MatchBlock),
+    /// `<each visit>` with `first` / `then` / `finally` arms (spec §14.2).
+    EachVisit(EachVisit),
+    /// `<after: cond> … <otherwise> …` state-morphing form (spec §14.2).
+    AfterMorph(AfterMorph),
+    /// `<let: name = expr>` inline lexical binding (spec §12.1, §14.2).
+    InlineLet(InlineLet),
     /// Any other block-opening `<kind: args>` directive that carries
     /// an indented body (e.g. `<broadcast: …>`). The body runs after
     /// the directive's side effects.
     DirectiveBlock(DirectiveBlock),
+    /// `slot: <name>` placeholder inside a beat body (spec §7 +
+    /// §16). At play time the playhead replaces this with the
+    /// call-site-provided body from [`Divert::To::slots`].
+    SlotPlaceholder(SlotPlaceholder),
+}
+
+/// One `<match: expr>` chain — the first arm whose bare-word pattern
+/// matches the scrutinee's display form wins (spec §14.2).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MatchBlock {
+    pub scrutinee: String,
+    pub arms: Vec<MatchArm>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MatchArm {
+    pub pattern: String,
+    pub body: Vec<BodyItem>,
+    pub span: Span,
+}
+
+/// `<each visit>` block with `first` / `then` / `finally` arms.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct EachVisit {
+    pub first: Vec<BodyItem>,
+    pub then: Vec<BodyItem>,
+    pub finally: Vec<BodyItem>,
+    pub span: Span,
+}
+
+/// `<after: cond> … <otherwise> …` state-morph.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AfterMorph {
+    pub condition: String,
+    pub after: Vec<BodyItem>,
+    pub otherwise: Vec<BodyItem>,
+    pub span: Span,
+}
+
+/// `<let: name = expr>` inline binding.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InlineLet {
+    pub name: String,
+    pub expression: String,
+    pub span: Span,
+}
+
+/// `slot: answer` placeholder (spec §7 + §16). Expanded by the
+/// playhead at the point the enclosing beat was diverted to.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SlotPlaceholder {
+    pub name: String,
+    pub span: Span,
 }
 
 /// One `<if:>` chain — first true arm wins (spec §14.2).
@@ -525,7 +700,15 @@ pub struct DirectiveBlock {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DialogueBlock {
+    /// Joined `|`-separated speaker line — `DOCKHAND | FISHER` (kept
+    /// for back-compat with consumers that surface a single
+    /// performer string). The split list lives in [`Self::speakers`].
     pub speaker: String,
+    /// Split list of all addressed performers (spec §16). For a
+    /// single-speaker cue this is `vec![speaker.clone()]`; for a
+    /// multi-speaker cue like `DOCKHAND | FISHER` it carries both.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub speakers: Vec<String>,
     /// Inline `(parenthetical)` on the line directly under the
     /// speaker. Additional inline parens inside the dialogue body
     /// appear in `lines` as `DialogueLine::Parenthetical`.
@@ -542,6 +725,7 @@ pub struct DialogueBlock {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 pub enum DialogueLine {
     Text(Located<String>),
     Parenthetical(Located<String>),
@@ -566,9 +750,23 @@ pub struct Choice {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Divert {
     /// `-> name` or `-> Lighthouse/ringing` or `-> name with k: v, …`.
+    ///
+    /// `slots` carries any answer-slot fill (spec §7 + §16) — an
+    /// indented `answer:`-style block following the divert. The
+    /// playhead pushes these onto a per-frame slot map when the
+    /// divert is taken so `slot: <name>` placeholders inside the
+    /// target beat can expand them.
     To {
         target: DivertTarget,
         params: IndexMap<String, String>,
+        #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+        slots: IndexMap<String, Vec<BodyItem>>,
+        /// `-> name as Participant` (spec §13.1). Inside the
+        /// invoked beat, bare identifiers like `trust` resolve
+        /// against the scoped entity's namespace
+        /// (`Participant.trust`) rather than a show-global.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope_as: Option<String>,
         span: Span,
     },
     /// `-> (name) ->` tunnel call (spec §7).

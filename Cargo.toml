@@ -79,7 +79,7 @@ lsp-types = "0.95"
 # rewrite decision (2026-04-15).
 axum = { version = "0.7", default-features = false, features = ["json", "http1", "tokio", "matched-path", "query", "form", "ws"] }
 tower = { version = "0.5", default-features = false }
-tower-http = { version = "0.6", default-features = false, features = ["trace", "compression-gzip", "limit"] }
+tower-http = { version = "0.6", default-features = false, features = ["trace", "compression-gzip", "limit", "fs", "cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter"] }
 

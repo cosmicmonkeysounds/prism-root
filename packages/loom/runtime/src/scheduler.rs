@@ -136,19 +136,11 @@ impl Scheduler {
     /// miss its budget it steals from ambient and active first
     /// (spec §12.5).
     pub fn tick(&mut self, now: Instant, world: &mut World, ledger: &mut Ledger) {
-        let mut focal_taken = drive_tier(
-            &mut self.focal,
-            self.budgets.focal,
-            now,
-            world,
-            ledger,
-        );
+        let mut focal_taken = drive_tier(&mut self.focal, self.budgets.focal, now, world, ledger);
         // Budget stealing: if focal exhausted its own budget mid-list
         // (work remains), pull from active / ambient before yielding
         // the tick.
-        if focal_taken >= self.budgets.focal
-            && self.focal.iter().any(|h| !h.coroutine.is_done())
-        {
+        if focal_taken >= self.budgets.focal && self.focal.iter().any(|h| !h.coroutine.is_done()) {
             let stolen_active = self.budgets.active / 2;
             let stolen_ambient = self.budgets.ambient / 4;
             focal_taken += drive_tier(&mut self.focal, stolen_active, now, world, ledger);

@@ -46,3 +46,23 @@ src/
 To regenerate the wasm bundle after editing `packages/loom/parser` or
 `packages/loom/wasm`, run `pnpm wasm:build` (release) or
 `pnpm wasm:build:dev` (faster compile, larger output).
+
+## Hosting
+
+Two ways to run the editor:
+
+1. **`pnpm dev`** — Vite at `http://localhost:5173`, with HMR. The
+   editor detects the dev port and points `relayUrl` at
+   `http://127.0.0.1:7878`. The relay needs `--cors permissive` to
+   accept the cross-origin handshake — `prism loom serve --cors
+   permissive` (or `cargo run -p loom-server --bin loom-relayd --
+   --cors permissive`).
+2. **`prism loom serve`** — the production topology. `pnpm build`
+   produces `dist/`; `loom-relayd` serves that directory plus the
+   `/api/*` REST surface plus `/ws` over a single TCP listener. The
+   editor picks `window.location.origin` as the relay URL by default
+   because the bundle is loaded from the same origin. No CORS needed.
+
+The default relay URL is computed in `src/store/session.ts`. To force
+a specific relay regardless of origin, set `localStorage["loom.relayUrl"]`
+or use the Cloud panel's "Relay URL" form.

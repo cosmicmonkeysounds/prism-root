@@ -32,8 +32,15 @@ pub enum Event {
     Action { text: String },
     /// A speaker delivered one line. Parenthetical performer
     /// direction is carried alongside for stage / booth display.
+    /// `speakers` carries the full split list — `DOCKHAND | FISHER` →
+    /// `["DOCKHAND", "FISHER"]` — so live booth code can address all
+    /// performers (spec §16). `speaker` is the joined-display fallback
+    /// for single-performer consumers; empty `speakers` falls back to
+    /// `vec![speaker.clone()]` semantically.
     Dialogue {
         speaker: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        speakers: Vec<String>,
         parenthetical: Option<String>,
         text: String,
     },
@@ -66,6 +73,15 @@ pub enum Event {
     },
     /// `<set: path OP rhs>` resolved and applied to the World scope.
     WorldSet { path: String, value: String },
+    /// A `<set: Character.knows.field …>` mutation routed through the
+    /// character store (spec §10.2). Carries the character + field
+    /// separately so the booth and save layer can round-trip
+    /// knowledge edits without re-parsing the dotted path.
+    KnowledgeChanged {
+        character: String,
+        field: String,
+        value: String,
+    },
     /// `<fire: name, ...>` pushed a named event onto the ledger.
     Fired {
         name: String,
@@ -104,10 +120,7 @@ pub enum Event {
     },
     /// A coroutine is parked on a `wait` until its predicate clears
     /// or its duration elapses (spec §12.3).
-    CoroutineWaiting {
-        coroutine: u64,
-        reason: String,
-    },
+    CoroutineWaiting { coroutine: u64, reason: String },
     /// A live participant joined the show (spec §13.1).
     ParticipantJoined { id: String },
     /// A participant was removed from the stage (booth-side retire).
@@ -123,6 +136,9 @@ pub enum Event {
     /// declared quorum or the duration elapsed (`reason` describes
     /// which).
     ImprovBeatAdvanced { handle: u64, reason: String },
+    /// `<after: cond>` latched true on this beat — subsequent visits
+    /// play the `after` arm without re-checking the condition (spec §14.2).
+    AfterLatched { beat: String, anchor: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,6 +202,16 @@ impl Ledger {
     /// envelopes between the match and the current end — rather
     /// than wall-clock seconds. Wall-clock backing lands when the
     /// clock subsystem comes online.
+    /// `true` if `AfterLatched { beat, anchor }` has been recorded.
+    pub fn after_latched(&self, beat: &str, anchor: &str) -> bool {
+        self.events.iter().any(|e| {
+            matches!(
+                e,
+                Event::AfterLatched { beat: b, anchor: a } if b == beat && a == anchor
+            )
+        })
+    }
+
     pub fn since(&self, name: &str) -> Option<usize> {
         for (idx, event) in self.events.iter().enumerate().rev() {
             if event_names(event, name) {
@@ -193,6 +219,137 @@ impl Ledger {
             }
         }
         None
+    }
+
+    /// Scoped form of [`Self::since`] — `since(Participant, bell_rung)`
+    /// (spec §12.2). Walks the ledger newest-first and counts only
+    /// events that originated in or are scoped to `scope` (a
+    /// participant id today; the same predicate matches dialogue
+    /// `speaker`, world writes on `<scope>.…`, and live-stage envelopes
+    /// carrying `scope` as their id). Returns the number of events
+    /// between the match and the end, or `None`.
+    pub fn since_scoped(&self, scope: &str, name: &str) -> Option<usize> {
+        for (idx, event) in self.events.iter().enumerate().rev() {
+            if !event_in_scope(event, scope) {
+                continue;
+            }
+            let matches = event_names(event, name)
+                || match event {
+                    Event::WorldSet { path, .. } => path
+                        .rsplit_once('.')
+                        .map(|(_, tail)| tail == name)
+                        .unwrap_or(false),
+                    _ => false,
+                };
+            if matches {
+                return Some(self.events.len() - idx - 1);
+            }
+        }
+        None
+    }
+
+    /// `last(target, speaker)` — the speaker of the most recent
+    /// `Dialogue` envelope whose parenthetical / performer direction
+    /// names `target` (spec §12.2). Returns `None` when nothing has
+    /// addressed `target` yet.
+    pub fn last_speaker_to(&self, target: &str) -> Option<&str> {
+        for event in self.events.iter().rev() {
+            if let Event::Dialogue {
+                speaker,
+                parenthetical,
+                ..
+            } = event
+            {
+                let mentions = parenthetical
+                    .as_deref()
+                    .map(|p| {
+                        p.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                            .any(|w| w == target)
+                    })
+                    .unwrap_or(false);
+                if mentions {
+                    return Some(speaker.as_str());
+                }
+            }
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn last_speaker_to_finds_most_recent_dialogue_addressing_target() {
+        let mut l = Ledger::default();
+        l.push(Event::Dialogue {
+            speaker: "Wren".into(),
+            speakers: vec!["Wren".into()],
+            parenthetical: Some("to Player".into()),
+            text: "Hello.".into(),
+        });
+        l.push(Event::Dialogue {
+            speaker: "Player".into(),
+            speakers: vec!["Player".into()],
+            parenthetical: Some("to Wren".into()),
+            text: "Hi.".into(),
+        });
+        assert_eq!(l.last_speaker_to("Wren"), Some("Player"));
+        assert_eq!(l.last_speaker_to("Player"), Some("Wren"));
+        assert_eq!(l.last_speaker_to("Stranger"), None);
+    }
+
+    #[test]
+    fn since_scoped_filters_to_participant_stream() {
+        let mut l = Ledger::default();
+        l.push(Event::Fired {
+            name: "bell_rung".into(),
+            payload: Vec::new(),
+        });
+        // A scoped (participant-specific) bell_rung — modelled today as
+        // a world write on `<scope>.bell_rung`.
+        l.push(Event::WorldSet {
+            path: "p17.bell_rung".into(),
+            value: "true".into(),
+        });
+        // Tail events so the scoped match is older.
+        l.push(Event::Action {
+            text: "filler".into(),
+        });
+        l.push(Event::Action {
+            text: "filler".into(),
+        });
+        let unscoped = l.since("bell_rung").expect("unscoped fire visible");
+        let scoped = l
+            .since_scoped("p17", "bell_rung")
+            .expect("scoped world-write visible");
+        // Both queries find a match. Logical-time deltas are
+        // count-from-end: the unscoped Fired is the oldest match (3
+        // events later), the scoped WorldSet is more recent (2 events
+        // later).
+        assert_eq!(scoped, 2);
+        assert_eq!(unscoped, 3);
+    }
+}
+
+/// True when `event` is scoped to a participant / character id
+/// (dialogue speaker, world writes on `<scope>.…`, live-stage
+/// envelopes carrying `scope` as their id).
+fn event_in_scope(event: &Event, scope: &str) -> bool {
+    match event {
+        Event::ParticipantJoined { id }
+        | Event::ParticipantRetired { id }
+        | Event::ParticipantEnteredLocation { id, .. }
+        | Event::CohortEnrolled { id, .. } => id == scope,
+        Event::Dialogue { speaker, .. } => speaker == scope,
+        Event::WorldSet { path, .. } => path
+            .split_once('.')
+            .map(|(head, _)| head == scope)
+            .unwrap_or(false),
+        Event::Fired { payload, .. } => payload.iter().any(|(_, v)| v == scope),
+        _ => false,
     }
 }
 
@@ -213,13 +370,38 @@ fn event_names(event: &Event, name: &str) -> bool {
 /// strings (`played("intro")`) also work.
 pub fn call_query(ledger: &Ledger, name: &str, args: &[CallArg<'_>]) -> Result<Value, ExprError> {
     let first_name = || args.first().map(|a| a.as_name()).unwrap_or_default();
+    let nth_name = |n: usize| args.get(n).map(|a| a.as_name()).unwrap_or_default();
     match name {
         "played" => Ok(Value::Bool(ledger.played(&first_name()))),
         "visits" => Ok(Value::Number(ledger.beat_visit_count(&first_name()) as f64)),
-        "since" => Ok(match ledger.since(&first_name()) {
-            Some(steps) => Value::Number(steps as f64),
-            None => Value::Null,
-        }),
+        "since" => {
+            // Scoped form `since(scope, name)` — when two args are
+            // present, walk the scope-filtered stream (spec §12.2).
+            if args.len() >= 2 {
+                return Ok(match ledger.since_scoped(&first_name(), &nth_name(1)) {
+                    Some(steps) => Value::Number(steps as f64),
+                    None => Value::Null,
+                });
+            }
+            Ok(match ledger.since(&first_name()) {
+                Some(steps) => Value::Number(steps as f64),
+                None => Value::Null,
+            })
+        }
+        "last" => {
+            // `last(target, field)` — today only `field == speaker` is
+            // wired (spec §12.2). Other fields fall through to Null
+            // until the ledger grows richer per-entity views.
+            let target = first_name();
+            let field = nth_name(1);
+            if field == "speaker" {
+                return Ok(match ledger.last_speaker_to(&target) {
+                    Some(s) => Value::String(s.to_string()),
+                    None => Value::Null,
+                });
+            }
+            Ok(Value::Null)
+        }
         other => Err(ExprError::UnknownFunction(other.into())),
     }
 }

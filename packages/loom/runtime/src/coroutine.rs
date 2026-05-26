@@ -37,6 +37,12 @@ pub struct Program {
     /// Labelled state entry points keyed by name (`approach`,
     /// `examine`, …). `""` is the implicit entry.
     pub labels: HashMap<String, usize>,
+    /// `when <pred>` start-gate text (spec §10.5). Until the
+    /// predicate evaluates truthy the coroutine reports
+    /// [`CoroutineStatus::Waiting`] without advancing. Once it
+    /// clears, the coroutine flips its `started` flag and the gate
+    /// stays cleared for the rest of the run.
+    pub start_when: Option<String>,
 }
 
 /// One lowered coroutine opcode. Source-line spans are not kept —
@@ -54,6 +60,11 @@ pub enum Step {
     WaitUntil { predicate: String },
     /// `wait <duration>` — park for at least `duration`.
     WaitDuration { duration: Duration },
+    /// `at 6am` / `at noon` / `at 6:30am` — park until the virtual
+    /// world clock reaches the named wall-clock time (spec §10.5).
+    /// Pure read against the world's `Time.hour` / `Time.minute`
+    /// (`u8` fits 0..=23 / 0..=59).
+    WaitUntilClock { hour: u8, minute: u8 },
     /// `-> <state>` — branch the program counter to the labelled
     /// state entry.
     Goto { state: String },
@@ -109,6 +120,9 @@ pub struct Coroutine {
     for_stack: Vec<ForFrame>,
     /// `true` once `Returned` has been observed once.
     done: bool,
+    /// `false` until the program's `start_when` gate clears. Once
+    /// `true`, the coroutine never re-checks the gate.
+    started: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -165,6 +179,7 @@ impl Coroutine {
             priority,
             for_stack: Vec::new(),
             done: false,
+            started: false,
         }
     }
 
@@ -180,6 +195,18 @@ impl Coroutine {
     pub fn step(&mut self, world: &mut World, ledger: &mut Ledger) -> CoroutineStatus {
         if self.done {
             return CoroutineStatus::Returned { value: None };
+        }
+        // `when <pred>` start-gate (spec §10.5). Until the predicate
+        // clears the coroutine reports `Waiting` and never advances
+        // its program counter. Once cleared the gate stays open.
+        if !self.started {
+            if let Some(gate) = self.program.start_when.clone() {
+                if !eval_truthy(&gate, world) {
+                    let reason = format!("when {gate}");
+                    return CoroutineStatus::Waiting { until: reason };
+                }
+            }
+            self.started = true;
         }
         let Some(step) = self.program.steps.get(self.pc).cloned() else {
             self.done = true;
@@ -246,6 +273,33 @@ impl Coroutine {
                     reason: reason.clone(),
                 });
                 CoroutineStatus::Waiting { until: reason }
+            }
+            Step::WaitUntilClock { hour, minute } => {
+                // Read `Time.hour` / `Time.minute` from the live world
+                // (the host advances them as wall-time progresses).
+                let cur_h = world
+                    .get("Time.hour")
+                    .as_number()
+                    .map(|n| n as i64)
+                    .unwrap_or(-1);
+                let cur_m = world
+                    .get("Time.minute")
+                    .as_number()
+                    .map(|n| n as i64)
+                    .unwrap_or(0);
+                let target = (hour as i64) * 60 + (minute as i64);
+                let now = cur_h * 60 + cur_m;
+                if cur_h >= 0 && now >= target {
+                    self.pc += 1;
+                    CoroutineStatus::Running
+                } else {
+                    let reason = format!("until {:02}:{:02}", hour, minute);
+                    ledger.push(Event::CoroutineWaiting {
+                        coroutine: self.id,
+                        reason: reason.clone(),
+                    });
+                    CoroutineStatus::Waiting { until: reason }
+                }
             }
             Step::Goto { state } => {
                 if let Some(&target) = self.program.labels.get(&state) {
@@ -360,7 +414,9 @@ fn eval_truthy(source: &str, world: &World) -> bool {
 /// ledger length so tests can be made reproducible without pulling
 /// in `rand`.
 fn pseudo_unit(seed: u64, salt: usize) -> f64 {
-    let mut x = seed.wrapping_mul(2862933555777941757).wrapping_add(salt as u64 + 1);
+    let mut x = seed
+        .wrapping_mul(2862933555777941757)
+        .wrapping_add(salt as u64 + 1);
     x ^= x >> 33;
     x = x.wrapping_mul(0xff51_afd7_ed55_8ccd);
     x ^= x >> 33;
@@ -405,6 +461,7 @@ fn lower_state(program: &mut Program, state: &SceneState) {
 pub fn lower_generator(name: &str, gen: &GeneratorBody) -> Program {
     let mut program = Program {
         name: name.to_string(),
+        start_when: gen.start_when.clone(),
         ..Program::default()
     };
     program.labels.insert(String::new(), 0);
@@ -432,6 +489,28 @@ fn lower_lines(program: &mut Program, lines: &[RawLine]) {
             lower_lines(program, &inner);
             program.steps.push(Step::LoopHead { back_to: head });
             continue;
+        }
+        // `at 6am  go_to Home` / `at noon` / `at 6:30am` (spec §10.5)
+        // — lower the leading clock as a `WaitUntilClock` opcode and
+        // re-lower the tail (if any) as a body line of its own.
+        if let Some(rest) = text.strip_prefix("at ") {
+            // Take the first whitespace-separated token as the time.
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let time_tok = parts.next().unwrap_or("").trim();
+            let tail = parts.next().map(str::trim).unwrap_or("");
+            if let Some((hour, minute)) = parse_clock_token(time_tok) {
+                program.steps.push(Step::WaitUntilClock { hour, minute });
+                if !tail.is_empty() {
+                    let synthetic = RawLine {
+                        indent: line.indent,
+                        text: tail.to_string(),
+                        span: line.span,
+                    };
+                    lower_lines(program, std::slice::from_ref(&synthetic));
+                }
+                i += 1;
+                continue;
+            }
         }
         if let Some(rest) = text.strip_prefix("wait until ") {
             program.steps.push(Step::WaitUntil {
@@ -529,17 +608,67 @@ fn lower_lines(program: &mut Program, lines: &[RawLine]) {
     }
 }
 
+/// Parse a clock-time token used after `at`: `6am`, `6:30am`, `noon`,
+/// `midnight`, `8pm`. Returns `(hour_24, minute)` or `None`.
+fn parse_clock_token(text: &str) -> Option<(u8, u8)> {
+    let t = text.trim().to_lowercase();
+    if t == "noon" {
+        return Some((12, 0));
+    }
+    if t == "midnight" {
+        return Some((0, 0));
+    }
+    enum Meridiem {
+        Am,
+        Pm,
+        None24,
+    }
+    let (head, meridiem) = if let Some(stripped) = t.strip_suffix("am") {
+        (stripped, Meridiem::Am)
+    } else if let Some(stripped) = t.strip_suffix("pm") {
+        (stripped, Meridiem::Pm)
+    } else {
+        (t.as_str(), Meridiem::None24)
+    };
+    let (h_str, m_str) = match head.split_once(':') {
+        Some((h, m)) => (h, m),
+        None => (head, "0"),
+    };
+    let mut hour: i32 = h_str.parse().ok()?;
+    let minute: u8 = m_str.parse().ok()?;
+    if minute >= 60 {
+        return None;
+    }
+    match meridiem {
+        Meridiem::Am => {
+            if hour == 12 {
+                hour = 0;
+            }
+        }
+        Meridiem::Pm => {
+            if hour != 12 {
+                hour += 12;
+            }
+        }
+        Meridiem::None24 => {
+            if hour == 24 {
+                hour = 0;
+            }
+        }
+    }
+    if !(0..24).contains(&hour) {
+        return None;
+    }
+    Some((hour as u8, minute))
+}
+
 fn parse_duration(text: &str) -> Option<Duration> {
     let t = text.trim();
     if let Some(num) = t.strip_suffix("ms") {
         return num.trim().parse::<u64>().ok().map(Duration::from_millis);
     }
     if let Some(num) = t.strip_suffix('s') {
-        return num
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .map(Duration::from_secs_f64);
+        return num.trim().parse::<f64>().ok().map(Duration::from_secs_f64);
     }
     if let Some(num) = t.strip_suffix('m') {
         return num
@@ -554,6 +683,84 @@ fn parse_duration(text: &str) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clock_token_parses_noon_midnight_and_meridiem() {
+        assert_eq!(parse_clock_token("noon"), Some((12, 0)));
+        assert_eq!(parse_clock_token("midnight"), Some((0, 0)));
+        assert_eq!(parse_clock_token("6am"), Some((6, 0)));
+        assert_eq!(parse_clock_token("6:30am"), Some((6, 30)));
+        assert_eq!(parse_clock_token("8pm"), Some((20, 0)));
+        assert_eq!(parse_clock_token("12am"), Some((0, 0)));
+        assert_eq!(parse_clock_token("12pm"), Some((12, 0)));
+        assert_eq!(parse_clock_token("14:30"), Some((14, 30)));
+        assert_eq!(parse_clock_token("bogus"), None);
+    }
+
+    #[test]
+    fn wait_until_clock_parks_then_resumes_when_time_passes() {
+        // `at 6am  go_to Home` lowers to WaitUntilClock + EmitLine.
+        let body = vec![RawLine {
+            indent: 0,
+            text: "at 6am go_to Home".into(),
+            span: Default::default(),
+        }];
+        let gen = GeneratorBody {
+            tier: None,
+            priority: None,
+            start_when: None,
+            body,
+        };
+        let prog = lower_generator("daily", &gen);
+        // Should produce a WaitUntilClock then an EmitLine.
+        assert!(matches!(
+            prog.steps[0],
+            Step::WaitUntilClock { hour: 6, minute: 0 }
+        ));
+        assert!(matches!(prog.steps[1], Step::EmitLine { .. }));
+        // Drive the coroutine: parks first (Time.hour not set), then
+        // after the host advances Time.hour past 6, it runs.
+        let mut co = Coroutine::new(99, prog, Tier::Ambient, 0.3);
+        let mut world = World::new();
+        let mut ledger = Ledger::default();
+        // Time.hour absent → wait.
+        let s = co.step(&mut world, &mut ledger);
+        assert!(matches!(s, CoroutineStatus::Waiting { .. }));
+        world.set("Time.hour", Value::Number(7.0));
+        let s = co.step(&mut world, &mut ledger);
+        assert_eq!(s, CoroutineStatus::Running);
+        let s = co.step(&mut world, &mut ledger);
+        assert_eq!(s, CoroutineStatus::Yielded);
+    }
+
+    #[test]
+    fn start_when_gates_coroutine_until_predicate_clears() {
+        // A generator with start_when="stress > 70" sits in Waiting
+        // until the world's `stress` value exceeds the threshold.
+        let body = vec![RawLine {
+            indent: 0,
+            text: "yield bark from anxious".into(),
+            span: Default::default(),
+        }];
+        let gen = GeneratorBody {
+            tier: None,
+            priority: None,
+            start_when: Some("stress > 70".into()),
+            body,
+        };
+        let prog = lower_generator("stress_reactions", &gen);
+        assert_eq!(prog.start_when.as_deref(), Some("stress > 70"));
+        let mut co = Coroutine::new(11, prog, Tier::Active, 0.5);
+        let mut world = World::new();
+        let mut ledger = Ledger::default();
+        world.set("stress", Value::Number(40.0));
+        let s = co.step(&mut world, &mut ledger);
+        assert!(matches!(s, CoroutineStatus::Waiting { .. }));
+        // Tip over the threshold; the coroutine should fire its body.
+        world.set("stress", Value::Number(80.0));
+        let s = co.step(&mut world, &mut ledger);
+        assert_eq!(s, CoroutineStatus::Yielded);
+    }
 
     #[test]
     fn duration_parses() {

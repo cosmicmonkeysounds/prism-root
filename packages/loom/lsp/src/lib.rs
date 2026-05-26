@@ -142,10 +142,11 @@ where
     R: lsp_types::request::Request,
     R::Params: serde::de::DeserializeOwned,
 {
-    req.extract::<R::Params>(R::METHOD).map_err(|err| match err {
-        ExtractError::MethodMismatch(r) => format!("method mismatch: {}", r.method),
-        ExtractError::JsonError { method, error } => format!("json error in {method}: {error}"),
-    })
+    req.extract::<R::Params>(R::METHOD)
+        .map_err(|err| match err {
+            ExtractError::MethodMismatch(r) => format!("method mismatch: {}", r.method),
+            ExtractError::JsonError { method, error } => format!("json error in {method}: {error}"),
+        })
 }
 
 fn error_response(id: RequestId, msg: String) -> Response {

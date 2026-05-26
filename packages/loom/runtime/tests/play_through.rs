@@ -69,6 +69,7 @@ fn project_plays_opening_to_ringing_to_end() {
     match p.step().unwrap() {
         Step::Event(Event::Dialogue {
             speaker,
+            speakers: _,
             parenthetical,
             text,
         }) => {
@@ -100,6 +101,7 @@ fn project_plays_opening_to_ringing_to_end() {
     match p.step().unwrap() {
         Step::Event(Event::Dialogue {
             speaker,
+            speakers: _,
             parenthetical,
             text,
         }) => {

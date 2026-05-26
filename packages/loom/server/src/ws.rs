@@ -99,11 +99,24 @@ struct PlayFile {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", content = "payload", rename_all = "kebab-case")]
 enum Outgoing {
-    AuthOk { subject: String },
-    Error { message: String },
-    Snapshot { workspace: String, bytes: String },
-    Update { workspace: String, bytes: String },
-    Presence { workspace: String, peers: Vec<PresenceState> },
+    AuthOk {
+        subject: String,
+    },
+    Error {
+        message: String,
+    },
+    Snapshot {
+        workspace: String,
+        bytes: String,
+    },
+    Update {
+        workspace: String,
+        bytes: String,
+    },
+    Presence {
+        workspace: String,
+        peers: Vec<PresenceState>,
+    },
     /// Phase 7 — current state of a co-play session.
     PlayState(crate::play::PlayStateSnapshot),
     Pong,
@@ -354,8 +367,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<LoomRelayState>) {
                     .collections()
                     .export_snapshot(&workspace)
                     .unwrap_or_default();
-                let encoded =
-                    base64::engine::general_purpose::STANDARD.encode(bytes);
+                let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
                 let _ = out_tx.send(
                     Outgoing::Snapshot {
                         workspace: workspace.clone(),
@@ -431,13 +443,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<LoomRelayState>) {
                 state.collections().import_snapshot(&workspace, raw, &now);
                 let _ = hub.tx.send(WsBroadcast {
                     from_peer: peer_id.clone(),
-                    message: Outgoing::Update {
-                        workspace,
-                        bytes,
-                    },
+                    message: Outgoing::Update { workspace, bytes },
                 });
             }
-            Incoming::Presence { workspace, state: pstate } => {
+            Incoming::Presence {
+                workspace,
+                state: pstate,
+            } => {
                 if auth.is_none() {
                     let _ = out_tx.send(
                         Outgoing::Error {
@@ -498,11 +510,12 @@ async fn handle_socket(socket: WebSocket, state: Arc<LoomRelayState>) {
                     );
                     continue;
                 };
-                let sources: Vec<(String, String)> = files
-                    .into_iter()
-                    .map(|f| (f.path, f.source))
-                    .collect();
-                match state.play.start(workspace.clone(), sources, session.subject.clone()) {
+                let sources: Vec<(String, String)> =
+                    files.into_iter().map(|f| (f.path, f.source)).collect();
+                match state
+                    .play
+                    .start(workspace.clone(), sources, session.subject.clone())
+                {
                     Ok(snap) => {
                         let msg = Outgoing::PlayState(snap);
                         let _ = out_tx.send(msg.to_ws());

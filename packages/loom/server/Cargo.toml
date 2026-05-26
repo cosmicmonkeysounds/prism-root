@@ -46,7 +46,7 @@ tracing-subscriber = { workspace = true }
 # rather than workspace-level — no other crate needs it today.
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }
@@ -56,3 +56,7 @@ http-body-util = "0.1"
 # suite spins up `axum::serve` on `127.0.0.1:0` and connects via
 # `tokio_tungstenite`.
 tokio-tungstenite = "0.24"
+# Phase 8 — the editor-serving suite materialises a fake Vite `dist/`
+# (`index.html` + a hashed asset) in a tempdir and points
+# `LoomServeConfig::editor_dist` at it.
+tempfile = { workspace = true }

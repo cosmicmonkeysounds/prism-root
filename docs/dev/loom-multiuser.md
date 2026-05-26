@@ -1,6 +1,6 @@
 # Loom — Multi-User Backbone
 
-Status: **Phases 1–7 landed.** WebSocket sync + presence are live on
+Status: **Phases 1–8 landed.** WebSocket sync + presence are live on
 `/ws`; the client wasm (`loom-wasm::LoomDoc`) and TS glue
 (`editor/src/lib/{sync,auth,presence,cm-loro,workspaces,export,project}.ts`)
 round-trip edits against the server. The React editor ships Cloud,
@@ -8,7 +8,11 @@ Remote, and Play sidebar panels driving the multi-user + co-playing
 flows. The local FSA + remote workspace models are unified by
 `LoomFolderBridge` (an Obsidian-style folder ↔ LoomDoc bridge) +
 `.loom-workspace.json` manifest. Phase 7 hosts `loom_runtime::Playhead`
-server-side and broadcasts the transcript over `/ws`.
+server-side and broadcasts the transcript over `/ws`. **Phase 8** turns
+`loom-relayd` into a single-binary deployment: it now ships the static
+React editor itself, defaults the client to same-origin, and the
+`prism loom build` / `prism loom serve` CLI commands wrap the build +
+boot loop.
 
 ## Goal
 
@@ -269,12 +273,86 @@ snapshot and rebroadcasts to other subscribers.
   store, no GraphObject layer). The CRDT only mirrors the folder for
   sync; persistence is the folder itself.
 
-### Phase 8+ — future
+### Phase 8 — self-hosted single-binary editor *(landed)*
+
+The Loom editor can now be hosted in full from one process. `loom-relayd`
+serves the React build alongside the JSON / WebSocket API; the React
+editor learns to default the relay URL to its own origin so a fresh
+deploy needs zero client-side configuration.
+
+**Server changes** (`packages/loom/server`):
+
+- `tower-http` gains the `fs` + `cors` features. `build_router_with`
+  accepts a `LoomServeConfig { editor_dist: Option<PathBuf>, cors:
+  CorsMode }`:
+  - When `editor_dist` is `Some(path)` the router gains a fallback
+    handler that wraps `ServeDir::new(path)` and, on 404, re-reads
+    `index.html` from disk. The custom fallback is necessary because
+    `tower-http`'s `ServeFile` derives the served path from the
+    request URI, which would 404 on nested SPA links like
+    `/workspace/abc`.
+  - `CorsMode::Permissive` (used by `--cors permissive` or the dev
+    server case) attaches `tower_http::cors::CorsLayer::permissive()`
+    so the Vite dev server on `:5173` can hit the relay on `:7878`.
+  - `CorsMode::SameOrigin` (the default once the editor is served
+    same-origin) keeps cross-origin off.
+- The `/api/*` and `/ws` routes stay exactly as in Phases 1–7; only
+  the fallback changes.
+
+**Binary changes** (`packages/loom/server/src/bin/loom_relayd.rs`):
+
+- New flags on `loom-relayd`:
+  - `--editor-dist <path>` — directory of `vite build` output to serve
+    (also reads `LOOM_EDITOR_DIST`).
+  - `--cors permissive|same-origin` — opt in to cross-origin requests.
+  - `--bind <addr:port>` already exists; the default is still
+    `127.0.0.1:7878`. Operators who want LAN access pass
+    `--bind 0.0.0.0:7878`.
+
+**Editor changes** (`packages/loom/editor`):
+
+- `useSession` defaults `relayUrl` to `window.location.origin` when no
+  override is persisted *and* `location.origin` is not a Vite dev URL
+  (`http://localhost:5173`, `:4173`, etc.). The "Relay URL" field on
+  the Cloud panel still lets the user point a same-origin deploy at
+  a different relay if they want to.
+- The Vite dev experience is unchanged: hitting `:5173` continues to
+  talk to `:7878` (with CORS now provided by the relay's permissive
+  mode when launched via the dev recipe).
+
+**CLI** (`packages/prism-cli`):
+
+- `prism loom build` — runs `pnpm build` in `packages/loom/editor` to
+  produce `editor/dist/`, then `cargo build -p loom-server` to produce
+  the `loom-relayd` binary. `--ship` adds `--release` to the cargo
+  step. `--skip-editor` / `--skip-server` cut the build in half when
+  iterating.
+- `prism loom serve [--bind <addr>] [--port <port>] [--editor-dist
+  <path>] [--cors <mode>] [--build]` — execs `loom-relayd` with the
+  editor dist pre-wired. `--build` runs the full build first; without
+  it, the command auto-builds the editor when `dist/` is missing
+  (suppress with `--no-auto-build`) and auto-builds the server binary
+  when `target/<profile>/loom-relayd` is missing.
+
+**What "host and serve the Loom editor in full" looks like**:
+
+```
+prism loom build           # one-time build of editor + relay
+prism loom serve --bind 0.0.0.0:7878
+# → open http://your.host:7878 from any browser, sign up, start authoring
+```
+
+A single TCP listener carries the static editor, the REST API, and the
+WebSocket sync channel. No reverse proxy required.
+
+### Phase 9+ — future
 
 - Persistent server-side workspaces (today's `CollectionHost` is
   in-memory; first restart drops state).
 - Transcript replay via `prism-core::network::session::transcript`.
 - DID-based auth + federation.
+- TLS termination (today the assumption is a reverse proxy sits in
+  front for prod, or the network is trusted).
 
 ## What "active" means at each phase
 

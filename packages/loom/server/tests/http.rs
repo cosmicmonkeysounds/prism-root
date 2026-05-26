@@ -148,8 +148,7 @@ async fn register_then_login_then_change() {
 
 #[tokio::test]
 async fn workspace_requires_auth() {
-    let (status, _) =
-        json_call(state(), "GET", "/api/workspaces", None, json!(null)).await;
+    let (status, _) = json_call(state(), "GET", "/api/workspaces", None, json!(null)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
@@ -180,8 +179,14 @@ async fn workspace_crud_and_snapshot_round_trip() {
     assert_eq!(body["name"], "Saltmere");
     assert_eq!(body["owner"], "bob");
 
-    let (status, body) =
-        json_call(state.clone(), "GET", "/api/workspaces", Some(&token), json!(null)).await;
+    let (status, body) = json_call(
+        state.clone(),
+        "GET",
+        "/api/workspaces",
+        Some(&token),
+        json!(null),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let workspaces = body["workspaces"].as_array().unwrap();
     assert_eq!(workspaces.len(), 1);

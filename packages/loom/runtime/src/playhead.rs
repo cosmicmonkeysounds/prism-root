@@ -15,8 +15,8 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use loom_parser::ast::{
-    BodyItem, Choice, Conditional, DialogueLine, Directive, DirectiveBlock, Divert, DivertTarget,
-    Item,
+    AfterMorph, BodyItem, Choice, Conditional, DialogueLine, Directive, DirectiveBlock, Divert,
+    DivertTarget, EachVisit, InlineLet, Item, MatchBlock,
 };
 
 use crate::bundle::{BeatRef, Bundle};
@@ -62,6 +62,10 @@ enum Yield {
     Divert {
         target: DivertTarget,
         params: indexmap::IndexMap<String, String>,
+        /// `as Participant` modifier (spec §13.1). When present, the
+        /// playhead pushes a scope alias onto the frame so paths like
+        /// `trust` resolve against `Participant.trust`.
+        scope_as: Option<String>,
     },
     Tunnel {
         target: DivertTarget,
@@ -77,6 +81,14 @@ enum Yield {
     /// A `<broadcast: …>`-style directive that runs first, then
     /// lowers its body into the queue head.
     DirectiveBlock(DirectiveBlock),
+    /// `<match: expr>` — pick the first arm whose pattern matches.
+    Match(MatchBlock),
+    /// `<each visit>` — choose `first` / `then` / `finally` by visit.
+    EachVisit(EachVisit),
+    /// `<after: cond> … <otherwise>` — per-beat latch.
+    AfterMorph(AfterMorph),
+    /// `<let: name = expr>` — scope-local binding.
+    InlineLet(InlineLet),
 }
 
 #[derive(Clone, Debug)]
@@ -92,6 +104,11 @@ struct PendingChoice {
 struct Frame {
     beat: BeatRef,
     file_qualifier: String,
+    /// `-> beat as Participant` modifier (spec §13.1). When set,
+    /// bare-name paths read inside this frame route through the
+    /// world key `<scope_as>.<name>` before falling back to the
+    /// flat name. Empty in the absence of an `as` modifier.
+    scope_as: Option<String>,
 }
 
 pub struct Playhead {
@@ -125,6 +142,16 @@ pub struct Playhead {
     /// playhead launches. Ticked once per playhead `step` so ambient
     /// generators interleave with the visible beat (spec §12.5).
     scheduler: crate::scheduler::Scheduler,
+    /// Per-anchor cycle counter for `<cycle: a | b | c>` — keyed by
+    /// the directive opener's source byte offset.
+    cycle_state: std::collections::HashMap<u32, usize>,
+    /// `participant_id → current_location`. Walked alongside the hook
+    /// drain so an `Event::ParticipantEnteredLocation` for a
+    /// participant who was already somewhere else emits a synthetic
+    /// `Exits` hook for their previous location (spec §10.4 — `on
+    /// Participant exits LOCATION` has no native ledger envelope; it
+    /// is the implicit pair of the `enters` event).
+    participant_locations: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -182,6 +209,8 @@ impl Playhead {
             characters,
             hook_cursor: 0,
             scheduler: crate::scheduler::Scheduler::new(),
+            cycle_state: std::collections::HashMap::new(),
+            participant_locations: std::collections::HashMap::new(),
         };
         p.enter_beat(entry);
         Ok(p)
@@ -208,20 +237,26 @@ impl Playhead {
         path: &[String],
         value: &crate::expr::Value,
         op: crate::simulacra::SetOp,
-    ) -> bool {
+    ) -> Result<bool, DirectiveError> {
         if path.len() < 3 {
-            return false;
+            return Ok(false);
         }
         let owner = path[0].clone();
         let Some(character) = self.characters.get_mut(&owner) else {
-            return false;
+            return Ok(false);
         };
-        if character.apply_set(path, value, op) {
-            character.refresh_own_reacts(&self.world);
-            character.publish(&mut self.world);
-            return true;
+        match character.apply_set(path, value, op) {
+            crate::simulacra::SetOutcome::Consumed => {
+                character.refresh_own_reacts(&self.world);
+                character.publish(&mut self.world);
+                Ok(true)
+            }
+            crate::simulacra::SetOutcome::Rejected(message) => Err(DirectiveError::BadArgs {
+                kind: "set".into(),
+                message: format!("{}: {}", path.join("."), message),
+            }),
+            crate::simulacra::SetOutcome::Passthrough => Ok(false),
         }
-        false
     }
 
     pub fn ledger(&self) -> &Ledger {
@@ -311,7 +346,11 @@ impl Playhead {
                     self.ledger.push(prompted);
                     return Ok(Step::Choice(opts));
                 }
-                Yield::Divert { target, params } => {
+                Yield::Divert {
+                    target,
+                    params,
+                    scope_as,
+                } => {
                     let beat_ref = self.resolve(&target)?;
                     let beat = self.bundle.beat(beat_ref).clone();
                     self.bind_beat_params(&params)?;
@@ -319,7 +358,7 @@ impl Playhead {
                         target: target.name.clone(),
                         beat: beat.name.clone(),
                     });
-                    self.enter_beat(beat_ref);
+                    self.enter_beat_scoped(beat_ref, scope_as);
                 }
                 Yield::Tunnel { target, params } => {
                     let beat_ref = self.resolve(&target)?;
@@ -359,15 +398,50 @@ impl Playhead {
                     return Ok(self.halt());
                 }
                 Yield::Directive(directive) => {
+                    // `<shuffle: a | b | c>` / `<cycle: a | b | c>` —
+                    // bar-separated inline yields. Splits before the
+                    // generic expression parser tries to read `|` as
+                    // an operator (it doesn't, but the split happens
+                    // first so the variant text passes through clean).
+                    let trimmed_raw = directive.raw.trim_start();
+                    if let Some(rest) = trimmed_raw.strip_prefix("shuffle:") {
+                        let variants = split_bar_variants(rest);
+                        if !variants.is_empty() {
+                            let idx = self.ledger.events().len() % variants.len();
+                            let text = variants[idx].clone();
+                            let event = Event::Action { text };
+                            self.ledger.push(event.clone());
+                            return Ok(Step::Event(event));
+                        }
+                    }
+                    if let Some(rest) = trimmed_raw.strip_prefix("cycle:") {
+                        let variants = split_bar_variants(rest);
+                        if !variants.is_empty() {
+                            let key = directive.span.start.byte;
+                            let idx = *self.cycle_state.get(&key).unwrap_or(&0);
+                            let text = variants[idx % variants.len()].clone();
+                            self.cycle_state.insert(key, idx + 1);
+                            let event = Event::Action { text };
+                            self.ledger.push(event.clone());
+                            return Ok(Step::Event(event));
+                        }
+                    }
+                    if let Some(rest) = trimmed_raw.strip_prefix("let:") {
+                        // Fallback inline let — reached from raw-line
+                        // lowering paths (hooks) that don't pre-parse
+                        // the directive into `BodyItem::InlineLet`.
+                        if let Some((name, expr_text)) = rest.split_once('=') {
+                            let name = name.trim().to_string();
+                            let value = self.eval_expression(expr_text.trim())?;
+                            self.world.set(name, value);
+                            continue;
+                        }
+                    }
                     let call = directives::parse(&directive.raw)?;
                     // `<spawn: Name [with k: v]>` — start a SCENE or
                     // GENERATOR coroutine at its declared tier.
                     if call.kind == "spawn" {
-                        if let Some(name) = call
-                            .positional
-                            .first()
-                            .map(|e| coroutine_name_from_expr(e))
-                        {
+                        if let Some(name) = call.positional.first().map(coroutine_name_from_expr) {
                             if self.spawn_coroutine(&name, &call.named)? {
                                 if let Some(latest) = self.ledger.events().last().cloned() {
                                     return Ok(Step::Event(latest));
@@ -382,11 +456,7 @@ impl Playhead {
                     // (if any) is written to `World["__last_run"]` so
                     // host code or follow-up `let` bindings can read it.
                     if call.kind == "run" {
-                        if let Some(name) = call
-                            .positional
-                            .first()
-                            .map(|e| coroutine_name_from_expr(e))
-                        {
+                        if let Some(name) = call.positional.first().map(coroutine_name_from_expr) {
                             if let Some(value) = self.run_coroutine(&name, &call.named)? {
                                 self.world.set("__last_run", value);
                                 if let Some(latest) = self.ledger.events().last().cloned() {
@@ -407,19 +477,47 @@ impl Playhead {
                             Err(expr::ExprError::UnknownFunction(n.into()))
                         })
                         .map_err(crate::directives::DirectiveError::from)?;
+                        // A bare-identifier rhs (`= suspects`) parses
+                        // as `Expr::Path(["suspects"])` and evaluates
+                        // to `Null` when no such world key exists. For
+                        // schema-validated knowledge slots (spec
+                        // §10.2) we want the literal name, not Null,
+                        // so the sum-typed slot check can compare it
+                        // against its declared variants.
+                        let rhs_value = match (&assign.rhs, &rhs_value) {
+                            (Expr::Path(segs), Value::Null) if segs.len() == 1 => {
+                                Value::String(segs[0].clone())
+                            }
+                            _ => rhs_value,
+                        };
                         let op = match assign.op {
                             crate::directives::AssignOp::Set => crate::simulacra::SetOp::Assign,
                             crate::directives::AssignOp::AddAssign => crate::simulacra::SetOp::Add,
                             crate::directives::AssignOp::SubAssign => crate::simulacra::SetOp::Sub,
                             _ => crate::simulacra::SetOp::Assign,
                         };
-                        if self.route_set_through_character(&assign.path, &rhs_value, op) {
+                        if self.route_set_through_character(&assign.path, &rhs_value, op)? {
                             let key = assign.path.join(".");
                             let new_value = self.world.get(&key);
-                            self.ledger.push(Event::WorldSet {
-                                path: key,
-                                value: new_value.display(),
-                            });
+                            // Knowledge writes carry a richer envelope
+                            // (spec §10.2) — the character store owns
+                            // the field, so the ledger records
+                            // `KnowledgeChanged` instead of the generic
+                            // `WorldSet`. Disposition writes stay on
+                            // `WorldSet` so the threshold-cross hook
+                            // derivation continues to fire.
+                            if assign.path.len() == 3 && assign.path[1] == "knows" {
+                                self.ledger.push(Event::KnowledgeChanged {
+                                    character: assign.path[0].clone(),
+                                    field: assign.path[2].clone(),
+                                    value: new_value.display(),
+                                });
+                            } else {
+                                self.ledger.push(Event::WorldSet {
+                                    path: key,
+                                    value: new_value.display(),
+                                });
+                            }
                             if let Some(latest) = self.ledger.events().last().cloned() {
                                 return Ok(Step::Event(latest));
                             }
@@ -471,6 +569,80 @@ impl Playhead {
                             self.queue.push_front(y);
                         }
                     }
+                }
+                Yield::Match(m) => {
+                    self.refresh_lets()?;
+                    let value = self.eval_expression(&m.scrutinee)?;
+                    let needle = value.display();
+                    for arm in &m.arms {
+                        if arm.pattern == needle {
+                            self.ledger.push(Event::ConditionalArm {
+                                condition: Some(arm.pattern.clone()),
+                            });
+                            let lowered = self.lower_body(&arm.body);
+                            for y in lowered.into_iter().rev() {
+                                self.queue.push_front(y);
+                            }
+                            break;
+                        }
+                    }
+                }
+                Yield::EachVisit(each) => {
+                    let beat_name = self
+                        .stack
+                        .last()
+                        .map(|f| self.bundle.beat(f.beat).name.clone())
+                        .unwrap_or_default();
+                    let visits = self.ledger.beat_visit_count(&beat_name);
+                    let body = match visits {
+                        0 | 1 => &each.first,
+                        2 => &each.then,
+                        _ => &each.finally,
+                    };
+                    if !body.is_empty() {
+                        let lowered = self.lower_body(body);
+                        for y in lowered.into_iter().rev() {
+                            self.queue.push_front(y);
+                        }
+                    }
+                }
+                Yield::AfterMorph(morph) => {
+                    self.refresh_lets()?;
+                    let beat_name = self
+                        .stack
+                        .last()
+                        .map(|f| self.bundle.beat(f.beat).name.clone())
+                        .unwrap_or_default();
+                    let anchor = format!("{}@{}", beat_name, morph.span.start.byte);
+                    let latched = self.ledger.after_latched(&beat_name, &anchor);
+                    let body = if latched {
+                        &morph.after
+                    } else {
+                        let truthy = self.eval_expression(&morph.condition)?.truthy();
+                        if truthy {
+                            self.ledger.push(Event::AfterLatched {
+                                beat: beat_name.clone(),
+                                anchor: anchor.clone(),
+                            });
+                            &morph.after
+                        } else {
+                            &morph.otherwise
+                        }
+                    };
+                    if !body.is_empty() {
+                        let lowered = self.lower_body(body);
+                        for y in lowered.into_iter().rev() {
+                            self.queue.push_front(y);
+                        }
+                    }
+                }
+                Yield::InlineLet(binding) => {
+                    let value = if binding.expression.is_empty() {
+                        Value::Null
+                    } else {
+                        self.eval_expression(&binding.expression)?
+                    };
+                    self.world.set(binding.name.clone(), value);
                 }
                 Yield::DirectiveBlock(block) => {
                     if let Some((var, src)) = parse_for_directive(&block.directive.raw) {
@@ -563,6 +735,7 @@ impl Playhead {
             }
             Event::Dialogue {
                 speaker,
+                speakers,
                 parenthetical,
                 text,
             } => {
@@ -571,6 +744,7 @@ impl Playhead {
                 let expanded = self.expand_inline_text(&cleaned)?;
                 Ok(Event::Dialogue {
                     speaker,
+                    speakers,
                     parenthetical,
                     text: expanded,
                 })
@@ -681,10 +855,35 @@ impl Playhead {
 
     /// Parse + evaluate one expression string against the current
     /// world. Ledger queries (`played(…)`, `visits(…)`, `since(…)`)
-    /// are resolved through [`crate::ledger::call_query`].
+    /// are resolved through [`crate::ledger::call_query`]. When the
+    /// enclosing beat carries an `as <scope>` modifier (spec §13.1),
+    /// the expression sees a transient world overlay where each
+    /// `<scope>.<name>` entry is also reachable as the bare `<name>`.
     fn eval_expression(&self, source: &str) -> Result<Value, DirectiveError> {
         let parsed = expr::parse(source).map_err(DirectiveError::from)?;
-        let value = expr::eval(&parsed, &self.world, &mut |name, args| {
+        let scope = self.stack.last().and_then(|f| f.scope_as.as_ref()).cloned();
+        let world_view: World = if let Some(scope) = scope {
+            let prefix = format!("{scope}.");
+            let mut overlay = self.world.clone();
+            // Walk the world's existing entries and republish every
+            // `<scope>.<name>` under the bare `<name>` so `trust` in
+            // the scoped beat reads as `<scope>.trust`.
+            let aliased: Vec<(String, Value)> = self
+                .world
+                .entries()
+                .filter_map(|(k, v)| {
+                    k.strip_prefix(&prefix)
+                        .map(|tail| (tail.to_string(), v.clone()))
+                })
+                .collect();
+            for (k, v) in aliased {
+                overlay.set(k, v);
+            }
+            overlay
+        } else {
+            self.world.clone()
+        };
+        let value = expr::eval(&parsed, &world_view, &mut |name, args| {
             ledger::call_query(&self.ledger, name, &args)
         })
         .map_err(DirectiveError::from)?;
@@ -778,6 +977,10 @@ impl Playhead {
     }
 
     fn enter_beat(&mut self, beat_ref: BeatRef) {
+        self.enter_beat_scoped(beat_ref, None);
+    }
+
+    fn enter_beat_scoped(&mut self, beat_ref: BeatRef, scope_as: Option<String>) {
         let beat = self.bundle.beat(beat_ref).clone();
         let file = self.bundle.file(beat_ref.file);
         self.ledger.push(Event::BeatEntered {
@@ -788,6 +991,7 @@ impl Playhead {
         self.stack.push(Frame {
             beat: beat_ref,
             file_qualifier: file.qualifier.clone(),
+            scope_as,
         });
         let lowered = self.lower_body(&beat.body);
         for y in lowered.into_iter().rev() {
@@ -815,8 +1019,7 @@ impl Playhead {
         };
         let id = self.scheduler.next_id();
         let mut coroutine = crate::coroutine::Coroutine::new(id, program, tier, priority);
-        let mut args: std::collections::HashMap<String, Value> =
-            std::collections::HashMap::new();
+        let mut args: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
         for (k, e) in named {
             let v = expr::eval(e, &self.world, &mut |n, _| {
                 Err(expr::ExprError::UnknownFunction(n.into()))
@@ -843,8 +1046,7 @@ impl Playhead {
         };
         let id = self.scheduler.next_id();
         let mut coroutine = crate::coroutine::Coroutine::new(id, program, tier, priority);
-        let mut args: std::collections::HashMap<String, Value> =
-            std::collections::HashMap::new();
+        let mut args: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
         for (k, e) in named {
             let v = expr::eval(e, &self.world, &mut |n, _| {
                 Err(expr::ExprError::UnknownFunction(n.into()))
@@ -951,6 +1153,38 @@ impl Playhead {
         self.hook_cursor = end;
 
         let mut to_lower: Vec<Vec<loom_parser::ast::RawLine>> = Vec::new();
+        // Pre-derive synthetic `Exits` hooks: a participant moving
+        // into a new location implies they exited the previous one.
+        // The live stage doesn't write an explicit envelope for that,
+        // so we keep our own `participant_locations` map and emit the
+        // synthetic event before the entering event's enter hook.
+        let mut exits: Vec<(String, String)> = Vec::new();
+        for event in &events {
+            if let Event::ParticipantEnteredLocation { id, location } = event {
+                if let Some(prev) = self.participant_locations.get(id) {
+                    if prev != location {
+                        exits.push((id.clone(), prev.clone()));
+                    }
+                }
+                self.participant_locations
+                    .insert(id.clone(), location.clone());
+            }
+        }
+        for (_id, prev_location) in &exits {
+            let hook_event = crate::simulacra::HookEvent::Exits(prev_location.as_str());
+            let names: Vec<String> = self.characters.keys().cloned().collect();
+            for name in &names {
+                let Some(character) = self.characters.get_mut(name) else {
+                    continue;
+                };
+                let hits = character.match_hooks(&hook_event);
+                for idx in hits {
+                    if let Some(sub) = character.hooks.get(idx) {
+                        to_lower.push(sub.body.clone());
+                    }
+                }
+            }
+        }
         for event in &events {
             // For each derived HookEvent, walk every character once.
             let derived: Vec<crate::simulacra::HookEvent<'_>> = derive_hook_events(event);
@@ -1058,8 +1292,21 @@ fn lower_item(item: &BodyItem, out: &mut Vec<Yield>) {
         BodyItem::Divert(d) => lower_divert(d, out),
         BodyItem::Conditional(c) => out.push(Yield::Conditional(c.clone())),
         BodyItem::DirectiveBlock(b) => out.push(Yield::DirectiveBlock(b.clone())),
+        BodyItem::Match(m) => out.push(Yield::Match(m.clone())),
+        BodyItem::EachVisit(e) => out.push(Yield::EachVisit(e.clone())),
+        BodyItem::AfterMorph(a) => out.push(Yield::AfterMorph(a.clone())),
+        BodyItem::InlineLet(l) => out.push(Yield::InlineLet(l.clone())),
+        // `SlotPlaceholder` expansion is owned by the typed-slot agent;
+        // ignore unrecognised placeholders so we don't accidentally
+        // double-handle them here.
+        BodyItem::SlotPlaceholder(_) => {}
         BodyItem::Dialogue(block) => {
             let speaker = block.speaker.clone();
+            let speakers = if block.speakers.is_empty() {
+                vec![speaker.clone()]
+            } else {
+                block.speakers.clone()
+            };
             // Phase-3 lowering: emit one Dialogue event per textual
             // line. The opener's `(parenthetical)` rides on the
             // *first* line; subsequent inline `(parenthetical)`
@@ -1072,6 +1319,7 @@ fn lower_item(item: &BodyItem, out: &mut Vec<Yield>) {
                     DialogueLine::Text(t) => {
                         out.push(Yield::Event(Event::Dialogue {
                             speaker: speaker.clone(),
+                            speakers: speakers.clone(),
                             parenthetical: current_paren.clone(),
                             text: t.value.clone(),
                         }));
@@ -1090,6 +1338,7 @@ fn lower_item(item: &BodyItem, out: &mut Vec<Yield>) {
                 // performer prompter sees the cue.
                 out.push(Yield::Event(Event::Dialogue {
                     speaker,
+                    speakers,
                     parenthetical: current_paren,
                     text: String::new(),
                 }));
@@ -1100,9 +1349,15 @@ fn lower_item(item: &BodyItem, out: &mut Vec<Yield>) {
 
 fn lower_divert(d: &Divert, out: &mut Vec<Yield>) {
     match d {
-        Divert::To { target, params, .. } => out.push(Yield::Divert {
+        Divert::To {
+            target,
+            params,
+            scope_as,
+            ..
+        } => out.push(Yield::Divert {
             target: target.clone(),
             params: params.clone(),
+            scope_as: scope_as.clone(),
         }),
         Divert::Tunnel { target, .. } => out.push(Yield::Tunnel {
             target: target.clone(),
@@ -1310,13 +1565,17 @@ fn derive_hook_events(event: &Event) -> Vec<crate::simulacra::HookEvent<'_>> {
         Event::WorldSet { path, value } => {
             // `Wren.trusts.Player` → threshold cross. Surface the new
             // numeric value so the character's threshold_memory edge-
-            // detects the crossing.
+            // detects both upward (`passes N`) and downward
+            // (`drops below N`) crossings (spec §10.4).
             let segments: Vec<&str> = path.split('.').collect();
-            if segments.len() == 3
-                && matches!(segments[1], "trusts" | "respects" | "fears")
-            {
+            if segments.len() == 3 && matches!(segments[1], "trusts" | "respects" | "fears") {
                 if let Ok(n) = value.parse::<f64>() {
                     out.push(HE::DispositionPasses {
+                        verb: segments[1],
+                        target: segments[2],
+                        value: n,
+                    });
+                    out.push(HE::DispositionDropsBelow {
                         verb: segments[1],
                         target: segments[2],
                         value: n,
@@ -1326,6 +1585,9 @@ fn derive_hook_events(event: &Event) -> Vec<crate::simulacra::HookEvent<'_>> {
         }
         Event::ParticipantEnteredLocation { location, .. } => {
             out.push(HE::Enters(location.as_str()));
+        }
+        Event::ParticipantJoined { .. } => {
+            out.push(HE::ParticipantJoins);
         }
         _ => {}
     }
@@ -1371,6 +1633,7 @@ fn lower_raw_lines(lines: &[loom_parser::ast::RawLine]) -> Vec<Yield> {
                         knot: None,
                     },
                     params,
+                    scope_as: None,
                 });
             } else {
                 out.push(Yield::Divert {
@@ -1380,6 +1643,7 @@ fn lower_raw_lines(lines: &[loom_parser::ast::RawLine]) -> Vec<Yield> {
                         knot: None,
                     },
                     params: indexmap::IndexMap::new(),
+                    scope_as: None,
                 });
             }
             continue;
@@ -1397,6 +1661,41 @@ fn lower_raw_lines(lines: &[loom_parser::ast::RawLine]) -> Vec<Yield> {
         out.push(Yield::Event(Event::Action {
             text: text.to_string(),
         }));
+    }
+    out
+}
+
+/// Split a `<shuffle:>` / `<cycle:>` body on top-level `|` separators.
+fn split_bar_variants(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    let mut quote: Option<char> = None;
+    for ch in text.chars() {
+        if let Some(q) = quote {
+            buf.push(ch);
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => {
+                quote = Some(ch);
+                buf.push(ch);
+            }
+            '|' => {
+                let trimmed = buf.trim().to_string();
+                if !trimmed.is_empty() {
+                    out.push(trimmed);
+                }
+                buf.clear();
+            }
+            _ => buf.push(ch),
+        }
+    }
+    let trimmed = buf.trim().to_string();
+    if !trimmed.is_empty() {
+        out.push(trimmed);
     }
     out
 }
@@ -1612,5 +1911,224 @@ Done.
         let end = p.step().unwrap();
         assert_eq!(end, Step::Ended);
         assert!(p.halted());
+    }
+
+    #[test]
+    fn match_dispatches_to_named_arm() {
+        let src = "
+== opening
+<set: NPC.knows.bell_origin = 'confirmed'>
+
+<match: NPC.knows.bell_origin>
+  confirmed
+    I know the answer.
+  suspects
+    I have a hunch.
+  unknown
+    I do not know.
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        let mut texts: Vec<String> = Vec::new();
+        loop {
+            match p.step().unwrap() {
+                Step::Event(Event::Action { text }) => texts.push(text),
+                Step::Ended => break,
+                Step::Choice(_) => panic!("no choices"),
+                _ => {}
+            }
+        }
+        assert!(
+            texts.iter().any(|t| t == "I know the answer."),
+            "matched arm body should fire: {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|t| t == "I have a hunch."),
+            "non-matching arm must be skipped: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn match_falls_through_when_no_arm_matches() {
+        let src = "
+== opening
+<set: NPC.knows.bell_origin = 'mystery'>
+
+<match: NPC.knows.bell_origin>
+  confirmed
+    Known.
+  suspects
+    Hunch.
+
+Tail.
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        let mut texts: Vec<String> = Vec::new();
+        loop {
+            match p.step().unwrap() {
+                Step::Event(Event::Action { text }) => texts.push(text),
+                Step::Ended => break,
+                _ => {}
+            }
+        }
+        assert!(
+            !texts.iter().any(|t| t == "Known." || t == "Hunch."),
+            "no arm should match for 'mystery': {texts:?}"
+        );
+        assert!(texts.iter().any(|t| t == "Tail."));
+    }
+
+    #[test]
+    fn each_visit_selects_first_arm_on_first_pass() {
+        let src = "
+== opening
+<each visit>
+  first
+    First time.
+  then
+    Subsequent.
+  finally
+    Exhausted.
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        let mut texts: Vec<String> = Vec::new();
+        loop {
+            match p.step().unwrap() {
+                Step::Event(Event::Action { text }) => texts.push(text),
+                Step::Ended => break,
+                _ => {}
+            }
+        }
+        assert!(texts.iter().any(|t| t == "First time."));
+        assert!(!texts.iter().any(|t| t == "Subsequent."));
+    }
+
+    #[test]
+    fn after_morph_latches_and_replaces_otherwise() {
+        let src = "
+== opening
+<set: bell_rung = true>
+
+<after: bell_rung>
+  Latched body.
+<otherwise>
+  Pre-latch body.
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        let mut texts: Vec<String> = Vec::new();
+        loop {
+            match p.step().unwrap() {
+                Step::Event(Event::Action { text }) => texts.push(text),
+                Step::Ended => break,
+                _ => {}
+            }
+        }
+        assert!(texts.iter().any(|t| t == "Latched body."));
+        assert!(!texts.iter().any(|t| t == "Pre-latch body."));
+        assert!(p
+            .ledger()
+            .events()
+            .iter()
+            .any(|e| matches!(e, Event::AfterLatched { .. })));
+    }
+
+    #[test]
+    fn after_morph_otherwise_when_unlatched() {
+        let src = "
+== opening
+<after: bell_rung>
+  Latched.
+<otherwise>
+  Not yet.
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        let mut texts: Vec<String> = Vec::new();
+        loop {
+            match p.step().unwrap() {
+                Step::Event(Event::Action { text }) => texts.push(text),
+                Step::Ended => break,
+                _ => {}
+            }
+        }
+        assert!(texts.iter().any(|t| t == "Not yet."));
+        assert!(!texts.iter().any(|t| t == "Latched."));
+    }
+
+    #[test]
+    fn inline_let_binds_into_scope_and_drops_after_block() {
+        let src = "
+== opening
+<let: tally = 7>
+
+Score is {tally}.
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        let mut texts: Vec<String> = Vec::new();
+        loop {
+            match p.step().unwrap() {
+                Step::Event(Event::Action { text }) => texts.push(text),
+                Step::Ended => break,
+                _ => {}
+            }
+        }
+        assert!(
+            texts.iter().any(|t| t == "Score is 7."),
+            "binding should be readable: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn shuffle_emits_one_variant() {
+        let src = "
+== opening
+<shuffle: alpha | beta | gamma>
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        let mut texts: Vec<String> = Vec::new();
+        loop {
+            match p.step().unwrap() {
+                Step::Event(Event::Action { text }) => texts.push(text),
+                Step::Ended => break,
+                _ => {}
+            }
+        }
+        assert_eq!(texts.len(), 1);
+        assert!(
+            matches!(texts[0].as_str(), "alpha" | "beta" | "gamma"),
+            "got {texts:?}"
+        );
+    }
+
+    #[test]
+    fn cycle_emits_variants_in_order() {
+        // One `<cycle:>` directive lowered three times via a `<for:>`
+        // unroll keeps the same source span, so the per-anchor counter
+        // advances across iterations and emits A, B, C.
+        let src = "
+== opening
+<for: i in [1, 2, 3]>
+  <cycle: A | B | C>
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        let mut texts: Vec<String> = Vec::new();
+        loop {
+            match p.step().unwrap() {
+                Step::Event(Event::Action { text }) => texts.push(text),
+                Step::Ended => break,
+                _ => {}
+            }
+        }
+        assert_eq!(
+            texts,
+            vec!["A".to_string(), "B".to_string(), "C".to_string()],
+            "got {texts:?}"
+        );
     }
 }

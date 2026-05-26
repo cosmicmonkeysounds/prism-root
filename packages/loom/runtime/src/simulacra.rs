@@ -30,6 +30,11 @@ pub struct CharacterState {
     /// `(verb, target)` → axis value.
     pub disposition: BTreeMap<(String, String), AxisValue>,
     pub knowledge: BTreeMap<String, Value>,
+    /// Declared knowledge type spellings, captured from each
+    /// [`KnowledgeField::type_spec`]. Read at write time so sum-typed
+    /// (`unknown | suspects | confirmed`) and `bool` slots reject
+    /// out-of-band values (spec §10.2).
+    pub knowledge_schema: BTreeMap<String, String>,
     pub goals: Vec<GoalState>,
     pub hooks: Vec<HookSubscription>,
     pub stats: Option<StatsInstance>,
@@ -124,6 +129,8 @@ impl CharacterState {
         }
         for k in &body.knowledge {
             self.knowledge.insert(k.name.clone(), seed_knowledge(k));
+            self.knowledge_schema
+                .insert(k.name.clone(), k.type_spec.clone());
         }
         for g in &body.goals {
             self.goals.push(GoalState {
@@ -230,7 +237,12 @@ impl CharacterState {
                     Some(text) => evaluate_predicate(text, &scoped),
                 }
             };
-            let active = goal.decl.active_when.as_ref().map(|t| evaluate_predicate(t, &scoped)).unwrap_or(true);
+            let active = goal
+                .decl
+                .active_when
+                .as_ref()
+                .map(|t| evaluate_predicate(t, &scoped))
+                .unwrap_or(true);
             match goal.status {
                 GoalStatus::Dormant => {
                     if active {
@@ -253,20 +265,36 @@ impl CharacterState {
     }
 
     /// Apply a `<set: Wren.knows.field := value>` mutation. Returns
-    /// `true` when the path matched a knowledge / disposition slot
-    /// (and was therefore consumed); `false` to let the generic world
-    /// set handler take over.
-    pub fn apply_set(&mut self, path: &[String], value: &Value, op: SetOp) -> bool {
+    /// [`SetOutcome::Consumed`] when the path matched a knowledge /
+    /// disposition slot (and was therefore consumed),
+    /// [`SetOutcome::Rejected`] when the slot's declared schema
+    /// refuses the value, or [`SetOutcome::Passthrough`] to let the
+    /// generic world set handler take over.
+    pub fn apply_set(&mut self, path: &[String], value: &Value, op: SetOp) -> SetOutcome {
         // `Wren.knows.field`
         if path.len() == 3 && path[1] == "knows" {
             let key = &path[2];
             let new_value = match op {
                 SetOp::Assign => value.clone(),
-                SetOp::Add => add_values(self.knowledge.get(key).cloned().unwrap_or(Value::Null), value.clone()),
-                SetOp::Sub => sub_values(self.knowledge.get(key).cloned().unwrap_or(Value::Null), value.clone()),
+                SetOp::Add => add_values(
+                    self.knowledge.get(key).cloned().unwrap_or(Value::Null),
+                    value.clone(),
+                ),
+                SetOp::Sub => sub_values(
+                    self.knowledge.get(key).cloned().unwrap_or(Value::Null),
+                    value.clone(),
+                ),
             };
+            // Schema gate (spec §10.2). Sum and bool slots reject
+            // anything outside their declared shape; everything else
+            // stays opaque.
+            if let Some(spec) = self.knowledge_schema.get(key) {
+                if let Some(message) = validate_knowledge_value(spec, op, &new_value) {
+                    return SetOutcome::Rejected(message);
+                }
+            }
             self.knowledge.insert(key.clone(), new_value);
-            return true;
+            return SetOutcome::Consumed;
         }
         // `Wren.trusts.Player` / `.respects.X` / `.fears.X`
         if path.len() == 3 && matches!(path[1].as_str(), "trusts" | "respects" | "fears") {
@@ -275,7 +303,10 @@ impl CharacterState {
             let axis = self
                 .disposition
                 .entry((verb.clone(), target.clone()))
-                .or_insert(AxisValue { current: 0.0, max: 100.0 });
+                .or_insert(AxisValue {
+                    current: 0.0,
+                    max: 100.0,
+                });
             let rhs = value.as_number().unwrap_or(0.0);
             axis.current = match op {
                 SetOp::Assign => rhs,
@@ -289,9 +320,9 @@ impl CharacterState {
             if axis.current > axis.max {
                 axis.current = axis.max;
             }
-            return true;
+            return SetOutcome::Consumed;
         }
-        false
+        SetOutcome::Passthrough
     }
 
     /// Match the character's hooks against `event` text. Returns the
@@ -352,6 +383,23 @@ pub enum SetOp {
     Sub,
 }
 
+/// Result of [`CharacterState::apply_set`] — whether the character
+/// store claimed the path, refused the value, or wants the caller to
+/// pass it through to the generic world set handler.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SetOutcome {
+    /// The mutation matched a knowledge or disposition slot and was
+    /// applied.
+    Consumed,
+    /// The mutation matched a slot but the declared schema refused
+    /// the value (spec §10.2). The string carries a writer-facing
+    /// reason; the caller should surface it as a directive error.
+    Rejected(String),
+    /// The path is not a character slot. The caller should run the
+    /// generic world write path.
+    Passthrough,
+}
+
 /// What the playhead saw — used to match against [`HookSubscription`].
 #[derive(Clone, Debug)]
 pub enum HookEvent<'a> {
@@ -370,6 +418,18 @@ pub enum HookEvent<'a> {
     Fired(&'a str),
     /// `on Participant enters L`.
     Enters(&'a str),
+    /// `on Participant exits L`.
+    Exits(&'a str),
+    /// `on <verb> drops below N` — downward threshold cross,
+    /// symmetric to [`Self::DispositionPasses`].
+    DispositionDropsBelow {
+        verb: &'a str,
+        target: &'a str,
+        value: f64,
+    },
+    /// `on participant joins` — a new audience member entered the
+    /// stage (spec §13.1).
+    ParticipantJoins,
 }
 
 fn hook_matches(
@@ -399,6 +459,14 @@ fn hook_matches(
                 return rest.trim() == *loc;
             }
         }
+        HookEvent::Exits(loc) => {
+            if let Some(rest) = pat.strip_prefix("Participant exits ") {
+                return rest.trim() == *loc;
+            }
+        }
+        HookEvent::ParticipantJoins => {
+            return pat == "participant joins" || pat == "Participant joins";
+        }
         HookEvent::DispositionPasses { verb, value, .. } => {
             // `trust passes N` (verbs stored as `trusts` get bare
             // alias `trust` here).
@@ -409,14 +477,85 @@ fn hook_matches(
                     Ok(n) => n,
                     Err(_) => return false,
                 };
-                let last = threshold.get(pat).copied().unwrap_or(0.0);
+                // Seed at +infinity so the first observation is treated
+                // as if the value started above the threshold (i.e.
+                // only an actual upward crossing fires).
+                let last = threshold.get(pat).copied().unwrap_or(f64::NEG_INFINITY);
                 let crossed = last < threshold_value && *value >= threshold_value;
+                threshold.insert(pat.to_string(), *value);
+                return crossed;
+            }
+        }
+        HookEvent::DispositionDropsBelow { verb, value, .. } => {
+            let bare_verb = verb.trim_end_matches('s');
+            let prefix = format!("{bare_verb} drops below ");
+            if let Some(rest) = pat.strip_prefix(&prefix) {
+                let threshold_value: f64 = match rest.trim().parse() {
+                    Ok(n) => n,
+                    Err(_) => return false,
+                };
+                // Seed at +infinity so the first observation below
+                // threshold fires once, then subsequent stays-below
+                // do not refire until the value climbs back above.
+                let last = threshold.get(pat).copied().unwrap_or(f64::INFINITY);
+                let crossed = last >= threshold_value && *value < threshold_value;
                 threshold.insert(pat.to_string(), *value);
                 return crossed;
             }
         }
     }
     false
+}
+
+/// Schema gate for `<set: …knows.field …>` writes (spec §10.2).
+/// Returns `Some(error_message)` when the declared `type_spec` refuses
+/// `value`. Sum (`unknown | suspects | confirmed`) and `bool` slots
+/// are validated; everything else is treated as opaque and accepted.
+fn validate_knowledge_value(type_spec: &str, op: SetOp, value: &Value) -> Option<String> {
+    let spec = type_spec.trim();
+    if spec == "bool" {
+        return match value {
+            Value::Bool(_) => None,
+            other => Some(format!("expected bool, got {}", describe_value(other))),
+        };
+    }
+    if spec.contains('|') {
+        let variants: Vec<&str> = spec
+            .split('|')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        // Compound ops (+=, -=) on sum slots are nonsensical; reject
+        // them with the same channel as a bad variant.
+        if !matches!(op, SetOp::Assign) {
+            return Some(
+                "sum-typed knowledge slot does not accept compound assignment".to_string(),
+            );
+        }
+        let candidate = match value {
+            Value::String(s) => s.trim().to_string(),
+            other => other.display(),
+        };
+        if variants.iter().any(|v| *v == candidate) {
+            return None;
+        }
+        return Some(format!(
+            "expected one of {}, got `{}`",
+            variants.join(" | "),
+            candidate
+        ));
+    }
+    None
+}
+
+fn describe_value(value: &Value) -> &'static str {
+    match value {
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::List(_) => "list",
+        Value::Null => "null",
+    }
 }
 
 fn is_one_shot(event: &str) -> bool {
@@ -475,7 +614,9 @@ fn add_values(a: Value, b: Value) -> Value {
         (Value::Number(x), other) => Value::Number(x + other.as_number().unwrap_or(0.0)),
         (Value::Null, other) => other,
         (Value::String(s), other) => Value::String(format!("{s}{}", other.display())),
-        (Value::Bool(b), other) => Value::Number(if b { 1.0 } else { 0.0 } + other.as_number().unwrap_or(0.0)),
+        (Value::Bool(b), other) => {
+            Value::Number(if b { 1.0 } else { 0.0 } + other.as_number().unwrap_or(0.0))
+        }
     }
 }
 
@@ -483,7 +624,12 @@ fn sub_values(a: Value, b: Value) -> Value {
     match (a, b) {
         (Value::List(items), other) => {
             let target = other.display();
-            Value::List(items.into_iter().filter(|v| v.display() != target).collect())
+            Value::List(
+                items
+                    .into_iter()
+                    .filter(|v| v.display() != target)
+                    .collect(),
+            )
         }
         (Value::Number(x), Value::Number(y)) => Value::Number(x - y),
         (Value::Number(x), other) => Value::Number(x - other.as_number().unwrap_or(0.0)),
@@ -584,7 +730,9 @@ mod tests {
         assert!(events.is_empty());
         assert_eq!(state.goals[0].status, GoalStatus::Pursuing);
         // Flip the predicate true.
-        state.knowledge.insert("saw_the_keeper".into(), Value::Bool(true));
+        state
+            .knowledge
+            .insert("saw_the_keeper".into(), Value::Bool(true));
         let mut world = World::new();
         state.publish(&mut world);
         let events = state.tick_goals(&world);
@@ -598,6 +746,7 @@ mod tests {
         body.hooks.push(HookDecl {
             event: "trust passes 80".into(),
             body: Vec::new(),
+            suppressed: false,
             span: span(),
         });
         let mut state =

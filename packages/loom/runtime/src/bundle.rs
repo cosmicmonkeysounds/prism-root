@@ -9,7 +9,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use loom_parser::ast::{
-    Beat, CharacterBody, CohortBody, GeneratorBody, Item, LocationBody, LoomFile, SceneBody,
+    Beat, CharacterBody, CohortBody, FactionBody, GeneratorBody, Item, ItemBody, LocationBody,
+    LoomFile, Property, SceneBody,
 };
 use loom_parser::Diagnostic;
 
@@ -80,10 +81,13 @@ pub enum ProjectDiagnostic {
     /// A child CHARACTER inherits from two parents that both supply a
     /// default for the same slot, and the child doesn't override. The
     /// runtime can't pick one without losing information (spec §9.5).
-    AmbiguousSlot {
-        character: String,
-        prop: String,
-    },
+    AmbiguousSlot { character: String, prop: String },
+    /// A CHARACTER (or anything CHARACTER-shaped) has a required
+    /// typed slot — `voice: any`, `home: any of LOCATION`,
+    /// `reputation: 0 to 100` — that no parent / trait fills and
+    /// the declaration itself doesn't provide. The runtime refuses
+    /// to instantiate it (spec §8 + §9).
+    RequiredSlotUnfilled { character: String, slot: String },
 }
 
 /// One compiled Loom project.
@@ -126,6 +130,13 @@ pub struct Bundle {
     pub cohorts: HashMap<String, CohortBody>,
     /// LOCATION declarations (spec §13.1), keyed by name.
     pub locations: HashMap<String, LocationBody>,
+    /// ITEM declarations (spec §9), keyed by name. Property
+    /// inheritance is resolved at build time, so each entry's
+    /// `properties` already includes inherited slots.
+    pub items: HashMap<String, ItemBody>,
+    /// FACTION declarations (spec §9), keyed by name. Same
+    /// inheritance handling as [`Self::items`].
+    pub factions: HashMap<String, FactionBody>,
 }
 
 impl Bundle {
@@ -170,8 +181,10 @@ impl Bundle {
                         }
                         DeclarationKind::Tree => {
                             if let Some(body) = &decl.tree {
-                                self.trees
-                                    .insert(decl.name.clone(), Tree::from_body(decl.name.clone(), body));
+                                self.trees.insert(
+                                    decl.name.clone(),
+                                    Tree::from_body(decl.name.clone(), body),
+                                );
                             }
                         }
                         _ => {}
@@ -188,6 +201,15 @@ impl Bundle {
         self.generator_programs.clear();
         self.cohorts.clear();
         self.locations.clear();
+        self.items.clear();
+        self.factions.clear();
+        // Pass 1: collect raw ITEM / FACTION bodies so we can merge
+        // them by `is X, Y` left-to-right (same shape as
+        // CHARACTER / TRAIT inheritance, spec §9.1).
+        let mut raw_items: HashMap<String, ItemBody> = HashMap::new();
+        let mut item_order: Vec<String> = Vec::new();
+        let mut raw_factions: HashMap<String, FactionBody> = HashMap::new();
+        let mut faction_order: Vec<String> = Vec::new();
         for entry in &self.files {
             for item in &entry.file.items {
                 if let Item::Declaration(decl) = item {
@@ -202,10 +224,39 @@ impl Bundle {
                                 self.locations.insert(decl.name.clone(), body.clone());
                             }
                         }
+                        DeclarationKind::Item => {
+                            if let Some(body) = &decl.item {
+                                if !raw_items.contains_key(&decl.name) {
+                                    item_order.push(decl.name.clone());
+                                }
+                                raw_items.insert(decl.name.clone(), body.clone());
+                            }
+                        }
+                        DeclarationKind::Faction => {
+                            if let Some(body) = &decl.faction {
+                                if !raw_factions.contains_key(&decl.name) {
+                                    faction_order.push(decl.name.clone());
+                                }
+                                raw_factions.insert(decl.name.clone(), body.clone());
+                            }
+                        }
                         _ => {}
                     }
                 }
             }
+        }
+        // Resolve ITEM / FACTION inheritance: child properties win,
+        // parent properties fill gaps, same logic shared between
+        // both kinds via [`merge_properties`].
+        let mut item_cache: HashMap<String, ItemBody> = HashMap::new();
+        for name in &item_order {
+            let merged = merge_item(name, &raw_items, &mut item_cache);
+            self.items.insert(name.clone(), merged);
+        }
+        let mut faction_cache: HashMap<String, FactionBody> = HashMap::new();
+        for name in &faction_order {
+            let merged = merge_faction(name, &raw_factions, &mut faction_cache);
+            self.factions.insert(name.clone(), merged);
         }
         for entry in &self.files {
             for item in &entry.file.items {
@@ -246,7 +297,10 @@ impl Bundle {
         for entry in &self.files {
             for item in &entry.file.items {
                 if let Item::Declaration(decl) = item {
-                    if matches!(decl.kind, DeclarationKind::Character | DeclarationKind::Trait) {
+                    if matches!(
+                        decl.kind,
+                        DeclarationKind::Character | DeclarationKind::Trait
+                    ) {
                         if let Some(body) = &decl.character {
                             let is_trait = matches!(decl.kind, DeclarationKind::Trait);
                             if !raw_decls.contains_key(&decl.name) {
@@ -283,6 +337,51 @@ impl Bundle {
             if is_trait {
                 continue;
             }
+            // Required-slot abstractness check (spec §8). Any
+            // typed property surfaced by the parser whose
+            // [`SlotType`] reports `is_required_hole` and that the
+            // merged body's string-keyed properties don't fill is
+            // an unfilled hole — the character stays abstract and
+            // is not materialised. Note: `merged_body.properties`
+            // already holds every inherited fill, so anything
+            // present there satisfies the slot.
+            // Group typed-property entries by name and look for at
+            // least one fill — i.e. an entry whose [`SlotType`] is
+            // not a required hole, or whose `default` is set. The
+            // merged list already contains parent + own entries
+            // (latest = child) so iterating it covers the whole
+            // inheritance chain.
+            use std::collections::HashMap as PropMap;
+            let mut by_name: PropMap<&str, Vec<&loom_parser::ast::Property>> = PropMap::new();
+            for prop in &merged_body.typed_properties {
+                by_name.entry(prop.name.as_str()).or_default().push(prop);
+            }
+            let mut unfilled = Vec::new();
+            for (name, entries) in &by_name {
+                // The slot is required iff *every* entry for this
+                // name is a required hole with no default. A single
+                // concrete override anywhere in the chain fills it.
+                let still_required = entries.iter().all(|p| {
+                    let has_default = p.default.is_some();
+                    match &p.slot_type {
+                        Some(s) => s.is_required_hole(has_default),
+                        None => false,
+                    }
+                });
+                if still_required {
+                    unfilled.push((*name).to_string());
+                }
+            }
+            if !unfilled.is_empty() {
+                for slot in unfilled {
+                    self.project_diagnostics
+                        .push(ProjectDiagnostic::RequiredSlotUnfilled {
+                            character: name.clone(),
+                            slot,
+                        });
+                }
+                continue;
+            }
             let state = CharacterState::compile(
                 name.clone(),
                 inherits,
@@ -301,12 +400,19 @@ impl Bundle {
             if is_trait {
                 continue;
             }
-            let Some(body) = merged.get(name) else { continue };
+            let Some(body) = merged.get(name) else {
+                continue;
+            };
             let mut bound = Vec::new();
             for gen in &body.generators {
                 let synth = GeneratorBody {
                     tier: gen.tier.clone(),
                     priority: gen.priority,
+                    // start_when is parsed on top-level GENERATORs only
+                    // today (spec §10.5 character-bound generators get
+                    // their gate via their declaring CHARACTER's hook
+                    // body). Leave it untouched here so the bound
+                    // generator runs eagerly once spawned.
                     start_when: None,
                     body: gen.body.clone(),
                 };
@@ -433,8 +539,24 @@ fn merge_character(
             merged_body.reacts.push(r.clone());
         }
         // Hooks: append in source order so every parent's body runs.
+        // The child's `on <event>: none` suppressors (spec §9.5) get
+        // applied after this fold, so we don't filter inherited entries
+        // here.
         for h in &parent_body.hooks {
             merged_body.hooks.push(h.clone());
+        }
+        // Typed properties (spec §8): dedup by name. Inherited
+        // typed slots define what the child must satisfy, but the
+        // child's own typed-property list always wins.
+        for p in &parent_body.typed_properties {
+            let exists = merged_body
+                .typed_properties
+                .iter()
+                .any(|e| e.name == p.name)
+                || own.typed_properties.iter().any(|e| e.name == p.name);
+            if !exists {
+                merged_body.typed_properties.push(p.clone());
+            }
         }
     }
 
@@ -460,10 +582,144 @@ fn merge_character(
     for r in &own.reacts {
         merged_body.reacts.push(r.clone());
     }
+    // Hook composition with `super` + `: none` (spec §9.4 + §9.5).
+    // First pass: collect every event clause the child suppressed.
+    let suppressed: std::collections::HashSet<String> = own
+        .hooks
+        .iter()
+        .filter(|h| h.suppressed)
+        .map(|h| normalise_hook_event(&h.event))
+        .collect();
+    if !suppressed.is_empty() {
+        merged_body
+            .hooks
+            .retain(|h| !suppressed.contains(&normalise_hook_event(&h.event)));
+    }
+    // Second pass: layer the child's own hooks on top. A non-
+    // suppressor hook whose body contains a bare `super` line expands
+    // that marker inline to the *latest* inherited body for the same
+    // event clause (parent body first, then the child's additions).
+    // The inherited entry is dropped so the composed hook replaces it
+    // rather than running alongside.
     for h in &own.hooks {
-        merged_body.hooks.push(h.clone());
+        if h.suppressed {
+            continue;
+        }
+        let key = normalise_hook_event(&h.event);
+        let has_super = h.body.iter().any(|line| line.text.trim() == "super");
+        if has_super {
+            // Find the most recent inherited body with the same event.
+            let parent_idx = merged_body
+                .hooks
+                .iter()
+                .rposition(|p| normalise_hook_event(&p.event) == key);
+            let parent_body = parent_idx
+                .and_then(|i| merged_body.hooks.get(i).map(|h| h.body.clone()))
+                .unwrap_or_default();
+            // Drop the inherited entry — its body is being woven in.
+            if let Some(i) = parent_idx {
+                merged_body.hooks.remove(i);
+            }
+            let mut composed = loom_parser::ast::HookDecl {
+                event: h.event.clone(),
+                body: Vec::new(),
+                suppressed: false,
+                span: h.span,
+            };
+            for line in &h.body {
+                if line.text.trim() == "super" {
+                    for p in &parent_body {
+                        composed.body.push(p.clone());
+                    }
+                } else {
+                    composed.body.push(line.clone());
+                }
+            }
+            merged_body.hooks.push(composed);
+        } else {
+            merged_body.hooks.push(h.clone());
+        }
+    }
+    for p in &own.typed_properties {
+        merged_body.typed_properties.push(p.clone());
     }
 
     visiting.remove(name);
     merged_body
+}
+
+/// Whitespace-collapsing comparison key for hook event clauses.
+/// `on meeting Player` ↔ `meeting Player` ↔ `meeting  Player` all
+/// normalise to the same string so suppression + `super` lookups are
+/// stable across minor formatting differences (spec §9.4 + §9.5).
+fn normalise_hook_event(event: &str) -> String {
+    event.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Merge a [`Property`] list — parent slots fill gaps the child
+/// doesn't declare; the child's own list always wins on name.
+/// Shared between ITEM (`is LootBag`) and FACTION inheritance
+/// (spec §9.1) so the resolution rules stay aligned.
+pub(crate) fn merge_properties(parent: &[Property], child: &[Property]) -> Vec<Property> {
+    let mut out: Vec<Property> = Vec::new();
+    for p in parent {
+        if child.iter().any(|c| c.name == p.name) {
+            continue;
+        }
+        out.push(p.clone());
+    }
+    for p in child {
+        out.push(p.clone());
+    }
+    out
+}
+
+fn merge_item(
+    name: &str,
+    raw: &HashMap<String, ItemBody>,
+    cache: &mut HashMap<String, ItemBody>,
+) -> ItemBody {
+    if let Some(b) = cache.get(name) {
+        return b.clone();
+    }
+    let Some(own) = raw.get(name).cloned() else {
+        return ItemBody::default();
+    };
+    let mut merged_props: Vec<Property> = Vec::new();
+    for parent in &own.inherits {
+        let parent_body = merge_item(parent, raw, cache);
+        merged_props = merge_properties(&merged_props, &parent_body.properties);
+    }
+    merged_props = merge_properties(&merged_props, &own.properties);
+    let merged = ItemBody {
+        inherits: own.inherits.clone(),
+        properties: merged_props,
+    };
+    cache.insert(name.to_string(), merged.clone());
+    merged
+}
+
+fn merge_faction(
+    name: &str,
+    raw: &HashMap<String, FactionBody>,
+    cache: &mut HashMap<String, FactionBody>,
+) -> FactionBody {
+    if let Some(b) = cache.get(name) {
+        return b.clone();
+    }
+    let Some(own) = raw.get(name).cloned() else {
+        return FactionBody::default();
+    };
+    let mut merged_props: Vec<Property> = Vec::new();
+    for parent in &own.inherits {
+        let parent_body = merge_faction(parent, raw, cache);
+        merged_props = merge_properties(&merged_props, &parent_body.properties);
+    }
+    merged_props = merge_properties(&merged_props, &own.properties);
+    let merged = FactionBody {
+        inherits: own.inherits.clone(),
+        properties: merged_props,
+    };
+    cache.insert(name.to_string(), merged.clone());
+    merged
 }
