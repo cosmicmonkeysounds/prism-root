@@ -314,13 +314,13 @@ fn run_debug_session(
         }
 
         let current_line = lua
-            .inspect_stack(0)
-            .map(|d| d.curr_line() as usize)
+            .inspect_stack(0, |d| d.current_line())
+            .flatten()
             .unwrap_or(0);
 
         // Track stack depth by counting active stack levels
         let mut stack_depth: i32 = 0;
-        while lua.inspect_stack(stack_depth as usize).is_some() {
+        while lua.inspect_stack(stack_depth as usize, |_| ()).is_some() {
             stack_depth += 1;
         }
         *shared_hook.step_depth.lock().unwrap() = stack_depth;
@@ -422,23 +422,18 @@ fn capture_stack(lua: &Lua, shared: &DebugShared) {
 
     let mut frames = Vec::new();
     for level in 0..20 {
-        let Some(debug) = lua.inspect_stack(level) else {
+        let Some(frame) = lua.inspect_stack(level, |debug| {
+            let names = debug.names();
+            let source = debug.source();
+            StackFrame {
+                name: names.name.map(|n| n.into_owned()),
+                source: source.short_src.map(|s| s.into_owned()),
+                line: debug.current_line().filter(|&l| l > 0),
+            }
+        }) else {
             break;
         };
-        let names = debug.names();
-        let source = debug.source();
-        frames.push(StackFrame {
-            name: names.name.map(|n| n.into_owned()),
-            source: source.short_src.map(|s| s.into_owned()),
-            line: {
-                let l = debug.curr_line();
-                if l > 0 {
-                    Some(l as usize)
-                } else {
-                    None
-                }
-            },
-        });
+        frames.push(frame);
     }
     *shared.call_stack.lock().unwrap() = frames;
 }

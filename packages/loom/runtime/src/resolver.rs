@@ -36,15 +36,14 @@ pub enum ResolveError {
 
 impl Bundle {
     /// Resolve a divert reference. `from_file` is the file the
-    /// divert originated in — currently unused, but reserved for
-    /// future "prefer beats inside the calling file" heuristics
-    /// that the spec leaves open (§18).
+    /// divert originated in — used to disambiguate a bare name that
+    /// matches multiple beats by preferring the one declared in the
+    /// caller's file (spec §18 resolution heuristic).
     pub fn resolve_divert(
         &self,
         from_file: FileIdx,
         target: &DivertTarget,
     ) -> Result<BeatRef, ResolveError> {
-        let _ = from_file;
         // Case 3: explicit knot — `file#knot`.
         if let Some(knot) = &target.knot {
             let file_idx = self.resolve_file(target)?;
@@ -91,10 +90,25 @@ impl Bundle {
         if let Some(beats) = self.beats_by_name.get(&target.name) {
             return match beats.len() {
                 1 => Ok(beats[0]),
-                _ => Err(ResolveError::Ambiguous {
-                    name: target.name.clone(),
-                    candidates: beats.clone(),
-                }),
+                _ => {
+                    // Spec §18 heuristic — prefer a candidate
+                    // declared in the calling file before reporting
+                    // the ambiguity. Cross-file ambiguity still
+                    // errors so the author hears about it.
+                    let same_file: Vec<BeatRef> = beats
+                        .iter()
+                        .copied()
+                        .filter(|r| r.file == from_file)
+                        .collect();
+                    if same_file.len() == 1 {
+                        Ok(same_file[0])
+                    } else {
+                        Err(ResolveError::Ambiguous {
+                            name: target.name.clone(),
+                            candidates: beats.clone(),
+                        })
+                    }
+                }
             };
         }
         if let Some(files) = self.files_by_stem.get(&target.name) {
@@ -220,6 +234,30 @@ mod tests {
             }
             other => panic!("expected ambiguous, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn same_file_wins_over_cross_file_ambiguity() {
+        // `ringing` exists in two beats; resolve from `a`'s file
+        // should pick `a/ringing` rather than error (spec §18).
+        let bundle = Bundle::from_sources([
+            ("main.loom", "entry: opening\n\n== opening\n\n.\n"),
+            ("beats/a/ringing.loom", "== ringing\n\n.\n"),
+            ("beats/b/ringing.loom", "== ringing\n\n.\n"),
+        ]);
+        let from_a = bundle
+            .beats_by_name
+            .get("ringing")
+            .and_then(|v| {
+                v.iter()
+                    .find(|r| bundle.files[r.file as usize].qualifier.ends_with("/a"))
+            })
+            .copied()
+            .expect("a/ringing exists");
+        let r = bundle
+            .resolve_divert(from_a.file, &target("ringing"))
+            .unwrap();
+        assert_eq!(r.file, from_a.file);
     }
 
     #[test]

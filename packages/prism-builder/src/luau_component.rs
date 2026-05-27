@@ -344,7 +344,7 @@ fn install_widget_global(lua: &Lua, pending: Rc<RefCell<Vec<PendingWidget>>>) ->
     if !matches!(existing, LuaValue::Nil) {
         let mt = lua.create_table()?;
         mt.set("__index", existing)?;
-        wrapper.set_metatable(Some(mt));
+        wrapper.set_metatable(Some(mt))?;
     }
 
     let widget_fn = {

@@ -1164,7 +1164,7 @@ fn install_prism_helpers(
             })?,
         )?;
         meta.set("__prism_state", true)?;
-        proxy.set_metatable(Some(meta));
+        let _ = proxy.set_metatable(Some(meta));
         Ok(proxy)
     })?;
     prism.set("state", state)?;
@@ -1189,7 +1189,7 @@ fn install_prism_helpers(
         let proxy = lua.create_table()?;
         let meta = lua.create_table()?;
         meta.set("__prism_derive", id)?;
-        proxy.set_metatable(Some(meta));
+        let _ = proxy.set_metatable(Some(meta));
         Ok(proxy)
     })?;
     prism.set("derive", derive)?;
@@ -1238,7 +1238,7 @@ fn install_prism_helpers(
                     }
                 })?,
             )?;
-            proxy.set_metatable(Some(meta));
+            let _ = proxy.set_metatable(Some(meta));
             Ok(proxy)
         },
     )?;

@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 loom-parser = { path = "../parser" }
+loom-runtime = { path = "../runtime" }
 loom-syntax = { path = "../syntax" }
 loro = { workspace = true }
 serde = { workspace = true }

@@ -983,10 +983,6 @@ fn parse_divert_params(text: &str) -> IndexMap<String, String> {
     out
 }
 
-// `Code` is used in tests below; pull the warning silencer where applicable.
-#[allow(dead_code)]
-fn _code_used_in_diagnostics(_: Code) {}
-
 /// Parse the interior of an `(improv …)` parenthetical attached to a
 /// dialogue cue (spec §13.3). The leading `improv` token has already
 /// been recognised by the caller; the body is a comma-separated set

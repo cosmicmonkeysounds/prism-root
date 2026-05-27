@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
-use http_body_util::BodyExt;
 use loom_server::{build_router, LoomRelayState};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
@@ -114,17 +113,6 @@ where
             other => panic!("unexpected frame: {other:?}"),
         }
     }
-}
-
-// Silence a clippy false-positive: BodyExt is referenced via the
-// dev-dep table on the HTTP suite, and Rust's unused-import lint
-// fires inside this file when we don't actually call into it.
-#[allow(dead_code)]
-fn _link_body_ext<B>() -> std::marker::PhantomData<B>
-where
-    B: BodyExt,
-{
-    std::marker::PhantomData
 }
 
 #[tokio::test]

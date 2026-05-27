@@ -15,7 +15,6 @@ use crate::ast::{
 };
 use crate::diagnostics::{Code, Diagnostic};
 use crate::source::Span;
-use indexmap::IndexMap;
 
 /// Attach structured `character` / `stats` / `tree` bodies to `decl`
 /// based on its [`DeclarationKind`]. Emits diagnostics for shape
@@ -979,8 +978,3 @@ fn lower_tree(body: &[RawLine], diagnostics: &mut Vec<Diagnostic>) -> TreeBody {
     }
     out
 }
-
-// `IndexMap` is referenced via the AST's `PropertyValue`; the
-// import is kept for the `out.properties.insert` call above.
-#[allow(dead_code)]
-fn _indexmap_use(_: &IndexMap<String, PropertyValue>) {}

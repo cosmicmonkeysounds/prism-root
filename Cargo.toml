@@ -214,7 +214,14 @@ enigo = { version = "0.2", default-features = false }
 # trait surface) track the same version. Phase 1 of
 # `docs/dev/luau-integration-plan.md` lifted this here from the daemon
 # manifest because `prism-core` now needs the trait imports too.
-mlua = { version = "0.10", features = ["luau", "vendored", "serialize"] }
+#
+# We use the `mluau` fork (https://github.com/mluau/mluau), aliased to
+# the `mlua` package name so every consumer's `use mlua::…` keeps
+# working unchanged. The fork has first-class `wasm32-unknown-unknown`
+# support, which is required for shipping Loom's Luau-extension
+# dispatch inside the editor's wasm bundle (see
+# `docs/dev/loom-web-shipping.md`).
+mlua = { package = "mluau", git = "https://github.com/mluau/mluau", rev = "ec9ddc0d27cd4ac3b3a5b7cb6f2da7310905ae01", features = ["luau", "vendored", "serialize"] }
 # In-tree proc macro that derives `mlua::UserData` impls + `.d.luau`
 # type stubs from a single Rust source. Annotated leaf-first across the
 # workspace so the Luau type surface stays in lockstep with Rust.

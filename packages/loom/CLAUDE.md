@@ -172,15 +172,33 @@ replaces the generic `WorldSet` for `Character.knows.*` writes
 (spec §10.2). Non-knowledge writes keep `WorldSet` so disposition
 threshold crossings continue to fire.
 
-Still to come: booth live-patching UX (spec §13.4), `<run:>` as a
-true awaiting form (today it's a synchronous inline drive — fine for
-the §16 worked example, but a real `Step::Awaiting(CoroutineHandle)`
-seam is needed once a scenario needs the playhead to interleave
-visible steps with a long-running coroutine), proper `rand` wiring
-for `<shuffle:>` (today it picks deterministically from ledger
-length), beat-local / scene-local / `local let` scope-stack lifetime
-tracking on the playhead (today every `let` is project-global), and
-CodeMirror remote-cursor preservation in `editor/src/lib/cm-loro.ts`.
+Phase 8 closures (2026-05-26): the playhead now ticks the scheduler
+at every yield boundary so `<spawn:>`-launched coroutines genuinely
+interleave with the visible beat, and character-bound generators
+(spec §10.5) auto-spawn at playhead startup. `<run:>` became a real
+awaiting form (`Step::Awaiting { coroutine }`) — it spawns at focal
+tier, surfaces ambient yields from the coroutine, and resumes the
+surrounding beat once `SceneCompleted` lands; the return value is
+stashed on `World["__last_run"]`. Answer-slot fill at divert call
+sites (spec §7 + §16) wires through `Frame.slots` →
+`Yield::SlotPlaceholder` → caller-body lowering at step time.
+`<let:>` bindings are now scope-local (spec §12.1): each frame
+captures prior values on first write and restores them when the
+frame pops, so a tunnel-local `<let:>` no longer leaks past `<-`.
+`<shuffle:>` picks via `rand::seq::SliceRandom::choose` instead of
+ledger-length modulo. Booth live-patch substrate (spec §13.4) is in
+place: `Playhead::booth_skip_beat` / `booth_force_directive` /
+`booth_hot_reload` plus `LiveStage::recast`, with `BeatSkipped` /
+`BundleReloaded` / `ParticipantRecast` ledger envelopes for audit.
+Divert ambiguity now resolves by preferring a same-file candidate
+(spec §18 heuristic) before erroring out. The editor's
+`cm-loro.ts` applies remote Loro commits as a minimal
+`(from, to, insert)` change (longest common prefix + suffix diff)
+so local cursors and selections survive remote edits.
+
+Still to come: the editor-side booth panel (UI scaffold on top of
+the new `booth_*` runtime APIs) and the live SCENE / coroutine
+tracker view in the web client.
 
 ## Multi-user (Phases 1–8 landed)
 

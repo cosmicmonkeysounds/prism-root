@@ -263,7 +263,7 @@ fn install_modifier_global(
     if !matches!(existing, LuaValue::Nil) {
         let mt = lua.create_table()?;
         mt.set("__index", existing)?;
-        wrapper.set_metatable(Some(mt));
+        wrapper.set_metatable(Some(mt))?;
     }
 
     let modifier_fn = {

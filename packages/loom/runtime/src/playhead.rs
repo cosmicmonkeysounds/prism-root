@@ -6,10 +6,12 @@
 //! heading, a metadata fence, or a choice prompt. Diverts, tunnel
 //! returns, and `-> END` are consumed internally and do not yield.
 //!
-//! Phase-3 scope: enough machinery to play the §16 worked example
-//! end-to-end with manual choice input. Reactive `let`, hook draining
-//! between yields, generator interleaving, and the tiered scheduler
-//! (spec §12.5) come online in subsequent phases.
+//! The playhead drives reactive `let` re-evaluation, drains hook
+//! reactions at every step boundary, pumps the tiered scheduler
+//! (spec §12.5) so spawned scenes / generators interleave with the
+//! visible beat, and parks on `<run:>` until the awaited coroutine
+//! returns. Booth-side live patching (skip, force-fire, hot-reload —
+//! spec §13.4) is exposed via `booth_*` methods.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -39,7 +41,9 @@ pub enum Step {
     /// surface ambient events from the coroutine as they arrive and
     /// resume the surrounding beat once the coroutine completes
     /// (spec §12.3 — `<run:>` as a true awaiting form).
-    Awaiting { coroutine: u64 },
+    Awaiting {
+        coroutine: u64,
+    },
     /// The playhead halted (`-> END` or ran out of body to advance).
     Ended,
 }
@@ -119,7 +123,6 @@ struct PendingChoice {
 #[derive(Debug)]
 struct Frame {
     beat: BeatRef,
-    file_qualifier: String,
     /// `-> beat as Participant` modifier (spec §13.1). When set,
     /// bare-name paths read inside this frame route through the
     /// world key `<scope_as>.<name>` before falling back to the
@@ -273,12 +276,8 @@ impl Playhead {
             .collect();
         for program in bound {
             let id = self.scheduler.next_id();
-            let coroutine = crate::coroutine::Coroutine::new(
-                id,
-                program,
-                crate::coroutine::Tier::Ambient,
-                0.3,
-            );
+            let coroutine =
+                crate::coroutine::Coroutine::new(id, program, crate::coroutine::Tier::Ambient, 0.3);
             self.scheduler.spawn(coroutine, &mut self.ledger);
         }
     }
@@ -381,8 +380,7 @@ impl Playhead {
                             // Mirror the synchronous form: stash the
                             // return value where the surrounding beat
                             // can read it.
-                            self.world
-                                .set("__last_run", Value::String(value.clone()));
+                            self.world.set("__last_run", Value::String(value.clone()));
                             completed = true;
                             break;
                         }
@@ -532,10 +530,7 @@ impl Playhead {
                         if !variants.is_empty() {
                             use rand::seq::SliceRandom;
                             let mut rng = rand::thread_rng();
-                            let text = variants
-                                .choose(&mut rng)
-                                .cloned()
-                                .unwrap_or_default();
+                            let text = variants.choose(&mut rng).cloned().unwrap_or_default();
                             let event = Event::Action { text };
                             self.ledger.push(event.clone());
                             return Ok(Step::Event(event));
@@ -1144,7 +1139,6 @@ impl Playhead {
         });
         self.stack.push(Frame {
             beat: beat_ref,
-            file_qualifier: file.qualifier.clone(),
             scope_as,
             slots,
             let_overrides: indexmap::IndexMap::new(),
@@ -1238,12 +1232,8 @@ impl Playhead {
             return Ok(None);
         };
         let id = self.scheduler.next_id();
-        let mut coroutine = crate::coroutine::Coroutine::new(
-            id,
-            program,
-            crate::coroutine::Tier::Focal,
-            priority,
-        );
+        let mut coroutine =
+            crate::coroutine::Coroutine::new(id, program, crate::coroutine::Tier::Focal, priority);
         let mut args: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
         for (k, e) in named {
             let v = expr::eval(e, &self.world, &mut |n, _| {
@@ -1255,62 +1245,6 @@ impl Playhead {
         coroutine.bind_args(args);
         self.scheduler.spawn(coroutine, &mut self.ledger);
         Ok(Some(id))
-    }
-
-    /// Synchronously drive a coroutine to completion inline. Returns
-    /// the coroutine's return value when it terminates. Yields and
-    /// waits push their normal envelopes onto the ledger; predicate
-    /// waits are evaluated against the live world snapshot.
-    #[allow(dead_code)]
-    fn run_coroutine(
-        &mut self,
-        name: &str,
-        named: &indexmap::IndexMap<String, Expr>,
-    ) -> Result<Option<Value>, PlayError> {
-        let Some((program, tier, priority)) = self.lookup_coroutine(name) else {
-            return Ok(None);
-        };
-        let id = self.scheduler.next_id();
-        let mut coroutine = crate::coroutine::Coroutine::new(id, program, tier, priority);
-        let mut args: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-        for (k, e) in named {
-            let v = expr::eval(e, &self.world, &mut |n, _| {
-                Err(expr::ExprError::UnknownFunction(n.into()))
-            })
-            .map_err(DirectiveError::from)?;
-            args.insert(k.clone(), v);
-        }
-        coroutine.bind_args(args);
-        // Mark the spawn so observers can audit the lifecycle.
-        self.ledger.push(Event::SceneSpawned {
-            scene: name.to_string(),
-            coroutine: id,
-            tier: tier.name().into(),
-        });
-        // Drive until terminal status — bounded by a step budget to
-        // keep a runaway `loop` from hanging the playhead.
-        let mut steps = 0usize;
-        let limit = 10_000usize;
-        loop {
-            if steps >= limit {
-                break;
-            }
-            steps += 1;
-            match coroutine.step(&mut self.world, &mut self.ledger) {
-                crate::coroutine::CoroutineStatus::Running
-                | crate::coroutine::CoroutineStatus::Yielded => {}
-                crate::coroutine::CoroutineStatus::Waiting { .. } => {
-                    // Predicate / duration wait: skip duration sleeps
-                    // (this is the synchronous form) and re-poll
-                    // predicates on the next iteration.
-                    continue;
-                }
-                crate::coroutine::CoroutineStatus::Returned { value } => {
-                    return Ok(Some(value.unwrap_or(Value::Null)));
-                }
-            }
-        }
-        Ok(Some(Value::Null))
     }
 
     /// Resolve a SCENE / GENERATOR name into a fresh `Program` clone
@@ -1648,13 +1582,6 @@ fn lower_divert(d: &Divert, out: &mut Vec<Yield>) {
         Divert::Return { .. } => out.push(Yield::Return),
         Divert::End { .. } => out.push(Yield::End),
     }
-}
-
-// `Frame::file_qualifier` is reserved for the Phase-4 reactive-scope
-// work (locating let-bindings declared file-local) but not read yet.
-#[allow(dead_code)]
-fn _frame_qualifier_unused(f: &Frame) -> &str {
-    &f.file_qualifier
 }
 
 /// Recognise `for: x in expr` directive bodies. Returns `(var, expr)`
