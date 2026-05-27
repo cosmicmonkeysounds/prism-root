@@ -1,12 +1,12 @@
-// Minimal CodeMirror 6 ↔ `LoomDoc` binding.
+// CodeMirror 6 ↔ `LoomDoc` binding.
 //
 // Round-trips text changes through a single `LoroText` keyed by `path`:
 // CodeMirror transactions emit per-change `spliceText` calls into the
 // doc, and a `LoomDoc.subscribe` callback dispatches Loro-side mutations
-// back into the editor. The "minimal" qualifier is load-bearing — this
-// is *not* a full CRDT-aware binding (no cursor stability across remote
-// edits, no rich-text marks). The Phase 4 spec calls this out: a more
-// thorough binding lands once the rest of the pipeline is in place.
+// back into the editor. Remote commits land as a *minimal* CodeMirror
+// change (one replacement of the differing middle, computed via longest
+// common prefix + suffix) so CM's built-in selection mapping preserves
+// local cursors and selections across remote edits.
 
 import {
     EditorState,
@@ -86,8 +86,45 @@ class LoomBindingPlugin {
 
     private onLoomCommit(): void {
         const next = this.opts.doc.getText(this.opts.path) ?? "";
-        if (next === this.view.state.doc.toString()) return;
-        this.replaceEditorContents(next);
+        const current = this.view.state.doc.toString();
+        if (next === current) return;
+        this.applyRemote(current, next);
+    }
+
+    /**
+     * Apply a remote update as the minimal `(from, to, insert)`
+     * change CodeMirror can absorb without disturbing the local
+     * selection. Computes the longest matching prefix + suffix so
+     * cursors anchored outside the changed region survive intact.
+     */
+    private applyRemote(current: string, next: string): void {
+        const currLen = current.length;
+        const nextLen = next.length;
+        let prefix = 0;
+        const maxPrefix = Math.min(currLen, nextLen);
+        while (prefix < maxPrefix && current.charCodeAt(prefix) === next.charCodeAt(prefix)) {
+            prefix++;
+        }
+        let suffix = 0;
+        const maxSuffix = Math.min(currLen - prefix, nextLen - prefix);
+        while (
+            suffix < maxSuffix &&
+            current.charCodeAt(currLen - 1 - suffix) === next.charCodeAt(nextLen - 1 - suffix)
+        ) {
+            suffix++;
+        }
+        const from = prefix;
+        const to = currLen - suffix;
+        const insert = next.slice(prefix, nextLen - suffix);
+        this.applying = true;
+        try {
+            this.view.dispatch({
+                changes: { from, to, insert },
+                effects: remoteOriginEffect.of(true),
+            });
+        } finally {
+            this.applying = false;
+        }
     }
 
     private replaceEditorContents(next: string): void {

@@ -13,6 +13,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Instant;
 
 use loom_parser::ast::{
     AfterMorph, BodyItem, Choice, Conditional, DialogueLine, Directive, DirectiveBlock, Divert,
@@ -32,6 +33,13 @@ pub enum Step {
     /// The playhead is offering a choice menu and is now waiting on
     /// [`Playhead::choose`].
     Choice(Vec<ChoiceOption>),
+    /// The playhead is parked on `<run: Name>` waiting for the
+    /// spawned coroutine to return. The host can interleave its own
+    /// work and keep calling [`Playhead::step`]; the playhead will
+    /// surface ambient events from the coroutine as they arrive and
+    /// resume the surrounding beat once the coroutine completes
+    /// (spec §12.3 — `<run:>` as a true awaiting form).
+    Awaiting { coroutine: u64 },
     /// The playhead halted (`-> END` or ran out of body to advance).
     Ended,
 }
@@ -66,6 +74,10 @@ enum Yield {
         /// playhead pushes a scope alias onto the frame so paths like
         /// `trust` resolve against `Participant.trust`.
         scope_as: Option<String>,
+        /// Answer-slot fill (spec §7 + §16). Each entry seeds the
+        /// callee frame's slot map so `slot: <name>` placeholders
+        /// inside the target beat expand into the supplied body.
+        slots: indexmap::IndexMap<String, Vec<BodyItem>>,
     },
     Tunnel {
         target: DivertTarget,
@@ -89,6 +101,10 @@ enum Yield {
     AfterMorph(AfterMorph),
     /// `<let: name = expr>` — scope-local binding.
     InlineLet(InlineLet),
+    /// `slot: <name>` placeholder (spec §7 + §16). At step time the
+    /// playhead looks up the current frame's slot map and lowers the
+    /// caller-supplied body into the queue head.
+    SlotPlaceholder(String),
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +125,15 @@ struct Frame {
     /// world key `<scope_as>.<name>` before falling back to the
     /// flat name. Empty in the absence of an `as` modifier.
     scope_as: Option<String>,
+    /// Answer-slot fill carried from the divert site (spec §7 + §16).
+    /// Keyed by slot name (`answer`, `topic`, …); each entry is the
+    /// caller-supplied body the placeholder lowers into.
+    slots: indexmap::IndexMap<String, Vec<BodyItem>>,
+    /// Scope-local `<let:>` overrides (spec §12.1). The first time a
+    /// let key is written inside this frame, the prior world value
+    /// (or absence) is captured here; popping the frame restores
+    /// every entry so the binding doesn't leak project-wide.
+    let_overrides: indexmap::IndexMap<String, Option<Value>>,
 }
 
 pub struct Playhead {
@@ -145,6 +170,16 @@ pub struct Playhead {
     /// Per-anchor cycle counter for `<cycle: a | b | c>` — keyed by
     /// the directive opener's source byte offset.
     cycle_state: std::collections::HashMap<u32, usize>,
+    /// `Some(coroutine_id)` while the playhead is parked on
+    /// `<run: Name>`. The step loop pumps the scheduler each call,
+    /// surfaces ambient events from the awaited coroutine, and
+    /// resumes the surrounding beat when the coroutine completes
+    /// (spec §12.3).
+    awaiting_run: Option<u64>,
+    /// Index into `ledger.events()` of the next event to inspect for
+    /// `awaiting_run` propagation — separate from `hook_cursor` so
+    /// the two cursors don't interfere.
+    awaiting_cursor: usize,
     /// `participant_id → current_location`. Walked alongside the hook
     /// drain so an `Event::ParticipantEnteredLocation` for a
     /// participant who was already somewhere else emits a synthetic
@@ -208,12 +243,44 @@ impl Playhead {
             pending_returns: Vec::new(),
             characters,
             hook_cursor: 0,
+            awaiting_run: None,
+            awaiting_cursor: 0,
             scheduler: crate::scheduler::Scheduler::new(),
             cycle_state: std::collections::HashMap::new(),
             participant_locations: std::collections::HashMap::new(),
         };
         p.enter_beat(entry);
+        p.boot_generators();
         Ok(p)
+    }
+
+    /// Spawn every top-level GENERATOR program and every
+    /// character-bound generator into the scheduler at playhead
+    /// startup (spec §10.5 / §12.4). Top-level generators with a
+    /// `start_when` gate sit in Waiting until their predicate clears;
+    /// the scheduler honours that via `Program.start_when`.
+    fn boot_generators(&mut self) {
+        // Character-bound generators (spec §10.5) — every living
+        // character's generators come up with the character. Top-level
+        // GENERATORs stay dormant until an explicit `<spawn:>` runs;
+        // their `start_when` predicate gates the *spawned* lifetime,
+        // not whether they auto-boot.
+        let bound: Vec<crate::coroutine::Program> = self
+            .bundle
+            .bound_generators
+            .values()
+            .flat_map(|progs| progs.iter().cloned())
+            .collect();
+        for program in bound {
+            let id = self.scheduler.next_id();
+            let coroutine = crate::coroutine::Coroutine::new(
+                id,
+                program,
+                crate::coroutine::Tier::Ambient,
+                0.3,
+            );
+            self.scheduler.spawn(coroutine, &mut self.ledger);
+        }
     }
 
     /// Borrow a compiled CHARACTER / TRAIT by name (spec §10).
@@ -295,11 +362,66 @@ impl Playhead {
         }
 
         loop {
+            // Service any `<run:>` await BEFORE draining hooks /
+            // popping a yield: the awaited coroutine is the only
+            // visible work the playhead can produce while parked.
+            if let Some(id) = self.awaiting_run {
+                self.scheduler
+                    .tick(Instant::now(), &mut self.world, &mut self.ledger);
+                let end = self.ledger.events().len();
+                let mut surface: Option<Event> = None;
+                let mut completed = false;
+                while self.awaiting_cursor < end {
+                    let event = self.ledger.events()[self.awaiting_cursor].clone();
+                    self.awaiting_cursor += 1;
+                    match &event {
+                        Event::SceneCompleted {
+                            coroutine, value, ..
+                        } if *coroutine == id => {
+                            // Mirror the synchronous form: stash the
+                            // return value where the surrounding beat
+                            // can read it.
+                            self.world
+                                .set("__last_run", Value::String(value.clone()));
+                            completed = true;
+                            break;
+                        }
+                        Event::GeneratorYielded { coroutine, .. }
+                        | Event::SceneAdvanced { coroutine, .. }
+                            if *coroutine == id =>
+                        {
+                            surface = Some(event);
+                        }
+                        _ => {}
+                    }
+                }
+                if completed {
+                    self.awaiting_run = None;
+                    // Fall through to the regular flow — pick up
+                    // wherever the suspended beat left off.
+                    if let Some(event) = surface {
+                        return Ok(Step::Event(event));
+                    }
+                } else {
+                    if let Some(event) = surface {
+                        return Ok(Step::Event(event));
+                    }
+                    return Ok(Step::Awaiting { coroutine: id });
+                }
+            }
             // Drain hook reactions to anything the previous iteration
             // wrote to the ledger before pulling the next yield off
             // the queue. Hooks lower into queue-front Yields so they
             // run before the playhead returns to the caller.
             self.drain_hooks();
+            // Advance any in-flight `<spawn:>`-launched coroutines so
+            // ambient / active generators interleave with the visible
+            // beat (spec §12.5). Tick after hook drain so hooks that
+            // wrote to the world are visible to coroutine predicates.
+            if !self.scheduler.is_empty() {
+                self.scheduler
+                    .tick(Instant::now(), &mut self.world, &mut self.ledger);
+            }
             let next = match self.queue.pop_front() {
                 Some(y) => y,
                 None => {
@@ -350,6 +472,7 @@ impl Playhead {
                     target,
                     params,
                     scope_as,
+                    slots,
                 } => {
                     let beat_ref = self.resolve(&target)?;
                     let beat = self.bundle.beat(beat_ref).clone();
@@ -358,7 +481,7 @@ impl Playhead {
                         target: target.name.clone(),
                         beat: beat.name.clone(),
                     });
-                    self.enter_beat_scoped(beat_ref, scope_as);
+                    self.enter_beat_with(beat_ref, scope_as, slots);
                 }
                 Yield::Tunnel { target, params } => {
                     let beat_ref = self.resolve(&target)?;
@@ -381,7 +504,7 @@ impl Playhead {
                     if self.stack.len() < 2 {
                         return Err(PlayError::BareReturn);
                     }
-                    self.stack.pop();
+                    self.pop_frame_restoring_lets();
                     self.ledger.push(Event::Returned);
                     if let Some(saved) = self.pending_returns.pop() {
                         // Append whatever's left of the called beat
@@ -407,8 +530,12 @@ impl Playhead {
                     if let Some(rest) = trimmed_raw.strip_prefix("shuffle:") {
                         let variants = split_bar_variants(rest);
                         if !variants.is_empty() {
-                            let idx = self.ledger.events().len() % variants.len();
-                            let text = variants[idx].clone();
+                            use rand::seq::SliceRandom;
+                            let mut rng = rand::thread_rng();
+                            let text = variants
+                                .choose(&mut rng)
+                                .cloned()
+                                .unwrap_or_default();
                             let event = Event::Action { text };
                             self.ledger.push(event.clone());
                             return Ok(Step::Event(event));
@@ -433,7 +560,7 @@ impl Playhead {
                         if let Some((name, expr_text)) = rest.split_once('=') {
                             let name = name.trim().to_string();
                             let value = self.eval_expression(expr_text.trim())?;
-                            self.world.set(name, value);
+                            self.write_scoped_let(name, value);
                             continue;
                         }
                     }
@@ -450,18 +577,20 @@ impl Playhead {
                             }
                         }
                     }
-                    // `<run: Name [with k: v]>` — synchronous variant:
-                    // drive the coroutine to completion inline before
-                    // yielding the next visible step. The return value
-                    // (if any) is written to `World["__last_run"]` so
-                    // host code or follow-up `let` bindings can read it.
+                    // `<run: Name [with k: v]>` — awaiting variant
+                    // (spec §12.3): spawn the coroutine at focal tier
+                    // and park the playhead. The step loop pumps the
+                    // scheduler each call, surfaces ambient events
+                    // from the awaited coroutine as `Step::Event`, and
+                    // resumes the surrounding beat once the coroutine
+                    // emits `SceneCompleted`. The returned value (if
+                    // any) is stashed on `World["__last_run"]` so
+                    // follow-up `let` bindings can read it.
                     if call.kind == "run" {
                         if let Some(name) = call.positional.first().map(coroutine_name_from_expr) {
-                            if let Some(value) = self.run_coroutine(&name, &call.named)? {
-                                self.world.set("__last_run", value);
-                                if let Some(latest) = self.ledger.events().last().cloned() {
-                                    return Ok(Step::Event(latest));
-                                }
+                            if let Some(id) = self.spawn_awaiting_run(&name, &call.named)? {
+                                self.awaiting_run = Some(id);
+                                self.awaiting_cursor = self.ledger.events().len();
                                 continue;
                             }
                         }
@@ -642,7 +771,27 @@ impl Playhead {
                     } else {
                         self.eval_expression(&binding.expression)?
                     };
-                    self.world.set(binding.name.clone(), value);
+                    self.write_scoped_let(binding.name.clone(), value);
+                }
+                Yield::SlotPlaceholder(name) => {
+                    // `slot: <name>` (spec §7 + §16). Look up the
+                    // current frame's caller-supplied slot map and
+                    // lower the body into the queue head. Missing
+                    // slots are silently empty so a beat that
+                    // declares a `slot: answer` but isn't diverted
+                    // with one still plays.
+                    let body = self
+                        .stack
+                        .last()
+                        .and_then(|f| f.slots.get(&name))
+                        .cloned()
+                        .unwrap_or_default();
+                    if !body.is_empty() {
+                        let lowered = self.lower_body(&body);
+                        for y in lowered.into_iter().rev() {
+                            self.queue.push_front(y);
+                        }
+                    }
                 }
                 Yield::DirectiveBlock(block) => {
                     if let Some((var, src)) = parse_for_directive(&block.directive.raw) {
@@ -977,10 +1126,15 @@ impl Playhead {
     }
 
     fn enter_beat(&mut self, beat_ref: BeatRef) {
-        self.enter_beat_scoped(beat_ref, None);
+        self.enter_beat_with(beat_ref, None, indexmap::IndexMap::new());
     }
 
-    fn enter_beat_scoped(&mut self, beat_ref: BeatRef, scope_as: Option<String>) {
+    fn enter_beat_with(
+        &mut self,
+        beat_ref: BeatRef,
+        scope_as: Option<String>,
+        slots: indexmap::IndexMap<String, Vec<BodyItem>>,
+    ) {
         let beat = self.bundle.beat(beat_ref).clone();
         let file = self.bundle.file(beat_ref.file);
         self.ledger.push(Event::BeatEntered {
@@ -992,6 +1146,8 @@ impl Playhead {
             beat: beat_ref,
             file_qualifier: file.qualifier.clone(),
             scope_as,
+            slots,
+            let_overrides: indexmap::IndexMap::new(),
         });
         let lowered = self.lower_body(&beat.body);
         for y in lowered.into_iter().rev() {
@@ -1002,9 +1158,44 @@ impl Playhead {
     fn halt(&mut self) -> Step {
         if !self.halted {
             self.halted = true;
+            // Drop every live frame's scope-local `<let:>` overrides
+            // so the post-run world view reflects only project-global
+            // state (spec §12.1).
+            while !self.stack.is_empty() {
+                self.pop_frame_restoring_lets();
+            }
             self.ledger.push(Event::Ended);
         }
         Step::Ended
+    }
+
+    /// Write a scope-local `<let:>` binding into the world, recording
+    /// the prior value (if any) on the current frame so the binding
+    /// can be unwound when the frame exits.
+    fn write_scoped_let(&mut self, name: String, value: Value) {
+        if let Some(frame) = self.stack.last_mut() {
+            if !frame.let_overrides.contains_key(&name) {
+                let prior = self.world.peek(&name).cloned();
+                frame.let_overrides.insert(name.clone(), prior);
+            }
+        }
+        self.world.set(name, value);
+    }
+
+    /// Pop the top frame, restoring any scope-local `<let:>` bindings
+    /// it captured back to their prior world value (or removing them
+    /// when the binding shadowed an unset key).
+    fn pop_frame_restoring_lets(&mut self) {
+        if let Some(frame) = self.stack.pop() {
+            for (name, prior) in frame.let_overrides.into_iter() {
+                match prior {
+                    Some(value) => self.world.set(name, value),
+                    None => {
+                        self.world.unset(&name);
+                    }
+                }
+            }
+        }
     }
 
     /// Construct + register a coroutine for a SCENE / GENERATOR
@@ -1032,10 +1223,45 @@ impl Playhead {
         Ok(true)
     }
 
+    /// Spawn a coroutine to be driven by the scheduler and awaited
+    /// across subsequent `step()` calls (the `<run:>` awaiting form,
+    /// spec §12.3). The coroutine is forced to focal tier so it
+    /// pumps promptly between the playhead's visible steps. Returns
+    /// the assigned coroutine id, or `None` when the name doesn't
+    /// resolve to a SCENE / GENERATOR.
+    fn spawn_awaiting_run(
+        &mut self,
+        name: &str,
+        named: &indexmap::IndexMap<String, Expr>,
+    ) -> Result<Option<u64>, PlayError> {
+        let Some((program, _tier, priority)) = self.lookup_coroutine(name) else {
+            return Ok(None);
+        };
+        let id = self.scheduler.next_id();
+        let mut coroutine = crate::coroutine::Coroutine::new(
+            id,
+            program,
+            crate::coroutine::Tier::Focal,
+            priority,
+        );
+        let mut args: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+        for (k, e) in named {
+            let v = expr::eval(e, &self.world, &mut |n, _| {
+                Err(expr::ExprError::UnknownFunction(n.into()))
+            })
+            .map_err(DirectiveError::from)?;
+            args.insert(k.clone(), v);
+        }
+        coroutine.bind_args(args);
+        self.scheduler.spawn(coroutine, &mut self.ledger);
+        Ok(Some(id))
+    }
+
     /// Synchronously drive a coroutine to completion inline. Returns
     /// the coroutine's return value when it terminates. Yields and
     /// waits push their normal envelopes onto the ledger; predicate
     /// waits are evaluated against the live world snapshot.
+    #[allow(dead_code)]
     fn run_coroutine(
         &mut self,
         name: &str,
@@ -1124,6 +1350,60 @@ impl Playhead {
             return Some((program, tier, priority));
         }
         None
+    }
+
+    /// Booth live-patch (spec §13.4) — drop the remainder of the
+    /// current beat's queue so the next `step()` falls through to
+    /// whatever lies after (a divert, `-> END`, or natural halt). A
+    /// `BeatSkipped` envelope lands on the ledger for audit.
+    pub fn booth_skip_beat(&mut self) {
+        let beat = self
+            .stack
+            .last()
+            .map(|f| self.bundle.beat(f.beat).name.clone())
+            .unwrap_or_default();
+        self.queue.clear();
+        self.ledger.push(Event::BeatSkipped { beat });
+    }
+
+    /// Booth live-patch (spec §13.4) — synthesize and immediately
+    /// queue a directive at the head of the playhead's work list.
+    /// The next `step()` dispatches it like any other inline
+    /// directive call. Used by the booth to force-fire a cue / sfx /
+    /// broadcast outside the authored script.
+    pub fn booth_force_directive(&mut self, raw: impl Into<String>) {
+        self.queue.push_front(Yield::Directive(Directive {
+            raw: raw.into(),
+            span: loom_parser::Span::default(),
+        }));
+    }
+
+    /// Booth live-patch (spec §13.4) — swap in a freshly compiled
+    /// bundle while preserving the live ledger, world, character
+    /// stores, scheduler, and live stage. Equivalent to a hot-reload
+    /// of the project source. The playhead halts to the new bundle's
+    /// entry beat; in-flight queues are dropped.
+    pub fn booth_hot_reload(&mut self, bundle: Arc<Bundle>) -> Result<(), PlayError> {
+        let entry = bundle.entry.ok_or(PlayError::NoEntry)?;
+        // Drop scoped lets in the current stack so the world view is
+        // consistent before we re-enter the new bundle.
+        while !self.stack.is_empty() {
+            self.pop_frame_restoring_lets();
+        }
+        self.queue.clear();
+        self.pending_returns.clear();
+        self.let_bindings = collect_let_bindings(&bundle);
+        for character in bundle.characters.values() {
+            character.publish(&mut self.world);
+        }
+        self.characters = bundle.characters.clone();
+        self.bundle = bundle;
+        self.halted = false;
+        self.awaiting_choice = false;
+        self.awaiting_run = None;
+        self.ledger.push(Event::BundleReloaded);
+        self.enter_beat(entry);
+        Ok(())
     }
 
     /// Borrow the scheduler driving any in-flight `<spawn:>`
@@ -1296,10 +1576,10 @@ fn lower_item(item: &BodyItem, out: &mut Vec<Yield>) {
         BodyItem::EachVisit(e) => out.push(Yield::EachVisit(e.clone())),
         BodyItem::AfterMorph(a) => out.push(Yield::AfterMorph(a.clone())),
         BodyItem::InlineLet(l) => out.push(Yield::InlineLet(l.clone())),
-        // `SlotPlaceholder` expansion is owned by the typed-slot agent;
-        // ignore unrecognised placeholders so we don't accidentally
-        // double-handle them here.
-        BodyItem::SlotPlaceholder(_) => {}
+        // `slot: <name>` (spec §7 + §16) — lower as a placeholder
+        // yield. The playhead expands it against the current frame's
+        // caller-supplied slot map at step time.
+        BodyItem::SlotPlaceholder(p) => out.push(Yield::SlotPlaceholder(p.name.clone())),
         BodyItem::Dialogue(block) => {
             let speaker = block.speaker.clone();
             let speakers = if block.speakers.is_empty() {
@@ -1353,11 +1633,13 @@ fn lower_divert(d: &Divert, out: &mut Vec<Yield>) {
             target,
             params,
             scope_as,
+            slots,
             ..
         } => out.push(Yield::Divert {
             target: target.clone(),
             params: params.clone(),
             scope_as: scope_as.clone(),
+            slots: slots.clone(),
         }),
         Divert::Tunnel { target, .. } => out.push(Yield::Tunnel {
             target: target.clone(),
@@ -1634,6 +1916,7 @@ fn lower_raw_lines(lines: &[loom_parser::ast::RawLine]) -> Vec<Yield> {
                     },
                     params,
                     scope_as: None,
+                    slots: indexmap::IndexMap::new(),
                 });
             } else {
                 out.push(Yield::Divert {
@@ -1644,6 +1927,7 @@ fn lower_raw_lines(lines: &[loom_parser::ast::RawLine]) -> Vec<Yield> {
                     },
                     params: indexmap::IndexMap::new(),
                     scope_as: None,
+                    slots: indexmap::IndexMap::new(),
                 });
             }
             continue;
@@ -1860,6 +2144,181 @@ Curtain.
             })
             .count();
         assert_eq!(spawned, 1, "spawn should register one coroutine");
+    }
+
+    #[test]
+    fn booth_skip_clears_remaining_beat_body() {
+        let src = "
+== opening
+First.
+Second.
+Third.
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        let first = p.step().unwrap();
+        assert!(matches!(
+            first,
+            Step::Event(Event::Action { ref text }) if text == "First."
+        ));
+        p.booth_skip_beat();
+        let next = p.step().unwrap();
+        assert!(matches!(next, Step::Ended));
+        assert!(p
+            .ledger()
+            .events()
+            .iter()
+            .any(|e| matches!(e, Event::BeatSkipped { beat } if beat == "opening")));
+    }
+
+    #[test]
+    fn booth_hot_reload_re_enters_new_entry() {
+        let v1 = Arc::new(Bundle::from_sources([(
+            "main.loom",
+            "== opening\nVersion one.\n",
+        )]));
+        let v2 = Arc::new(Bundle::from_sources([(
+            "main.loom",
+            "== opening\nVersion two.\n",
+        )]));
+        let mut p = Playhead::new(v1).unwrap();
+        let _ = p.step().unwrap();
+        p.booth_hot_reload(v2).unwrap();
+        let evt = p.step().unwrap();
+        match evt {
+            Step::Event(Event::Action { text }) => assert_eq!(text, "Version two."),
+            other => panic!("expected new bundle's first action, got {other:?}"),
+        }
+        assert!(p
+            .ledger()
+            .events()
+            .iter()
+            .any(|e| matches!(e, Event::BundleReloaded)));
+    }
+
+    #[test]
+    fn scoped_let_does_not_leak_past_tunnel_return() {
+        // A `<let:>` inside a tunnel-called beat must drop back to
+        // its prior value when the tunnel returns (spec §12.1
+        // scope-local lifetimes).
+        let src = "
+== opening
+<let: tally = 1>
+-> (annex) ->
+Outer tally is {tally}.
+
+== annex
+<let: tally = 99>
+Inner tally is {tally}.
+<-
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        let mut texts: Vec<String> = Vec::new();
+        loop {
+            match p.step().unwrap() {
+                Step::Event(Event::Action { text }) => texts.push(text),
+                Step::Ended => break,
+                _ => {}
+            }
+        }
+        let inner = texts
+            .iter()
+            .find(|t| t.starts_with("Inner tally is"))
+            .expect("inner emitted");
+        let outer = texts
+            .iter()
+            .find(|t| t.starts_with("Outer tally is"))
+            .expect("outer emitted");
+        assert!(inner.contains("99"), "tunnel binding visible: {inner}");
+        assert!(
+            outer.contains("1"),
+            "tunnel binding should not have leaked: {outer}"
+        );
+    }
+
+    #[test]
+    fn slot_placeholder_expands_to_caller_body() {
+        // `slot: answer` at the callee site lowers into the caller's
+        // answer-block body (spec §7 + §16).
+        let src = "
+== opening
+-> respond
+  answer:
+    Wren nods.
+
+== respond
+Wren waits.
+slot: answer
+End scene.
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        let mut texts = Vec::new();
+        loop {
+            match p.step().unwrap() {
+                Step::Ended => break,
+                Step::Choice(_) => panic!("no choices"),
+                Step::Awaiting { .. } => {}
+                Step::Event(Event::Action { text }) => texts.push(text),
+                Step::Event(_) => {}
+            }
+        }
+        assert!(
+            texts.iter().any(|t| t.contains("Wren nods.")),
+            "slot fill should have emitted the caller body: {:?}",
+            texts
+        );
+        // The slot fill must land between the callee's surrounding lines.
+        let waits = texts
+            .iter()
+            .position(|t| t.contains("Wren waits."))
+            .expect("callee head");
+        let nods = texts
+            .iter()
+            .position(|t| t.contains("Wren nods."))
+            .expect("slot fill");
+        let end = texts
+            .iter()
+            .position(|t| t.contains("End scene."))
+            .expect("callee tail");
+        assert!(waits < nods && nods < end, "ordering: {:?}", texts);
+    }
+
+    #[test]
+    fn run_directive_parks_with_awaiting_step() {
+        // A `<run:>` whose coroutine parks on a wait must surface at
+        // least one `Step::Awaiting` and resume the surrounding beat
+        // once the coroutine returns (spec §12.3).
+        let src = "
+SCENE chime
+  wait 1ms
+  return done
+
+== opening
+<run: chime>
+
+Tail.
+";
+        let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));
+        let mut p = Playhead::new(bundle).unwrap();
+        let mut saw_awaiting = false;
+        let mut steps = 0;
+        loop {
+            steps += 1;
+            assert!(steps < 100_000, "playhead should converge");
+            match p.step().unwrap() {
+                Step::Ended => break,
+                Step::Choice(_) => panic!("no choices"),
+                Step::Awaiting { coroutine } => {
+                    saw_awaiting = true;
+                    assert!(coroutine > 0);
+                }
+                Step::Event(_) => {}
+            }
+        }
+        assert!(saw_awaiting, "playhead should have parked on <run:>");
+        assert_eq!(p.world().get("__last_run"), Value::String("done".into()));
     }
 
     #[test]

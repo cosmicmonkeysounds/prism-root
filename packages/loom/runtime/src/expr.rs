@@ -104,6 +104,18 @@ impl World {
     pub fn set(&mut self, key: impl Into<String>, value: Value) {
         self.values.insert(key.into(), value);
     }
+    /// Remove a key from the world. Used by scope-local `<let:>`
+    /// bindings to drop themselves when the enclosing frame exits.
+    /// Returns the prior value, if any.
+    pub fn unset(&mut self, key: &str) -> Option<Value> {
+        self.values.remove(key)
+    }
+    /// Borrow the current value without falling back to `Null`. Used
+    /// when capturing the prior binding so a scope-local override can
+    /// restore it on frame exit.
+    pub fn peek(&self, key: &str) -> Option<&Value> {
+        self.values.get(key)
+    }
     pub fn entries(&self) -> impl Iterator<Item = (&String, &Value)> {
         self.values.iter()
     }

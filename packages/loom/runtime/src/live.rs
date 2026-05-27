@@ -394,6 +394,39 @@ impl LiveStage {
         true
     }
 
+    /// Re-cast a role at the booth (spec §13.4): every state
+    /// previously attached to `old_id` (location, cohort membership)
+    /// is moved over to `new_id`. The original participant entry is
+    /// removed. Used when the cast changes mid-show — a stand-in
+    /// takes a role without restarting the playhead.
+    pub fn recast(&mut self, old_id: &str, new_id: &str, ledger: &mut Ledger) -> bool {
+        let Some(mut participant) = self.participants.remove(old_id) else {
+            return false;
+        };
+        participant.id = new_id.to_string();
+        if let Some(loc) = participant
+            .current_location
+            .as_ref()
+            .and_then(|l| self.locations.get_mut(l))
+        {
+            loc.occupants.remove(old_id);
+            loc.occupants.insert(new_id.to_string());
+        }
+        let cohorts: Vec<String> = participant.cohort_memberships.iter().cloned().collect();
+        for c in cohorts {
+            if let Some(cohort) = self.cohorts.get_mut(&c) {
+                cohort.members.remove(old_id);
+                cohort.members.insert(new_id.to_string());
+            }
+        }
+        self.participants.insert(new_id.to_string(), participant);
+        ledger.push(Event::ParticipantRecast {
+            old_id: old_id.to_string(),
+            new_id: new_id.to_string(),
+        });
+        true
+    }
+
     /// Start an improv beat through the controller. The playhead
     /// holds on its return value until [`ImprovController::submit_signal`]
     /// resolves, or [`ImprovController::drain_timeouts`] expires it.

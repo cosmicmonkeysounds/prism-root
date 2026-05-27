@@ -125,6 +125,15 @@ pub enum Event {
     ParticipantJoined { id: String },
     /// A participant was removed from the stage (booth-side retire).
     ParticipantRetired { id: String },
+    /// A participant was re-cast — every state previously attached to
+    /// `old_id` now lives on `new_id` (spec §13.4 booth live-patch).
+    ParticipantRecast { old_id: String, new_id: String },
+    /// The booth skipped past the named beat (spec §13.4).
+    BeatSkipped { beat: String },
+    /// The bundle was hot-reloaded while the show was live; the
+    /// playhead has just re-entered the new bundle's entry beat
+    /// (spec §13.4).
+    BundleReloaded,
     /// A participant entered a LOCATION (spec §13.1).
     ParticipantEnteredLocation { id: String, location: String },
     /// A participant was enrolled into a COHORT (spec §13.1).
@@ -343,6 +352,7 @@ fn event_in_scope(event: &Event, scope: &str) -> bool {
         | Event::ParticipantRetired { id }
         | Event::ParticipantEnteredLocation { id, .. }
         | Event::CohortEnrolled { id, .. } => id == scope,
+        Event::ParticipantRecast { old_id, new_id } => old_id == scope || new_id == scope,
         Event::Dialogue { speaker, .. } => speaker == scope,
         Event::WorldSet { path, .. } => path
             .split_once('.')

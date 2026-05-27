@@ -92,6 +92,12 @@ impl PlaySession {
                     self.pending_choices = options;
                     return Ok(());
                 }
+                Step::Awaiting { .. } => {
+                    // The playhead is parked on `<run:>` — surface
+                    // control back to the host so it can interleave
+                    // its own work; the next call resumes pumping.
+                    return Ok(());
+                }
                 Step::Ended => {
                     self.pending_choices.clear();
                     self.transcript.push(Event::Ended);
