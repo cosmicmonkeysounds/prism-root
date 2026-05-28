@@ -38,6 +38,10 @@ pub mod directives;
 pub mod expr;
 pub mod ledger;
 pub mod live;
+#[cfg(feature = "luau")]
+pub mod luau;
+#[cfg(not(feature = "luau"))]
+#[path = "luau_stub.rs"]
 pub mod luau;
 pub mod meridian;
 pub mod playhead;

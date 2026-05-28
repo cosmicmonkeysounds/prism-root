@@ -12,11 +12,15 @@ The Loom editor ships as a **web app**. That means:
 - The only Rust binary we ship is `loom-relayd` — a small slice of
   Prism's relay carved out for Loom (auth, CRDT host, capability
   tokens, play hub, static editor `dist/`).
-- Luau ships **inside** the wasm bundle via the
-  [`mluau`](https://github.com/mluau/mluau) fork of `mlua`. There is
-  no desktop-runner asterisk — every `.luau` extension a project
-  loads runs in the browser, against the same `LuauRegistry` we use
-  natively.
+- Luau in the wasm bundle is **deferred** (see §7). The wasm build
+  ships with a no-op `LuauRegistry` stub; projects that don't import
+  custom `.luau` extensions (i.e. anything using only built-in
+  directives + syntactic forms) author and play 100% on web. A real
+  lua-on-web backend (likely [wasmoon][wasmoon] or [piccolo][piccolo])
+  lands as W8.
+
+[wasmoon]: https://github.com/ceifa/wasmoon
+[piccolo]: https://github.com/kyren/piccolo
 - `pnpm dev` boots Vite for HMR plus a single `loom-relayd` process
   for the API/WS surface. The same `loom-relayd` is the production
   backend binary; in prod it also serves the editor's prebuilt
@@ -140,19 +144,13 @@ Ordered by blocking-ness. Each item has a clear owner-crate.
 
 ### 6.1 Bundle-size budget for `loom-wasm`
 
-Target: gzipped wasm under **3 MB** with Luau enabled. Workflow:
-
-1. Measure baseline (parser + runtime, no Luau yet — current state).
-2. Swap `mlua` → `mluau` workspace-wide (see §7).
-3. Build `loom-wasm` for `wasm32-unknown-unknown` with `mluau`
-   enabled; record size delta.
-4. If over budget, the first lever is `wasm-opt -Oz` (we currently
-   disable it in `loom-wasm/Cargo.toml` due to a macOS aarch64
-   validator bug — revisit; the bug was in a wasm-pack-bundled
-   binary, a fresh wasm-opt on PATH may be clean).
-5. Second lever: trim `mluau` features (drop `serialize` if the
-   only consumer is the native `LuauRegistry::value_to_lua` and we
-   can replace it with hand rolling).
+Target: gzipped wasm under **3 MB**. Current state (parser + runtime
+without Luau): **2.4 MB uncompressed, 842 KB gzipped.** Headroom for
+the LSP-in-wasm work (W2) and an eventual lua-on-web layer (W8) is
+ample. If we ever exceed budget, the first lever is `wasm-opt -Oz`
+(we currently disable it in `loom-wasm/Cargo.toml` due to a macOS
+aarch64 validator bug in the wasm-pack-bundled binary; a fresh
+PATH-visible wasm-opt may be clean).
 
 ### 6.2 LSP feature parity in wasm
 
@@ -213,55 +211,82 @@ short follow-up doc — this is the highest-risk operational gap.
   are wasm-native vs require a desktop runner — i.e. the Luau gap
   from §4.
 
-## 7. Luau in wasm — via `mluau`
+## 7. Lua-on-web — deferred to W8
 
-We use [`mluau`](https://github.com/mluau/mluau), a fork of `mlua`
-maintained with first-class wasm support. The fork keeps the same
-public API surface (`mlua::Lua`, `Function`, `Table`, `Variadic`,
-`UserData`, `mlua::Error`), so the swap is mostly a workspace
-manifest change plus a path rename in `loom-runtime`.
+We tried Luau-in-wasm via `mluau` and hit a hard toolchain wall.
+Findings (recorded so we don't relitigate):
 
-Plan:
+- `mluau` swap on **native** is clean: same public surface as `mlua`,
+  86/86 runtime tests pass, three drive-by API adjustments
+  (`set_metatable` now returns `Result`, `Debug::curr_line` →
+  `current_line`).
+- `mluau` officially supports wasm only via
+  `wasm32-unknown-emscripten` (per its README + CI). Emscripten
+  compiled all of Luau's C++ against its bundled libc++, but:
+  - `wasm-bindgen` is hard-wired to `wasm32-unknown-unknown`; it
+    does not produce usable output for the emscripten triple.
+  - Mixed toolchains don't work: `emcc` refuses to compile C++ for
+    `wasm32-unknown-unknown` (error: "emcc only supports
+    wasm32-unknown-emscripten").
+  - `wasi-sdk`'s libc++ headers can't be used standalone — libc++
+    collides with `<ctype.h>` macros (`space`/`print`/`cntrl` are
+    enum constants in libc++ and preprocessor defines in wasi-libc),
+    confirming libc++ is not toolchain-portable.
+- Switching the whole `loom-wasm` crate to
+  `wasm32-unknown-emscripten` is doable but **requires rewriting
+  the JS↔Rust interop**: ~7 `#[wasm_bindgen]` exports + the
+  `LoomDoc`/`SubscriptionHandle` userdata layer become hand-written
+  `extern "C"` exports + JS glue, and the editor's
+  `import init from './loom-wasm/loom_wasm.js'` shape changes. We
+  judged this is not worth blocking W1.
 
-1. **Workspace dep.** Replace `mlua = "0.10"` with a `mluau` git
-   dep in the root `Cargo.toml`. Keep the same feature set
-   (`luau`, `vendored`, `serialize`).
-2. **Path alias.** `mluau` re-exports under the `mlua` name (the
-   fork preserves the crate name), so source files in
-   `loom-runtime/src/luau.rs` keep their `use mlua::{…}` imports.
-   If the fork uses a different crate name, add
-   `mluau = { package = "mluau", … }` and run a one-pass
-   `s/mlua::/mluau::/` in `luau.rs` + `prism-luau-derive` if that
-   crate references mlua paths directly.
-3. **Native parity.** `cargo test -p loom-runtime` must still pass
-   — this is the safety net before touching wasm.
-4. **Wasm build.** Add the `luau-wasm` feature to `loom-runtime`
-   only if `mluau` needs different feature flags on
-   `wasm32-unknown-unknown`; otherwise build straight through.
-   `loom-wasm` adds `loom-runtime` to its deps (already there) and
-   `wasm-pack build --release` should produce one artifact.
-5. **Editor surface.** No change. The wasm-exposed `LoomDoc` /
-   `parse` / `diagnose` API already covers the editor's needs;
-   Luau dispatch happens inside `Playhead::step` when (later) we
-   expose a local play surface to wasm.
+What ships **today**: the `luau` feature on `loom-runtime` is
+default-on for native and disabled in `loom-wasm` via
+`default-features = false`. The stub `LuauRegistry` in
+`runtime/src/luau_stub.rs` returns `UnknownKind` for any directive
+that would have gone through Luau. Built-in syntactic forms
+(`if`/`else`/`match`/`for`/`let`/`set`/`fire`/...) and the core
+Rust builtins (`broadcast`, `enroll`, `set`, `fire`, `sfx`, `cue`,
+`pause`, `anchor`, `spawn`, `cancel`, `goal`, `goto`, `compose`,
+`heal`, `flash`) go through the trait-object path and work fine on
+web. Any project that does not load a custom `.luau` extension
+authors and plays end-to-end in the browser today.
 
-The 13 syntactic forms + core builtins still run as native Rust
-inside `Playhead`; Luau is invoked only when a project loads a
-`.luau` extension. That keeps the hot path fast and means
-size-sensitive deployments could later strip Luau out via a
-feature flag — but the default web bundle ships it.
+**W8 (later):** pick one of three lua-on-web strategies. None of
+them blocks W1–W7. Recorded so future-us doesn't re-explore.
+
+- **wasmoon** ([github][wasmoon]) — Lua 5.4 already compiled to
+  wasm + a clean JS API. The Rust runtime would raise an
+  `Event::DirectiveCallExternal { name, args }` instead of
+  dispatching; the editor's TS side would dispatch into wasmoon
+  with a `loom.*` global that proxies back through the existing
+  `LoomDoc` wasm-bindgen surface. ~50-line Luau→Lua transpile
+  bridge handles the small dialect gap (type annotations are
+  comment-stripped, string interpolation desugared). Zero changes
+  to the Rust wasm pipeline. **Likely best choice.**
+- **piccolo** ([github][piccolo]) — Rust-native Lua 5.4. Compiles
+  cleanly to `wasm32-unknown-unknown`. Same Luau→Lua dialect gap
+  as wasmoon. Newer / less battle-tested than mluau. Keeps
+  everything in Rust.
+- **TS-native directive extensions** — drop Lua-on-web entirely;
+  extension authors write TS modules the editor loads. Lightest;
+  loses cross-platform parity with desktop's `.luau` extensions.
+
+[wasmoon]: https://github.com/ceifa/wasmoon
+[piccolo]: https://github.com/kyren/piccolo
 
 ## 8. Phased plan
 
 | Phase | Scope | Done when |
 |------|------|----------|
-| **W1** | Baseline wasm size; swap `mlua` → `mluau`; build `loom-wasm` with Luau enabled | `wasm-pack build --release` < 3 MB gz with Luau in the bundle |
+| **W1** | Baseline wasm size; swap `mlua` → `mluau` (native); feature-gate Luau off for wasm with a stub `LuauRegistry` | ✅ done 2026-05-27 — 842 KB gz with runtime included, 86/86 native tests pass |
 | **W2** | Lift `loom-lsp` handler logic into a reusable module; expose via `loom-wasm` | CodeMirror hover/completion/def/outline backed by wasm |
 | **W3** | Auto-rebuild wasm in Vite plugin; commit `.gitignore` rule | `pnpm dev` cold-start regenerates wasm without manual step |
 | **W4** | Persistence audit + decision doc for `loom-server` (storage backend, backups, compaction) | Decision doc merged, implementation issue filed |
 | **W5** | `include_dir!` static-embed option; single-binary deploy | `loom-relayd` standalone binary serves editor with no extra files |
 | **W6** | Hardening sweep (TLS docs, rate limits, CSP, WS backoff) | Deploy checklist green |
 | **W7** | UX polish + open TODOs (remote cursors, booth live-patch) | Tracked in follow-ups, not shipping-blocking |
+| **W8** | Lua-on-web decision + implementation (wasmoon / piccolo / TS-native) | A `.luau` extension loaded in the editor dispatches its custom directive end-to-end |
 
 W1–W3 are the only true blockers for "web editor ships from a Vite
 build + a Rust binary." W4–W5 are required before a public

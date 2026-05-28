@@ -12,7 +12,12 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 loom-parser = { path = "../parser" }
-loom-runtime = { path = "../runtime" }
+# `default-features = false` drops the Luau bridge — mluau requires
+# `wasm32-unknown-emscripten`, which is incompatible with our
+# wasm-bindgen pipeline. The stub `LuauRegistry` reports
+# `UnknownKind` for any non-builtin directive. See
+# `docs/dev/loom-web-shipping.md` §7.
+loom-runtime = { path = "../runtime", default-features = false }
 loom-syntax = { path = "../syntax" }
 loro = { workspace = true }
 serde = { workspace = true }
