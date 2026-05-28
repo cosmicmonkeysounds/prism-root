@@ -19,7 +19,9 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 pub mod loom_doc;
+pub mod lsp_workspace;
 pub use loom_doc::{LoomDoc, SubscriptionHandle};
+pub use lsp_workspace::LspWorkspace;
 
 #[wasm_bindgen(start)]
 pub fn init() {

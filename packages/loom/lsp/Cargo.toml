@@ -3,7 +3,7 @@ name = "loom-lsp"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
-description = "Language Server Protocol server for Loom v3. Speaks JSON-RPC over stdio; backed by loom-parser + a workspace-wide name index."
+description = "Language Server Protocol implementation for Loom v3. Backed by loom-parser + a workspace-wide name index. Ships a stdio JSON-RPC binary natively; library-only when consumed by loom-wasm (no lsp-server dep)."
 
 [lib]
 name = "loom_lsp"
@@ -12,11 +12,20 @@ path = "src/lib.rs"
 [[bin]]
 name = "loom-lsp"
 path = "src/bin/loom-lsp.rs"
+required-features = ["stdio"]
+
+[features]
+# `stdio` wires the JSON-RPC server loop that the desktop binary
+# drives. Disabled when `loom-wasm` consumes this crate as a library —
+# the browser editor calls `Workspace::*` directly through
+# wasm-bindgen wrappers and never needs `lsp-server`.
+default = ["stdio"]
+stdio = ["dep:anyhow", "dep:lsp-server"]
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-lsp-server = { workspace = true }
+lsp-server = { workspace = true, optional = true }
 lsp-types = { workspace = true }
 loom-parser = { path = "../parser" }

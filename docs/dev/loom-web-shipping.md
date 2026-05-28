@@ -280,7 +280,7 @@ them blocks W1–W7. Recorded so future-us doesn't re-explore.
 | Phase | Scope | Done when |
 |------|------|----------|
 | **W1** | Baseline wasm size; swap `mlua` → `mluau` (native); feature-gate Luau off for wasm with a stub `LuauRegistry` | ✅ done 2026-05-27 — 842 KB gz with runtime included, 86/86 native tests pass |
-| **W2** | Lift `loom-lsp` handler logic into a reusable module; expose via `loom-wasm` | CodeMirror hover/completion/def/outline backed by wasm |
+| **W2** | Lift `loom-lsp` handler logic into a reusable module; expose via `loom-wasm` | ✅ done 2026-05-28 — `loom-lsp` `stdio` feature gates the JSON-RPC pump; `loom-wasm` ships `LspWorkspace` with `open`/`update`/`close`/`diagnostics`/`completion`/`hover`/`definition`/`documentSymbols`. Bundle 956 KB gz. |
 | **W3** | Auto-rebuild wasm in Vite plugin; commit `.gitignore` rule | `pnpm dev` cold-start regenerates wasm without manual step |
 | **W4** | Persistence audit + decision doc for `loom-server` (storage backend, backups, compaction) | Decision doc merged, implementation issue filed |
 | **W5** | `include_dir!` static-embed option; single-binary deploy | `loom-relayd` standalone binary serves editor with no extra files |
