@@ -315,7 +315,7 @@ impl LiveStage {
                 joined_at,
                 ..Participant::default()
             });
-        ledger.push(Event::ParticipantJoined { id: id.clone() });
+        ledger.push_for(&id, Event::ParticipantJoined { id: id.clone() });
         id
     }
 
@@ -345,10 +345,13 @@ impl LiveStage {
                 ..Location::default()
             });
         loc.occupants.insert(id.to_string());
-        ledger.push(Event::ParticipantEnteredLocation {
-            id: id.to_string(),
-            location: location.to_string(),
-        });
+        ledger.push_for(
+            id,
+            Event::ParticipantEnteredLocation {
+                id: id.to_string(),
+                location: location.to_string(),
+            },
+        );
         Ok(())
     }
 
@@ -367,10 +370,13 @@ impl LiveStage {
                 ..Cohort::default()
             });
         cohort_entry.members.insert(id.to_string());
-        ledger.push(Event::CohortEnrolled {
-            id: id.to_string(),
-            cohort: cohort.to_string(),
-        });
+        ledger.push_for(
+            id,
+            Event::CohortEnrolled {
+                id: id.to_string(),
+                cohort: cohort.to_string(),
+            },
+        );
         Ok(())
     }
 
@@ -390,7 +396,7 @@ impl LiveStage {
                 cohort.members.remove(id);
             }
         }
-        ledger.push(Event::ParticipantRetired { id: id.to_string() });
+        ledger.push_for(id, Event::ParticipantRetired { id: id.to_string() });
         true
     }
 
@@ -420,10 +426,15 @@ impl LiveStage {
             }
         }
         self.participants.insert(new_id.to_string(), participant);
-        ledger.push(Event::ParticipantRecast {
-            old_id: old_id.to_string(),
-            new_id: new_id.to_string(),
-        });
+        // Attribute the recast envelope to the *new* player's row —
+        // that's the participant the rest of the show will address.
+        ledger.push_for(
+            new_id,
+            Event::ParticipantRecast {
+                old_id: old_id.to_string(),
+                new_id: new_id.to_string(),
+            },
+        );
         true
     }
 

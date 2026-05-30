@@ -16,7 +16,7 @@
 
 use crate::directives::{AssignOp, CallContext, DirectiveError, Handler, HandlerOutcome, Registry};
 use crate::expr::{Expr, Value, World};
-use crate::ledger::Event;
+use crate::ledger::{Event, BOOTH_TRACK_NAME};
 
 pub fn register(registry: &mut Registry) {
     registry.register("sfx", Generic);
@@ -176,10 +176,10 @@ impl Handler for CastHandler {
                 message: "expected `<cast: <person> as <role>>` or named `person:`/`role:`".into(),
             })?;
         bind_cast(ctx.world, &person, &role);
-        ctx.ledger.push(Event::CastBound {
-            person,
-            role,
-        });
+        ctx.ledger.push_for(
+            BOOTH_TRACK_NAME,
+            Event::CastBound { person, role },
+        );
         Ok(HandlerOutcome::Suppressed)
     }
 }
@@ -231,11 +231,14 @@ impl Handler for RecastHandler {
             release_cast(ctx.world, &old_player, &role);
         }
         bind_cast(ctx.world, &new_player, &role);
-        ctx.ledger.push(Event::CastSwapped {
-            role,
-            old_player,
-            new_player,
-        });
+        ctx.ledger.push_for(
+            BOOTH_TRACK_NAME,
+            Event::CastSwapped {
+                role,
+                old_player,
+                new_player,
+            },
+        );
         Ok(HandlerOutcome::Suppressed)
     }
 }
@@ -249,11 +252,17 @@ impl Handler for PromoteHandler {
                 message: "expected `<promote: <person> as <role>>`".into(),
             })?;
         bind_cast(ctx.world, &person, &role);
-        ctx.ledger.push(Event::CastBound {
-            person: person.clone(),
-            role: role.clone(),
-        });
-        ctx.ledger.push(Event::RolePromoted { person, role });
+        ctx.ledger.push_for(
+            BOOTH_TRACK_NAME,
+            Event::CastBound {
+                person: person.clone(),
+                role: role.clone(),
+            },
+        );
+        ctx.ledger.push_for(
+            BOOTH_TRACK_NAME,
+            Event::RolePromoted { person, role },
+        );
         Ok(HandlerOutcome::Suppressed)
     }
 }
@@ -274,10 +283,10 @@ impl Handler for DemoteHandler {
         if !role.is_empty() {
             release_cast(ctx.world, &person, &role);
         }
-        ctx.ledger.push(Event::CastReleased {
-            person,
-            role,
-        });
+        ctx.ledger.push_for(
+            BOOTH_TRACK_NAME,
+            Event::CastReleased { person, role },
+        );
         Ok(HandlerOutcome::Suppressed)
     }
 }
@@ -293,7 +302,8 @@ impl Handler for LoadRosterHandler {
             })?;
         ctx.world
             .set("Roster.active".to_string(), Value::String(roster.clone()));
-        ctx.ledger.push(Event::RosterLoaded { roster });
+        ctx.ledger
+            .push_for(BOOTH_TRACK_NAME, Event::RosterLoaded { roster });
         Ok(HandlerOutcome::Suppressed)
     }
 }

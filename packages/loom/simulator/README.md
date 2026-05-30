@@ -33,11 +33,23 @@ if it exists; otherwise click **Open…** in the top bar.
   dialogue, choices.
 - **Choice buttons** — appear under the transcript whenever the
   playhead hits a `*` block. Click to advance.
-- **Ledger tab** — every `Event` envelope the runtime emits (great for
-  debugging directives, world writes, knowledge changes, scene
-  spawns).
+- **Ledger tab** — every `Event` envelope the runtime emits, tagged
+  with its track id `[tN]`, its ledger index `#N`, and a `← #N`
+  back-pointer to its cause envelope. Great for debugging directives,
+  world writes, knowledge changes, scene spawns, and cross-track
+  hook firings.
+- **Timeline tab** — multitrack canvas (loom-editor.html §4.2
+  Arrangement view). Rows are Mesh tracks (Booth at top, then Main,
+  then ROLEs, then PERSONs, then ambient generators). Each ledger
+  envelope renders as a small block on its track row, colour-coded
+  by event kind. Cross-track cause edges (e.g. a Booth `<cast:>`
+  directive firing a `HookFired` on Wren's row) draw as thin red
+  arcs. Pan with click-drag; Ctrl+scroll to zoom.
 - **World tab** — live key/value snapshot of the `World` scope after
   every `WorldSet` / `KnowledgeChanged` / `LetEvaluated`.
+- **Graph tab** — Obsidian-style force-directed entity graph
+  (characters / locations / cohorts / beats). Independent of the
+  timeline; useful for compose-mode browsing.
 - **Diagnostics tab** — parser + project diagnostics from load time.
 
 ## Booth controls

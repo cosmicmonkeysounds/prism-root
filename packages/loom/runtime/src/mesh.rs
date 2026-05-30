@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::bundle::Bundle;
-use crate::ledger::{CellKind, Event, TrackId};
+use crate::ledger::{CellKind, Event, TrackId, BOOTH_TRACK_NAME};
 use crate::playhead::{PlayError, Playhead, Step};
 
 /// What kind of cursor a [`Track`] is — drives how the canvas labels
@@ -131,29 +131,18 @@ pub struct Mesh {
 impl Mesh {
     /// Build a mesh around a fresh single-playhead show. The main
     /// track is created automatically and bound to
-    /// [`TrackIdentity::Main`] / [`Driver::Scripted`].
+    /// [`TrackIdentity::Main`] / [`Driver::Scripted`]; tracks for
+    /// every CHARACTER / ROLE, every PERSON, every top-level
+    /// GENERATOR, plus a Booth track, are seeded eagerly so the
+    /// canvas can render rows for absentee actors and the directive
+    /// handlers can attribute envelopes (loom-editor.html §11.2).
     pub fn new(bundle: Arc<Bundle>) -> Result<Self, PlayError> {
-        let head = Playhead::new(bundle)?;
-        let mut tracks = HashMap::new();
-        tracks.insert(
-            TrackId::MAIN,
-            Track {
-                id: TrackId::MAIN,
-                identity: TrackIdentity::Main,
-                driver: Driver::Scripted,
-            },
-        );
-        Ok(Self {
-            head,
-            tracks,
-            next_track_id: 1,
-        })
+        let mut mesh = Self::bare(Playhead::new(bundle.clone())?);
+        mesh.seed_from_bundle(&bundle);
+        Ok(mesh)
     }
 
-    /// Wrap an existing playhead. Use this when an integration tests
-    /// or boot path needs to attach the Mesh view to a playhead it
-    /// constructed itself.
-    pub fn from_playhead(head: Playhead) -> Self {
+    fn bare(head: Playhead) -> Self {
         let mut tracks = HashMap::new();
         tracks.insert(
             TrackId::MAIN,
@@ -168,6 +157,83 @@ impl Mesh {
             tracks,
             next_track_id: 1,
         }
+    }
+
+    /// Seed track rows + the ledger's name index from a bundle. Safe
+    /// to call more than once: existing tracks (by canonical name)
+    /// keep their ids.
+    pub fn seed_from_bundle(&mut self, bundle: &Bundle) {
+        // Booth track always exists.
+        let booth = self.intern_track(
+            BOOTH_TRACK_NAME,
+            TrackIdentity::Booth,
+            Driver::Scripted,
+        );
+        self.head
+            .ledger_mut()
+            .register_track(BOOTH_TRACK_NAME, booth);
+        // One row per CHARACTER / ROLE.
+        let names: Vec<String> = bundle.characters.keys().cloned().collect();
+        for name in names {
+            let id = self.intern_track(
+                &name,
+                TrackIdentity::Role(name.clone()),
+                Driver::Scripted,
+            );
+            self.head.ledger_mut().register_track(name, id);
+        }
+        // One row per PERSON.
+        let persons: Vec<String> = bundle.persons.keys().cloned().collect();
+        for name in persons {
+            let id = self.intern_track(
+                &name,
+                TrackIdentity::Person(name.clone()),
+                Driver::Scripted,
+            );
+            self.head.ledger_mut().register_track(name, id);
+        }
+        // One row per top-level GENERATOR.
+        let gens: Vec<String> = bundle.generators.keys().cloned().collect();
+        for name in gens {
+            let id = self.intern_track(
+                &name,
+                TrackIdentity::AmbientGenerator(name.clone()),
+                Driver::Scripted,
+            );
+            self.head.ledger_mut().register_track(name, id);
+        }
+    }
+
+    /// Lookup-or-allocate a track by its canonical name. Internal
+    /// helper for [`Self::seed_from_bundle`].
+    fn intern_track(
+        &mut self,
+        name: &str,
+        identity: TrackIdentity,
+        driver: Driver,
+    ) -> TrackId {
+        if let Some(existing) = self.head.ledger().track_for(name) {
+            return existing;
+        }
+        let id = TrackId(self.next_track_id);
+        self.next_track_id += 1;
+        self.tracks.insert(
+            id,
+            Track {
+                id,
+                identity,
+                driver,
+            },
+        );
+        id
+    }
+
+    /// Wrap an existing playhead. The caller is responsible for
+    /// calling [`Self::seed_from_bundle`] if they want the canvas to
+    /// see character / person rows; otherwise the Mesh runs as a
+    /// single-track wrapper around the playhead.
+    pub fn from_playhead(head: Playhead) -> Self {
+        Self::bare(head)
     }
 
     /// Advance the mesh by one step. Phase A: delegates to the wrapped

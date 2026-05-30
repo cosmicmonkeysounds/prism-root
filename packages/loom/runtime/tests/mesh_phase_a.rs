@@ -57,7 +57,11 @@ fn mesh_has_main_track_registered() {
     let main = mesh.track(TrackId::MAIN).expect("MAIN track");
     assert!(matches!(main.identity, TrackIdentity::Main));
     assert!(matches!(main.driver, Driver::Scripted));
-    assert_eq!(mesh.tracks().count(), 1);
+    // Phase B: the Mesh seeds extra rows from the bundle (Booth +
+    // characters). MAIN is one of them, not the only one.
+    assert!(mesh
+        .tracks()
+        .any(|t| matches!(t.identity, TrackIdentity::Booth)));
 }
 
 #[test]

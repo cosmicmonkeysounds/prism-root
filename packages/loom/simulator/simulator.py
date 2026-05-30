@@ -546,6 +546,217 @@ class GraphView(QGraphicsView):
 
 
 # ---------------------------------------------------------------------------
+# Timeline view (multitrack — loom-editor.html §4.2 Arrangement view)
+# ---------------------------------------------------------------------------
+
+
+# Stable Y-rank by track kind so the canvas always reads top-to-bottom in
+# the same order: Booth, Main, Roles, Persons, Cohorts, Generators.
+TRACK_RANK = {
+    "booth": 0,
+    "main": 1,
+    "role": 2,
+    "person": 3,
+    "cohort": 4,
+    "generator": 5,
+}
+
+TRACK_COLORS = {
+    "booth": QColor("#ff7043"),
+    "main": QColor("#90a4ae"),
+    "role": QColor("#e0a800"),
+    "person": QColor("#42a5f5"),
+    "cohort": QColor("#7c4dff"),
+    "generator": QColor("#26a69a"),
+}
+
+# Per-envelope-kind colour. Picked to read against the dark background
+# and to group thematically (movement = teal, dialogue = warm, world
+# writes = orange, hooks = red, booth = bright).
+EVENT_COLORS = {
+    "CellEntered": QColor("#37474f"),
+    "CellExited": QColor("#263238"),
+    "BeatEntered": QColor("#5c6bc0"),
+    "Dialogue": QColor("#e0a800"),
+    "Action": QColor("#cfd8dc"),
+    "Scene": QColor("#80cbc4"),
+    "ChoiceTaken": QColor("#aed581"),
+    "Diverted": QColor("#80deea"),
+    "Tunneled": QColor("#80deea"),
+    "Returned": QColor("#90caf9"),
+    "WorldSet": QColor("#ffb74d"),
+    "KnowledgeChanged": QColor("#ffd54f"),
+    "HookFired": QColor("#ef5350"),
+    "CastBound": QColor("#ff8a65"),
+    "CastReleased": QColor("#ff8a65"),
+    "CastSwapped": QColor("#ff8a65"),
+    "RolePromoted": QColor("#ff8a65"),
+    "RosterLoaded": QColor("#ff8a65"),
+    "ParticipantJoined": QColor("#9ccc65"),
+    "ParticipantEnteredLocation": QColor("#9ccc65"),
+    "CohortEnrolled": QColor("#9ccc65"),
+    "Ended": QColor("#b0bec5"),
+}
+DEFAULT_EVENT_COLOR = QColor("#78909c")
+
+
+class TimelineView(QGraphicsView):
+    """Multitrack canvas. Each row is a Mesh track (Booth, Wren, …);
+    each block is one ledger envelope plotted at its ledger index.
+    Cell envelopes shade the spans between them as translucent rects so
+    nested cells (e.g. `opening` containing a divert into `ringing`)
+    read as parent / child bands. Cause edges render as thin lines from
+    the triggering envelope to its hook firing — Phase B's headline
+    feature.
+    """
+
+    ROW_HEIGHT = 36
+    LABEL_WIDTH = 130
+    BLOCK_WIDTH = 12
+    BLOCK_GAP = 2
+    TOP_PAD = 16
+
+    def __init__(self):
+        super().__init__()
+        self._scene = QGraphicsScene(self)
+        self._scene.setBackgroundBrush(QBrush(QColor("#15191e")))
+        self.setScene(self._scene)
+        self.setRenderHint(QPainter.Antialiasing)
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        # Track id → integer row (Y position). Built from the latest
+        # `tracks` payload; empty until then.
+        self._row_of: dict[int, int] = {}
+        self._track_info: dict[int, dict] = {}
+        # Ledger index → (track id, scene-x position). Used to draw
+        # cause arcs without re-scanning the scene.
+        self._block_pos: dict[int, tuple[int, float]] = {}
+        # The next x slot to use on each row.
+        self._next_x: dict[int, float] = {}
+
+    def wheelEvent(self, event):  # noqa: N802 — Qt API
+        if event.modifiers() & Qt.ControlModifier:
+            factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
+            self.scale(factor, factor)
+        else:
+            super().wheelEvent(event)
+
+    def clear_timeline(self) -> None:
+        self._scene.clear()
+        self._row_of.clear()
+        self._track_info.clear()
+        self._block_pos.clear()
+        self._next_x.clear()
+
+    def set_tracks(self, tracks: list) -> None:
+        """Build / rebuild the row layout from a `tracks` payload."""
+        self.clear_timeline()
+        # Already sorted by Mesh on the Rust side; honour that order
+        # but defensively re-sort by (kind rank, id) so the layout is
+        # stable across reloads.
+        ordered = sorted(
+            tracks,
+            key=lambda t: (TRACK_RANK.get(t.get("kind", ""), 99), t.get("id", 0)),
+        )
+        for row, t in enumerate(ordered):
+            tid = int(t.get("id", 0))
+            self._row_of[tid] = row
+            self._track_info[tid] = t
+            self._next_x[tid] = self.LABEL_WIDTH
+            self._draw_row(row, t)
+        # Tell the scene to expand to fit the labels.
+        self.setSceneRect(
+            QRectF(
+                0,
+                0,
+                max(800.0, self.LABEL_WIDTH + 200.0),
+                self.TOP_PAD + (row + 1) * self.ROW_HEIGHT + self.TOP_PAD,
+            )
+        )
+
+    def _draw_row(self, row: int, t: dict) -> None:
+        y = self.TOP_PAD + row * self.ROW_HEIGHT
+        kind = t.get("kind", "main")
+        color = TRACK_COLORS.get(kind, QColor("#90a4ae"))
+        # Driver badge stripe.
+        stripe = self._scene.addRect(
+            0, y, 6, self.ROW_HEIGHT - 4, QPen(Qt.NoPen), QBrush(color)
+        )
+        stripe.setZValue(1)
+        # Row label.
+        label = QGraphicsSimpleTextItem(t.get("label", "?"))
+        label.setBrush(QBrush(QColor("#eceff1")))
+        font = QFont("Menlo", 10)
+        font.setBold(True)
+        label.setFont(font)
+        label.setPos(12, y + 4)
+        self._scene.addItem(label)
+        # Driver sub-label.
+        sub = QGraphicsSimpleTextItem(t.get("driver", "Scripted"))
+        sub.setBrush(QBrush(QColor("#78909c")))
+        sub.setFont(QFont("Menlo", 8))
+        sub.setPos(12, y + 18)
+        self._scene.addItem(sub)
+        # Row baseline.
+        line = self._scene.addLine(
+            self.LABEL_WIDTH,
+            y + self.ROW_HEIGHT / 2,
+            10_000,
+            y + self.ROW_HEIGHT / 2,
+            QPen(QColor("#2a3038"), 1),
+        )
+        line.setZValue(0)
+
+    def add_envelope(self, idx: int, track: int, cause, kind: str) -> None:
+        """Draw one envelope as a block on its track row.
+        `cause` may be None or an int (cause envelope index)."""
+        row = self._row_of.get(track)
+        if row is None:
+            return
+        y = self.TOP_PAD + row * self.ROW_HEIGHT
+        x = self._next_x.get(track, self.LABEL_WIDTH)
+        color = EVENT_COLORS.get(kind, DEFAULT_EVENT_COLOR)
+        rect = self._scene.addRect(
+            x,
+            y + 4,
+            self.BLOCK_WIDTH,
+            self.ROW_HEIGHT - 8,
+            QPen(QColor("#11151b"), 0.5),
+            QBrush(color),
+        )
+        rect.setToolTip(f"#{idx}  {kind}\ntrack {track}, cause {cause}")
+        rect.setZValue(2)
+        self._block_pos[idx] = (track, x + self.BLOCK_WIDTH / 2)
+        self._next_x[track] = x + self.BLOCK_WIDTH + self.BLOCK_GAP
+        # Cause arc — only drawn when both endpoints are visible and
+        # they live on different tracks (intra-track causes are obvious
+        # from row order; cross-track is the interesting case).
+        if cause is not None and cause in self._block_pos:
+            (cause_track, cause_x) = self._block_pos[cause]
+            if cause_track != track:
+                cause_row = self._row_of.get(cause_track)
+                if cause_row is not None:
+                    cause_y = (
+                        self.TOP_PAD
+                        + cause_row * self.ROW_HEIGHT
+                        + self.ROW_HEIGHT / 2
+                    )
+                    here_y = y + self.ROW_HEIGHT / 2
+                    arc = self._scene.addLine(
+                        cause_x,
+                        cause_y,
+                        x + self.BLOCK_WIDTH / 2,
+                        here_y,
+                        QPen(QColor("#ef5350"), 0.8),
+                    )
+                    arc.setZValue(1)
+        # Extend scene rect so scroll bars track.
+        widest = max(self._next_x.values()) if self._next_x else self.LABEL_WIDTH
+        rect_now = self.sceneRect()
+        if widest + 40 > rect_now.right():
+            self.setSceneRect(QRectF(0, 0, widest + 200, rect_now.bottom()))
+
+
+# ---------------------------------------------------------------------------
 # Inspector dialog (per-node)
 # ---------------------------------------------------------------------------
 
@@ -728,6 +939,11 @@ class Simulator(QMainWindow):
         self.world_tree.itemChanged.connect(self._on_world_item_changed)
         right.addTab(self.world_tree, "World")
 
+        # Timeline canvas — multitrack view of the Mesh
+        # (loom-editor.html §4.2 Arrangement view).
+        self.timeline = TimelineView()
+        right.addTab(self.timeline, "Timeline")
+
         # Graph canvas.
         self.graph = GraphView()
         self.graph.node_double_clicked.connect(self._open_inspector)
@@ -853,8 +1069,10 @@ class Simulator(QMainWindow):
             self._set_diagnostics(msg.get("diagnostics") or [])
             self._send({"cmd": "entities"})
             self._send({"cmd": "world"})
+        elif kind == "tracks":
+            self.timeline.set_tracks(msg.get("tracks") or [])
         elif kind == "event":
-            self._handle_event(msg.get("event") or {})
+            self._handle_event_msg(msg)
         elif kind == "choice":
             self._show_choices(msg.get("options") or [])
         elif kind == "awaiting":
@@ -868,17 +1086,33 @@ class Simulator(QMainWindow):
             self._set_world(msg.get("entries") or [])
         elif kind == "entities":
             self._set_entities(msg)
+        elif kind == "cells":
+            # Reserved for future drill-in; ignored for now.
+            pass
         elif kind == "error":
             self._append_ledger(f"[error] {msg.get('message')}")
             self.statusBar().showMessage(msg.get("message") or "error")
         else:
             self._append_ledger(f"[?] {msg}")
 
-    def _handle_event(self, event: dict) -> None:
+    def _handle_event_msg(self, msg: dict) -> None:
+        """Phase B-aware event handler: routes the envelope to the
+        timeline (per-track block + cause arc) and to the existing
+        transcript / ledger / world surfaces."""
+        idx = msg.get("idx")
+        track = int(msg.get("track", 0))
+        cause = msg.get("cause")
+        event = msg.get("event") or {}
         if not event:
             return
         ((kind, payload),) = event.items() if isinstance(event, dict) else (("?", {}),)
-        self._append_ledger(f"{kind}: {self._summarize(payload)}")
+        if idx is not None:
+            self.timeline.add_envelope(int(idx), track, cause, kind)
+        cause_tag = f"  ← #{cause}" if cause is not None else ""
+        prefix = f"[t{track} #{idx}]" if idx is not None else ""
+        self._append_ledger(f"{prefix} {kind}: {self._summarize(payload)}{cause_tag}")
+        # Below: the existing transcript / world-refresh routing,
+        # untouched by Phase B.
         if kind == "Scene":
             self._append_transcript(f"\n[SCENE] {payload.get('text','')}\n")
         elif kind == "Action":
@@ -921,6 +1155,7 @@ class Simulator(QMainWindow):
         self.diag_view.clear()
         self.world_tree.clear()
         self.graph.clear_graph()
+        self.timeline.clear_timeline()
         self._world_cache.clear()
         self._entities_cache = {}
         self._clear_choices()

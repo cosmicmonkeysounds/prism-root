@@ -332,6 +332,12 @@ impl Playhead {
         }
     }
 
+    /// Mutable accessor to the ledger — used by [`crate::mesh::Mesh`]
+    /// to register name → track mappings before play starts.
+    pub fn ledger_mut(&mut self) -> &mut Ledger {
+        &mut self.ledger
+    }
+
     pub fn ledger(&self) -> &Ledger {
         &self.ledger
     }
@@ -1451,11 +1457,12 @@ impl Playhead {
         let cursor_base = self.hook_cursor as u32;
         self.hook_cursor = end;
 
-        // `to_lower` carries (body, hook clause, cause envelope idx)
-        // so we can synthesise a `HookFired` envelope per firing
-        // (loom-editor.html §3 — the editor's causal graph reads
-        // these arcs).
-        let mut to_lower: Vec<(Vec<loom_parser::ast::RawLine>, String, u32)> = Vec::new();
+        // `to_lower` carries (body, hook clause, cause envelope idx,
+        // character name) so we can synthesise a `HookFired` envelope
+        // per firing on the character's own track
+        // (loom-editor.html §3 + §11.2).
+        let mut to_lower: Vec<(Vec<loom_parser::ast::RawLine>, String, u32, String)> =
+            Vec::new();
         // Pre-derive synthetic `Exits` hooks: a participant moving
         // into a new location implies they exited the previous one.
         // The live stage doesn't write an explicit envelope for that,
@@ -1483,7 +1490,12 @@ impl Playhead {
                 let hits = character.match_hooks(&hook_event);
                 for idx in hits {
                     if let Some(sub) = character.hooks.get(idx) {
-                        to_lower.push((sub.body.clone(), sub.event.clone(), *cause_idx));
+                        to_lower.push((
+                            sub.body.clone(),
+                            sub.event.clone(),
+                            *cause_idx,
+                            name.clone(),
+                        ));
                     }
                 }
             }
@@ -1501,7 +1513,12 @@ impl Playhead {
                     let hits = character.match_hooks(hook_event);
                     for idx in hits {
                         if let Some(sub) = character.hooks.get(idx) {
-                            to_lower.push((sub.body.clone(), sub.event.clone(), cause_idx));
+                            to_lower.push((
+                                sub.body.clone(),
+                                sub.event.clone(),
+                                cause_idx,
+                                name.clone(),
+                            ));
                         }
                     }
                 }
@@ -1509,16 +1526,22 @@ impl Playhead {
         }
         // Emit the HookFired envelopes before lowering. Push them with
         // explicit metadata so `cause` points at the triggering envelope
-        // rather than the per-track tail (loom-editor.html §3).
-        for (_, clause, cause_idx) in &to_lower {
+        // rather than the per-track tail; the `track` field routes the
+        // envelope onto the firing character's own row when one has
+        // been seeded (loom-editor.html §3 + §11.2).
+        for (_, clause, cause_idx, character) in &to_lower {
+            let track = self
+                .ledger
+                .track_for(character)
+                .unwrap_or(crate::ledger::TrackId::MAIN);
             self.ledger.push_with_meta(
                 Event::HookFired {
-                    track: crate::ledger::TrackId::MAIN,
+                    track,
                     clause: clause.clone(),
                     cause: *cause_idx,
                 },
                 crate::ledger::EnvelopeMeta {
-                    track: crate::ledger::TrackId::MAIN,
+                    track,
                     cause: Some(*cause_idx),
                 },
             );
@@ -1526,7 +1549,7 @@ impl Playhead {
         // Strip the metadata before lowering — the rest of the path
         // only consumes the raw body.
         let to_lower: Vec<Vec<loom_parser::ast::RawLine>> =
-            to_lower.into_iter().map(|(b, _, _)| b).collect();
+            to_lower.into_iter().map(|(b, _, _, _)| b).collect();
         if to_lower.is_empty() {
             return;
         }

@@ -9,7 +9,11 @@
 //!
 //! Each line on stdout is one JSON object with a `"type"` tag:
 //! - `{"type":"ready","entry":"opening","diagnostics":[...]}`
-//! - `{"type":"event","event":{...}}` — a ledger `Event` envelope
+//! - `{"type":"tracks","tracks":[{"id":N,"kind":"role|person|cohort|generator|booth|main","label":"...","driver":"..."}, ...]}`
+//!   — emitted once on `ready` and again after `reload`
+//! - `{"type":"event","idx":N,"track":N,"cause":N|null,"event":{...}}` — a ledger
+//!   envelope with its mesh metadata (loom-editor.html §3)
+//! - `{"type":"cells","track":N,"cells":[{"kind":"BeatVisit","bundle_ref":"...","start":N,"end":N|null,"snapshot":"..."}, ...]}`
 //! - `{"type":"choice","options":[{"index":N,"text":"...","sticky":false}, ...]}`
 //! - `{"type":"awaiting","coroutine":N}`
 //! - `{"type":"ended"}`
@@ -20,6 +24,8 @@
 //! - `{"cmd":"step"}` — advance until the next Choice / Awaiting / Ended
 //! - `{"cmd":"choose","index":N}` — pick a choice
 //! - `{"cmd":"world"}` — emit a world snapshot
+//! - `{"cmd":"tracks"}` — re-emit the current track list
+//! - `{"cmd":"cells","track":N}` — emit cells_for_track for one track
 //! - `{"cmd":"skip"}` — booth skip beat
 //! - `{"cmd":"force","raw":"sfx: ..."}` — booth force directive
 //! - `{"cmd":"reload"}` — re-load the project from disk and hot-reload
@@ -30,7 +36,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use loom_parser::ast::{BodyItem, Divert, Item};
-use loom_runtime::{Bundle, Playhead, Step};
+use loom_runtime::{Bundle, Mesh, Step, TrackId, TrackIdentity};
 use serde_json::{json, Value as JsonValue};
 
 fn main() {
@@ -57,10 +63,10 @@ fn main() {
         .map(|r| bundle.beat(r).name.clone())
         .unwrap_or_default();
 
-    let mut playhead = match Playhead::new(Arc::clone(&bundle)) {
-        Ok(p) => p,
+    let mut mesh = match Mesh::new(Arc::clone(&bundle)) {
+        Ok(m) => m,
         Err(e) => {
-            emit_err(&format!("playhead init: {e}"));
+            emit_err(&format!("mesh init: {e}"));
             std::process::exit(1);
         }
     };
@@ -70,9 +76,10 @@ fn main() {
         "entry": entry,
         "diagnostics": diagnostics,
     }));
+    emit_tracks(&mesh);
 
     // First batch — drive forward until we need user input.
-    pump(&mut playhead);
+    pump(&mut mesh);
 
     let stdin = io::stdin();
     let mut root = root;
@@ -90,17 +97,26 @@ fn main() {
             }
         };
         match cmd.get("cmd").and_then(|v| v.as_str()).unwrap_or("") {
-            "step" => pump(&mut playhead),
+            "step" => pump(&mut mesh),
             "choose" => {
                 let idx = cmd.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                if let Err(e) = playhead.choose(idx) {
+                if let Err(e) = mesh.choose(idx) {
                     emit_err(&format!("choose: {e}"));
                 } else {
-                    pump(&mut playhead);
+                    pump(&mut mesh);
                 }
             }
-            "world" => emit_world(&playhead),
+            "world" => emit_world(&mesh),
             "entities" => emit_entities(&bundle),
+            "tracks" => emit_tracks(&mesh),
+            "cells" => {
+                let track = cmd
+                    .get("track")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| TrackId(n as u32))
+                    .unwrap_or(TrackId::MAIN);
+                emit_cells(&mesh, track);
+            }
             "set" => {
                 let key = cmd.get("key").and_then(|v| v.as_str()).unwrap_or("");
                 match cmd.get("value") {
@@ -109,14 +125,14 @@ fn main() {
                     Some(value) => {
                         let lit = json_value_to_literal(value);
                         let raw = format!("set: {} = {}", key, lit);
-                        playhead.booth_force_directive(raw);
-                        pump(&mut playhead);
+                        mesh.playhead_mut().booth_force_directive(raw);
+                        pump(&mut mesh);
                     }
                 }
             }
             "skip" => {
-                playhead.booth_skip_beat();
-                pump(&mut playhead);
+                mesh.playhead_mut().booth_skip_beat();
+                pump(&mut mesh);
             }
             "force" => {
                 let raw = cmd
@@ -124,15 +140,21 @@ fn main() {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                playhead.booth_force_directive(raw);
-                pump(&mut playhead);
+                mesh.playhead_mut().booth_force_directive(raw);
+                pump(&mut mesh);
             }
             "reload" => match Bundle::load(&root) {
                 Ok(b) => {
-                    if let Err(e) = playhead.booth_hot_reload(Arc::new(b)) {
+                    let new_bundle = Arc::new(b);
+                    if let Err(e) = mesh.playhead_mut().booth_hot_reload(Arc::clone(&new_bundle))
+                    {
                         emit_err(&format!("hot reload: {e}"));
                     } else {
-                        pump(&mut playhead);
+                        // Re-seed in case the new bundle introduced new
+                        // ROLEs / PERSONs / generators.
+                        mesh.seed_from_bundle(&new_bundle);
+                        emit_tracks(&mesh);
+                        pump(&mut mesh);
                     }
                 }
                 Err(e) => emit_err(&format!("reload load: {e}")),
@@ -148,12 +170,14 @@ fn main() {
     }
 }
 
-fn pump(playhead: &mut Playhead) {
+fn pump(mesh: &mut Mesh) {
     // Drain Step::Event lines until we hit Choice / Awaiting / Ended
-    // or exceed a safety budget for runaway loops.
+    // or exceed a safety budget for runaway loops. Each event is
+    // tagged with its track id + ledger index + cause so the
+    // simulator can build the multitrack canvas without a second pass.
     let mut budget = 10_000usize;
     loop {
-        if playhead.halted() {
+        if mesh.playhead().halted() {
             emit(json!({ "type": "ended" }));
             return;
         }
@@ -162,26 +186,31 @@ fn pump(playhead: &mut Playhead) {
             return;
         }
         budget -= 1;
-        match playhead.step() {
-            Ok(Step::Event(ev)) => emit(json!({
-                "type": "event",
-                "event": ev,
-            })),
-            Ok(Step::Choice(options)) => {
+        // Snapshot the ledger end before stepping so the new envelopes
+        // can be emitted with their (track, cause) metadata.
+        let start = mesh.ledger().len();
+        match mesh.step() {
+            Ok((_step_track, Step::Event(_ev))) => {
+                emit_new_envelopes(mesh, start);
+            }
+            Ok((_, Step::Choice(options))) => {
+                emit_new_envelopes(mesh, start);
                 emit(json!({
                     "type": "choice",
                     "options": options,
                 }));
                 return;
             }
-            Ok(Step::Awaiting { coroutine }) => {
+            Ok((_, Step::Awaiting { coroutine })) => {
+                emit_new_envelopes(mesh, start);
                 emit(json!({
                     "type": "awaiting",
                     "coroutine": coroutine,
                 }));
                 return;
             }
-            Ok(Step::Ended) => {
+            Ok((_, Step::Ended)) => {
+                emit_new_envelopes(mesh, start);
                 emit(json!({ "type": "ended" }));
                 return;
             }
@@ -193,8 +222,26 @@ fn pump(playhead: &mut Playhead) {
     }
 }
 
-fn emit_world(playhead: &Playhead) {
-    let entries: Vec<(String, String)> = playhead
+/// Emit every envelope written since `start` as a per-track-tagged
+/// `event` line. One stdin step typically produces one envelope but
+/// hook drains and booth directives can synthesise several; the
+/// simulator handles them all uniformly.
+fn emit_new_envelopes(mesh: &Mesh, start: usize) {
+    let events = mesh.ledger().events();
+    let meta = mesh.ledger().meta();
+    for idx in start..events.len() {
+        emit(json!({
+            "type": "event",
+            "idx": idx,
+            "track": meta[idx].track.0,
+            "cause": meta[idx].cause,
+            "event": events[idx],
+        }));
+    }
+}
+
+fn emit_world(mesh: &Mesh) {
+    let entries: Vec<(String, String)> = mesh
         .world()
         .entries()
         .map(|(k, v)| (k.clone(), v.display()))
@@ -202,6 +249,74 @@ fn emit_world(playhead: &Playhead) {
     emit(json!({
         "type": "world",
         "entries": entries,
+    }));
+}
+
+/// Emit the track list. Each track has an id, a human-readable label,
+/// a kind tag the simulator uses for colour coding, and the driver.
+fn emit_tracks(mesh: &Mesh) {
+    let mut tracks: Vec<JsonValue> = mesh
+        .tracks()
+        .map(|t| {
+            let (kind, name) = match &t.identity {
+                TrackIdentity::Role(n) => ("role", n.as_str()),
+                TrackIdentity::Person(n) => ("person", n.as_str()),
+                TrackIdentity::Cohort(n) => ("cohort", n.as_str()),
+                TrackIdentity::AmbientGenerator(n) => ("generator", n.as_str()),
+                TrackIdentity::Booth => ("booth", "Booth"),
+                TrackIdentity::Main => ("main", "Main"),
+            };
+            json!({
+                "id": t.id.0,
+                "kind": kind,
+                "label": name,
+                "driver": format!("{:?}", t.driver),
+            })
+        })
+        .collect();
+    // Stable canvas order: Booth first, then Main spine, then Roles,
+    // then Persons, then Cohorts, then ambient Generators.
+    tracks.sort_by_key(|t| {
+        let kind = t.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        let rank = match kind {
+            "booth" => 0,
+            "main" => 1,
+            "role" => 2,
+            "person" => 3,
+            "cohort" => 4,
+            "generator" => 5,
+            _ => 6,
+        };
+        let id = t.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+        (rank, id)
+    });
+    emit(json!({
+        "type": "tracks",
+        "tracks": tracks,
+    }));
+}
+
+/// Emit `cells_for_track` for one track. The simulator pulls cells
+/// lazily as it scrolls the multitrack canvas.
+fn emit_cells(mesh: &Mesh, track: TrackId) {
+    let cells: Vec<JsonValue> = mesh
+        .cells_for_track(track)
+        .iter()
+        .map(|c| {
+            json!({
+                "track": c.track.0,
+                "kind": format!("{:?}", c.kind),
+                "bundle_ref": c.bundle_ref,
+                "start": c.start,
+                "end": c.end,
+                "snapshot": c.snapshot,
+            })
+        })
+        .collect();
+    emit(json!({
+        "type": "cells",
+        "track": track.0,
+        "cells": cells,
     }));
 }
 

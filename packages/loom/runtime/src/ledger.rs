@@ -268,7 +268,21 @@ pub struct Ledger {
     /// one. Not serialised because it's derivable from `meta`.
     #[serde(skip)]
     track_tails: std::collections::HashMap<TrackId, u32>,
+    /// Name → TrackId index (loom-editor.html §9, Phase B). Seeded by
+    /// [`crate::mesh::Mesh::seed_from_bundle`] so directive handlers
+    /// and live-stage methods can attribute envelopes to the right
+    /// row without holding a reference to the Mesh. Lookup names are
+    /// the canonical declaration ids — `"Wren"`, `"jamie_lee"`,
+    /// `"Initiates"`, `"HarborChorus"` — plus the synthetic
+    /// `"<booth>"` sentinel for the operator track.
+    #[serde(skip)]
+    name_to_track: std::collections::HashMap<String, TrackId>,
 }
+
+/// Reserved name for the Booth track in [`Ledger::register_track`] /
+/// [`Ledger::track_for`]. Use this constant rather than retyping the
+/// literal; the editor reads the same key.
+pub const BOOTH_TRACK_NAME: &str = "<booth>";
 
 impl Ledger {
     /// Push an envelope on the implicit main track, chaining `cause`
@@ -303,6 +317,30 @@ impl Ledger {
     /// index.
     pub fn meta(&self) -> &[EnvelopeMeta] {
         &self.meta
+    }
+
+    /// Register a name → track mapping (Phase B). Subsequent calls
+    /// to [`Self::track_for`] with the same name return the stored
+    /// id. Idempotent — re-registering overwrites.
+    pub fn register_track(&mut self, name: impl Into<String>, id: TrackId) {
+        self.name_to_track.insert(name.into(), id);
+    }
+
+    /// Resolve a canonical name to its track id. Returns `None` when
+    /// the Mesh has not seeded a track for this name; callers that
+    /// route by name should fall back to [`TrackId::MAIN`] in that
+    /// case so single-playhead callers keep working.
+    pub fn track_for(&self, name: &str) -> Option<TrackId> {
+        self.name_to_track.get(name).copied()
+    }
+
+    /// Convenience for the common pattern "push on the named track
+    /// if one exists, else on MAIN". Used by directive handlers and
+    /// the live stage to attribute envelopes without first checking
+    /// for the track id.
+    pub fn push_for(&mut self, name: &str, event: Event) {
+        let track = self.track_for(name).unwrap_or(TrackId::MAIN);
+        self.push_on(track, event);
     }
 
     /// Iterate `(idx, &Event, &EnvelopeMeta)` triples in source order.
