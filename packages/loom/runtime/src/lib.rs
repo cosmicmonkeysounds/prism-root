@@ -44,6 +44,7 @@ pub mod luau;
 #[path = "luau_stub.rs"]
 pub mod luau;
 pub mod meridian;
+pub mod mesh;
 pub mod playhead;
 pub mod project;
 pub mod reactive;
@@ -55,7 +56,8 @@ pub use bundle::{BeatIdx, BeatRef, Bundle, FileIdx, LoomFileEntry, ProjectDiagno
 pub use coroutine::{Coroutine, CoroutineStatus, Program as CoroutineProgram, Tier};
 pub use directives::{DirectiveCall, DirectiveError, Registry};
 pub use expr::{Value, World};
-pub use ledger::{ChoiceOption, Event, Ledger};
+pub use ledger::{CellKind, ChoiceOption, EnvelopeMeta, Event, Ledger, TrackId};
+pub use mesh::{Cell, Driver, Mesh, Track, TrackIdentity};
 pub use live::{
     parse_broadcast_scope, BroadcastScope, Cohort, ImprovController, ImprovHandle, ImprovOutcome,
     LiveError, LiveStage, Location, Participant, ParticipantId,

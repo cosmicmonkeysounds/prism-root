@@ -1167,6 +1167,14 @@ impl Playhead {
     ) {
         let beat = self.bundle.beat(beat_ref).clone();
         let file = self.bundle.file(beat_ref.file);
+        // CellEntered opens an editor-visible boundary on the main
+        // track (loom-editor.html §3 + §9.4). Phase A always uses
+        // `TrackId::MAIN`; Phase B routes per-track.
+        self.ledger.push(Event::CellEntered {
+            track: crate::ledger::TrackId::MAIN,
+            kind: crate::ledger::CellKind::BeatVisit,
+            bundle_ref: beat.name.clone(),
+        });
         self.ledger.push(Event::BeatEntered {
             beat: beat.name.clone(),
             file: file.path.clone(),
@@ -1199,6 +1207,10 @@ impl Playhead {
         }
         let was_tunneled = self.stack.last().map(|f| f.tunneled).unwrap_or(false);
         self.pop_frame_restoring_lets();
+        self.ledger.push(Event::CellExited {
+            track: crate::ledger::TrackId::MAIN,
+            snapshot: String::new(),
+        });
         self.ledger.push(Event::Returned);
         if was_tunneled {
             if let Some(saved) = self.pending_returns.pop() {
@@ -1220,6 +1232,13 @@ impl Playhead {
             // state (spec §12.1).
             while !self.stack.is_empty() {
                 self.pop_frame_restoring_lets();
+                // Close the outermost cell explicitly so the editor
+                // canvas sees every beat-visit bracketed even when
+                // the show halts mid-frame (`-> END` short-circuit).
+                self.ledger.push(Event::CellExited {
+                    track: crate::ledger::TrackId::MAIN,
+                    snapshot: String::new(),
+                });
             }
             self.ledger.push(Event::Ended);
         }
@@ -1425,29 +1444,36 @@ impl Playhead {
             return;
         }
         // Snapshot the events to inspect so we don't alias the ledger
-        // borrow with the character mutation below.
+        // borrow with the character mutation below. `event_offsets`
+        // holds the original ledger index of each snapshot entry, so
+        // `HookFired` envelopes can attribute their `cause` correctly.
         let events: Vec<Event> = self.ledger.events()[self.hook_cursor..end].to_vec();
+        let cursor_base = self.hook_cursor as u32;
         self.hook_cursor = end;
 
-        let mut to_lower: Vec<Vec<loom_parser::ast::RawLine>> = Vec::new();
+        // `to_lower` carries (body, hook clause, cause envelope idx)
+        // so we can synthesise a `HookFired` envelope per firing
+        // (loom-editor.html §3 — the editor's causal graph reads
+        // these arcs).
+        let mut to_lower: Vec<(Vec<loom_parser::ast::RawLine>, String, u32)> = Vec::new();
         // Pre-derive synthetic `Exits` hooks: a participant moving
         // into a new location implies they exited the previous one.
         // The live stage doesn't write an explicit envelope for that,
         // so we keep our own `participant_locations` map and emit the
         // synthetic event before the entering event's enter hook.
-        let mut exits: Vec<(String, String)> = Vec::new();
-        for event in &events {
+        let mut exits: Vec<(String, String, u32)> = Vec::new();
+        for (offset, event) in events.iter().enumerate() {
             if let Event::ParticipantEnteredLocation { id, location } = event {
                 if let Some(prev) = self.participant_locations.get(id) {
                     if prev != location {
-                        exits.push((id.clone(), prev.clone()));
+                        exits.push((id.clone(), prev.clone(), cursor_base + offset as u32));
                     }
                 }
                 self.participant_locations
                     .insert(id.clone(), location.clone());
             }
         }
-        for (_id, prev_location) in &exits {
+        for (_id, prev_location, cause_idx) in &exits {
             let hook_event = crate::simulacra::HookEvent::Exits(prev_location.as_str());
             let names: Vec<String> = self.characters.keys().cloned().collect();
             for name in &names {
@@ -1457,12 +1483,13 @@ impl Playhead {
                 let hits = character.match_hooks(&hook_event);
                 for idx in hits {
                     if let Some(sub) = character.hooks.get(idx) {
-                        to_lower.push(sub.body.clone());
+                        to_lower.push((sub.body.clone(), sub.event.clone(), *cause_idx));
                     }
                 }
             }
         }
-        for event in &events {
+        for (offset, event) in events.iter().enumerate() {
+            let cause_idx = cursor_base + offset as u32;
             // For each derived HookEvent, walk every character once.
             let derived: Vec<crate::simulacra::HookEvent<'_>> = derive_hook_events(event);
             for hook_event in &derived {
@@ -1474,12 +1501,32 @@ impl Playhead {
                     let hits = character.match_hooks(hook_event);
                     for idx in hits {
                         if let Some(sub) = character.hooks.get(idx) {
-                            to_lower.push(sub.body.clone());
+                            to_lower.push((sub.body.clone(), sub.event.clone(), cause_idx));
                         }
                     }
                 }
             }
         }
+        // Emit the HookFired envelopes before lowering. Push them with
+        // explicit metadata so `cause` points at the triggering envelope
+        // rather than the per-track tail (loom-editor.html §3).
+        for (_, clause, cause_idx) in &to_lower {
+            self.ledger.push_with_meta(
+                Event::HookFired {
+                    track: crate::ledger::TrackId::MAIN,
+                    clause: clause.clone(),
+                    cause: *cause_idx,
+                },
+                crate::ledger::EnvelopeMeta {
+                    track: crate::ledger::TrackId::MAIN,
+                    cause: Some(*cause_idx),
+                },
+            );
+        }
+        // Strip the metadata before lowering — the rest of the path
+        // only consumes the raw body.
+        let to_lower: Vec<Vec<loom_parser::ast::RawLine>> =
+            to_lower.into_iter().map(|(b, _, _)| b).collect();
         if to_lower.is_empty() {
             return;
         }

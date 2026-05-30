@@ -164,6 +164,45 @@ pub enum Event {
     /// A ROSTER definition was loaded — the cast block emitted into
     /// the runtime registry (spec v3 §13.3 `<load_roster:>`).
     RosterLoaded { roster: String },
+    /// One cell — the editor's atomic unit of history — opened on a
+    /// track (loom-editor.html §3 + §9.4). `kind` distinguishes
+    /// between beat-visit / improv / generator-yield / directive
+    /// cells; `bundle_ref` describes what is being played.
+    CellEntered {
+        track: TrackId,
+        kind: CellKind,
+        bundle_ref: String,
+    },
+    /// The cell most recently opened on `track` closed.
+    /// `snapshot` is an opaque content-addressed handle the editor
+    /// pairs with a world snapshot store; the runtime computes it
+    /// lazily, so the field is a free-form string for now.
+    CellExited { track: TrackId, snapshot: String },
+    /// A hook fired (loom-editor.html §3). Materialises an event
+    /// that was implicit in the previous design so the causal graph
+    /// can render `effect ← hook ← trigger` arcs across tracks.
+    HookFired {
+        track: TrackId,
+        clause: String,
+        /// The envelope index whose predicate triggered this firing.
+        cause: u32,
+    },
+}
+
+/// Classification of a [`Event::CellEntered`] envelope (loom-editor.html
+/// §3). Held as a small enum rather than a string so the editor can
+/// colour-code cells without parsing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum CellKind {
+    /// A beat-visit — the playhead walked into a named beat.
+    BeatVisit,
+    /// An improv window — the runtime holds for performer input.
+    Improv,
+    /// One generator yield (or an ongoing generator stripe — the
+    /// editor decides whether to aggregate adjacent yields).
+    GeneratorYield,
+    /// A directive call worthy of its own cell (booth actions, casts).
+    Directive,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,20 +212,106 @@ pub struct ChoiceOption {
     pub sticky: bool,
 }
 
-/// An ordered log of [`Event`]s. Plain `Vec`-backed; mutations only
-/// through `push`.
+/// Stable handle for a track inside a [`crate::mesh::Mesh`] (spec —
+/// `docs/dev/loom-editor.html` §2). Newtype over `u32` so the editor
+/// can address rows without knowing the runtime's storage shape. The
+/// reserved id `TrackId(0)` is the implicit "main" track every
+/// single-playhead show runs on; the Mesh wrapper allocates higher
+/// ids when more drivers come online (Phase B).
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct TrackId(pub u32);
+
+impl TrackId {
+    /// The implicit main track — the one a single Playhead runs on.
+    pub const MAIN: TrackId = TrackId(0);
+}
+
+impl From<u32> for TrackId {
+    fn from(value: u32) -> Self {
+        TrackId(value)
+    }
+}
+
+/// Metadata attached to every envelope (loom-editor.html §3). `track`
+/// records *whose cursor* the envelope belongs to; `cause` is the
+/// envelope index that triggered this one (`None` for root events
+/// — player input, walk-up joins, booth actions, ambient generator
+/// ticks).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EnvelopeMeta {
+    pub track: TrackId,
+    /// Index into the ledger of the envelope that caused this one.
+    /// `None` for root envelopes.
+    pub cause: Option<u32>,
+}
+
+impl Default for EnvelopeMeta {
+    fn default() -> Self {
+        Self {
+            track: TrackId::MAIN,
+            cause: None,
+        }
+    }
+}
+
+/// An ordered log of [`Event`]s + per-envelope [`EnvelopeMeta`]. Plain
+/// `Vec`-backed; mutations only through `push` / `push_with_meta`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Ledger {
     events: Vec<Event>,
+    /// Parallel to `events`: `meta[i]` is the metadata for `events[i]`.
+    /// Kept in lock-step by [`Self::push`] / [`Self::push_with_meta`].
+    #[serde(default)]
+    meta: Vec<EnvelopeMeta>,
+    /// Tail index per track — the most recent envelope on each track,
+    /// used to chain `cause` when a caller pushes without specifying
+    /// one. Not serialised because it's derivable from `meta`.
+    #[serde(skip)]
+    track_tails: std::collections::HashMap<TrackId, u32>,
 }
 
 impl Ledger {
+    /// Push an envelope on the implicit main track, chaining `cause`
+    /// to the previous envelope on that track. Existing call sites
+    /// keep working unchanged — the new metadata is computed for them.
     pub fn push(&mut self, event: Event) {
+        self.push_on(TrackId::MAIN, event);
+    }
+
+    /// Push an envelope on a specific track, chaining `cause` to that
+    /// track's previous envelope.
+    pub fn push_on(&mut self, track: TrackId, event: Event) {
+        let cause = self.track_tails.get(&track).copied();
+        self.push_with_meta(event, EnvelopeMeta { track, cause });
+    }
+
+    /// Push an envelope with explicit metadata — used by the
+    /// hook-drain path to attribute a `HookFired` to its triggering
+    /// envelope rather than the per-track tail.
+    pub fn push_with_meta(&mut self, event: Event, meta: EnvelopeMeta) {
+        let idx = self.events.len() as u32;
         self.events.push(event);
+        self.meta.push(meta);
+        self.track_tails.insert(meta.track, idx);
     }
 
     pub fn events(&self) -> &[Event] {
         &self.events
+    }
+
+    /// Parallel slice of envelope metadata, one entry per `events()`
+    /// index.
+    pub fn meta(&self) -> &[EnvelopeMeta] {
+        &self.meta
+    }
+
+    /// Iterate `(idx, &Event, &EnvelopeMeta)` triples in source order.
+    pub fn iter_with_meta(&self) -> impl Iterator<Item = (u32, &Event, &EnvelopeMeta)> {
+        self.events
+            .iter()
+            .zip(self.meta.iter())
+            .enumerate()
+            .map(|(i, (e, m))| (i as u32, e, m))
     }
 
     pub fn len(&self) -> usize {

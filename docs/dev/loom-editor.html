@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Loom editor — the living graph</title>
+  <style>
+    body { font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           max-width: 920px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1c1c1e; }
+    h1, h2, h3, h4 { line-height: 1.2; }
+    h1 { font-size: 2.2rem; margin-bottom: 0.25rem; }
+    h2 { margin-top: 2.6rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+    h3 { margin-top: 1.8rem; }
+    h4 { margin-top: 1.2rem; color: #444; }
+    code, pre { font-family: SF Mono, Menlo, Consolas, monospace; }
+    code { background: #f4f4f6; padding: 0.1em 0.35em; border-radius: 3px; }
+    pre { background: #f4f4f6; padding: 1rem; border-radius: 6px; overflow-x: auto;
+          font-size: 13.5px; line-height: 1.5; }
+    .lede { font-size: 1.1rem; color: #555; }
+    .pill { display: inline-block; font-size: 0.78em; padding: 0.1em 0.5em;
+            border-radius: 999px; background: #eef; color: #335;
+            margin-left: 0.4em; vertical-align: middle; }
+    .pill.warn { background: #fde7e7; color: #8a2424; }
+    .pill.good { background: #e6f4ea; color: #1d6b35; }
+    .callout { border-left: 3px solid #c4d2e6; background: #f7fafd;
+               padding: 0.8rem 1rem; margin: 1.2rem 0; border-radius: 0 4px 4px 0; }
+    .callout.warn { border-color: #d8b14a; background: #fffaef; }
+    .callout.good { border-color: #7fb78a; background: #f3faf4; }
+    .callout.big { border-left-width: 5px; padding: 1rem 1.2rem; font-size: 1.04em; }
+    table { width: 100%; border-collapse: collapse; margin: 0.8rem 0; font-size: 14.5px; }
+    th, td { padding: 0.5rem 0.6rem; border-bottom: 1px solid #eee; text-align: left; vertical-align: top; }
+    th { background: #fafafa; }
+    .toc { background: #fafafa; border: 1px solid #eee; padding: 1rem 1.2rem;
+           border-radius: 6px; margin: 1.6rem 0; }
+    .toc ol { margin: 0; padding-left: 1.6rem; }
+    .toc li { margin: 0.2rem 0; }
+    a { color: #0066cc; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    em.term { font-style: italic; color: #334; }
+    .ascii { background: #fafafa; border: 1px solid #eee; padding: 1rem 1.2rem;
+             border-radius: 6px; font-family: SF Mono, Menlo, monospace;
+             font-size: 12.5px; line-height: 1.55; white-space: pre; overflow-x: auto; }
+    .strike { text-decoration: line-through; color: #888; }
+  </style>
+</head>
+<body>
+
+<h1>Loom editor — a live NLE for non-linear stories <span class="pill">design</span></h1>
+
+<p class="lede">
+  The Loom editor is a non-linear editor in the DAW / NLE sense:
+  multitrack timeline, parallel clips, live cursors, inspectors,
+  patcher overlays, and time travel. Stories that <em>look</em> like
+  scripts get authored, rehearsed, and run in the same canvas that a
+  video editor cuts a film in or a producer arranges a session in.
+  The closest prior art is the pairing in <strong>Ableton Live</strong>
+  — a <em>Session</em> view of clips that can fire at any time, and an
+  <em>Arrangement</em> view of what actually happened — together with
+  <strong>DaVinci Resolve</strong>'s track-folder + inspector
+  ergonomics and <strong>Max/MSP</strong>'s patcher graph for causal
+  inspection. v3 ships with a single linear <code>Playhead</code> that
+  walks one beat at a time; that is enough to play a story but not
+  enough to <em>show</em> one. A Loom show is a mesh of concurrent
+  tracks — a Wren, a Bellkeeper, a chorus, an audience cohort, a
+  director at the booth — each with its own state, its own history,
+  its own current beat. The editor and the engine should both treat
+  the show that way. This doc proposes the runtime + UI work to get
+  there.
+</p>
+
+<div class="callout big good">
+  <strong>The four claims.</strong>
+  <ol style="margin:0.5rem 0 0 1.2rem; padding:0;">
+    <li><strong>One playhead is a lie.</strong> Every character is
+      already advancing under its own volition (goals, generators,
+      hooks); the runtime serialises that mesh into one stream so the
+      v2 console UI can read it. The editor's mental model has to
+      match the engine's actual shape: <strong>many tracks, one
+      world</strong>.</li>
+    <li><strong>The story is a graph, not a transcript.</strong> The
+      ledger is already a DAG — every event has a cause (a directive,
+      a hook, a choice, a tick). Rendered as a transcript that
+      structure dies. Rendered as a graph it becomes the primary
+      surface for inspection, time-travel, and "why did this fire?"
+      debugging.</li>
+    <li><strong>The editor is a window, not a player.</strong>
+      Composing, directing, and running a show are three modes over
+      the same canvas, not three apps. A writer dragging beats and a
+      booth operator hot-patching a fainted performer are doing the
+      same operation on the same graph.</li>
+    <li><strong>Volition is a track property.</strong> A track can be
+      driven by the script (NPC), by a performer (scripted role with
+      a human reading lines), or by an audience member (a
+      participant). Switching modes mid-show is a binding change, not
+      a different engine path.</li>
+    <li><strong>Two views, one timeline.</strong> Ableton Live's
+      Session / Arrangement split is the right pairing. A
+      <strong>Session</strong> view shows the grid of beats that
+      <em>could</em> fire on each track, with global narrative
+      branches as columns ("scenes") that fire across every track at
+      once. An <strong>Arrangement</strong> view shows the same
+      project as the linear multitrack record of what actually
+      happened. Same store, same envelopes — two projections.</li>
+  </ol>
+</div>
+
+<div class="toc">
+  <h3 style="margin-top:0">Contents</h3>
+  <ol>
+    <li><a href="#diagnosis">Why one playhead is wrong</a></li>
+    <li><a href="#mesh">The mesh model — Tracks, Mesh, shared World</a></li>
+    <li><a href="#graph">The living graph — events as a DAG</a></li>
+    <li><a href="#canvas">The editor canvas — Session and Arrangement</a></li>
+    <li><a href="#modes">Three modes over one canvas — compose / direct / boot</a></li>
+    <li><a href="#inspector">The inspector — picking a cell, picking an arc</a></li>
+    <li><a href="#time">Time travel and per-track rewind</a></li>
+    <li><a href="#volition">Volition — who is driving each track</a></li>
+    <li><a href="#runtime">Runtime changes — <code>Playhead</code> → <code>PlayMesh</code></a></li>
+    <li><a href="#editor-arch">Editor architecture — components and panels</a></li>
+    <li><a href="#migration">Migration from the single playhead</a></li>
+    <li><a href="#resolved">Resolved design decisions</a></li>
+    <li><a href="#open">Still open</a></li>
+  </ol>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="diagnosis">1. Why one playhead is wrong</h2>
+
+<p>
+  v3 has more concurrency than the playhead lets you see. Right now:
+</p>
+
+<ul>
+  <li>Every ROLE with a <code>generator</code> is a coroutine running
+    on the tiered scheduler (focal / active / ambient — spec §12.5).
+    Wren's <code>daily_routine</code> and the
+    <code>HarborChorus</code> are both ticking while the player is
+    mid-dialogue with the Bellkeeper.</li>
+  <li>Every ROLE with goals is already a small state machine running
+    independently (spec §10.3) — <code>find_keeper</code> pursues
+    even when nothing in the focal beat references it.</li>
+  <li>Every PERSON has their own location and cohort state
+    (spec v3 §13). A participant walking between rooms is a parallel
+    movement timeline.</li>
+  <li><code>&lt;spawn:&gt;</code> and <code>&lt;run:&gt;</code> exist
+    precisely so beats can launch siblings (spec §12.3, §12.4). They
+    are first-class.</li>
+</ul>
+
+<p>
+  The runtime threads all of that through one cursor — the
+  <code>Playhead</code> — and surfaces it as a single
+  <code>Step</code> stream. That's the right serialisation for the
+  current TUI / web-editor preview, and it will stay the right one
+  for "play this beat in isolation." But it is the wrong primary
+  view for an authoring tool, because:
+</p>
+
+<ol>
+  <li><strong>Authoring questions are cross-track.</strong> "Where
+    is Wren when the player is in the Nave?" "Which cohort hears
+    this cue?" "Is anyone idle for more than 90 seconds in act
+    one?" — none of these are answerable by reading the current
+    beat's body.</li>
+  <li><strong>Debugging questions are causal.</strong> "Why did Wren
+    just shift to <code>hostile</code>?" — that's a backward walk
+    through the disposition mutation that crossed the threshold,
+    the directive that issued it, the beat the directive was in,
+    the divert that brought the playhead to that beat. The
+    transcript shows you the result; the graph shows you the
+    cause.</li>
+  <li><strong>Live-show questions are spatial.</strong> A booth
+    operator's view is "twenty audience members across four rooms,
+    plus six performers, plus a director cueing from a tablet" —
+    not "what line is the playhead on." The current shell renders
+    the wrong thing for the operator.</li>
+</ol>
+
+<p>
+  None of these need the playhead removed. They need a peer view of
+  the same engine state organised by <em>track</em>, not by
+  <em>time</em>.
+</p>
+
+<!-- ================================================================ -->
+<h2 id="mesh">2. The mesh model — Tracks, Mesh, shared World</h2>
+
+<p>
+  Three new nouns. They subsume the playhead; they do not replace it
+  (a single-track Mesh <em>is</em> a Playhead).
+</p>
+
+<table>
+  <tr><th>Noun</th><th>Is</th><th>Owns</th></tr>
+  <tr>
+    <td><strong><code>Track</code></strong></td>
+    <td>One independent cursor through the story.</td>
+    <td>identity (what it is the cursor of — see below); frame stack;
+      private dialogue history; subscription set of hook clauses;
+      scheduler tier.</td>
+  </tr>
+  <tr>
+    <td><strong><code>Mesh</code></strong></td>
+    <td>The set of currently live Tracks, plus their causal links.</td>
+    <td>creation/retirement of tracks; cross-track hook routing;
+      one shared <code>Ledger</code>; one shared <code>World</code>
+      (Loro CRDT); the global scheduler.</td>
+  </tr>
+  <tr>
+    <td><strong><code>Cell</code></strong></td>
+    <td>One unit of a Track's history — a beat-visit, an improv
+      window, a generator yield, a directive call.</td>
+    <td>span in real time; a pointer into the bundle (what was
+      played); a snapshot id (what the world looked like after);
+      the cause-edge that produced it.</td>
+  </tr>
+</table>
+
+<p>
+  A Track's <em>identity</em> is one of (spec v3 §13 vocabulary):
+</p>
+
+<ul>
+  <li><strong>A <code>ROLE</code>.</strong> The track follows the
+    fictional entity. Whoever plays the role (NPC, performer,
+    walk-up) drives this track. Wren has a track.</li>
+  <li><strong>A <code>PERSON</code> not bound to a role.</strong>
+    Walk-up audience members get a track for themselves. Their
+    location, cohort membership, content-tolerance, and any beat
+    they're being broadcast into are on this track.</li>
+  <li><strong>A <code>COHORT</code>.</strong> Group-scoped flow.
+    The Initiates have a track; what they're collectively being
+    addressed by sits on it.</li>
+  <li><strong>An ambient <code>GENERATOR</code>.</strong> World-bound
+    generators (the harbour chorus, the weather, the bell) each get
+    their own track.</li>
+  <li><strong>The director / booth.</strong> Operator actions
+    (skip, recast, hot-patch) ride on a special "Booth" track that
+    can route into any other.</li>
+</ul>
+
+<p>
+  Tracks all share <em>one</em> world (the Loro CRDT) and <em>one</em>
+  ledger. They differ in <em>what they're reading the world from</em>:
+  a Track's <code>self</code>-scope is its identity, so an expression
+  like <code>trust(Player)</code> inside Wren's track resolves to
+  <code>Wren.trusts.Player</code>; the same expression inside an
+  Initiate's track resolves to <code>Initiate.trusts.Player</code>.
+  Spec v3 §13.5 already had this rule for scoped beats; the Mesh
+  generalises it.
+</p>
+
+<p>
+  A Track's <em>private history</em> is a slice of the ledger — every
+  envelope whose subject is this track or whose cause-edge lands on
+  it. Two participants in the same beat see overlapping but distinct
+  slices: the broadcast envelope, the directives that fired on them,
+  the dialogue they were addressed by.
+</p>
+
+<!-- ================================================================ -->
+<h2 id="graph">3. The living graph — events as a DAG</h2>
+
+<p>
+  Today's <code>Ledger</code> is a flat append-only vector of
+  <code>Event</code> envelopes (spec implementation: §10.4, §13.4).
+  Flat is fine for a transcript; insufficient for a graph. Every
+  envelope grows two new fields:
+</p>
+
+<pre>pub struct EnvelopeMeta {
+    /// The track this envelope is "about" — the cursor whose cell
+    /// produced or received it.
+    pub track: TrackId,
+    /// The cause edge: the prior envelope index that triggered this
+    /// one. `None` for root events (player input, walk-up join,
+    /// booth action, ambient generator tick).
+    pub cause: Option<EnvelopeIdx>,
+}
+</pre>
+
+<p>
+  Every existing path that pushes to the ledger now has to attach a
+  cause. The wiring is mechanical:
+</p>
+
+<table>
+  <tr><th>Envelope</th><th>Cause</th></tr>
+  <tr><td><code>Action</code> / <code>Dialogue</code></td>
+      <td>the beat-visit envelope that opened the current cell</td></tr>
+  <tr><td><code>Directive</code></td>
+      <td>the body item index that fired it (carried through the playhead's instruction pointer)</td></tr>
+  <tr><td><code>WorldSet</code></td>
+      <td>the directive that called <code>&lt;set:&gt;</code></td></tr>
+  <tr><td><code>KnowledgeChanged</code></td>
+      <td>the directive that wrote <code>Character.knows.X</code></td></tr>
+  <tr><td>Hook firings (synthetic — see below)</td>
+      <td>the envelope whose predicate they reacted to</td></tr>
+  <tr><td><code>CastBound</code> / <code>RolePromoted</code></td>
+      <td>the directive or roster line that produced it</td></tr>
+  <tr><td><code>ParticipantJoined</code> / walk-up events</td>
+      <td><code>None</code> — these are roots</td></tr>
+</table>
+
+<p>
+  The runtime currently fires hooks implicitly inside the playhead's
+  yield-loop; we need to materialise the firing so the graph can
+  show "this hook fired because that envelope landed." A new
+  <code>HookFired</code> envelope captures it:
+</p>
+
+<pre>HookFired {
+    track:    TrackId,        // whose hook
+    clause:   String,         // normalised event clause
+    cause:    EnvelopeIdx,    // the envelope whose predicate triggered it
+}
+</pre>
+
+<p>
+  With that in place, the editor can render the ledger as a DAG: nodes
+  are envelopes, edges are causes. A click on Wren's
+  <code>hostile</code> tag walks back through HookFired → WorldSet →
+  Directive → BeatVisit → Choice. The same DAG, projected onto track
+  rows over time, is the multitrack timeline (next section).
+</p>
+
+<!-- ================================================================ -->
+<h2 id="canvas">4. The editor canvas — Session and Arrangement</h2>
+
+<p>
+  The Ableton Live split is the right one. <strong>Session</strong>
+  view is the grid of <em>what could fire</em>; <strong>Arrangement</strong>
+  view is the linear record of <em>what did</em>. Both render the
+  same Mesh; the toggle is one keystroke.
+</p>
+
+<h3 id="session">4.1 Session view — the clip grid</h3>
+
+<p>
+  Rows are tracks. Columns are <strong>narrative scenes</strong> — the
+  global story branches. A cell at (Wren, "Act II — the bell rings")
+  is a <em>clip</em>: a launchable chunk of Loom (a beat, a scene, a
+  generator phase, an improv window). Firing a column fires every
+  clip in that column at once — the canonical "advance the show to
+  Act II" gesture. Firing a single cell launches just that track's
+  clip; <em>follow actions</em> on a clip (the Loom equivalent of a
+  divert) auto-launch the next clip in the row when this one
+  finishes.
+</p>
+
+<div class="ascii">
+                  Prologue     Act I        Act II        Act III      Coda
+                  ─────────   ─────────   ───────────   ─────────   ─────────
+Booth          │  [load   ]  [        ]  [recast?  ]  [        ]  [final  ] │
+Wren           │  [opening]  [ringing ]  [confront ]  [decide  ]  [exeunt ] │
+Bellkeeper     │  [        ]  [meet_pl]  [answers  ]  [refuse  ]  [exeunt ] │
+▼ Initiates    │  [orient ]  [wait    ]  [bell hear]  [convene ]  [release] │
+   walkup_12   │            [join    ]  [BellTower]  [convene ]  [release] │
+   walkup_13   │                        [BellTower]  [convene ]  [release] │
+▼ Ambient      │  [Chorus.] [Chorus.. ] [Storm…   ] [Storm…   ] [Chorus.] │
+   HarborChor. │  ▓▓▓▓▓▓▓▓ ▓▓▓▓▓▓▓▓▓▓ ▓▓▓▓▓▓▓▓▓▓▓▓ ▓▓▓▓▓▓▓▓▓▓▓▓ ▓▓▓▓▓▓▓▓ │
+   Weather    │  ░░░░░░░░ ░░░░░░░░░░ ▒▒▒▒▒▒▒▒▒▒▒▒ ▒▒▒▒▒▒▒▒▒▒▒▒ ░░░░░░░░ │
+
+  ▶ fires a clip      ▶▶ fires a column (scene)      ▽ collapses a folder
+</div>
+
+<p>Reading rules:</p>
+
+<ul>
+  <li><strong>Columns are scenes (global branches).</strong> Firing a
+    column fires every clip in it concurrently. Big narrative
+    branches — Act II vs. Act II' — live as parallel <em>scene
+    sets</em>, picked at runtime by an operator, a hook, or a choice.
+    Small per-person branches (this audience member picked dialogue
+    A; this one picked B) do <em>not</em> get their own columns;
+    they're internal to a clip's content.</li>
+  <li><strong>Track folders.</strong> Cohorts render as expandable
+    folders ("Initiates ▽") whose children are the participant rows
+    in the cohort. Collapsed, the folder shows the cohort's own
+    flow; expanded, every participant row appears beneath it.
+    Generators have an "Ambient" folder by default; the booth can
+    pin specific generators above the fold during a show.</li>
+  <li><strong>Clip vs. ongoing.</strong> A beat is a finite clip; a
+    generator clip is <em>ongoing</em> and renders as a continuous
+    audio-style waveform stripe (▓▓▓ / ░░░) rather than a discrete
+    block. The runtime emits per-tier ticks the canvas paints into
+    the stripe; zooming in expands the stripe into individual
+    yields. This matches the DAW intuition of a live-recording
+    track: it's running, it has level, you can scrub it.</li>
+  <li><strong>Follow actions.</strong> A divert at the end of a clip
+    is a follow action on the cell. The Session view shows it as a
+    small arrow on the cell's right edge pointing at the next clip
+    (often in the next column over). Re-targeting a follow action is
+    a drag on that arrow — and the source-file divert updates to
+    match.</li>
+  <li>The <strong>Booth</strong> folder pins to the top — its clips
+    are operator-issued envelopes (<code>&lt;cast:&gt;</code>,
+    <code>&lt;recast:&gt;</code>, <code>&lt;load_roster:&gt;</code>,
+    hot-reloads, skips).</li>
+</ul>
+
+<h3 id="arrangement">4.2 Arrangement view — the live record</h3>
+
+<p>
+  Toggle to Arrangement. The same tracks become the rows of a linear
+  timeline; the horizontal axis is real time during a show, beat-visit
+  ordinal during composition. Each cell renders as a block whose width
+  is its duration. Cause edges render as thin arcs from one cell to
+  another — usually within a track (this beat's directive triggered
+  the next), often across tracks (a directive in Wren's track fired a
+  hook in the Bellkeeper's track).
+</p>
+
+<div class="ascii">
+time →            00:00          00:30          01:00          01:30
+                  │              │              │              │
+
+Booth     ──────●─────────────────────────────────●───────────────  (load_roster, recast)
+                │                                 │
+Wren      ──────┴─[opening]──[ring]──[ringing]────┴─[ringing']──→   (Jamie → Kim)
+                            ↘ cast bound          ↑ recast
+Bellkeeper ─────[idle_gen]──[meet_player]────[answers_bell]────→
+                              ↑ hook from ring
+▼ Initiates ──[orientation]──[wait]──[broadcast: bell]─[wait]────→
+   walkup_12 ───────────[join]──[orientation]──[BellTower:enter]──
+                                                   ↑ promote
+▼ Ambient
+   HarborChor.  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓→     (live record)
+   Weather     ░░░░░░░░░░░░░░░░░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒→    (storm rising)
+</div>
+
+<p>
+  Same track folders, same colour coding, same selection +
+  inspector. In compose mode dragging a clip horizontally re-orders
+  beats inside the source; in boot mode the same drag is a booth
+  skip / re-cue. The Arrangement view is what a director hands a
+  composer ("here's the cue list") and what the booth shows the
+  stage manager during the run.
+</p>
+
+<h3 id="patcher">4.3 Patcher overlay — the causal graph</h3>
+
+<p>
+  A third optional projection, modelled on Max/MSP: open the
+  patcher window and the same envelopes appear as nodes with cause
+  edges as cords. Useful when "what fired what" matters more than
+  "when did it happen." Selecting an arc in Arrangement opens the
+  patcher zoomed to that arc; selecting a node in the patcher
+  scrolls Arrangement to that cell. Same data, three projections.
+</p>
+
+<!-- ================================================================ -->
+<h2 id="modes">5. Three modes over one canvas</h2>
+
+<p>
+  Same Mesh, same DAG, same canvas — three vocabularies on top.
+</p>
+
+<table>
+  <tr><th>Mode</th><th>Whose tool</th><th>Verbs the canvas exposes</th></tr>
+  <tr>
+    <td><strong>Compose</strong></td>
+    <td>Writer / dramaturg</td>
+    <td>edit beat bodies, drag-reorder beats inside a track, draw a
+      divert by dragging from one beat to another, fork a beat into
+      an <code>&lt;if&gt;</code> chain, declare a new ROLE / TRAIT /
+      STATS, run a "dry play" that fakes audience joins.</td>
+  </tr>
+  <tr>
+    <td><strong>Direct</strong></td>
+    <td>Director in rehearsal</td>
+    <td>set the active ROSTER, dry-run the show with mocked
+      participants, scrub backward to see how a beat lands under
+      different disposition states, freeze a track while inspecting
+      another, add notes to cells.</td>
+  </tr>
+  <tr>
+    <td><strong>Boot</strong> (booth at showtime)</td>
+    <td>Stage manager / booth operator</td>
+    <td>cast, recast, promote, demote, skip, force-fire a cue,
+      hot-reload a <code>.loom</code> patch, watch the ambient row
+      for drift, route a microphone to a participant.</td>
+  </tr>
+</table>
+
+<p>
+  Mode is a UI affordance, not a runtime split. The engine doesn't
+  know which mode the front-end is in; it just emits envelopes. The
+  Compose mode talks to a Mesh whose clock is paused, Direct mode
+  talks to a Mesh whose clock is mocked, Boot mode talks to a Mesh
+  whose clock is real and whose participants are real. The same
+  Loro store backs all three; collaboration "just works" because it
+  is already in the substrate.
+</p>
+
+<!-- ================================================================ -->
+<h2 id="inspector">6. The inspector — picking a cell, picking an arc</h2>
+
+<p>
+  Clicking a cell opens a side pane bound to that cell's state.
+  Clicking a cause arc opens it bound to the envelope and its
+  reverse-chain. The pane is the existing "panels" surface from
+  spec v3 §13.11 — People / Roles / Roster / Stage — pinned to the
+  selected cell.
+</p>
+
+<p>What the pane shows for a beat-visit cell:</p>
+
+<ul>
+  <li><strong>Header</strong> — track identity (ROLE name or PERSON
+    name), beat name, visit count, real time span.</li>
+  <li><strong>World snapshot</strong> — the world as it was after
+    the cell completed. Snapshots are content-addressed (a hash of
+    the affected world subtree) so cells that didn't mutate share
+    storage with the previous snapshot.</li>
+  <li><strong>Local state</strong> — for ROLE tracks: stats, knowledge,
+    goal queue, hook subscription. For PERSON tracks: location,
+    cohorts, content-tolerance, bound role. For COHORT tracks:
+    membership.</li>
+  <li><strong>Live expressions</strong> — a small REPL pinned to the
+    cell's world. <code>Wren.stats.health</code> /
+    <code>jamie_lee.location</code> work against the snapshot.</li>
+  <li><strong>Causality</strong> — the cause chain (incoming arc),
+    the effect chain (outgoing arcs). Each link clickable.</li>
+</ul>
+
+<p>What it shows for a HookFired arc:</p>
+
+<ul>
+  <li>The hook source — the file/line that declared it.</li>
+  <li>The triggering envelope, fully expanded.</li>
+  <li>The hook's body lines as they ran, with directive results inline.</li>
+  <li>"Suppress this firing in replay" / "always fire from now on" —
+    booth-mode override surfaces for debugging.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="time">7. Time travel and branches</h2>
+
+<p>
+  The ledger is append-only and content-addressed. Every cell carries
+  a snapshot id; the world at any historical point is the snapshot
+  the most recent cell pointed at. Rewinding is not a delete — it's
+  a re-bind. Two scales of operation:
+</p>
+
+<h3>7.1 Global scrub and global branches</h3>
+
+<p>
+  Most branches that matter to a story are <em>global</em>. The
+  player ringing the bell or not ringing the bell affects every
+  performer in every room — that's a global narrative branch. The
+  Session view shows those branches as columns (§4.1); the
+  Arrangement view shows them as a fork in the project's spine.
+</p>
+
+<ul>
+  <li><strong>Global scrub.</strong> Drag the play-position cursor
+    backward across the Arrangement. The world rebinds to the
+    snapshot at that point; rendering replays each track up to its
+    position at that time. The ledger past the scrub point becomes
+    "future" — still in the store, just not enacted.</li>
+  <li><strong>Global branch.</strong> From any cell, "branch from
+    here" forks the project at that envelope. The Session view's
+    column structure grows a new column for the branch; the
+    Arrangement view shows the branches as parallel spines that can
+    be diff-viewed against each other. Branch semantics map to Loro
+    forks — both branches are first-class objects in the store, and
+    the operator can merge one back in as a commit.</li>
+  <li>The story-level branch is the unit; <em>not</em> the
+    per-track or per-person divergence.</li>
+</ul>
+
+<h3>7.2 Per-person branches do not get rails</h3>
+
+<p>
+  Two audience members picking different dialogue with the same NPC
+  is <em>not</em> a branch in this sense. It's local content
+  variation inside a single broadcast scope: same beat, different
+  body items chosen by <code>&lt;match:&gt;</code> or
+  <code>&lt;if:&gt;</code> per-PERSON. The Arrangement view shows
+  this as one cell whose inspector breaks down the per-person
+  resolution — not as a forked timeline. Per-person variation is
+  cheap (it's just expression evaluation against a participant
+  scope); forking the project for every audience member would be
+  unreadable.
+</p>
+
+<p>
+  The rule of thumb: <em>if the operator at the booth would say
+  "we're playing a different show now," it's a global branch. If
+  they'd say "this person is hearing a slightly different cue," it
+  isn't.</em>
+</p>
+
+<h3>7.3 Rehearsal scrubs</h3>
+
+<p>
+  In compose / direct mode, scrubbing is the rehearsal feature:
+  "play that exchange again but with Wren's disposition still warm."
+  The same global-scrub mechanism does it — the only thing different
+  is that direct mode doesn't commit the replay back to the live
+  ledger by default. The operator gets a "save this take" affordance
+  if they want to keep it.
+</p>
+
+<!-- ================================================================ -->
+<h2 id="volition">8. Volition — who is driving each track</h2>
+
+<p>
+  Each Track has a <em>driver</em> — the source of its forward
+  motion. v2 had two implicit drivers (script-driven for the focal
+  beat, scheduler-driven for ambient generators). The Mesh formalises
+  three:
+</p>
+
+<table>
+  <tr><th>Driver</th><th>How the track advances</th><th>Example</th></tr>
+  <tr>
+    <td><strong>Scripted</strong></td>
+    <td>Walks the bundle's body items deterministically. Goals,
+      generators, hooks all participate.</td>
+    <td>An NPC patrol; an ambient generator; a focal beat with no
+      live performer.</td>
+  </tr>
+  <tr>
+    <td><strong>Performer</strong></td>
+    <td>Same body but waits on a human cue per dialogue line / per
+      improv beat. The performer sees their lines on a prompter;
+      the track advances when they press pedal / hit anchor phrase /
+      complete the improv.</td>
+    <td>An actor playing Wren reads scripted lines.</td>
+  </tr>
+  <tr>
+    <td><strong>Participant</strong></td>
+    <td>Driven by the live PERSON's physical / device actions —
+      location entries, taps, walk-up join, biometric cues.</td>
+    <td>An audience member moving between rooms; a walk-up
+      triggering a personalised beat by tapping a wristband.</td>
+  </tr>
+</table>
+
+<p>
+  A track's driver is mutable at runtime. A scripted Wren-track
+  becomes performer-driven the moment <code>&lt;cast: jamie_lee as
+  Wren&gt;</code> binds a PERSON. A performer who steps off becomes
+  scripted again (or ghosts) without restarting the track. The canvas
+  distinguishes drivers visually — a coloured stripe at the left of
+  each track row, in the manner of Resolve's track-type badges.
+</p>
+
+<!-- ================================================================ -->
+<h2 id="runtime">9. Runtime changes — <code>Playhead</code> → <code>PlayMesh</code></h2>
+
+<p>
+  Concrete shape of the work in <code>loom-runtime</code>:
+</p>
+
+<h3>9.1 New types</h3>
+
+<pre>pub struct TrackId(pub u32);
+
+pub enum TrackIdentity {
+    Role(String),
+    Person(String),
+    Cohort(String),
+    AmbientGenerator(String),
+    Booth,
+}
+
+pub enum Driver {
+    Scripted,
+    Performer { device: Option&lt;String&gt; },
+    Participant { person: String },
+}
+
+pub struct Track {
+    pub id: TrackId,
+    pub identity: TrackIdentity,
+    pub driver: Driver,
+    pub tier: Tier,                        // scheduler tier
+    pub stack: Vec&lt;Frame&gt;,                 // existing Frame, scoped to this track
+    pub local_world_overlay: WorldOverlay, // self.* + local lets (spec §9.6.2)
+    pub history: Vec&lt;EnvelopeIdx&gt;,         // private slice of the ledger
+    pub subscriptions: Vec&lt;HookSubscription&gt;,
+}
+
+pub struct PlayMesh {
+    pub bundle: Arc&lt;Bundle&gt;,
+    pub world: World,                      // shared Loro store
+    pub ledger: Ledger,                    // shared, now with EnvelopeMeta
+    pub scheduler: Scheduler,
+    pub tracks: SlotMap&lt;TrackId, Track&gt;,
+    pub focus: Option&lt;TrackId&gt;,            // booth/editor "PoV"
+    pub clock: Clock,                      // real | mocked | paused
+}
+</pre>
+
+<h3>9.2 Step model</h3>
+
+<p>
+  <code>PlayMesh::step()</code> runs one scheduler tick across every
+  track and returns a vector of <code>(TrackId, Step)</code> pairs.
+  The existing <code>Step</code> enum is reused per-track:
+</p>
+
+<pre>impl PlayMesh {
+    pub fn step(&amp;mut self) -&gt; Vec&lt;(TrackId, Step)&gt; { … }
+
+    /// Run a single track in isolation — the existing Playhead API
+    /// reborn as a slice of the Mesh.
+    pub fn step_one(&amp;mut self, id: TrackId) -&gt; Result&lt;Step, PlayError&gt; { … }
+
+    /// Drive the Mesh until every track is idle or waiting on input.
+    pub fn run_to_quiescence(&amp;mut self) { … }
+
+    /// `Playhead` becomes a thin wrapper: a Mesh with one Scripted
+    /// track. Existing callers keep working.
+    pub fn into_playhead(self) -&gt; Playhead { … }
+}
+</pre>
+
+<h3>9.3 Hook routing</h3>
+
+<p>
+  Hooks were already declared per-ROLE / per-TRAIT and the runtime
+  fires them on matching ledger events. With the Mesh the rule
+  becomes: a hook declared inside a ROLE fires <em>on the track that
+  binds that role</em>; a top-level hook (<code>on participant joins</code>)
+  spawns a new Participant track or routes to the relevant one.
+  HookFired envelopes carry the track id so the graph can render
+  the arc.
+</p>
+
+<h3>9.4 Cell synthesis</h3>
+
+<p>
+  Cells are not an extra storage layer — they're a view over the
+  ledger keyed by (track, span). The runtime emits two new
+  envelopes per beat-visit so the cell boundaries are explicit:
+  <code>CellEntered { track, cell_kind, bundle_ref }</code> and
+  <code>CellExited { track, snapshot }</code>. The editor's
+  multitrack canvas reads cell rows by paging through the ledger
+  and grouping by track id between Entered/Exited pairs.
+</p>
+
+<h3>9.5 Snapshots</h3>
+
+<p>
+  After every <code>CellExited</code> the runtime hashes the world
+  subtrees the track touched and writes a <code>Snapshot { id, base,
+  diff }</code> record. Snapshots chain — each one is a diff against
+  the previous on the same track plus diffs against concurrent
+  changes from other tracks. Scrubbing back to a cell rebinds the
+  world to the snapshot id; the Loro store can do this without a
+  full materialisation by replaying ops.
+</p>
+
+<!-- ================================================================ -->
+<h2 id="editor-arch">10. Editor architecture — components and panels</h2>
+
+<p>
+  The editor is the React/Vite/CodeMirror app under
+  <code>packages/loom/editor</code>. New surfaces:
+</p>
+
+<table>
+  <tr><th>Component</th><th>Role</th></tr>
+  <tr>
+    <td><code>&lt;MeshCanvas /&gt;</code></td>
+    <td>The multitrack timeline. Reads
+      <code>PlayMesh::tracks</code> + the cell-paginated ledger;
+      renders rows, cells, cause arcs. Handles pan / zoom /
+      drag-to-divert.</td>
+  </tr>
+  <tr>
+    <td><code>&lt;TrackRow /&gt;</code></td>
+    <td>One row, one track. Carries the driver badge, the role/person
+      portrait, and the cell strip.</td>
+  </tr>
+  <tr>
+    <td><code>&lt;CellInspector /&gt;</code></td>
+    <td>The side pane (§6). Bound to a selected cell or arc.</td>
+  </tr>
+  <tr>
+    <td><code>&lt;GraphOverlay /&gt;</code></td>
+    <td>Toggleable second canvas — same ledger, rendered as a
+      classical DAG. Useful when "what fired what" matters more
+      than "when did it fire."</td>
+  </tr>
+  <tr>
+    <td><code>&lt;CompositionPalette /&gt;</code></td>
+    <td>Compose-mode toolbar. New ROLE / new beat / new TRAIT /
+      stub generator. Drag from palette onto canvas creates and
+      inserts.</td>
+  </tr>
+  <tr>
+    <td><code>&lt;BoothPanel /&gt;</code></td>
+    <td>Boot-mode actions: cast, recast, promote, skip, hot-reload,
+      route mic, force-fire cue. Every action is a directive call
+      so the ledger captures the operator's intent.</td>
+  </tr>
+  <tr>
+    <td><code>&lt;ScriptEditor /&gt;</code></td>
+    <td>CodeMirror, still the source-of-truth view. Bidirectional —
+      writing in the source updates the canvas; dragging a beat on
+      the canvas re-emits its declaration in the source.</td>
+  </tr>
+</table>
+
+<p>
+  Data flow: <code>loom-server</code> hosts the
+  <code>PlayMesh</code>; the editor subscribes to the ledger over WS,
+  pages cells lazily by (track, time-range), and applies operator
+  actions as directive calls. Compose-mode edits are Loro ops on the
+  source files. Booth-mode edits are directive calls on the running
+  Mesh.
+</p>
+
+<!-- ================================================================ -->
+<h2 id="migration">11. Migration from the single playhead</h2>
+
+<p>
+  Two-phase, non-breaking.
+</p>
+
+<h3>11.1 Phase A — Mesh as a wrapper</h3>
+
+<p>
+  Land <code>PlayMesh</code> with exactly one scripted track that
+  delegates to the current <code>Playhead</code>. Add the
+  <code>EnvelopeMeta { track, cause }</code> fields to every existing
+  ledger push site (TrackId is always 0; cause is always the
+  previous envelope on the same track). Emit
+  <code>CellEntered</code> / <code>CellExited</code> around each
+  beat-visit. No editor changes yet; the existing TUI / web preview
+  keeps reading the same <code>Step</code> stream.
+</p>
+
+<p>
+  This phase is mostly mechanical wiring and a new envelope. It
+  unblocks the canvas without changing semantics.
+</p>
+
+<h3>11.2 Phase B — multiple drivers</h3>
+
+<p>
+  Introduce the four <code>Driver</code> variants. Spawn a Track per
+  ROLE that has goals or character-bound generators (today they ride
+  the scheduler invisibly — this just gives them their own row).
+  Spawn a Track per live PERSON. Spawn the Booth track. Route hooks
+  through track ids.
+</p>
+
+<p>
+  This is the visible phase: the canvas suddenly has many rows; the
+  inspector becomes useful; per-track rewind unlocks.
+</p>
+
+
+<!-- ================================================================ -->
+<h2 id="resolved">12. Resolved design decisions</h2>
+
+<p>
+  Decisions captured here are deliberate; they constrain the
+  implementation. Anything not on this list is fair game in the
+  build-out.
+</p>
+
+<h3>12.1 Branches are global, not per-track</h3>
+
+<p>
+  The story branches that get a column / a fork / a rail are the
+  ones the operator at the booth would describe as "we're playing a
+  different show now" — the bell rings vs. doesn't ring; the
+  Bellkeeper lives vs. dies; act II vs. act II' (§7.1). Per-person
+  variation (two audience members picking different dialogue with
+  the same NPC) stays inside a single cell as
+  <code>&lt;match:&gt;</code> / <code>&lt;if:&gt;</code> resolution
+  in a participant scope — it does <em>not</em> grow its own rail.
+  This is the same rule Ableton applies to Session view: scenes are
+  the global-fire unit, clip parameters are the per-instance
+  variation.
+</p>
+
+<h3>12.2 Generators render as ongoing recording-style cells</h3>
+
+<p>
+  A generator on a track does not produce N tiny discrete cells. It
+  produces one <em>ongoing</em> cell that renders the way an audio
+  track records in a DAW — a continuous stripe whose level / colour
+  reflects activity (current yield, current state, scheduler tier
+  load). Per-yield envelopes are still in the ledger; the canvas
+  paints them into the stripe and exposes them on zoom-in. Pausing,
+  scrubbing, and slicing a generator cell behave like cutting a live
+  audio take in Resolve — the engine emits a synthetic boundary
+  envelope and starts a new ongoing cell at the cut.
+</p>
+
+<h3>12.3 Cohorts are track folders, not their own tracks</h3>
+
+<p>
+  A cohort is a targeting mask, not an actor. It renders as an
+  <strong>expandable folder</strong> in the track header, the way
+  Resolve and Ableton group tracks: collapsed shows aggregate
+  activity for the cohort, expanded reveals every PERSON / ROLE
+  bound to it as its own child row. A broadcast addressed to the
+  cohort highlights the folder header and (in expanded view) the
+  receiving children. The folder also functions as a track-routing
+  point: a directive issued to <code>Initiates</code> routes to each
+  child row's history.
+</p>
+
+<h3>12.4 Drag grammar on the canvas</h3>
+
+<p>
+  Modelled on the consistent verbs of Live + Resolve + Max:
+</p>
+
+<table>
+  <tr><th>Gesture</th><th>Session view</th><th>Arrangement view</th><th>Patcher overlay</th></tr>
+  <tr><td>Click a cell</td>
+      <td>select clip → inspector</td>
+      <td>select cell → inspector</td>
+      <td>select node → inspector</td></tr>
+  <tr><td>▶ a cell</td>
+      <td>fire one clip on its track</td>
+      <td>—</td>
+      <td>—</td></tr>
+  <tr><td>▶▶ a column</td>
+      <td>fire every clip in the scene</td>
+      <td>—</td>
+      <td>—</td></tr>
+  <tr><td>Drag a cell within its row</td>
+      <td>reorder clip in track</td>
+      <td>reorder the beat in source / boot-mode skip</td>
+      <td>—</td></tr>
+  <tr><td>Drag a cell across rows</td>
+      <td>spawn a parallel clip on the target track</td>
+      <td>move the beat onto another track</td>
+      <td>—</td></tr>
+  <tr><td>Drag a follow-action arrow</td>
+      <td>retarget the divert</td>
+      <td>—</td>
+      <td>redraw the cause cord</td></tr>
+  <tr><td>Right-click on a node</td>
+      <td>"open in source"</td>
+      <td>"open in source" / "branch from here"</td>
+      <td>"open in source" / "trace upstream"</td></tr>
+  <tr><td>Cmd-drag a cell</td>
+      <td>duplicate</td>
+      <td>duplicate</td>
+      <td>—</td></tr>
+</table>
+
+<p>
+  Every gesture lowers to a small set of operations on the bundle
+  (compose mode) or the running Mesh (boot mode); the source-file
+  view stays the canonical representation.
+</p>
+
+<h3>12.5 Fan-in causes</h3>
+
+<p>
+  Goal predicates that re-evaluate on every dependency can be
+  triggered by multiple envelopes at once. The <code>cause</code>
+  field on an envelope is a singleton; multi-cause firings emit
+  <em>one</em> <code>HookFired</code> per triggering envelope, all
+  pointing at the same hook clause. The patcher overlay then renders
+  a natural fan-in (multiple cords into one node), the way Max
+  renders concurrent inputs to an object. No special data shape; the
+  rendering does the work.
+</p>
+
+<h3>12.6 Live + composition share one Loro store</h3>
+
+<p>
+  Compose-mode edits land as Loro ops on the source files; boot-mode
+  actions land as Loro ops on the running ledger; rehearsal
+  rewinds branch the ledger temporarily and commit on the operator's
+  "save take" gesture. Collaboration "just works" because Loro
+  already handles concurrent edits; the editor just exposes the
+  branch / commit gestures plainly. The pattern mirrors Resolve's
+  Project Library — many cuts off one media pool — and Max's
+  patcher-with-presentation duality.
+</p>
+
+<h2 id="open">13. Still open</h2>
+
+<ul>
+  <li><strong>Clip authoring directly on Session.</strong> Dragging
+    cells into empty grid slots to create new beats is intuitive,
+    but the round-trip into source-file structure (file path,
+    declaration order, mixin clauses) needs a clear convention.
+    Prototype before locking.</li>
+  <li><strong>Aggregate clocks across branches.</strong> When two
+    global branches both originate from a single cell, their
+    sibling clocks need a deterministic ordering for ledger reads
+    that span them. Lean on Loro's hybrid clock; UI surfaces this
+    as a branch picker in the time bar.</li>
+  <li><strong>Booth-side undo discipline.</strong> An accidental
+    recast at showtime should be reversible — but only in a way the
+    ledger captures (a corrective envelope) rather than a destructive
+    undo. The undo affordance is therefore "issue the inverse
+    directive" not "rewrite history."</li>
+</ul>
+
+<hr style="margin-top: 3rem;">
+
+<p style="color: #777; font-size: 0.9em;">
+  This doc proposes work; nothing here has shipped. It assumes the
+  v3 spec (<a href="loom-v3.html">loom-v3.html</a>) and the v3
+  reference (<a href="../../packages/loom/REFERENCE.html">REFERENCE.html</a>)
+  as ground truth and extends them. The runtime types listed are
+  proposals; the editor components are sketches. Sign-off goes on a
+  per-phase basis (§11).
+</p>
+
+</body>
+</html>
