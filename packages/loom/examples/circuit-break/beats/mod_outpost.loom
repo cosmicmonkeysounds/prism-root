@@ -1,0 +1,115 @@
+# Mod outpost — Praxis runs a briefing-room rather than a rally.
+# Sharper, colder, fewer hand-gestures. Audience members enrolled
+# into Mods receive a clipboard on entry.
+
+== mod_outpost
+  cast: Praxis
+  setting: ModOutpost
+
+<broadcast: cohort(Mods)>
+  NARRATOR
+    The fans roar. Every monitor on the back wall is tiled with the
+    same image — the Plaza, in real time, including you.
+
+PRAXIS
+  (improv duration: 120s, advance on: quorum(6) [speech(go), gesture(Cue)])
+  (Run a briefing. Assign each Mod a watch-target — name an actual
+   Chatter audience-member they're now responsible for monitoring.
+   The Playwright watches for resistance and marks reluctant Mods
+   as defection candidates.)
+
+# Praxis publishes the rules of engagement. Only mods can hear.
+<broadcast: cohort(Mods) and location(ModOutpost)>
+  NARRATOR
+    A monitor labeled CALIBRATION blinks. Nobody else has noticed.
+
+# Chatters hear, distantly, what Praxis is saying about them.
+<broadcast: cohort(Chatters)>
+  PRAXIS
+    (over the relay)
+    There is no conspiracy. There are people screaming because order
+    inconveniences them. Stand down. Go home. Eat something.
+
+* Praxis names a specific chatter and dispatches a watch team.
+  -> mod_dispatch
+* Praxis admits her people have been coming back wrong.
+  -> mod_confession
+
+== mod_dispatch
+  cast: Praxis
+  setting: ModOutpost
+
+PRAXIS
+  (improv duration: 90s, advance on: any [gesture(stand), speech(vex)])
+  (Dispatch three Mods toward the Chatter Camp. Tell them: "Watch.
+   Don't engage. The first Mod who engages tonight gets pulled.")
+
+<set: Praxis.trusts.Mods += 10>
+
+# The dispatched mods cross broadcast scope to the chatters.
+<broadcast: cohort(Chatters)>
+  NARRATOR
+    Three figures in matching jackets cross the Plaza in step.
+    Nobody on the chatter side is reassured by this.
+
+* The watch team turns back when one of them sees the door.
+  -> mod_at_door
+* The watch team engages anyway — Praxis loses control.
+  -> faction_war
+* The Playwright pulls four Mods aside.
+  -> defection
+
+== mod_confession
+  cast: Praxis
+  setting: ModOutpost
+
+PRAXIS
+  (improv duration: 90s, advance on: quorum(4) [speech(go), gesture(nod)])
+  (Crack. Tell the Mods that three of theirs came back from a
+   chatter raid last month "different." Pick a real Mod
+   audience-member and address them as one of the affected. Then
+   apologize — actually apologize — for using them as cover.)
+
+<set: Praxis.knows.motherboard_named = true>
+<set: Praxis.trusts.Mods -= 15>
+
+<broadcast: cohort(Mods) and location(ModOutpost)>
+  PRAXIS
+    The thing on the monitor labeled CALIBRATION isn't a calibration
+    tool. I don't know what it is. I have been pretending I did.
+
+* Praxis leads four Mods toward the Plaza door.
+  -> mod_at_door
+* Praxis stands down — Mods may break ranks toward Defection.
+  -> defection
+
+== mod_at_door
+  cast: Praxis
+  setting: Plaza
+
+<broadcast: location(Plaza)>
+  NARRATOR
+    Mod boots in the Plaza. The door behind the fountain hangs open.
+
+PRAXIS
+  (improv duration: 60s, advance on: any [speech(motherboard), gesture(recoil)])
+  (Approach. Bring the four. Look in. The Playwright cues a cyborg
+   into the doorway again.)
+
+CYBORG
+  (improv duration: 30s, advance on: quorum(3) [gesture(recoil)])
+  (Stand. Turn. Address Praxis by her first name — which she has
+   not, tonight, given.)
+
+<set: Praxis.knows.motherboard_named = true>
+
+-> defection
+
+== praxis_committed
+  cast: Praxis
+  setting: ModOutpost
+
+PRAXIS
+  (low, to the front row of Mods)
+  Whatever I order you to do for the rest of the night — if I look
+  through you when I'm saying it, refuse. That's the protocol now.

@@ -9,6 +9,10 @@ description = "Runtime for Loom v3 — bundle, resolver, playhead, ledger, react
 name = "loom_runtime"
 path = "src/lib.rs"
 
+[[bin]]
+name = "loom-play"
+path = "src/bin/loom_play.rs"
+
 [features]
 # Luau bridge ships by default on native. Web builds (`loom-wasm`)
 # disable it via `default-features = false` because mluau requires

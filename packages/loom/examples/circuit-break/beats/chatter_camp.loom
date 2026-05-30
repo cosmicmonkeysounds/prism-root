@@ -1,0 +1,155 @@
+# Chatter camp — Vex runs an open-mic style indoctrination. New
+# audience members can sign in (enrolling formally moves them into
+# the Chatters cohort and the ChatterCamp location).
+
+== faction_break
+  cast: Vex, Praxis
+  setting: Plaza
+
+The two cohorts thin the Plaza. Anyone neutral is now noticed for
+being neutral.
+
+* Follow the Chatters out.
+  -> chatter_camp
+* Follow the Mods out.
+  -> mod_outpost
+
+== chatter_camp
+  cast: Vex
+  setting: ChatterCamp
+
+<broadcast: cohort(Chatters)>
+  NARRATOR
+    The data-hall has been stickered into a single hallucination.
+    Three audience-members deep on every wall.
+
+VEX
+  (improv duration: 120s, advance on: quorum(6) [speech(go), gesture(Cue)])
+  (Hold court. Take grievances from the crowd. Call out one mod by
+   name as the enemy. Mark anyone who looks unconvinced — those
+   are the Playwright's targets for defection later.)
+
+# Vex names the enemy. Mods listening from afar (via the broadcast)
+# hear themselves accused.
+<broadcast: cohort(Mods)>
+  VEX
+    The mods aren't just deleting us. They're cataloguing us. We
+    have the lists. We have the timestamps. We have the bodies.
+
+# A chatter sings out a rumor. Only those at chatter camp hear.
+<broadcast: cohort(Chatters) and location(ChatterCamp)>
+  NARRATOR
+    A junior chatter whispers: "Has anyone seen Tess lately? She was
+    here Tuesday. She wasn't on Wednesday. She doesn't remember
+    Tuesday."
+
+* Vex calls out a specific mod to confront.
+  -> chatter_callout
+* Vex calls for an investigation of the door behind the plaza.
+  -> chatter_investigate
+
+== chatter_callout
+  cast: Vex
+  setting: ChatterCamp
+
+VEX
+  (improv duration: 90s, advance on: any [speech(praxis), gesture(point)])
+  (Demand Praxis answer for a specific named missing chatter. Use a
+   real audience-member's name to make the missing person concrete.
+   Audience may volunteer details — accept them.)
+
+<set: Vex.trusts.Chatters += 10>
+
+# Praxis hears this only if she's still on broadcast range.
+<broadcast: cohort(Mods)>
+  PRAXIS
+    (off-stage, over the broadcast)
+    That name is a lie. We never had a Tess. We did have a Tessa.
+    Tessa transferred out.
+
+* Vex doubles down — march on the outpost.
+  -> chatter_march
+* Vex sees through the deflection and pivots to the cyborgs.
+  -> chatter_pivot
+* The Playwright pulls four Chatters aside.
+  -> defection
+
+== chatter_investigate
+  cast: Vex
+  setting: ChatterCamp
+
+VEX
+  (improv duration: 60s, advance on: quorum(3) [gesture(point), speech(door)])
+  (Tell the crowd about the door behind the fountain. Some have
+   seen it tonight, some haven't. Recruit four volunteers to come
+   look.)
+
+<set: Vex.knows.motherboard_named = true>
+
+* Vex leads four Chatters back to the Plaza door.
+  -> chatter_at_door
+* The Playwright pulls four Chatters aside.
+  -> defection
+
+== chatter_at_door
+  cast: Vex
+  setting: Plaza
+
+<broadcast: location(Plaza)>
+  NARRATOR
+    The door, when pushed, opens. Of course it does.
+
+# A scout party of four. The improv slot is "What's inside?" — the
+# Playwright cues a cyborg performer to come stand silently in the
+# doorway exactly when the room gets quiet.
+
+VEX
+  (improv duration: 75s, advance on: any [speech(motherboard), gesture(recoil)])
+  (Lead the four Chatters to the threshold. Have them describe what
+   they see. The Playwright signals the cyborg performer to step in.)
+
+CYBORG
+  (improv duration: 30s, advance on: quorum(3) [gesture(recoil)])
+  (Stand. Turn. Make eye contact with each of the four. Say a single
+   word, in chorus with two unseen voices: "MOTHERBOARD.")
+
+<set: Vex.knows.motherboard_named = true>
+
+-> defection
+
+== chatter_pivot
+  cast: Vex
+  setting: ChatterCamp
+
+VEX
+  (improv duration: 60s, advance on: any [speech(motherboard)])
+  (Drop the mod fight. Tell the truth: "We've been swinging at the
+   wrong target." Let an audience member name the right one — feed
+   them the word "Motherboard" if they stall.)
+
+<set: Vex.knows.motherboard_named = true>
+<set: Praxis.knows.motherboard_named = true>
+
+-> defection
+
+== chatter_march
+  cast: Vex
+  setting: ChatterCamp
+
+VEX
+  (improv duration: 45s, advance on: quorum(4) [gesture(stand)])
+  (March. Lead the Chatters out the door toward the Mod Outpost.
+   This is the failure mode — the Playwright will collide the two
+   cohorts at the Plaza and force an early confrontation.)
+
+* Collide the cohorts in the Plaza.
+  -> faction_war
+
+== vex_committed
+  cast: Vex
+  setting: ChatterCamp
+
+VEX
+  (quietly, to the front row of Chatters)
+  You're with me. All the way through to whatever this is. Don't
+  let me forget that — even if I forget myself.

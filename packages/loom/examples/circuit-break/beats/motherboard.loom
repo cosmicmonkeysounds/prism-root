@@ -1,0 +1,48 @@
+# Storm-the-Core finale. Multiple factions converge on the
+# MotherboardCore location. The Motherboard performer holds court.
+
+== storm_core
+  cast: NineIron
+  setting: NineIronHide
+
+NINEIRON
+  (improv duration: 30s, advance on: quorum(4) [gesture(stand)])
+  (Stand. Say only: "Then come on.")
+
+<broadcast: cohort(Defectors)>
+  NARRATOR
+    The defectors move. Anyone still in a faction camp can choose
+    to follow. The Plaza door is open. The corridor is short. The
+    hum gets louder.
+
+* Defectors arrive at the Core.
+  -> motherboard_intro
+
+== motherboard_intro
+  cast: Motherboard
+  setting: MotherboardCore
+
+<broadcast: location(MotherboardCore)>
+  NARRATOR
+    The Core is a room that is a computer. There is a chair. In the
+    chair is a thing that looks like a person who has been editing
+    themselves for a long time.
+
+MOTHERBOARD
+  (improv duration: 180s, advance on: quorum(6) [speech(go), gesture(Cue)])
+  (Greet them by faction. Address each cohort separately. Make
+   offers that match their cohort: Chatters get "a stage forever,"
+   Mods get "the seat at the calibration desk," Defectors get "your
+   own bodies back." Take questions. Lie about exactly one thing —
+   audience must choose which.)
+
+# Three endings, decided by who's in the room and who flinches.
+
+* The Defectors charge — keys produced, chair shorted.
+  -> ending_destroyed
+* A Mod takes the calibration seat.
+  -> ending_mod_succession
+* A Chatter takes the offer of "a stage forever."
+  -> ending_chatter_assimilated
+* Everyone refuses everything and walks out.
+  -> ending_walked_late

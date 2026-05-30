@@ -147,7 +147,17 @@ impl CharacterState {
         }
         if let Some(profile_name) = &body.stats_profile {
             if let Some(profile) = profiles.get(profile_name) {
-                self.stats = Some(StatsInstance::from_profile(profile, world));
+                // Spec v3 §9.6 — when the body carries a structured
+                // `stats_ctor`, lift the named args into the
+                // constructor call. Falls back to the plain factory
+                // when no args were supplied.
+                let inst = match &body.stats_ctor {
+                    Some(call) if !call.args.is_empty() => {
+                        StatsInstance::from_profile_with_args(profile, &call.args, world)
+                    }
+                    _ => StatsInstance::from_profile(profile, world),
+                };
+                self.stats = Some(inst);
             }
         }
         // Stash the predicates so `refresh_own_reacts` can recompute

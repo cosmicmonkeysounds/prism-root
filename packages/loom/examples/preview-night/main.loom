@@ -1,0 +1,72 @@
+# Preview Night — 05.28
+entry: prologue
+
+// Spec v3 §13 walked end-to-end:
+//   * STATS as a class with init + methods (spec §9.6)
+//   * ROLE alias for CHARACTER (spec §13.1)
+//   * PERSON declarations (spec §13.2)
+//   * ROSTER with cast / swings / cohorts / locations (spec §13.3)
+//   * <load_roster:> + <cast:> + <recast:> directives (spec §13.4)
+
+STATS Combat
+  attribute strength = 10, range 1 to 30
+  attribute agility  = 10, range 1 to 30
+  stat damage = 8 + strength * 0.5
+
+ROLE Wren is Keeper
+  voice: female_alto
+  stats: Combat(strength: 12)
+
+ROLE Bellkeeper
+  voice: gruff_baritone
+
+COHORT Initiates
+  label: The Initiates
+  capacity: 24
+
+LOCATION BellTower
+  label: The Bell Tower
+  ambient: bell-loop
+  capacity: 12
+
+PERSON jamie_lee
+  display_name: Jamie Lee
+  pronouns: they/them
+  device: jamie_phone_01
+  content_tolerance: [no_strobe]
+
+PERSON raja_park
+  display_name: Raja Park
+  pronouns: he/him
+  device: raja_phone_02
+
+PERSON kim_ho
+  display_name: Kim Ho
+  pronouns: she/her
+  device: kim_phone_03
+
+ROSTER preview_night_05_28
+  date: 2026-05-28T19:30
+  capacity: 24
+
+  cast
+    Wren        := jamie_lee
+    Bellkeeper  := raja_park
+    Initiate    := any of [audience]
+
+  swings
+    Wren        := [raja_park, kim_ho]
+    Bellkeeper  := [jamie_lee]
+
+  cohorts
+    Initiates   start with: [audience]
+
+  locations
+    BellTower   start with: [jamie_lee]
+
+== prologue
+
+<load_roster: preview_night_05_28>
+<cast: jamie_lee as Wren>
+
+-> END

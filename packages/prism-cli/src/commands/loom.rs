@@ -45,6 +45,28 @@ pub enum LoomKind {
     /// Serve the Loom editor + API + WS from a single `loom-relayd`
     /// process. Pass `--build` to rebuild the editor + binary first.
     Serve(LoomServeArgs),
+    /// Launch the PySide6 Loom Runtime / Simulator GUI against a
+    /// project directory. Builds the `loom-play` driver first and
+    /// then execs `python3 packages/loom/simulator/simulator.py`.
+    /// Friends only need `pip install pyside6` once.
+    Sim(LoomSimArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct LoomSimArgs {
+    /// Project directory to load on startup. Defaults to
+    /// `packages/loom/examples/saltmere`.
+    pub project: Option<PathBuf>,
+    /// Skip rebuilding the `loom-play` driver before launching.
+    #[arg(long)]
+    pub skip_build: bool,
+    /// Build the release-profile driver (slower compile, faster
+    /// playback). Defaults to the debug profile.
+    #[arg(long)]
+    pub ship: bool,
+    /// Override the Python interpreter. Defaults to `python3`.
+    #[arg(long, default_value = "python3")]
+    pub python: String,
 }
 
 #[derive(Debug, Args)]
@@ -116,7 +138,47 @@ pub fn run(args: &LoomArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> 
         LoomKind::Lsp => run_lsp(dry_run),
         LoomKind::Build(args) => run_build(args, workspace, dry_run),
         LoomKind::Serve(args) => run_serve(args, workspace, dry_run),
+        LoomKind::Sim(args) => run_sim(args, workspace, dry_run),
     }
+}
+
+fn run_sim(args: &LoomSimArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
+    let mut plan = Vec::new();
+    if !args.skip_build {
+        let mut build = CommandBuilder::cargo()
+            .arg("build")
+            .package("loom-runtime")
+            .arg("--bin")
+            .arg("loom-play")
+            .label("loom-play-build");
+        if args.ship {
+            build = build.release();
+        }
+        plan.push(build.cwd(workspace.root()));
+    }
+
+    let simulator = workspace
+        .package("loom")
+        .join("simulator")
+        .join("simulator.py");
+    let project = args
+        .project
+        .clone()
+        .unwrap_or_else(|| workspace.package("loom").join("examples").join("saltmere"));
+
+    let mut launch = CommandBuilder::exec(PathBuf::from(&args.python))
+        .arg(simulator.to_string_lossy().into_owned())
+        .arg(project.to_string_lossy().into_owned())
+        .label("loom-sim")
+        .cwd(workspace.root());
+    // The simulator finds the binary via `target/{debug,release}/loom-play`;
+    // pass a hint env var so a `--ship` build is picked up first.
+    if args.ship {
+        launch = launch.env("LOOM_PLAY_PROFILE", "release");
+    }
+    plan.push(launch);
+
+    super::execute_plan(&plan, dry_run)
 }
 
 fn run_lsp(dry_run: bool) -> Result<u8> {

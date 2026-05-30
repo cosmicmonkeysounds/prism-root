@@ -161,7 +161,7 @@ impl Workspace {
     fn index_declaration(&mut self, uri: &Url, decl: &Declaration) {
         let range = span_to_range(decl.span);
         match decl.kind {
-            DeclarationKind::Character => {
+            DeclarationKind::Character | DeclarationKind::Role => {
                 self.characters.insert(
                     decl.name.clone(),
                     CharacterInfo {

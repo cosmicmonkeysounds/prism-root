@@ -1,0 +1,50 @@
+# Cyborg interludes — short broadcast-only beats the Playwright can
+# splice in between any other beat to crank the tension. Not on the
+# main divert tree; the Playwright invokes them with booth_force_
+# directive lines or by manual divert from the simulator.
+
+== plaza_glitch
+  cast: Player
+  setting: Plaza
+
+<broadcast: location(Plaza)>
+  NARRATOR
+    Every screen in the Plaza shows the same frame for one second
+    longer than it should. Then they resume.
+
+CYBORG
+  (improv duration: 20s, advance on: any [gesture(notice)])
+  (Walk through the Plaza in step with another cyborg. Make no eye
+   contact. Stop exactly mid-crossing. Resume.)
+
+-> END
+
+== chatter_glitch
+  cast: Player
+  setting: ChatterCamp
+
+<broadcast: cohort(Chatters) and location(ChatterCamp)>
+  NARRATOR
+    A sticker on the back wall, which definitely was a peace sign a
+    minute ago, is now a crown.
+
+CYBORG
+  (improv duration: 20s, advance on: any [speech(go), gesture(Cue)])
+  (From the doorway, in chorus with one off-stage voice: "VEX.")
+
+<set: Vex.trusts.Chatters -= 5>
+
+-> END
+
+== mod_glitch
+  cast: Player
+  setting: ModOutpost
+
+<broadcast: cohort(Mods) and location(ModOutpost)>
+  NARRATOR
+    Every monitor on the back wall, for one frame, shows the chair
+    in the Core. No one knows what it is yet.
+
+<set: Praxis.knows.motherboard_named = true>
+
+-> END

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use loom_parser::ast::{
     Beat, CharacterBody, CohortBody, FactionBody, GeneratorBody, Item, ItemBody, LocationBody,
-    LoomFile, Property, SceneBody,
+    LoomFile, PersonBody, Property, RosterBody, SceneBody,
 };
 use loom_parser::Diagnostic;
 
@@ -137,6 +137,13 @@ pub struct Bundle {
     /// FACTION declarations (spec §9), keyed by name. Same
     /// inheritance handling as [`Self::items`].
     pub factions: HashMap<String, FactionBody>,
+    /// PERSON declarations (spec v3 §13.2), keyed by name. Persons
+    /// are real humans (or AI agents) the show knows about — pronouns,
+    /// device, accessibility, content tolerances.
+    pub persons: HashMap<String, PersonBody>,
+    /// ROSTER declarations (spec v3 §13.3), keyed by name. A roster
+    /// is the lineup for a specific run.
+    pub rosters: HashMap<String, RosterBody>,
 }
 
 impl Bundle {
@@ -203,6 +210,8 @@ impl Bundle {
         self.locations.clear();
         self.items.clear();
         self.factions.clear();
+        self.persons.clear();
+        self.rosters.clear();
         // Pass 1: collect raw ITEM / FACTION bodies so we can merge
         // them by `is X, Y` left-to-right (same shape as
         // CHARACTER / TRAIT inheritance, spec §9.1).
@@ -222,6 +231,16 @@ impl Bundle {
                         DeclarationKind::Location => {
                             if let Some(body) = &decl.location {
                                 self.locations.insert(decl.name.clone(), body.clone());
+                            }
+                        }
+                        DeclarationKind::Person => {
+                            if let Some(body) = &decl.person {
+                                self.persons.insert(decl.name.clone(), body.clone());
+                            }
+                        }
+                        DeclarationKind::Roster => {
+                            if let Some(body) = &decl.roster {
+                                self.rosters.insert(decl.name.clone(), body.clone());
                             }
                         }
                         DeclarationKind::Item => {
@@ -299,7 +318,9 @@ impl Bundle {
                 if let Item::Declaration(decl) = item {
                     if matches!(
                         decl.kind,
-                        DeclarationKind::Character | DeclarationKind::Trait
+                        DeclarationKind::Character
+                            | DeclarationKind::Role
+                            | DeclarationKind::Trait
                     ) {
                         if let Some(body) = &decl.character {
                             let is_trait = matches!(decl.kind, DeclarationKind::Trait);
@@ -490,9 +511,14 @@ fn merge_character(
             merged_body.properties.insert(k.clone(), v.clone());
             parent_property_sources.insert(k.clone(), parent_name.clone());
         }
-        // stats_profile from a parent only when child doesn't pick one.
+        // stats_profile + structured constructor call from a parent
+        // only when child doesn't pick one. Child override (below)
+        // clobbers the inherited call wholesale — partial inheritance
+        // of constructor args would surprise authors more than help
+        // them.
         if merged_body.stats_profile.is_none() && own.stats_profile.is_none() {
             merged_body.stats_profile = parent_body.stats_profile.clone();
+            merged_body.stats_ctor = parent_body.stats_ctor.clone();
         }
         // Disposition: append parent's axes for `(verb, target)` pairs
         // the child + earlier parents haven't covered.
@@ -566,6 +592,7 @@ fn merge_character(
     }
     if own.stats_profile.is_some() {
         merged_body.stats_profile = own.stats_profile.clone();
+        merged_body.stats_ctor = own.stats_ctor.clone();
     }
     for d in &own.disposition {
         merged_body.disposition.push(d.clone());
@@ -642,6 +669,22 @@ fn merge_character(
     }
     for p in &own.typed_properties {
         merged_body.typed_properties.push(p.clone());
+    }
+    // Class-layer composition (spec v3 §9.6): child's `init` wins
+    // wholesale; methods inherit by name with child override.
+    if own.init.is_some() {
+        merged_body.init = own.init.clone();
+    }
+    {
+        use std::collections::HashSet;
+        let own_method_names: HashSet<&str> =
+            own.methods.iter().map(|m| m.name.as_str()).collect();
+        merged_body
+            .methods
+            .retain(|m| !own_method_names.contains(m.name.as_str()));
+        for m in &own.methods {
+            merged_body.methods.push(m.clone());
+        }
     }
 
     visiting.remove(name);

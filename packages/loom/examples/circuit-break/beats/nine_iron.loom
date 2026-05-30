@@ -1,0 +1,130 @@
+== nine_iron
+  cast: NineIron, Player
+  setting: NineIronHide
+
+INT. A MAINTENANCE LOCKER, THREE FLOORS DOWN
+
+NineIron is missing the lower half of their left arm and has replaced
+it with a length of rebar wrapped in cloth tape. Hence the name.
+
+NINEIRON
+  You picked a side. Good. The Motherboard can't read you yet — it
+  reads commitments. Until you commit, you're noise.
+
+  Now. The thing you need to understand: there is no chatter-mod war.
+  There is a Motherboard, and there is everyone else. The "war" is the
+  attention budget the Motherboard needs us to spend so it can spend
+  ours.
+
+* Why are you telling me?
+  -> nine_iron_why
+* I want to destroy it.
+  -> nine_iron_plan_destroy
+* I want to join it.
+  -> nine_iron_plan_join
+* I want to expose it — make the chatters and mods unite.
+  -> nine_iron_plan_unite
+
+== nine_iron_why
+  cast: NineIron, Player
+
+NINEIRON
+  Because I was a cyborg for six months and I remember it. That isn't
+  supposed to happen. Whatever they did to me, it didn't take all the
+  way. I am, in their words, a defective node.
+
+  And defective nodes get pruned. So I'm picking my exit.
+
+* I want to destroy it.
+  -> nine_iron_plan_destroy
+* I want to join it.
+  -> nine_iron_plan_join
+* I want to unite the factions against it.
+  -> nine_iron_plan_unite
+* I'm not the right person for this.
+  -> nine_iron_refuse
+
+== nine_iron_plan_destroy
+  cast: NineIron, Player
+
+NINEIRON
+  Then you'll need a key. Two keys, technically — one from each
+  faction's leadership. They don't know they have them. The chatters'
+  is in Vex's sticker book. The mods' is in Praxis's wall of monitors,
+  the one labeled CALIBRATION.
+
+<if: Vex.knows.player_signed_chatter>
+  Vex trusts you enough. Probably.
+<else if: Praxis.knows.player_signed_mod>
+  Praxis trusts you enough. Probably.
+<else>
+  You haven't earned either trust yet. You'll have to fix that.
+<-
+
+<set: NineIron.knows.player_knows_motherboard = true>
+
+* Go to Vex.
+  -> chatter_camp
+* Go to Praxis.
+  -> mod_outpost
+* Skip the keys. Just go to the Motherboard.
+  -> motherboard_intro
+
+== nine_iron_plan_join
+  cast: NineIron, Player
+
+NINEIRON
+  (long silence)
+  ...Why.
+
+  No. Don't tell me. I don't want it on me. The door is in the plaza,
+  behind the fountain. Push it. It opens. Tell the Motherboard I sent
+  you. It won't help, but I'd like it to know.
+
+* Go to the door.
+  -> motherboard_intro
+* Reconsider.
+  -> nine_iron
+
+== nine_iron_plan_unite
+  cast: NineIron, Player
+
+NINEIRON
+  Hard road. Hardest road. Vex has to believe Praxis. Praxis has to
+  believe Vex. Both have to believe me.
+
+  You'd need both sides to have seen a cyborg with their own eyes. Not
+  rumor. Sight.
+
+<if: Vex.knows.saw_cyborg>
+  <if: Praxis.knows.saw_cyborg>
+    Both leaders already suspect. You can sell this.
+  <else>
+    Vex suspects. Praxis still doesn't. Show her.
+  <-
+<else>
+  <if: Praxis.knows.saw_cyborg>
+    Praxis suspects. Vex doesn't. Show him.
+  <else>
+    Neither leader believes. You'll have to convince them both.
+  <-
+<-
+
+* Go to Vex.
+  -> chatter_camp
+* Go to Praxis.
+  -> mod_outpost
+* Go straight to the Motherboard and try to negotiate.
+  -> motherboard_intro
+
+== nine_iron_refuse
+  cast: NineIron, Player
+
+NINEIRON
+  Then walk. The door's open. Take it.
+
+  When the lights stutter — when you're somewhere else and the lights
+  stutter — that'll be it. I won't have done it. You won't have done
+  it. Nobody will have. That's the trick of it.
+
+-> ending_walked

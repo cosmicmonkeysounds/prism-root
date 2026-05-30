@@ -154,6 +154,8 @@ impl<'d> Parser<'d> {
             location: None,
             item: None,
             faction: None,
+            person: None,
+            roster: None,
             span: Span::new(opener.span().start, end),
         }
     }
@@ -310,11 +312,8 @@ impl<'d> Parser<'d> {
             LineKind::Prose(text) => {
                 // Action paragraph — accumulate consecutive prose
                 // lines at the same indent.
-                let span = self.collect_action(&line);
-                Some(BodyItem::Action(Located {
-                    value: text.clone(),
-                    span,
-                }))
+                let (value, span) = self.collect_action(&line, text);
+                Some(BodyItem::Action(Located { value, span }))
             }
             LineKind::Parenthetical(_) => {
                 // A bare parenthetical with no preceding speaker is
@@ -479,22 +478,36 @@ impl<'d> Parser<'d> {
     /// Accumulate an action paragraph — successive prose lines at
     /// the same indent are concatenated with a single newline, the
     /// way a reader (or director) sees them on the page.
-    fn collect_action(&mut self, opener: &ScannedLine) -> Span {
+    fn collect_action(&mut self, opener: &ScannedLine, first_text: &str) -> (String, Span) {
         let start = opener.span().start;
         let mut end = opener.span().end;
+        let mut text = first_text.to_string();
+        let mut last_line_no = opener.line;
         self.cursor += 1;
         while let Some(line) = self.peek() {
             if line.indent != opener.indent {
                 break;
             }
-            if let LineKind::Prose(_) = &line.kind {
+            // A blank line in the source between two prose lines breaks
+            // the paragraph — the scanner drops blanks but leaves a gap
+            // in the line-number sequence, so a jump > 1 means at least
+            // one blank line sat between us.
+            if line.line > last_line_no + 1 {
+                break;
+            }
+            if let LineKind::Prose(prose) = &line.kind {
+                if !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(prose);
                 end = line.span().end;
+                last_line_no = line.line;
                 self.cursor += 1;
             } else {
                 break;
             }
         }
-        Span::new(start, end)
+        (text, Span::new(start, end))
     }
 
     fn collect_fence(

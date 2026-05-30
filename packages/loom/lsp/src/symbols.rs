@@ -28,6 +28,9 @@ pub fn document_symbols(ws: &Workspace, uri: &Url) -> Option<DocumentSymbolRespo
                     DeclarationKind::Generator => SymbolKind::EVENT,
                     DeclarationKind::Scene => SymbolKind::METHOD,
                     DeclarationKind::Cohort => SymbolKind::ARRAY,
+                    DeclarationKind::Role => SymbolKind::CLASS,
+                    DeclarationKind::Person => SymbolKind::OBJECT,
+                    DeclarationKind::Roster => SymbolKind::PACKAGE,
                 };
                 symbols.push(symbol(decl.name.clone(), kind, range));
             }

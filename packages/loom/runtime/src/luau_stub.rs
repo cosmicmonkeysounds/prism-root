@@ -76,4 +76,3 @@ impl LuauRegistry {
 pub fn register_core_builtins(_reg: &mut LuauRegistry) -> Result<(), DirectiveError> {
     Ok(())
 }
-

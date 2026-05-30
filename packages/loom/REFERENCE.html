@@ -1,0 +1,2602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Loom — a friendly reference</title>
+  <style>
+    :root {
+      --ink: #1c1c1e;
+      --soft: #555;
+      --rule: #e8e8ec;
+      --bg-quiet: #fafafa;
+      --bg-code: #f4f4f6;
+      --bg-warm: #fff8ef;
+      --bg-cool: #f1f6fb;
+      --bg-good: #f3faf4;
+      --bg-warn: #fdf2f2;
+      --accent: #2a5688;
+      --accent-soft: #88a6c8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 880px; margin: 2.5rem auto; padding: 0 1.4rem;
+      color: var(--ink);
+      background: #fff;
+    }
+    h1, h2, h3, h4, h5 { line-height: 1.2; font-weight: 600; }
+    h1 { font-size: 2.4rem; margin-bottom: 0.25rem; }
+    h2 {
+      margin-top: 3.6rem; border-bottom: 2px solid var(--rule);
+      padding-bottom: 0.35rem; font-size: 1.65rem;
+      color: var(--accent);
+    }
+    h3 { margin-top: 2.2rem; font-size: 1.25rem; }
+    h4 { margin-top: 1.6rem; font-size: 1.05rem; color: #333; }
+    h5 { margin-top: 1.2rem; font-size: 0.95rem; color: var(--soft); text-transform: uppercase; letter-spacing: 0.04em; }
+    p { margin: 0.7rem 0 1rem; }
+    code, pre, kbd { font-family: "SF Mono", Menlo, Consolas, monospace; }
+    code {
+      background: var(--bg-code);
+      padding: 0.1em 0.4em;
+      border-radius: 3px;
+      font-size: 0.92em;
+    }
+    pre {
+      background: var(--bg-code);
+      padding: 1rem 1.2rem;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 13.5px;
+      line-height: 1.55;
+      border: 1px solid #e9e9ed;
+    }
+    pre code { background: none; padding: 0; }
+    .lede {
+      font-size: 1.15rem; color: #444; max-width: 38em;
+      margin: 0.5rem 0 1.5rem;
+    }
+    .pill {
+      display: inline-block; font-size: 0.72em; padding: 0.15em 0.6em;
+      border-radius: 999px; background: #eef; color: #335;
+      vertical-align: middle; font-weight: 500;
+    }
+    .pill.beginner { background: #e6f4ea; color: #1d6b35; }
+    .pill.intermediate { background: #fff3d6; color: #7a5a16; }
+    .pill.advanced { background: #f5e6f5; color: #6a2c6a; }
+    .callout {
+      border-left: 4px solid var(--accent-soft);
+      background: var(--bg-cool);
+      padding: 0.9rem 1.1rem;
+      margin: 1.4rem 0;
+      border-radius: 0 6px 6px 0;
+    }
+    .callout.tip {
+      border-color: #7fb78a;
+      background: var(--bg-good);
+    }
+    .callout.warn {
+      border-color: #d8b14a;
+      background: var(--bg-warm);
+    }
+    .callout.heads-up {
+      border-color: #c4625b;
+      background: var(--bg-warn);
+    }
+    .callout strong:first-child { color: var(--accent); }
+    .callout.tip strong:first-child { color: #1d6b35; }
+    .callout.warn strong:first-child { color: #8a6418; }
+    .callout.heads-up strong:first-child { color: #8a2424; }
+    table {
+      width: 100%; border-collapse: collapse; margin: 1rem 0;
+      font-size: 14.5px;
+    }
+    th, td {
+      padding: 0.55rem 0.7rem; border-bottom: 1px solid var(--rule);
+      text-align: left; vertical-align: top;
+    }
+    th { background: var(--bg-quiet); font-weight: 600; }
+    .toc {
+      background: var(--bg-quiet);
+      border: 1px solid var(--rule);
+      padding: 1.2rem 1.5rem;
+      border-radius: 8px;
+      margin: 2rem 0 3rem;
+    }
+    .toc h3 { margin-top: 0; margin-bottom: 0.6rem; color: var(--accent); }
+    .toc ol { margin: 0; padding-left: 1.6rem; }
+    .toc li { margin: 0.25rem 0; }
+    .toc .part { font-weight: 600; margin-top: 0.7rem; }
+    .toc a { color: var(--ink); text-decoration: none; }
+    .toc a:hover { color: var(--accent); text-decoration: underline; }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1rem 0;
+    }
+    .two-col pre { margin: 0; }
+    .two-col > div > h5 { margin-top: 0; }
+    .vocab {
+      display: grid;
+      grid-template-columns: minmax(8em, 12em) 1fr;
+      gap: 0.4rem 1rem;
+      margin: 1rem 0;
+      font-size: 14.5px;
+    }
+    .vocab dt {
+      font-family: "SF Mono", Menlo, monospace;
+      font-weight: 600;
+      color: var(--accent);
+      padding-top: 0.1em;
+    }
+    .vocab dd {
+      margin: 0;
+      padding-bottom: 0.4em;
+      border-bottom: 1px dashed var(--rule);
+    }
+    .step {
+      counter-reset: step-counter;
+      list-style: none;
+      padding-left: 0;
+    }
+    .step > li {
+      counter-increment: step-counter;
+      position: relative;
+      padding-left: 2.5rem;
+      margin-bottom: 1rem;
+      min-height: 1.6rem;
+    }
+    .step > li::before {
+      content: counter(step-counter);
+      position: absolute;
+      left: 0; top: 0;
+      width: 1.7rem; height: 1.7rem;
+      background: var(--accent);
+      color: white;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 600; font-size: 0.85rem;
+    }
+    .glossary dt {
+      font-weight: 600; color: var(--accent);
+      margin-top: 0.6rem;
+    }
+    .glossary dd { margin: 0.1rem 0 0.5rem 1.2rem; }
+    .lookup {
+      width: 100%; border-collapse: collapse; font-size: 13.5px;
+    }
+    .lookup td:first-child {
+      font-family: "SF Mono", Menlo, monospace;
+      font-weight: 600;
+      white-space: nowrap;
+      width: 35%;
+    }
+    a { color: var(--accent); }
+    .key {
+      display: inline-block;
+      background: #eef;
+      color: #335;
+      padding: 0.05em 0.4em;
+      border-radius: 3px;
+      font-family: "SF Mono", Menlo, monospace;
+      font-size: 0.9em;
+    }
+    hr.section {
+      border: none;
+      height: 1px;
+      background: var(--rule);
+      margin: 3rem 0;
+    }
+    .footer {
+      margin: 4rem 0 2rem;
+      padding: 1.2rem 0;
+      border-top: 1px solid var(--rule);
+      color: var(--soft);
+      font-size: 0.95em;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Loom — a friendly reference</h1>
+<p class="lede">
+  Loom is a way to write stories that branch, react, and come to life — but it
+  reads like a screenplay. This guide assumes nothing. By the end you'll be
+  writing simple branching scenes, characters with feelings and memory,
+  immersive theatre that addresses each audience member by name, and ambient
+  worlds that hum along on their own.
+</p>
+
+<div class="callout tip">
+  <strong>How to read this guide.</strong> The first half is a tutorial — work
+  through it in order. The second half is reference — flip in, look something
+  up, flip out. The badges next to each section header tell you the level:
+  <span class="pill beginner">beginner</span>
+  <span class="pill intermediate">intermediate</span>
+  <span class="pill advanced">advanced</span>. If you skip ahead and feel lost,
+  the earlier sections probably hold the missing piece.
+</div>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li class="part">Part 1 — Just enough screenplay</li>
+    <li><a href="#what-is-loom">What is Loom?</a></li>
+    <li><a href="#screenplay-101">Screenplay 101 — speakers, dialogue, action</a></li>
+    <li><a href="#first-file">Your first <code>.loom</code> file</a></li>
+    <li><a href="#headers">The header at the top</a></li>
+
+    <li class="part">Part 2 — Branching</li>
+    <li><a href="#beats">Beats — splitting your story into named scenes</a></li>
+    <li><a href="#choices">Choices — <code>*</code> and <code>+</code></a></li>
+    <li><a href="#diverts">Diverts — jumping between beats</a></li>
+    <li><a href="#suppression">The <code>[…]</code> suppression trick</a></li>
+
+    <li class="part">Part 3 — The five brackets</li>
+    <li><a href="#brackets">The five brackets, one job each</a></li>
+    <li><a href="#parens">Parentheses — directions for the performer</a></li>
+    <li><a href="#braces">Curly braces — values mixed into text</a></li>
+    <li><a href="#angle">Angle brackets — telling the runtime to do something</a></li>
+    <li><a href="#fences">Triple backticks — production notes</a></li>
+    <li><a href="#comments">Comments — notes only the writer sees</a></li>
+
+    <li class="part">Part 4 — Variables, conditions, memory</li>
+    <li><a href="#let">Variables with <code>let</code></a></li>
+    <li><a href="#set">Changing values with <code>&lt;set:&gt;</code></a></li>
+    <li><a href="#if">Conditionals — <code>&lt;if:&gt;</code>, <code>&lt;else if:&gt;</code>, <code>&lt;else&gt;</code></a></li>
+    <li><a href="#interpolation">Putting values into dialogue</a></li>
+    <li><a href="#match">Picking arms with <code>&lt;match:&gt;</code></a></li>
+    <li><a href="#each-visit">Differing each visit</a></li>
+    <li><a href="#after-otherwise">Latching with <code>&lt;after:&gt;</code> / <code>&lt;otherwise&gt;</code></a></li>
+    <li><a href="#shuffle-cycle">Variation — <code>&lt;shuffle:&gt;</code> and <code>&lt;cycle:&gt;</code></a></li>
+    <li><a href="#ledger">Remembering what happened — the ledger</a></li>
+
+    <li class="part">Part 5 — Characters as simulations</li>
+    <li><a href="#character">Declaring a <code>CHARACTER</code></a></li>
+    <li><a href="#disposition">Disposition — trust, respect, fear</a></li>
+    <li><a href="#knowledge">Knowledge — what a character has learned</a></li>
+    <li><a href="#goals">Goals — what a character is trying to do</a></li>
+    <li><a href="#hooks">Hooks — characters reacting to events</a></li>
+    <li><a href="#traits">Reusing with <code>TRAIT</code></a></li>
+    <li><a href="#inheritance">Inheritance, traits, and composition</a></li>
+    <li><a href="#super">Overrides and <code>super</code></a></li>
+
+    <li class="part">Part 6 — Stats and progression</li>
+    <li><a href="#stats">Stats with <code>STATS</code></a></li>
+    <li><a href="#meridian">Attributes, axes, pools, stats</a></li>
+    <li><a href="#trees">Skill trees with <code>TREE</code></a></li>
+
+    <li class="part">Part 7 — Live performance</li>
+    <li><a href="#participants">Participants — real people in your story</a></li>
+    <li><a href="#cohort-location">Cohorts and locations</a></li>
+    <li><a href="#broadcast">Broadcast scopes</a></li>
+    <li><a href="#improv">Improv with pluggable advancement</a></li>
+    <li><a href="#booth">The booth — live patching</a></li>
+
+    <li class="part">Part 8 — Living worlds</li>
+    <li><a href="#generators">Generators — ambient life</a></li>
+    <li><a href="#scenes">Scenes — multi-step coroutines</a></li>
+    <li><a href="#scheduling">Tiered scheduling</a></li>
+    <li><a href="#slots">Typed slots — filling holes at call sites</a></li>
+
+    <li class="part">Part 9 — Multi-file projects</li>
+    <li><a href="#projects">A project is a folder</a></li>
+    <li><a href="#cross-file">Diverts across files</a></li>
+
+    <li class="part">Part 10 — Worked examples</li>
+    <li><a href="#saltmere">Saltmere — a small project end-to-end</a></li>
+    <li><a href="#patterns">Common patterns</a></li>
+
+    <li class="part">Part 11 — Reference</li>
+    <li><a href="#cheatsheet">Bracket cheat sheet</a></li>
+    <li><a href="#keywords">Keyword index</a></li>
+    <li><a href="#directives-table">Built-in directives</a></li>
+    <li><a href="#glossary">Glossary</a></li>
+    <li><a href="#errors">Common errors and what they mean</a></li>
+  </ol>
+</div>
+
+<hr class="section">
+
+<h2 id="what-is-loom">1. What is Loom? <span class="pill beginner">beginner</span></h2>
+
+<p>
+  Loom is a small language for writing branching stories. It is designed for
+  people who write — novelists, playwrights, game designers, immersive-theatre
+  directors, audio dramatists. You don't need to be a programmer to use it.
+  You write something that looks like a screenplay, and a computer turns it
+  into a working story.
+</p>
+
+<p>The same file can be:</p>
+
+<ul>
+  <li>A <strong>screenplay</strong> a writer hands to a director.</li>
+  <li>A <strong>prompt book</strong> a stage manager runs a show from.</li>
+  <li>A <strong>game script</strong> a player explores by making choices.</li>
+  <li>A <strong>live-theatre cue sheet</strong> driving lighting, sound, and audience-specific moments.</li>
+  <li>A <strong>character sheet</strong> with feelings, knowledge, and goals that change as the story plays out.</li>
+</ul>
+
+<p>
+  None of those are "modes". They are all the same file, read by different
+  audiences. The trick is a small, consistent grammar that lets each audience
+  ignore the parts they don't need.
+</p>
+
+<div class="callout">
+  <strong>The promise.</strong> If you can write a paragraph of dialogue
+  with a name on top, you can write Loom. Everything else — variables,
+  branching, characters with memory, live audiences — is added one small
+  idea at a time.
+</div>
+
+<h2 id="screenplay-101">2. Screenplay 101 — speakers, dialogue, action <span class="pill beginner">beginner</span></h2>
+
+<p>
+  If you've never written a screenplay before, the format takes about three
+  minutes to learn. Loom uses the same rules, plus a few additions you'll
+  meet later. The conventions are positional — <em>where</em> something is on
+  the page is what tells the runtime (or a reader) what it is.
+</p>
+
+<h3>The four shapes you'll see</h3>
+
+<dl class="vocab">
+  <dt>Action line</dt>
+  <dd>A paragraph flush to the left margin. It describes what happens, in present tense.</dd>
+  <dt>Speaker</dt>
+  <dd>A name in ALL CAPS on its own line. It says who is talking next.</dd>
+  <dt>Dialogue</dt>
+  <dd>The lines indented under a speaker. The actual words spoken.</dd>
+  <dt>Parenthetical</dt>
+  <dd>A note in <code>(parentheses)</code> indented above or inside dialogue. A direction for the performer — tone, action, blocking.</dd>
+</dl>
+
+<p>That's the whole format. Here it is in one example:</p>
+
+<pre>INT. LIGHTHOUSE - DAWN
+
+A bell rope swings in the gloom.
+
+WREN
+  (quietly)
+  It hasn't rung in three days.
+
+She turns the lantern up.
+
+WREN
+  Whoever you are — listen.</pre>
+
+<p>Let's walk through it:</p>
+
+<ul>
+  <li><code>INT. LIGHTHOUSE - DAWN</code> is a <strong>scene heading</strong>. <code>INT.</code> means interior; the rest names the place and time. The runtime ignores it. It exists for the reader.</li>
+  <li><code>A bell rope swings in the gloom.</code> is an <strong>action line</strong>. Flush left, written in present tense, describes the world.</li>
+  <li><code>WREN</code> in ALL CAPS is a <strong>speaker cue</strong>. Wren is about to speak.</li>
+  <li><code>(quietly)</code> is a <strong>parenthetical</strong>. It tells the performer <em>how</em> to deliver the next line.</li>
+  <li><code>It hasn't rung in three days.</code> indented under Wren is her <strong>dialogue</strong>.</li>
+</ul>
+
+<div class="callout tip">
+  <strong>The screenplay trick.</strong> ALL-CAPS-on-its-own-line means
+  "someone is about to speak." Indented-under-a-speaker means "this is what
+  they say." Flush-left-paragraph means "this is what's happening in the
+  world." You do not need any other markers. Loom adds a handful of brackets
+  on top of this skeleton, but the screenplay rules stay intact.
+</div>
+
+<h3>Multiple speakers in one breath</h3>
+
+<p>If two or more characters speak in unison, put both names on the speaker line, separated by <code>|</code>:</p>
+
+<pre>WREN | FISHER
+  (stunned)
+  You... rang it.</pre>
+
+<p>This matters most in live performance — the runtime sends the line to both performers.</p>
+
+<h2 id="first-file">3. Your first <code>.loom</code> file <span class="pill beginner">beginner</span></h2>
+
+<p>
+  A Loom story lives in a file with a <code>.loom</code> extension. The
+  smallest possible useful file looks like this:
+</p>
+
+<pre># Hello
+entry: opening
+
+== opening
+
+INT. ROOM - DAY
+
+A first sentence appears on the page.
+
+NARRATOR
+  Welcome to Loom.
+
+-&gt; END
+</pre>
+
+<p>Three things you've just done:</p>
+
+<ol class="step">
+  <li>Given your story a title (<code># Hello</code>) and named the starting beat (<code>entry: opening</code>).</li>
+  <li>Declared a beat called <code>opening</code> with <code>== opening</code>. A <em>beat</em> is a named scene the runtime can jump to.</li>
+  <li>Ended the playhead with <code>-&gt; END</code>. The arrow <code>-&gt;</code> means "jump to," and <code>END</code> is a built-in target that stops the story.</li>
+</ol>
+
+<p>
+  Save that as <code>main.loom</code>, point Loom at it, and the runtime
+  will print the action line, deliver the narrator's line to a voice, and
+  stop. You have made a tiny story.
+</p>
+
+<div class="callout">
+  <strong>Why <code>main.loom</code>?</strong> Loom always starts at a file
+  named <code>main.loom</code> in the project folder. Every other file is
+  optional. We'll cover multi-file projects in <a href="#projects">§28</a> —
+  for now, one file is plenty.
+</div>
+
+<h2 id="headers">4. The header at the top <span class="pill beginner">beginner</span></h2>
+
+<p>
+  At the top of <code>main.loom</code> you write a small header. It looks
+  like the front matter you'd see in a markdown document or an essay.
+</p>
+
+<pre># Saltmere
+entry: opening
+tags:  tutorial, lighthouse
+author: Jane Writer</pre>
+
+<table>
+  <tr><th>Line</th><th>What it does</th></tr>
+  <tr><td><code># Title</code></td><td>The story's title. One line, starts with a single <code>#</code>.</td></tr>
+  <tr><td><code>entry:</code></td><td>The name of the beat to start in. If you skip this, Loom starts at the first <code>==</code> in the file.</td></tr>
+  <tr><td><code>tags:</code></td><td>Comma-separated tags for organising. Loom doesn't enforce a meaning; tools can filter by them.</td></tr>
+  <tr><td><code>author:</code> / <code>title:</code> / <code>next:</code></td><td>Optional metadata. Free-form, for tools that want to read it.</td></tr>
+</table>
+
+<p>
+  None of these are mandatory. You can write a working Loom file with no
+  header at all — just an opening beat and some content.
+</p>
+
+<hr class="section">
+
+<h2 id="beats">5. Beats — splitting your story into named scenes <span class="pill beginner">beginner</span></h2>
+
+<p>
+  A <strong>beat</strong> is a named chunk of your story. The runtime can
+  jump from one beat to another. They are how a non-linear story is built
+  up: instead of one long file, you write little pieces and connect them.
+</p>
+
+<p>You declare a beat with two equals signs and a name:</p>
+
+<pre>== opening
+  cast: Wren, Player
+  setting: Lighthouse
+
+INT. LIGHTHOUSE - DAWN
+
+A bell rope swings in the gloom.</pre>
+
+<p>The lines immediately after <code>== opening</code> are the beat's <strong>contract</strong>:</p>
+
+<dl class="vocab">
+  <dt>cast:</dt>
+  <dd>Who is in this scene. Lets tools warn you if you start writing dialogue for someone who isn't present.</dd>
+  <dt>setting:</dt>
+  <dd>Where this scene takes place. Plain text or a named <code>LOCATION</code> (covered later).</dd>
+  <dt>with topic:</dt>
+  <dd>For beats that take parameters — see <a href="#slots">typed slots</a>.</dd>
+</dl>
+
+<p>Below the contract is the <strong>body</strong>: action lines, dialogue, choices, anything else.</p>
+
+<div class="callout tip">
+  <strong>Why two equals signs?</strong> Loom borrows <code>==</code> from
+  Ink (a sister narrative language). It's visually distinct, easy to scan
+  for, and impossible to confuse with markdown headings. Think of it as
+  "this is a beat marker."
+</div>
+
+<h2 id="choices">6. Choices — <code>*</code> and <code>+</code> <span class="pill beginner">beginner</span></h2>
+
+<p>
+  A choice is a moment where the reader (or player) picks what happens next.
+  Choices look like this:
+</p>
+
+<pre>WREN
+  (quietly)
+  It hasn't rung in three days.
+
+* Ring the bell.
+  -&gt; ringing
+* Leave quietly.
+  -&gt; END</pre>
+
+<p>
+  Each line starting with <code>*</code> is a choice. The text after
+  <code>*</code> is the label the reader sees. The indented lines under it
+  are what happens if they pick that option.
+</p>
+
+<p>There are two kinds of choice marker:</p>
+
+<table>
+  <tr><th>Marker</th><th>Behavior</th><th>When to use</th></tr>
+  <tr>
+    <td><code>*</code></td>
+    <td><strong>Once-only.</strong> Disappears after the reader picks it.</td>
+    <td>Branching decisions; one-time actions.</td>
+  </tr>
+  <tr>
+    <td><code>+</code></td>
+    <td><strong>Sticky.</strong> Stays available every time the reader sees this beat.</td>
+    <td>"Ask about…" menus, recurring options, anything the reader can do repeatedly.</td>
+  </tr>
+</table>
+
+<pre>+ Ask about the bell.
+  -&gt; ask_bell
++ Ask about the keepers.
+  -&gt; ask_keepers
+* Leave.
+  -&gt; END</pre>
+
+<p>
+  Here the reader can ask about the bell and the keepers as many times as
+  they want, but once they leave, the leave option is gone.
+</p>
+
+<h2 id="diverts">7. Diverts — jumping between beats <span class="pill beginner">beginner</span></h2>
+
+<p>
+  A <strong>divert</strong> is the arrow <code>-&gt;</code> followed by a
+  beat name. It tells the playhead "go there next."
+</p>
+
+<pre>-&gt; ringing            ← jump to the beat called "ringing"
+-&gt; END                ← stop the story
+-&gt; Lighthouse/dawn    ← jump to a beat in a specific folder (when needed)</pre>
+
+<p>Diverts can appear almost anywhere in a beat:</p>
+
+<ul>
+  <li>At the end of a beat (the most common spot).</li>
+  <li>At the end of a choice's body.</li>
+  <li>Inside an <code>&lt;if:&gt;</code> branch.</li>
+  <li>Even at the end of a character's dialogue.</li>
+</ul>
+
+<pre>WREN
+  Then you should know what I know.
+  -&gt; ask_about</pre>
+
+<p>
+  Here, the divert ends Wren's turn — once she finishes speaking, the
+  playhead jumps to the <code>ask_about</code> beat. Diverts are the
+  primary way a non-linear story moves.
+</p>
+
+<h3>Built-in target: <code>END</code></h3>
+
+<p>
+  <code>-&gt; END</code> is the one reserved divert target. It tells the
+  playhead to stop. Every "ending" in your story is reached by a
+  <code>-&gt; END</code> somewhere.
+</p>
+
+<h3>Diverts with parameters</h3>
+
+<p>
+  A beat can take parameters — we'll cover this more in
+  <a href="#slots">§25</a>, but the surface form is worth seeing now:
+</p>
+
+<pre>== ask_about(topic)
+  cast: NPC, Player
+
+PLAYER
+  Tell me about the {topic}.</pre>
+
+<p>And the caller fills <code>topic</code> at the divert site:</p>
+
+<pre>* Ask about the bell.
+  -&gt; ask_about with topic: bell</pre>
+
+<p>
+  The <code>{topic}</code> inside the beat will be replaced with
+  <code>bell</code> at runtime. This is how you write one beat that handles
+  many similar conversations.
+</p>
+
+<h3>Tunnels — go somewhere, come back</h3>
+
+<p>
+  Sometimes you want the playhead to detour into another beat and then
+  return to where it left off. That's a <strong>tunnel</strong>:
+</p>
+
+<pre>-&gt; (cleanup) -&gt;    ← jump into cleanup, then come back
+                    (the next line continues here)</pre>
+
+<p>And inside <code>cleanup</code>, the tunnel returns with:</p>
+
+<pre>&lt;-</pre>
+
+<p>
+  Tunnels are useful when several beats need to share a piece of logic
+  (reset some state, play a recurring cue, do a quick check). For your
+  first stories you'll rarely need them.
+</p>
+
+<h2 id="suppression">8. The <code>[…]</code> suppression trick <span class="pill beginner">beginner</span></h2>
+
+<p>
+  Square brackets do one specific job borrowed from Ink: they let a choice
+  label and the narration that plays <em>after</em> the choice differ.
+</p>
+
+<pre>* "Yes."[ I said firmly.]
+  -&gt; agreed</pre>
+
+<p>This produces:</p>
+
+<ul>
+  <li><strong>The button the reader sees:</strong> <code>"Yes."</code></li>
+  <li><strong>The line that plays after they click:</strong> <code>"Yes." I said firmly.</code></li>
+</ul>
+
+<p>
+  Anything inside <code>[…]</code> appears in the spoken narration only,
+  not in the button. It's how you keep choice labels short while keeping
+  the prose natural.
+</p>
+
+<hr class="section">
+
+<h2 id="brackets">9. The five brackets, one job each <span class="pill beginner">beginner</span></h2>
+
+<p>
+  Loom uses five kinds of brackets, and each one does exactly one thing.
+  This is the most important table in the whole document — if you remember
+  it, the rest of Loom is just vocabulary.
+</p>
+
+<table>
+  <tr>
+    <th>Bracket</th>
+    <th>Who it talks to</th>
+    <th>What it does</th>
+    <th>Example</th>
+  </tr>
+  <tr>
+    <td><code>( … )</code></td>
+    <td>the performer</td>
+    <td>direction — how to act or read</td>
+    <td><code>(quietly)</code></td>
+  </tr>
+  <tr>
+    <td><code>{ … }</code></td>
+    <td>the reader</td>
+    <td>insert a value into text</td>
+    <td><code>Hello, {Player.name}.</code></td>
+  </tr>
+  <tr>
+    <td><code>[ … ]</code></td>
+    <td>the reader (hidden from choice)</td>
+    <td>suppress text from the choice label</td>
+    <td><code>"Yes."[ I said firmly.]</code></td>
+  </tr>
+  <tr>
+    <td><code>&lt; … &gt;</code></td>
+    <td>the runtime</td>
+    <td>do something — play a sound, set a value, branch</td>
+    <td><code>&lt;sfx: bell&gt;</code></td>
+  </tr>
+  <tr>
+    <td><code>``` … ```</code></td>
+    <td>the production team</td>
+    <td>notes for stage managers, producers, editors</td>
+    <td><code>```warn lx14```</code></td>
+  </tr>
+</table>
+
+<div class="callout tip">
+  <strong>The cheat.</strong> When you're not sure which bracket to use,
+  ask "who is this for?" If it's the actor — parentheses. If it's a value
+  the reader should see — curly braces. If it's an instruction the
+  computer carries out — angle brackets. If it's a note for the lighting
+  designer — triple backticks. Once you've got that down, you've got Loom.
+</div>
+
+<h2 id="parens">10. Parentheses — directions for the performer <span class="pill beginner">beginner</span></h2>
+
+<p>
+  Anything inside <code>( … )</code> is a direction. It belongs to the
+  actor or narrator delivering the line. It is <em>not</em> spoken aloud.
+</p>
+
+<pre>WREN
+  (whispering, almost to herself)
+  It hasn't rung in three days.
+
+She moves to the window. (slow — the storm is just starting)</pre>
+
+<p>Common uses:</p>
+
+<ul>
+  <li><strong>Tone:</strong> <code>(quietly)</code>, <code>(furious)</code>, <code>(unsure)</code></li>
+  <li><strong>Action:</strong> <code>(she crosses to the door)</code></li>
+  <li><strong>Beat / pause:</strong> <code>(beat)</code>, <code>(pause)</code></li>
+  <li><strong>Improv instruction (special):</strong> see <a href="#improv">§22</a></li>
+</ul>
+
+<h2 id="braces">11. Curly braces — values mixed into text <span class="pill beginner">beginner</span></h2>
+
+<p>
+  Curly braces <code>{ … }</code> let you drop a value into a line.
+  Anywhere you put <code>{expression}</code> inside an action line or
+  dialogue, Loom replaces it with the current value.
+</p>
+
+<pre>NARRATOR
+  You have {coins} coins and {keys} keys.
+
+WREN
+  Welcome back, {Player.name}.</pre>
+
+<p>This is sometimes called <strong>interpolation</strong>. The braces are essentially "paste this value here."</p>
+
+<h2 id="angle">12. Angle brackets — telling the runtime to do something <span class="pill beginner">beginner</span></h2>
+
+<p>
+  Angle brackets <code>&lt; … &gt;</code> are how you tell the runtime to
+  <em>do</em> something. Play a sound. Change a value. Check a condition.
+  These are sometimes called <strong>directives</strong>.
+</p>
+
+<pre>&lt;sfx: bell_toll&gt;                 ← play a sound effect
+&lt;cue: lx14&gt;                      ← fire a named cue
+&lt;set: Wren.trusts.Player += 10&gt;  ← change a value
+&lt;pause: 2s&gt;                      ← wait two seconds
+&lt;anchor: opening_top&gt;            ← name this position</pre>
+
+<p>
+  The first word after <code>&lt;</code> is the directive name. The colon
+  separates the name from its arguments. Arguments can be positional
+  (separated by commas) or named (using <code>key: value</code>).
+</p>
+
+<p>
+  Some directives also open <strong>blocks</strong> — they contain other
+  lines, indented underneath:
+</p>
+
+<pre>&lt;if: Wren.trusts.Player &gt; 50&gt;
+  WREN
+    I knew you'd come.</pre>
+
+<p>
+  We'll cover the most common directives in the next part. There are
+  dozens more in the <a href="#directives-table">directives table</a>
+  at the back.
+</p>
+
+<h2 id="fences">13. Triple backticks — production notes <span class="pill beginner">beginner</span></h2>
+
+<p>
+  A triple-backtick fence <code>``` … ```</code> is a region the runtime
+  ignores. It's for everyone <em>else</em> who reads the script: stage
+  managers, lighting designers, sound designers, producers, future you.
+</p>
+
+<pre>```warn lx14```            ← inline form: one line
+
+```note
+This scene felt long at the table read. Try cutting the lantern beat;
+the silence after the bell carries more than the dialogue.
+```                        ← block form: multiple lines</pre>
+
+<p>
+  The first word inside the fence is the kind of note. Useful kinds:
+</p>
+
+<table>
+  <tr><th>Tag</th><th>Meaning</th></tr>
+  <tr><td><code>note</code></td><td>General-purpose note.</td></tr>
+  <tr><td><code>warn</code></td><td>Heads-up for the operator (a cue is coming).</td></tr>
+  <tr><td><code>cue</code></td><td>A named cue point.</td></tr>
+  <tr><td><code>blocking</code></td><td>Stage direction for blocking.</td></tr>
+  <tr><td><code>todo</code></td><td>Something to fix later — tools surface these.</td></tr>
+  <tr><td><code>break</code></td><td>A debugger breakpoint (advanced).</td></tr>
+  <tr><td><code>related</code></td><td>Cross-reference to another beat.</td></tr>
+</table>
+
+<p>You can invent new tags freely. Tools that don't recognise a tag treat it as a note.</p>
+
+<h2 id="comments">14. Comments — notes only the writer sees <span class="pill beginner">beginner</span></h2>
+
+<p>
+  If a triple-backtick fence is for the production team, a
+  <strong>comment</strong> is for the next writer (often future you).
+  Comments don't appear in the script at runtime <em>or</em> in any
+  production view.
+</p>
+
+<p>Loom borrows C-style comments:</p>
+
+<pre>// rough order: bell, beat, lantern up, line
+WREN
+  (quietly)
+  It hasn't rung in three days. // pickup pace if Wren's actor is fast
+
+/*
+  blocking sketch from rehearsal 04-12:
+  Wren is upstage left at the rope. Player enters from SR on the bell.
+*/</pre>
+
+<table>
+  <tr><th>Form</th><th>Scope</th></tr>
+  <tr><td><code>// …</code></td><td>To the end of the line.</td></tr>
+  <tr><td><code>/* … */</code></td><td>Across as many lines as you want.</td></tr>
+</table>
+
+<div class="callout warn">
+  <strong>One small rule.</strong> <code>//</code> must be at the start of
+  a line, or have whitespace before it. This is so URLs in dialogue
+  (<code>https://example.com</code>) don't accidentally become comments.
+</div>
+
+<hr class="section">
+
+<h2 id="let">15. Variables with <code>let</code> <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  A <strong>variable</strong> is a name that holds a value. In Loom, you
+  declare variables with <code>let</code>:
+</p>
+
+<pre>let trusted    = Wren.trusts.Player &gt; 50
+let in_danger  = Player.health &lt; 30
+let crowd_size = count(Participants in BellTower)</pre>
+
+<p>
+  Each <code>let</code> binds a name to an expression. The crucial trick
+  is that the value updates <em>automatically</em> as its inputs change.
+  If Wren's trust climbs above 50, <code>trusted</code> becomes
+  <code>true</code> with no further action from you. If the player heals,
+  <code>in_danger</code> turns false on its own.
+</p>
+
+<p>This is called <strong>reactive</strong> — Loom watches the inputs for you.</p>
+
+<p>You then use the name as a condition:</p>
+
+<pre>&lt;if: trusted&gt;
+  WREN
+    I knew you'd come.</pre>
+
+<div class="callout tip">
+  <strong>Why this is nice.</strong> You don't have to remember to update
+  <code>trusted</code> every time Wren's trust changes. The name is a live
+  formula, not a snapshot. Most of your conditions will read better when
+  you name them this way once at the top of the file.
+</div>
+
+<h3>Top-level vs beat-local <code>let</code></h3>
+
+<p>A <code>let</code> at the top of a file is visible everywhere in your project.</p>
+
+<pre># Saltmere
+entry: opening
+let trusted = Wren.trusts.Player &gt; 50    ← visible to every beat</pre>
+
+<p>A <code>let</code> directive inside a beat is local to that beat:</p>
+
+<pre>== ringing
+  cast: Wren, Player
+
+&lt;let: bell_count = visits(ringing)&gt;       ← local to this beat
+&lt;if: bell_count &gt; 3&gt;
+  NARRATOR
+    The bell is wearing thin.</pre>
+
+<h2 id="set">16. Changing values with <code>&lt;set:&gt;</code> <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  <code>&lt;set:&gt;</code> is the directive that mutates the world.
+  Anything you want to remember happened — a stat going up, a flag being
+  set, a knowledge fact learned — flows through <code>&lt;set:&gt;</code>.
+</p>
+
+<pre>&lt;set: Wren.trusts.Player += 10&gt;          ← bump trust by 10
+&lt;set: Wren.knows.bell_origin := suspects&gt;  ← change knowledge
+&lt;set: Wren.knows.rumours += SingingRumour&gt; ← add to a list
+&lt;set: Wren.knows.rumours -= SingingRumour&gt; ← remove from a list
+&lt;set: Wren.hp := 80&gt;                     ← assign directly</pre>
+
+<table>
+  <tr><th>Operator</th><th>What it does</th></tr>
+  <tr><td><code>:=</code></td><td>Replace the value.</td></tr>
+  <tr><td><code>+=</code></td><td>Add to a number, or append to a list.</td></tr>
+  <tr><td><code>-=</code></td><td>Subtract from a number, or remove from a list.</td></tr>
+</table>
+
+<p>
+  Every <code>&lt;set:&gt;</code> writes an entry to the runtime's
+  <strong>ledger</strong>. The ledger is the story's permanent record —
+  it's how saves work, how hooks fire, and how queries like
+  <code>visits(opening)</code> and <code>since(bell_rung)</code> get
+  answered.
+</p>
+
+<h2 id="if">17. Conditionals — <code>&lt;if:&gt;</code>, <code>&lt;else if:&gt;</code>, <code>&lt;else&gt;</code> <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  The most common branch you'll write. The body indented under the
+  directive runs only if the condition is true.
+</p>
+
+<pre>&lt;if: Wren.trusts.Player &gt; 80&gt;
+  WREN
+    Then you should know what I know.
+  -&gt; reveal
+
+&lt;else if: Wren.trusts.Player &gt; 40&gt;
+  WREN
+    Maybe. Not yet.
+
+&lt;else&gt;
+  WREN
+    Leave. Now.
+  -&gt; END</pre>
+
+<p>The chain reads exactly as English does: if A, else if B, else C.</p>
+
+<p>Conditions can be:</p>
+
+<ul>
+  <li>Comparisons: <code>&gt;</code>, <code>&lt;</code>, <code>==</code>, <code>!=</code>, <code>&gt;=</code>, <code>&lt;=</code></li>
+  <li>Booleans (plain true/false): <code>Wren.knows.met_player</code></li>
+  <li>Combinations with <code>and</code>, <code>or</code>, <code>not</code></li>
+  <li>A named <code>let</code>: <code>&lt;if: trusted&gt;</code></li>
+  <li>A ledger query: <code>&lt;if: visits(opening) &gt; 2&gt;</code></li>
+</ul>
+
+<h2 id="interpolation">18. Putting values into dialogue <span class="pill intermediate">intermediate</span></h2>
+
+<p>You met this earlier under <a href="#braces">curly braces</a>. The full power:</p>
+
+<pre>NARRATOR
+  Welcome, {Player.name}. You have {Player.coins} coins.
+
+NARRATOR
+  Wren {Wren.knows.met_player ? "smiles" : "stares"} at you.
+
+WREN
+  I owe you {damage_taken * 2} silver for what you did.</pre>
+
+<p>
+  Anything inside <code>{…}</code> is evaluated, the result converted to
+  text, and pasted into the line. You can do arithmetic, look up
+  properties, even branch with a <code>condition ? yes : no</code>
+  expression.
+</p>
+
+<h2 id="match">19. Picking arms with <code>&lt;match:&gt;</code> <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  Sometimes you want to switch on a value with more than two options.
+  <code>&lt;match:&gt;</code> dispatches to the first arm whose label
+  matches.
+</p>
+
+<pre>&lt;match: weather&gt;
+  storm
+    NARRATOR
+      Rain hammers the roof.
+  fog
+    NARRATOR
+      The lighthouse beam is the only thing moving.
+  clear
+    NARRATOR
+      Stars over the harbour.</pre>
+
+<p>
+  Each indented label (<code>storm</code>, <code>fog</code>,
+  <code>clear</code>) is an arm. The arm whose label equals the value of
+  <code>weather</code> runs. If none match, nothing runs.
+</p>
+
+<p>
+  <code>&lt;match:&gt;</code> is especially handy for knowledge fields
+  with a fixed set of states:
+</p>
+
+<pre>&lt;match: NPC.knows.bell_origin&gt;
+  confirmed
+    NPC
+      The bell calls when the keeper is in danger.
+  suspects
+    NPC
+      I've heard rumours, but nothing I'd swear to.
+  unknown
+    NPC
+      I'm sorry. I don't know.</pre>
+
+<h2 id="each-visit">20. Differing each visit <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  <code>&lt;each visit&gt;</code> picks a different arm depending on how
+  many times the playhead has reached this beat. It has three arms:
+</p>
+
+<pre>== bell_tower
+  cast: Wren, Player
+
+&lt;each visit&gt;
+  first
+    NARRATOR
+      The bell tower is dark. Your eyes adjust.
+  then
+    NARRATOR
+      The tower is familiar now.
+  finally
+    NARRATOR
+      You've been here too many times. The dust knows you.</pre>
+
+<p>
+  <code>first</code> runs on visit 1, <code>then</code> on visit 2, and
+  <code>finally</code> on every visit from 3 onward. This is a clean way
+  to make a beat feel different on subsequent visits without writing three
+  separate beats.
+</p>
+
+<h2 id="after-otherwise">21. Latching with <code>&lt;after:&gt;</code> / <code>&lt;otherwise&gt;</code> <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  <code>&lt;after: condition&gt;</code> is "once this becomes true, switch
+  permanently." Before it switches, <code>&lt;otherwise&gt;</code> runs.
+</p>
+
+<pre>&lt;after: Wren.knows.bell_origin == confirmed&gt;
+  WREN
+    We don't speak of the bell here.
+&lt;otherwise&gt;
+  WREN
+    Welcome to the lighthouse.</pre>
+
+<p>
+  This is a one-way latch: once Wren knows the bell's origin, this beat
+  uses the <code>&lt;after:&gt;</code> body forever, even if her knowledge
+  somehow reverted. (Edge case: knowledge usually only moves forward.)
+</p>
+
+<h2 id="shuffle-cycle">22. Variation — <code>&lt;shuffle:&gt;</code> and <code>&lt;cycle:&gt;</code> <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  Two small directives that add variation to ambient lines.
+</p>
+
+<table>
+  <tr><th>Directive</th><th>Behavior</th></tr>
+  <tr>
+    <td><code>&lt;shuffle: a | b | c&gt;</code></td>
+    <td>Picks one of the options at random. Different (well, pseudo-random) each time the line is reached.</td>
+  </tr>
+  <tr>
+    <td><code>&lt;cycle: a | b | c&gt;</code></td>
+    <td>Returns the options in order, looping back to the start.</td>
+  </tr>
+</table>
+
+<pre>FISHER
+  &lt;shuffle: Storm's close. | Sky's wrong. | Time to tie down.&gt;
+
+VILLAGER
+  &lt;cycle: Morning. | Afternoon. | Evening. | Night.&gt;</pre>
+
+<p>
+  Use <code>shuffle</code> for crowd chatter that should feel random; use
+  <code>cycle</code> for a sequence you want to play through in order
+  (e.g. a series of escalating threats).
+</p>
+
+<h2 id="ledger">23. Remembering what happened — the ledger <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  Every change in your story — every <code>&lt;set:&gt;</code>, every
+  beat visit, every cue, every choice — gets recorded in the
+  <strong>ledger</strong>. The ledger is the story's memory. You can ask
+  it questions inside conditions.
+</p>
+
+<table>
+  <tr><th>Query</th><th>What it returns</th></tr>
+  <tr><td><code>visits(opening)</code></td><td>How many times the playhead has entered <code>opening</code>.</td></tr>
+  <tr><td><code>played(opening)</code></td><td><code>true</code> if <code>opening</code> has ever played.</td></tr>
+  <tr><td><code>since(bell_rung)</code></td><td>Time elapsed (in seconds) since the named anchor or set fired.</td></tr>
+  <tr><td><code>since(Participant, bell_rung)</code></td><td>Same, but scoped to one participant (live performance).</td></tr>
+  <tr><td><code>last(Wren, speaker)</code></td><td>Who Wren last spoke to.</td></tr>
+</table>
+
+<pre>&lt;if: visits(opening) &gt; 3&gt;
+  NARRATOR
+    You've been here a while. Things have shifted.
+
+&lt;if: since(bell_rung) &lt; 30s&gt;
+  WREN
+    The bell. Still resonant.
+
+&lt;if: played(reveal_secret)&gt;
+  WREN
+    You know now. There's no unknowing.</pre>
+
+<h3>Anchors — naming places in the story</h3>
+
+<p>
+  An <strong>anchor</strong> is a named position in your story. You drop
+  one with the <code>&lt;anchor:&gt;</code> directive:
+</p>
+
+<pre>&lt;anchor: bell_rung&gt;</pre>
+
+<p>
+  Now you can ask "how long since <code>bell_rung</code> happened?" with
+  <code>since(bell_rung)</code>, or test if you've crossed it with
+  <code>played(bell_rung)</code>. Anchors are cheap — sprinkle them
+  liberally wherever you might want to refer back.
+</p>
+
+<hr class="section">
+
+<h2 id="character">24. Declaring a <code>CHARACTER</code> <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  So far our characters have been names that show up to speak. A
+  <code>CHARACTER</code> declaration gives them substance: properties,
+  feelings, memories, goals, behaviours.
+</p>
+
+<pre>CHARACTER Wren
+  voice:      female_alto
+  home:       Lighthouse
+  reputation: 60
+  hp:         80</pre>
+
+<p>
+  That's the simplest form: a name, then indented <code>key: value</code>
+  lines underneath. Any name you put on the left of the colon becomes a
+  property of the character. Now <code>Wren.voice</code>, <code>Wren.home</code>,
+  and <code>Wren.hp</code> all exist and can be read or set anywhere in
+  your project.
+</p>
+
+<h2 id="disposition">25. Disposition — trust, respect, fear <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  Characters can have feelings about each other. Loom gives you a
+  built-in shape for this:
+</p>
+
+<pre>CHARACTER Wren
+  trusts Player:   30 of 100
+  respects Player: 50 of 100
+  fears Player:     0 of 100
+
+  reacts trust &gt; 60                       → warm
+  reacts fear &gt; 40                        → guarded
+  reacts trust &lt; 10 and respect &lt; 30      → hostile</pre>
+
+<p>
+  Each <code>X target: N of M</code> line declares a numbered axis
+  between 0 and M, starting at N. Common verbs are
+  <code>trusts</code>, <code>respects</code>, and <code>fears</code>, but
+  you can invent your own.
+</p>
+
+<p>
+  The <code>reacts</code> lines emit a tag when the condition becomes
+  true. Other conditions can read these tags:
+</p>
+
+<pre>&lt;if: Wren.is.warm&gt;
+  WREN
+    Come in, come in. Sit.</pre>
+
+<h3>Mirrors</h3>
+
+<p>If trust runs both ways, you can mirror it:</p>
+
+<pre>  trusts Player: 30 of 100 mirror Player.trusts.Wren</pre>
+
+<p>
+  Now any change to <code>Wren.trusts.Player</code> is also visible on
+  <code>Player.trusts.Wren</code> (and vice versa) — useful for
+  relationships where the math should stay symmetric.
+</p>
+
+<h2 id="knowledge">26. Knowledge — what a character has learned <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  Disposition is "how do they feel." <strong>Knowledge</strong> is "what
+  do they know."
+</p>
+
+<pre>CHARACTER Wren
+  knows:
+    met_player:     bool = false
+    bell_origin:    unknown | suspects | confirmed = unknown
+    keeper_name:    text?
+    rumours:        list of RUMOUR = []
+    saw_the_keeper: bool = false</pre>
+
+<p>Each line in the <code>knows:</code> block declares a typed slot:</p>
+
+<table>
+  <tr><th>Type</th><th>Means</th></tr>
+  <tr><td><code>bool</code></td><td>true or false.</td></tr>
+  <tr><td><code>int</code> / <code>number</code></td><td>Whole or decimal number.</td></tr>
+  <tr><td><code>text</code></td><td>A string. <code>text?</code> means optional (can be unset).</td></tr>
+  <tr><td><code>A | B | C</code></td><td>One of a fixed set of named values.</td></tr>
+  <tr><td><code>list of T</code></td><td>An ordered list of things of type T.</td></tr>
+  <tr><td><code>map of K to V</code></td><td>A mapping from K to V.</td></tr>
+  <tr><td><code>range A to B = N</code></td><td>A number between A and B, starting at N.</td></tr>
+</table>
+
+<p>You change knowledge with the usual <code>&lt;set:&gt;</code>:</p>
+
+<pre>&lt;set: Wren.knows.met_player := true&gt;
+&lt;set: Wren.knows.bell_origin := suspects&gt;
+&lt;set: Wren.knows.rumours += SingingRumour&gt;</pre>
+
+<p>
+  Knowledge is read-only from outside the character: you can only change
+  Wren's knowledge with a <code>Wren.knows.*</code> set. This makes it
+  easy to track who learned what.
+</p>
+
+<h2 id="goals">27. Goals — what a character is trying to do <span class="pill advanced">advanced</span></h2>
+
+<p>
+  A <strong>goal</strong> is a small state machine on a character. It has
+  predicates that say when it's active, when it's complete, and when it's
+  failed.
+</p>
+
+<pre>CHARACTER Wren
+  goal find_keeper
+    priority:       0.8
+    active when:    Time.hour &gt; 6 and not Wren.exhausted
+    completes when: Wren.knows.saw_the_keeper
+    fails when:     Wren.hp &lt; 20
+    drives:         search_routine          ← a generator
+    on complete:    &lt;set: Wren.knows.bell_origin := confirmed&gt;
+    on fail:        -&gt; abandoned_quest</pre>
+
+<p>What each line does:</p>
+
+<dl class="vocab">
+  <dt>priority:</dt>
+  <dd>Higher-priority goals win when more than one is active.</dd>
+  <dt>active when:</dt>
+  <dd>The condition that makes the goal eligible. Re-evaluates automatically as inputs change.</dd>
+  <dt>completes when:</dt>
+  <dd>The condition that means the goal succeeded.</dd>
+  <dt>fails when:</dt>
+  <dd>The condition that means it failed.</dd>
+  <dt>drives:</dt>
+  <dd>A generator that runs while this goal is active. (See <a href="#generators">§32</a>.)</dd>
+  <dt>on complete: / on fail:</dt>
+  <dd>What to do when the goal resolves.</dd>
+</dl>
+
+<h2 id="hooks">28. Hooks — characters reacting to events <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  A <strong>hook</strong> is "when X happens, do Y." You write hooks
+  inside a <code>CHARACTER</code> body, leading with <code>on …</code>.
+</p>
+
+<pre>CHARACTER Wren
+  on meeting Player
+    &lt;if: not Wren.knows.met_player&gt;
+      &lt;set: Wren.knows.met_player := true&gt;
+      -&gt; introduce_self as Wren
+
+  on trust passes 80
+    -&gt; reveal_secret as Wren
+
+  on Time.hour == 22
+    -&gt; retire_for_night as Wren
+
+  on cue bell_strike_loud
+    &lt;set: Wren.knows.heard_the_bell := true&gt;
+
+  on Participant enters Lighthouse
+    -&gt; greet_visitor as Wren
+
+  on event bell_acknowledged
+    &lt;set: Wren.trusts.Player += 10&gt;</pre>
+
+<p>Hook event kinds:</p>
+
+<table>
+  <tr><th>Form</th><th>Fires when…</th></tr>
+  <tr><td><code>on meeting X</code></td><td>This character first encounters X (once per pair).</td></tr>
+  <tr><td><code>on trust passes N</code> / <code>respect passes N</code></td><td>The named axis crosses N going up.</td></tr>
+  <tr><td><code>on trust drops below N</code></td><td>The axis crosses N going down.</td></tr>
+  <tr><td><code>on Time.hour == 22</code></td><td>The in-world clock reaches a value.</td></tr>
+  <tr><td><code>on Participant enters X</code></td><td>An audience participant enters location X.</td></tr>
+  <tr><td><code>on Participant exits X</code></td><td>An audience participant leaves X.</td></tr>
+  <tr><td><code>on participant joins</code></td><td>A new audience participant joins the show.</td></tr>
+  <tr><td><code>on cue X</code></td><td>The named cue fires (often from the booth).</td></tr>
+  <tr><td><code>on event X</code></td><td>A user-fired event named X (via <code>&lt;fire: X&gt;</code>).</td></tr>
+</table>
+
+<div class="callout">
+  <strong>Hooks never interrupt.</strong> If a hook fires while the
+  playhead is in the middle of a line, the hook waits — it runs at the
+  next "yield" point (end of a line, end of a beat, a choice prompt, a
+  <code>wait</code>). You'll never get a hook talking over an actor.
+</div>
+
+<h2 id="traits">29. Reusing with <code>TRAIT</code> <span class="pill advanced">advanced</span></h2>
+
+<p>
+  When two characters share behaviour — say, every guard patrols, every
+  shopkeeper haggles — you don't want to repeat yourself. A
+  <strong>trait</strong> is a reusable bundle of properties, hooks,
+  generators, and goals.
+</p>
+
+<pre>TRAIT Patrolling
+  route: list of LOCATION                    ← required slot; no default
+
+  generator walk_route
+    tier: ambient
+    loop
+      for waypoint in route
+        &lt;goto: self → waypoint&gt;
+        wait until at(waypoint)
+        wait random(4s, 10s)
+
+  on cue alarm
+    &lt;goto: self → route.first&gt;</pre>
+
+<p>You mix the trait into a character with <code>is</code>:</p>
+
+<pre>CHARACTER Guard is Humanoid, Combatant, Patrolling
+  hp:     80
+  attack: 6
+  route:  [Gate, Wall, Courtyard]</pre>
+
+<p>
+  Now <code>Guard</code> has everything <code>Patrolling</code> defines —
+  the route property, the walk generator, the alarm hook — without you
+  re-writing any of it.
+</p>
+
+<p>A character can mix in any number of traits:</p>
+
+<pre>CHARACTER Goblin is Humanoid, Combatant, Looter, Talkative
+  hp: 20</pre>
+
+<h2 id="inheritance">30. Inheritance, traits, and composition <span class="pill advanced">advanced</span></h2>
+
+<p>
+  Loom gives you three ways to share behaviour. They look similar; the
+  difference is conceptual.
+</p>
+
+<table>
+  <tr><th>Mechanism</th><th>Relationship</th><th>Use when…</th></tr>
+  <tr>
+    <td><strong>Inheritance</strong></td>
+    <td><em>is-a</em></td>
+    <td>A specific kind of an existing thing. <code>GoblinKing is Goblin</code> — a king is a kind of goblin.</td>
+  </tr>
+  <tr>
+    <td><strong>Trait mixing</strong></td>
+    <td><em>can-do</em></td>
+    <td>A capability bundle. <code>Goblin is Looter</code> — a goblin can be looted.</td>
+  </tr>
+  <tr>
+    <td><strong>Composition</strong></td>
+    <td><em>has-a</em></td>
+    <td>A property that points to another thing. <code>loot: LootBag = goblin_pouch</code>.</td>
+  </tr>
+</table>
+
+<p>
+  All three coexist. A typical character uses all three at once: it
+  inherits its base type (<code>is Humanoid</code>), mixes in
+  capabilities (<code>Looter, Patrolling</code>), and composes properties
+  by reference (<code>loot: LootBag = goblin_pouch</code>).
+</p>
+
+<h2 id="super">31. Overrides and <code>super</code> <span class="pill advanced">advanced</span></h2>
+
+<p>
+  Every property and hook in a parent has a name. A child that declares
+  the same name <strong>replaces</strong> the parent's version.
+</p>
+
+<pre>CHARACTER ChattyGuard is Guard
+  chattiness: 90               ← overrides Guard.chattiness</pre>
+
+<p>To <em>extend</em> the parent rather than replace it, call <code>super</code>:</p>
+
+<pre>CHARACTER ChattyGuard is Guard
+  on meeting Player
+    super                       ← run the parent's hook first
+    GUARD
+      And try not to drip on the flagstones.</pre>
+
+<p>To suppress an inherited hook entirely:</p>
+
+<pre>CHARACTER QuietGuard is Guard
+  on meeting Player: none</pre>
+
+<h3>Constructors, <code>self</code>, and methods</h3>
+
+<p>
+  Every declaration in Loom is a class. That sounds heavy, but in
+  practice it shows up in three small pieces you only need when you
+  reach for them:
+</p>
+
+<ul>
+  <li><strong><code>init</code></strong> — a constructor body. Runs
+    when the declaration is instantiated. Receives named args from the
+    call site.</li>
+  <li><strong><code>self</code></strong> — the instance under
+    construction or under call. <code>self.strength</code> is the
+    instance's own strength; <code>self.owner</code> on an embedded
+    profile is the character it's embedded in.</li>
+  <li><strong><code>method</code></strong> — a callable on the
+    instance. <code>method swing(target)</code> declares
+    <code>Wren.swing(Goblin)</code>.</li>
+</ul>
+
+<pre>STATS Combat
+  attribute strength = 10
+  init(strength: int? = none)
+    if strength is not none
+      self.strength = strength
+  stat damage = 8 + self.strength * 0.5
+  method swing(target)
+    target.health -= self.damage</pre>
+
+<p>
+  You can ignore all three when you don't need them — a declaration
+  with no <code>init</code> just lets every property default. The
+  moment you write <code>stats: Combat(strength: 12)</code>, you are
+  calling that synthesised init.
+</p>
+
+<hr class="section">
+
+<h2 id="stats">32. Stats with <code>STATS</code> <span class="pill advanced">advanced</span></h2>
+
+<p>
+  Some stories have numbers — health, mana, attack, level. Loom's stat
+  system is called <strong>Meridian</strong>, and it covers nearly every
+  progression model with five primitives.
+</p>
+
+<p>You declare a stats profile once, then include it in a character:</p>
+
+<pre>STATS Combat
+  attribute strength = 10, range 1 to 30
+
+  axis level
+    mode: xp_curve
+    curve: level * level * 50
+
+  pool health
+    max: self.max_health
+    regen: 2/s when not self.in_combat
+
+  stat max_health = 50 + self.strength * 5
+  stat damage     = 8 + self.strength * 0.5
+
+  method swing(target)
+    let blow = self.damage + d6()
+    target.health -= blow
+    return blow</pre>
+
+<p>And include it like this:</p>
+
+<pre>CHARACTER Wren is Keeper, Combatant
+  stats: Combat(strength: 12)</pre>
+
+<p>
+  <code>strength: 12</code> is <em>not</em> a property bolted onto
+  Wren — it's an argument to <code>Combat</code>'s constructor.
+  <code>Wren.stats</code> is a Combat instance that owns the value;
+  <code>self</code> inside the STATS body always refers to that
+  instance.
+</p>
+
+<p>
+  You'll see two shorter forms for the same call — they all mean the
+  same thing:
+</p>
+
+<pre>stats: Combat(strength: 12)        ← canonical, what the runtime sees
+
+stats: Combat                      ← indented block: tidy in tutorials
+  strength: 12
+
+stats.strength: 12                 ← dotted: one-line override</pre>
+
+<p>
+  Reading is even friendlier. <code>Wren.strength</code> is a shortcut
+  for <code>Wren.stats.strength</code>, and so are <code>Wren.health</code>,
+  <code>Wren.damage</code>, <code>Wren.swing(Goblin)</code> — Loom folds
+  any unambiguous embedded-profile name onto the character so authors
+  can write what they mean. Writes are stricter: <code>&lt;set:&gt;</code>
+  always names the canonical path (<code>Wren.stats.strength</code>) so
+  the owner of mutable state is never in doubt.
+</p>
+
+<h2 id="meridian">33. Attributes, axes, pools, stats <span class="pill advanced">advanced</span></h2>
+
+<table>
+  <tr><th>Primitive</th><th>What it is</th><th>Example</th></tr>
+  <tr>
+    <td><code>attribute</code></td>
+    <td>A static number set at creation, optionally clamped.</td>
+    <td><code>attribute strength = 10, range 1 to 30</code></td>
+  </tr>
+  <tr>
+    <td><code>axis</code></td>
+    <td>A dimension that advances at runtime (e.g. level).</td>
+    <td><code>axis level<br>&nbsp;&nbsp;mode: xp_curve<br>&nbsp;&nbsp;curve: level * level * 50</code></td>
+  </tr>
+  <tr>
+    <td><code>pool</code></td>
+    <td>A spendable supply with a max and a regen rule.</td>
+    <td><code>pool health<br>&nbsp;&nbsp;max: max_health<br>&nbsp;&nbsp;regen: 2/s when not in_combat</code></td>
+  </tr>
+  <tr>
+    <td><code>stat</code></td>
+    <td>A computed value — an expression of other stats and attributes.</td>
+    <td><code>stat damage = 8 + strength * 0.5</code></td>
+  </tr>
+</table>
+
+<p>Axes can advance in six modes:</p>
+
+<dl class="vocab">
+  <dt>xp_curve</dt>
+  <dd>Classic experience curve — accumulate XP, level up at thresholds.</dd>
+  <dt>use_tracking</dt>
+  <dd>Skill goes up by being used (Skyrim style).</dd>
+  <dt>point_buy</dt>
+  <dd>Player spends points (D&D style).</dd>
+  <dt>milestone</dt>
+  <dd>Advance at scripted moments.</dd>
+  <dt>narrative_trigger</dt>
+  <dd>Advance when a story condition is met.</dd>
+  <dt>sdk_controlled</dt>
+  <dd>External code decides.</dd>
+</dl>
+
+<h2 id="trees">34. Skill trees with <code>TREE</code> <span class="pill advanced">advanced</span></h2>
+
+<p>
+  A <code>TREE</code> is a directed graph of unlockable nodes — a skill
+  tree, a talent tree, a tech tree.
+</p>
+
+<pre>TREE WarriorPath
+  node armsman_1
+    cost:   1
+    effect: stat(damage) += 5
+
+  node armsman_2
+    cost:     1
+    requires: node(armsman_1)
+    effect:   stat(damage) += 5</pre>
+
+<p>
+  Each <code>node</code> can declare a <code>cost</code>, a
+  <code>requires</code> gate (referring to other nodes or axes), and one
+  or more <code>effect</code> lines. The runtime tracks which nodes a
+  character has taken and gates progression accordingly.
+</p>
+
+<hr class="section">
+
+<h2 id="participants">35. Roles, people, rosters, cast <span class="pill advanced">advanced</span></h2>
+
+<p>
+  Loom drives immersive live shows. The trick to writing one is to
+  keep the <em>fictional character</em> and the <em>real person playing
+  them</em> as separate things you can rebind on the fly. Four nouns
+  cover it:
+</p>
+
+<table>
+  <tr><th>Noun</th><th>What it is</th></tr>
+  <tr><td><strong><code>ROLE</code></strong></td>
+      <td>A scripted character — Wren, the Bellkeeper, the Initiate. The fiction. <code>CHARACTER</code> is a friendly alias.</td></tr>
+  <tr><td><strong><code>PERSON</code></strong></td>
+      <td>A real human (or AI) the show knows about — Jamie, Raja, audience walk-ups. The human.</td></tr>
+  <tr><td><strong><code>ROSTER</code></strong></td>
+      <td>The lineup for a specific run — who is expected, who covers whom, who starts where.</td></tr>
+  <tr><td><strong>cast</strong></td>
+      <td>The runtime fact "this person is currently playing this role." Swap mid-show.</td></tr>
+</table>
+
+<h3>Declaring a PERSON</h3>
+
+<pre>PERSON jamie_lee
+  display_name:    Jamie Lee
+  pronouns:        they/them
+  device:          jamie_phone_01
+  content_tolerance: [no_strobe, no_loud_bells]
+  accessibility:   [step_free]
+  notes:           Veteran swing.</pre>
+
+<p>
+  PERSONs live in the company's <code>people/</code> folder and survive
+  individual shows. Walk-up audience members get an ephemeral PERSON
+  minted at the door. Every field except <code>display_name</code> is
+  optional.
+</p>
+
+<h3>Declaring a ROSTER</h3>
+
+<pre>ROSTER preview_night_05_28
+  date:     2026-05-28T19:30
+  capacity: 24
+
+  cast
+    Wren        := jamie_lee
+    Bellkeeper  := raja_park
+    Initiate    := any of [audience]      ← any walk-up
+    Singer      := any of [pat_eberle, kim_ho, audience]
+
+  swings
+    Wren        := [raja_park, kim_ho]    ← priority order
+    Bellkeeper  := [jamie_lee]
+
+  locations
+    BellTower   start with: [jamie_lee]</pre>
+
+<p>
+  A ROSTER slot can be a named PERSON, a pool of acceptable PERSONs
+  (<code>any of [...]</code>), or empty. The synthetic pool
+  <code>audience</code> means "any walk-up." Empty slots are legal —
+  the role plays as a "ghost" until you cast someone in. Load a roster
+  at showtime with <code>&lt;load_roster: preview_night_05_28&gt;</code>.
+</p>
+
+<h3>Casting on the fly</h3>
+
+<pre>&lt;cast:    jamie_lee as Wren&gt;            ← bind
+&lt;uncast:  Wren&gt;                          ← release; role goes ghost
+&lt;recast:  Wren := kim_ho&gt;                ← atomic swap; stats &amp; goals survive
+&lt;promote: anonymous_walkup_12 as Initiate&gt;
+&lt;demote:  kim_ho&gt;                        ← stops playing; still in attendance</pre>
+
+<p>
+  Recast is the deep one: when you swap Wren's player, the role's
+  stats, knowledge, goals, and any in-flight scene keep running. Only
+  the player changes.
+</p>
+
+<h3>Hooks and the <code>as Participant</code> alias</h3>
+
+<pre>on participant joins
+  &lt;enroll: Participant → Initiates&gt;
+  -&gt; orientation as Participant</pre>
+
+<p>
+  The capitalised <code>Participant</code> means "the PERSON this event
+  is about." The phrase <code>as Participant</code> at the end of a
+  divert says "play <code>orientation</code> scoped to that one PERSON."
+  Inside such a beat, <code>self</code> is the PERSON, and
+  <code>self.role</code> is the ROLE they're currently bound to (or
+  <code>none</code> if they're unbound audience). From a role-scoped
+  beat, <code>self.player</code> is the PERSON playing the role.
+</p>
+
+<h3>Personal and character info, side by side</h3>
+
+<p>
+  Both the simulator and the booth runtime have an inspection panel
+  for every PERSON and every ROLE, addressed by the same dotted paths
+  you write in expressions:
+</p>
+
+<pre>jamie_lee.display_name              ← person face
+jamie_lee.content_tolerance
+jamie_lee.location
+jamie_lee.role                      ← currently Wren
+
+Wren.player                         ← role face: currently jamie_lee
+Wren.stats.health
+Wren.goals.find_keeper.state</pre>
+
+<p>
+  The People panel lists PERSONs (with the role each is playing inline);
+  the Roles panel lists ROLEs (with the player each is bound to inline).
+  Pick whichever face the moment needs.
+</p>
+
+<h2 id="cohort-location">36. Cohorts and locations <span class="pill advanced">advanced</span></h2>
+
+<p>
+  A <strong>cohort</strong> is a named group of participants. A
+  <strong>location</strong> is a named place in your venue. Both are
+  declared with the same shape as a character:
+</p>
+
+<pre>COHORT Initiates
+  label:    The Initiates
+  capacity: 24
+
+COHORT Singers
+  label:    The Singers
+  capacity: 8
+
+LOCATION BellTower
+  label:    The Bell Tower
+  ambient:  bell-loop
+  capacity: 8
+
+LOCATION Nave
+  label:    The Nave
+  capacity: 32</pre>
+
+<p>
+  Participants can be in one location at a time and any number of
+  cohorts. The runtime emits ledger events as they move and join.
+</p>
+
+<h2 id="broadcast">37. Broadcast scopes <span class="pill advanced">advanced</span></h2>
+
+<p>
+  In a live show, different audience members can hear different things.
+  <code>&lt;broadcast:&gt;</code> sends content only to the matching
+  audience.
+</p>
+
+<pre>&lt;broadcast: participant(Participant)&gt;
+  NARRATOR
+    (whispering)
+    You hear it differently. You always have.
+
+&lt;broadcast: location(BellTower) but participant(Participant)&gt;
+  NARRATOR
+    The others look up.
+
+&lt;broadcast: cohort(Singers) and location(BellTower)&gt;
+  &lt;cue: private_choir&gt;</pre>
+
+<p>The scope vocabulary:</p>
+
+<table>
+  <tr><th>Atom</th><th>Meaning</th></tr>
+  <tr><td><code>participant(X)</code></td><td>Just participant X.</td></tr>
+  <tr><td><code>cohort(C)</code></td><td>Everyone in cohort C.</td></tr>
+  <tr><td><code>location(L)</code></td><td>Everyone currently in location L.</td></tr>
+  <tr><td><code>A and B</code></td><td>Intersection — in both A and B.</td></tr>
+  <tr><td><code>A but B</code></td><td>Difference — in A, not in B.</td></tr>
+</table>
+
+<h2 id="improv">38. Improv with pluggable advancement <span class="pill advanced">advanced</span></h2>
+
+<p>
+  Sometimes you don't want to script every word — you want to give the
+  performer a brief and let them improvise. Loom has a special
+  parenthetical for that:
+</p>
+
+<pre>BELLKEEPER
+  (improv duration: 45s, advance on: any [pedal, speech(let us begin), gesture(Bow)])
+  (Greet warmly. Find out why they came. Don't reveal the singing —
+   that's act two.)
+
+  -&gt; next_beat</pre>
+
+<p>What's happening:</p>
+
+<ul>
+  <li>The first parenthetical (the one starting with <code>improv</code>) is the <strong>director's note</strong> — how long, and what makes the beat advance.</li>
+  <li>The second parenthetical is the <strong>performer's brief</strong> — what to play.</li>
+  <li>The runtime holds the playhead until <em>any</em> of the listed signals arrives, or the <code>duration</code> elapses.</li>
+</ul>
+
+<table>
+  <tr><th>Advance signal</th><th>Meaning</th></tr>
+  <tr><td><code>pedal</code></td><td>The booth presses a pedal.</td></tr>
+  <tr><td><code>speech(phrase)</code></td><td>A performer says the phrase (or the runtime hears it).</td></tr>
+  <tr><td><code>gesture(name)</code></td><td>A motion-tracked gesture fires.</td></tr>
+</table>
+
+<table>
+  <tr><th>Quorum operator</th><th>Meaning</th></tr>
+  <tr><td><code>any</code></td><td>Advance on the first signal.</td></tr>
+  <tr><td><code>all</code></td><td>Advance only when every signal has fired.</td></tr>
+  <tr><td><code>quorum(N)</code></td><td>Advance when N have fired.</td></tr>
+</table>
+
+<h2 id="booth">39. The booth — live patching <span class="pill advanced">advanced</span></h2>
+
+<p>
+  In a live show, the booth (the operator's station) is just another
+  client of the same runtime. The booth can:
+</p>
+
+<ul>
+  <li>Skip a participant past a beat.</li>
+  <li>Force-fire a cue.</li>
+  <li>Re-cast a role (swap one performer for another mid-show).</li>
+  <li>Retire a participant who left early.</li>
+  <li>Hot-reload a <code>.loom</code> patch without stopping the show.</li>
+</ul>
+
+<p>
+  Every booth action writes to the ledger, so the post-show audit shows
+  exactly what was overridden, when, and by whom. This isn't a special
+  mode of Loom — it's the same machinery the script uses, exposed in a
+  different UI.
+</p>
+
+<hr class="section">
+
+<h2 id="generators">40. Generators — ambient life <span class="pill advanced">advanced</span></h2>
+
+<p>
+  A <strong>generator</strong> is a long-running coroutine that yields
+  content at intervals. Generators are how you build worlds that feel
+  alive when nothing important is happening — dockworkers calling out,
+  villagers gossiping, the wind picking up.
+</p>
+
+<pre>GENERATOR HarborChorus
+  tier:     ambient
+  priority: 0.3
+
+  loop
+    wait random(20s, 60s)
+
+    &lt;if: Storm.active&gt;
+      DOCKHAND | FISHER
+        (worried)
+        &lt;shuffle: Storm's close. | Sky's wrong. | Time to tie down.&gt;
+
+    &lt;else if: Bell.ringing&gt;
+      VILLAGER
+        (surprised)
+        The bell! It's ringing!
+
+    &lt;else&gt;
+      FISHER | VILLAGER
+        &lt;cycle: Quiet night. | Stars are out. | Tide's calm.&gt;</pre>
+
+<p>What's happening:</p>
+
+<ul>
+  <li><code>tier: ambient</code> — runs on a slow budget (every ~2 seconds).</li>
+  <li><code>priority: 0.3</code> — relatively low priority; will be deferred if the scheduler is busy.</li>
+  <li><code>loop</code> — runs forever (until cancelled).</li>
+  <li><code>wait random(20s, 60s)</code> — pauses between 20 and 60 seconds.</li>
+  <li>Inside the loop, an <code>if/else</code> chain picks which line to play.</li>
+</ul>
+
+<p>Generators can also live inside a character:</p>
+
+<pre>CHARACTER Elena
+  generator daily_routine
+    at 6am   go_to Home
+    at 8am   go_to Bakery
+    at noon  go_to Harbor
+
+    every random(15m, 45m)
+      &lt;if: at Harbor and Weather.fog&gt;
+        yield bark from HarborFogChatter</pre>
+
+<p>
+  A character with no generators is a static prop. A character with a few
+  is a villager. A character with a dozen anchors a whole town.
+</p>
+
+<h2 id="scenes">41. Scenes — multi-step coroutines <span class="pill advanced">advanced</span></h2>
+
+<p>
+  Where a generator yields ambient content, a <code>SCENE</code> drives a
+  focused multi-step interaction.
+</p>
+
+<pre>SCENE patrol(character)
+  loop
+    wait until character.spotted_intruder
+    -&gt; investigate as character
+
+SCENE investigate(character)
+  approach
+    wait until character.at(Player.position)
+    -&gt; examine
+
+  examine
+    NPC
+      (focused)
+      Hmm. Something's not right.
+    wait until character.deduction &gt; 60
+    -&gt; confront
+
+  confront
+    return clue</pre>
+
+<p>What's new here:</p>
+
+<ul>
+  <li><strong>Parameters</strong> — <code>patrol(character)</code> takes a character to attach to.</li>
+  <li><strong>Labelled states</strong> — <code>approach</code>, <code>examine</code>, <code>confront</code> are inner state names you can jump between with <code>-&gt;</code>.</li>
+  <li><strong><code>wait until expression</code></strong> — block until the expression is true.</li>
+  <li><strong><code>return value</code></strong> — produce a value and end the scene.</li>
+</ul>
+
+<p>You launch a scene with either <code>spawn</code> (fire-and-forget) or <code>run</code> (await the return value):</p>
+
+<pre>&lt;spawn: patrol with character: Guard1&gt;            ← run in background
+
+&lt;let: outcome = run investigate(character: Wren)&gt;  ← wait for return</pre>
+
+<h2 id="scheduling">42. Tiered scheduling <span class="pill advanced">advanced</span></h2>
+
+<p>
+  When you have hundreds of characters and generators all alive at once,
+  the runtime can't tick every one of them every frame. Loom uses three
+  tiers, each with a per-tick budget:
+</p>
+
+<table>
+  <tr><th>Tier</th><th>Ticks every</th><th>Best for</th></tr>
+  <tr><td><code>focal</code></td><td>every frame (~16ms)</td><td>Active conversation, scenes the camera is in.</td></tr>
+  <tr><td><code>active</code></td><td>~100ms</td><td>Nearby NPCs, recently-spoken-with characters.</td></tr>
+  <tr><td><code>ambient</code></td><td>~2 seconds</td><td>Distant NPCs, world generators, background life.</td></tr>
+</table>
+
+<p>
+  You set a tier on a generator or scene with <code>tier: focal</code>,
+  <code>tier: active</code>, or <code>tier: ambient</code>. If you don't
+  set one, sensible defaults apply.
+</p>
+
+<p>
+  A scene marked <code>tier: focal</code> is never deferred — under load,
+  the scheduler steals budget from ambient before dropping a focal frame.
+</p>
+
+<h2 id="slots">43. Typed slots — filling holes at call sites <span class="pill advanced">advanced</span></h2>
+
+<p>
+  "Typed slots" sound technical, but the idea is small: a beat, a
+  character, or a scene can have <em>holes</em> that callers fill in.
+  This is how you reuse one beat for many similar interactions.
+</p>
+
+<h3>On a character</h3>
+
+<pre>CHARACTER Keeper
+  voice: any
+  home:  any of LOCATION
+
+CHARACTER Wren is Keeper
+  voice: female_alto
+  home:  Lighthouse</pre>
+
+<p>
+  <code>Keeper</code> has two unfilled slots (no defaults). It can't be
+  instantiated on its own — it's an abstract template. <code>Wren is
+  Keeper</code> fills the slots.
+</p>
+
+<h3>On a beat</h3>
+
+<pre>== ask_about(topic, NPC)
+  cast: NPC, Player
+
+PLAYER
+  Tell me about the {topic}.
+
+&lt;match: NPC.knows of topic&gt;
+  confirmed
+    slot: answer            ← caller fills this
+  unknown
+    NPC
+      I'm sorry. I don't know.</pre>
+
+<p>And at the call site:</p>
+
+<pre>-&gt; ask_about with topic: bell, NPC: Wren
+  answer:
+    WREN
+      The bell rings when the keeper is in danger.</pre>
+
+<p>
+  The <code>slot: answer</code> in the beat says "the caller fills this
+  with custom content." The caller's <code>answer:</code> block at the
+  divert site is what slots in. The same beat handles asking Wren about
+  the bell, asking Wren about the keepers, asking the fisher about the
+  storm — same machinery, different answer.
+</p>
+
+<hr class="section">
+
+<h2 id="projects">44. A project is a folder <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  A <strong>Loom project</strong> is a folder. Anywhere in that folder,
+  any file ending in <code>.loom</code> is part of the project. The
+  runtime loads them all, resolves names across them, and starts at
+  <code>main.loom</code>'s entry beat.
+</p>
+
+<pre>my-show/
+├── main.loom                    ← the entry point
+├── cast/
+│   ├── Wren.loom                ← one character per file (optional)
+│   ├── Player.loom
+│   └── Bellkeeper.loom
+├── locations/
+│   ├── Lighthouse.loom
+│   └── Harbor.loom
+├── stats/
+│   └── Combat.loom              ← shared stats profile
+├── factions/
+│   └── KeepersGuild.loom
+├── beats/
+│   ├── opening.loom
+│   ├── ringing.loom             ← one beat per file
+│   └── act_two/
+│       ├── confrontation.loom
+│       └── revelation.loom
+└── generators/
+    └── HarborChorus.loom        ← ambient life</pre>
+
+<p>The discipline:</p>
+
+<ul>
+  <li><strong><code>main.loom</code> is the entry.</strong> Its <code>entry:</code> property names the first beat.</li>
+  <li><strong>Folders are for humans.</strong> Loom doesn't enforce a layout. Put files where you'd look for them.</li>
+  <li><strong>Names are flat.</strong> A beat called <code>ringing</code> lives in <code>beats/ringing.loom</code> or <code>main.loom</code> or anywhere else — the resolver finds it.</li>
+  <li><strong>Any declaration can live anywhere.</strong> Wren can be in <code>cast/Wren.loom</code>, or inline in <code>main.loom</code>. Your choice.</li>
+</ul>
+
+<h2 id="cross-file">45. Diverts across files <span class="pill intermediate">intermediate</span></h2>
+
+<p>
+  Diverts cross file boundaries seamlessly. The playhead doesn't notice
+  whether the next beat is in the same file or a different one.
+</p>
+
+<table>
+  <tr><th>Form</th><th>Meaning</th></tr>
+  <tr><td><code>-&gt; ringing</code></td><td>Jump to the beat <code>ringing</code> — wherever it lives.</td></tr>
+  <tr><td><code>-&gt; Lighthouse/ringing</code></td><td>Disambiguate by folder when two beats share a name.</td></tr>
+  <tr><td><code>-&gt; Wren</code></td><td>Jump to the entry beat of the file declaring <code>Wren</code>.</td></tr>
+  <tr><td><code>-&gt; cast/Wren#backstory</code></td><td>Jump to a specific beat (<code>backstory</code>) inside <code>cast/Wren.loom</code>.</td></tr>
+  <tr><td><code>-&gt; ask_about with topic: bell, NPC: Wren</code></td><td>Parameterised — fill slots at the call site.</td></tr>
+  <tr><td><code>-&gt; (ask_about with topic: bell) -&gt;</code></td><td>Tunnel — jump, then return on <code>&lt;-</code>.</td></tr>
+  <tr><td><code>-&gt; END</code></td><td>Stop the playhead.</td></tr>
+</table>
+
+<div class="callout warn">
+  <strong>Two beats with the same name.</strong> If you accidentally
+  create two beats called <code>opening</code> in different files, the
+  resolver errors out by default — better than silently picking the
+  wrong one. Qualify with the folder name to disambiguate
+  (<code>-&gt; Lighthouse/opening</code>).
+</div>
+
+<hr class="section">
+
+<h2 id="saltmere">46. Saltmere — a small project end-to-end <span class="pill advanced">advanced</span></h2>
+
+<p>
+  Let's put everything together. Here's a small five-file project that
+  uses cross-file diverts, a reactive <code>let</code>, a hook, a
+  generator, and a parameterised beat with a typed slot.
+</p>
+
+<h5>main.loom</h5>
+<pre># Saltmere
+entry: opening
+
+let trusted = Wren.trusts.Player &gt; 50
+
+== opening
+  cast: Wren, Player
+  setting: Lighthouse
+
+INT. LIGHTHOUSE - DAWN
+
+```warn lx_dawn```
+&lt;anchor: opening_top&gt;
+
+A bell rope swings in the gloom. Wren watches it from the doorway.
+
+&lt;cue: lx_dawn&gt;
+
+WREN
+  (quietly)
+  It hasn't rung in three days.
+  ```blocking: cross to lantern on "three"```
+
+She turns the lantern up.
+
+* Ring the bell.[ I shouldn't, but I do.]
+  -&gt; ringing
+* Ask about the keepers.
+  -&gt; ask_about with topic: keepers, NPC: Wren
+* Leave quietly.
+  -&gt; END</pre>
+
+<h5>cast/Wren.loom</h5>
+<pre>CHARACTER Wren is Keeper, Combatant
+  stats:      Combat
+  voice:      female_alto
+  home:       Lighthouse
+  reputation: 60
+  hp:         80
+  attack:     4
+  knows:
+    met_player:  bool = false
+    bell_origin: unknown | suspects | confirmed = unknown
+
+  trusts Player:   30 of 100
+  respects Player: 50 of 100
+
+  reacts trust &gt; 60  → warm
+  reacts trust &lt; 10  → cold
+
+  goal find_keeper
+    priority:       0.8
+    active when:    Time.hour &gt; 6
+    completes when: Wren.knows.bell_origin == confirmed
+
+  on trust passes 80
+    -&gt; reveal_secret as Wren
+
+  on meeting Player
+    &lt;set: Wren.knows.met_player := true&gt;
+
+  generator daily_routine
+    tier: ambient
+    at 6am   &lt;goto: Wren → Lighthouse&gt;
+    at noon  &lt;goto: Wren → Harbor&gt;
+    every random(15m, 45m)
+      &lt;if: at Harbor and Weather.fog&gt;
+        yield bark from HarborFogChatter</pre>
+
+<h5>locations/Lighthouse.loom</h5>
+<pre>LOCATION Lighthouse
+  label:    The Saltmere Lighthouse
+  ambient:  wind_low
+  contains: bell_rope, brass_lantern, Wren
+  capacity: 6</pre>
+
+<h5>stats/Combat.loom</h5>
+<pre>STATS Combat
+  attribute strength = 10, range 1 to 30
+
+  pool health
+    max:   max_health
+    regen: 2/s when not in_combat
+
+  stat max_health = 50 + strength * 5
+  stat damage     = 8 + strength * 0.5</pre>
+
+<h5>beats/ringing.loom</h5>
+<pre>== ringing
+  cast: Wren, Player
+  setting: Lighthouse
+
+&lt;sfx: bell_toll&gt;
+&lt;anchor: the_bell_rings&gt;
+
+The sound carries across the rocks.
+
+WREN
+  (stunned)
+  You... rang it.
+  &lt;set: Wren.trusts.Player += 20&gt;
+  &lt;fire: bell_acknowledged&gt;
+
+&lt;if: trusted&gt;                            ← uses the let from main.loom
+  WREN
+    Then you should know what I know.
+  -&gt; ask_about with topic: bell, NPC: Wren
+&lt;else&gt;
+  WREN
+    Leave. Now.
+  -&gt; END
+
+== ask_about(topic, NPC)
+  cast: NPC, Player
+
+PLAYER
+  What can you tell me about {topic}?
+
+&lt;match: NPC.knows of topic&gt;
+  confirmed
+    slot: answer
+  suspects
+    NPC
+      I've heard rumours, but nothing I'd swear to.
+  unknown
+    NPC
+      I'm sorry. I don't know.</pre>
+
+<p>And the caller fills the answer slot at the divert site:</p>
+
+<pre>-&gt; ask_about with topic: bell, NPC: Wren
+  answer:
+    WREN
+      The bell rings when the keeper is in danger.
+      I was the last keeper before me.</pre>
+
+<div class="callout tip">
+  <strong>What you just built.</strong> A writer reads these files as a
+  screenplay. A stage manager reads the <code>``` … ```</code> notes as
+  a prompt book. A developer reads <code>&lt;…&gt;</code> directives as
+  runtime calls. A character designer reads <code>CHARACTER</code>,
+  <code>STATS</code>, <code>goal</code>, <code>on</code>,
+  <code>generator</code> as a small simulation. A producer reads the
+  folder as a breakdown. The runtime reads everything as one weave.
+  Five audiences, one project.
+</div>
+
+<h2 id="patterns">47. Common patterns <span class="pill advanced">advanced</span></h2>
+
+<h3>"Ask about…" menus</h3>
+
+<p>Sticky choices plus a parameterised beat:</p>
+
+<pre>+ Ask about the bell.
+  -&gt; ask_about with topic: bell, NPC: Wren
++ Ask about the keepers.
+  -&gt; ask_about with topic: keepers, NPC: Wren
++ Ask about the rumours.
+  -&gt; ask_about with topic: rumours, NPC: Wren
+* Stop asking.
+  -&gt; END</pre>
+
+<h3>Threshold-driven reveals</h3>
+
+<p>A hook on a disposition crossing:</p>
+
+<pre>CHARACTER Wren
+  on trust passes 80
+    -&gt; reveal_secret as Wren</pre>
+
+<p>Now any line that pushes Wren's trust past 80 — anywhere in the project — automatically triggers <code>reveal_secret</code>.</p>
+
+<h3>Hidden gossip</h3>
+
+<p>A broadcast that addresses everyone except one person:</p>
+
+<pre>&lt;broadcast: location(Tavern) but participant(Player)&gt;
+  &lt;cue: whisper_about_player&gt;</pre>
+
+<h3>A character who differs by visit</h3>
+
+<pre>== shop
+  cast: Merchant, Player
+
+&lt;each visit&gt;
+  first
+    MERCHANT
+      Welcome, traveller. First time?
+  then
+    MERCHANT
+      Back again.
+  finally
+    MERCHANT
+      You know the prices.</pre>
+
+<h3>A scene that waits on a condition</h3>
+
+<pre>SCENE wait_for_dawn(character)
+  wait until Time.hour &gt;= 6
+  &lt;goto: character → Lighthouse&gt;
+  return</pre>
+
+<hr class="section">
+
+<h2 id="cheatsheet">48. Bracket cheat sheet <span class="pill beginner">beginner</span></h2>
+
+<table>
+  <tr><th>Marker</th><th>What it is</th><th>Where</th></tr>
+  <tr><td><code>#</code></td><td>Story title.</td><td>Top of <code>main.loom</code>.</td></tr>
+  <tr><td><code>key:</code></td><td>Property line.</td><td>Header, beat contract, character body, etc.</td></tr>
+  <tr><td><code>==</code></td><td>Beat declaration.</td><td>Start of a beat.</td></tr>
+  <tr><td><code>*</code></td><td>Once-only choice.</td><td>Inside a beat.</td></tr>
+  <tr><td><code>+</code></td><td>Sticky choice.</td><td>Inside a beat.</td></tr>
+  <tr><td><code>-&gt;</code></td><td>Divert.</td><td>Inside a beat, end of choice, end of dialogue.</td></tr>
+  <tr><td><code>&lt;-</code></td><td>Tunnel return.</td><td>End of a tunnel body.</td></tr>
+  <tr><td><code>( )</code></td><td>Parenthetical — direction.</td><td>Above or inside dialogue.</td></tr>
+  <tr><td><code>{ }</code></td><td>Interpolation — value into text.</td><td>Inside dialogue or action.</td></tr>
+  <tr><td><code>[ ]</code></td><td>Choice-suppression.</td><td>Inside a choice label.</td></tr>
+  <tr><td><code>&lt; &gt;</code></td><td>Directive — runtime call.</td><td>Almost anywhere.</td></tr>
+  <tr><td><code>``` ```</code></td><td>Production note.</td><td>Inline or block, anywhere.</td></tr>
+  <tr><td><code>// …</code></td><td>Line comment (writer-only).</td><td>End of line or whole line.</td></tr>
+  <tr><td><code>/* … */</code></td><td>Block comment (writer-only).</td><td>Across lines.</td></tr>
+  <tr><td><code>INT.</code> / <code>EXT.</code></td><td>Scene heading.</td><td>Start of an action paragraph.</td></tr>
+  <tr><td><code>NAME</code> (ALL CAPS)</td><td>Speaker cue.</td><td>On its own line.</td></tr>
+  <tr><td><code>NAME | NAME</code></td><td>Multi-speaker cue.</td><td>On its own line.</td></tr>
+</table>
+
+<h2 id="keywords">49. Keyword index <span class="pill intermediate">intermediate</span></h2>
+
+<h3>Declaration kinds</h3>
+
+<table class="lookup">
+  <tr><td>CHARACTER</td><td>A person, creature, or entity that can act in the story.</td></tr>
+  <tr><td>TRAIT</td><td>A reusable bundle of behaviour mixed into a CHARACTER with <code>is</code>.</td></tr>
+  <tr><td>ITEM</td><td>An object — has properties, can be inherited from.</td></tr>
+  <tr><td>LOCATION</td><td>A named place. Capacity, ambient, contents.</td></tr>
+  <tr><td>FACTION</td><td>A group with collective state.</td></tr>
+  <tr><td>STATS</td><td>A profile of attributes, axes, pools, and computed stats.</td></tr>
+  <tr><td>TREE</td><td>A skill / talent / tech tree of unlockable nodes.</td></tr>
+  <tr><td>GENERATOR</td><td>A long-running ambient coroutine.</td></tr>
+  <tr><td>SCENE</td><td>A multi-step interaction coroutine with labelled states.</td></tr>
+  <tr><td>COHORT</td><td>A named group of participants (live performance).</td></tr>
+</table>
+
+<h3>Inside a CHARACTER / TRAIT body</h3>
+
+<table class="lookup">
+  <tr><td>is X, Y</td><td>Inherit / mix in from X and Y.</td></tr>
+  <tr><td>trusts / respects / fears</td><td>Disposition axes toward another character.</td></tr>
+  <tr><td>reacts COND → tag</td><td>Emit a tag when a condition holds.</td></tr>
+  <tr><td>knows:</td><td>Open a typed knowledge schema block.</td></tr>
+  <tr><td>mirror</td><td>Reflect a disposition value to/from another character's matching axis.</td></tr>
+  <tr><td>goal NAME</td><td>Declare a goal (a small state machine).</td></tr>
+  <tr><td>priority: / active when: / completes when: / fails when:</td><td>Goal predicates and priority.</td></tr>
+  <tr><td>drives: / on complete: / on fail:</td><td>Goal lifecycle wiring.</td></tr>
+  <tr><td>generator NAME</td><td>Character-bound generator (ambient behaviour).</td></tr>
+  <tr><td>on EVENT</td><td>Hook — runs when EVENT fires.</td></tr>
+  <tr><td>super</td><td>Inside an override, call the parent version first.</td></tr>
+  <tr><td>none</td><td>Inside an override, suppress the inherited version.</td></tr>
+</table>
+
+<h3>Inside a STATS body</h3>
+
+<table class="lookup">
+  <tr><td>attribute X = N, range A to B</td><td>Static per-character value, clamped.</td></tr>
+  <tr><td>axis X<br>mode: …<br>curve: …</td><td>Runtime-advancing dimension.</td></tr>
+  <tr><td>pool X<br>max: …<br>regen: …</td><td>Spendable resource with max + regen.</td></tr>
+  <tr><td>stat X = expression</td><td>Computed value.</td></tr>
+</table>
+
+<h3>Inside a TREE body</h3>
+
+<table class="lookup">
+  <tr><td>node X</td><td>An unlockable node.</td></tr>
+  <tr><td>cost:</td><td>What the node costs to unlock.</td></tr>
+  <tr><td>requires:</td><td>Gate — what must be true before this node can unlock.</td></tr>
+  <tr><td>effect:</td><td>What happens when unlocked.</td></tr>
+</table>
+
+<h3>Inside a SCENE body</h3>
+
+<table class="lookup">
+  <tr><td>wait until COND</td><td>Block until COND becomes true.</td></tr>
+  <tr><td>wait DURATION</td><td>Block for a fixed time.</td></tr>
+  <tr><td>at TIME</td><td>Block until the in-world clock reaches TIME.</td></tr>
+  <tr><td>loop</td><td>Repeat the body forever (or until cancelled).</td></tr>
+  <tr><td>for X in COLLECTION</td><td>Iterate.</td></tr>
+  <tr><td>yield bark from LIST</td><td>Yield one line from a named list.</td></tr>
+  <tr><td>return VALUE</td><td>End the scene, producing VALUE.</td></tr>
+</table>
+
+<h3>Inside a beat contract</h3>
+
+<table class="lookup">
+  <tr><td>cast:</td><td>Who is present.</td></tr>
+  <tr><td>setting:</td><td>Where this is.</td></tr>
+  <tr><td>with topic: / with X:</td><td>Beat parameters (for parameterised beats).</td></tr>
+</table>
+
+<h2 id="directives-table">50. Built-in directives <span class="pill intermediate">intermediate</span></h2>
+
+<h3>Syntactic directives (built into the language)</h3>
+
+<table class="lookup">
+  <tr><td>&lt;if: COND&gt;</td><td>Run the indented body if COND is true.</td></tr>
+  <tr><td>&lt;else if: COND&gt;</td><td>Chain after an <code>if</code>.</td></tr>
+  <tr><td>&lt;else&gt;</td><td>Final arm in an <code>if/else if</code> chain.</td></tr>
+  <tr><td>&lt;match: EXPR&gt;</td><td>Multi-arm dispatch.</td></tr>
+  <tr><td>&lt;for: X in COLLECTION&gt;</td><td>Iterate.</td></tr>
+  <tr><td>&lt;each visit&gt; / first / then / finally</td><td>Pick by visit count.</td></tr>
+  <tr><td>&lt;after: COND&gt; / &lt;otherwise&gt;</td><td>Latching state morph.</td></tr>
+  <tr><td>&lt;anchor: NAME&gt;</td><td>Name a position in the story.</td></tr>
+  <tr><td>&lt;let: NAME = EXPR&gt;</td><td>Inline scope-local binding.</td></tr>
+</table>
+
+<h3>Core verbs (registered as functions you can call)</h3>
+
+<table class="lookup">
+  <tr><td>&lt;sfx: NAME&gt;</td><td>Play a sound effect.</td></tr>
+  <tr><td>&lt;cue: NAME&gt;</td><td>Fire a named cue (lighting, sound, anything subscribed).</td></tr>
+  <tr><td>&lt;pause: DURATION&gt;</td><td>Wait DURATION.</td></tr>
+  <tr><td>&lt;fire: EVENT&gt;</td><td>Fire a user-named event (consumed by <code>on event …</code> hooks).</td></tr>
+  <tr><td>&lt;set: PATH OP VALUE&gt;</td><td>Mutate a value (see <a href="#set">§16</a>).</td></tr>
+  <tr><td>&lt;spawn: SCENE&gt;</td><td>Launch a scene in the background.</td></tr>
+  <tr><td>&lt;cancel: SCENE&gt;</td><td>Stop a running scene.</td></tr>
+  <tr><td>&lt;goal: PATH ACTION&gt;</td><td>Force a goal — <code>start</code>, <code>complete</code>, <code>reset</code>.</td></tr>
+  <tr><td>&lt;broadcast: SCOPE&gt;</td><td>Send the indented body only to the matching audience.</td></tr>
+  <tr><td>&lt;enroll: PARTICIPANT → COHORT&gt;</td><td>Add a participant to a cohort.</td></tr>
+  <tr><td>&lt;goto: WHO → WHERE&gt;</td><td>Move a character to a location.</td></tr>
+  <tr><td>&lt;compose: EXPR&gt;</td><td>Compose / call a Luau expression.</td></tr>
+  <tr><td>&lt;flash: COLOR, DURATION&gt;</td><td>(Example studio verb.) Flash the stage a colour.</td></tr>
+  <tr><td>&lt;heal: WHO, AMOUNT&gt;</td><td>(Example studio verb.) Heal a character.</td></tr>
+  <tr><td>&lt;shuffle: A | B | C&gt;</td><td>Random pick.</td></tr>
+  <tr><td>&lt;cycle: A | B | C&gt;</td><td>Cycle through in order.</td></tr>
+</table>
+
+<div class="callout">
+  <strong>Studios add their own.</strong> The core directives are the
+  ones every project gets for free. A particular studio (or even a
+  particular show) can add directives that make sense for them —
+  <code>&lt;moonlight&gt;</code>, <code>&lt;projector: video1&gt;</code>,
+  <code>&lt;haptic: pulse&gt;</code>. The same registry, the same
+  dispatch — the runtime doesn't care which.
+</div>
+
+<h2 id="glossary">51. Glossary <span class="pill beginner">beginner</span></h2>
+
+<dl class="glossary">
+  <dt>action line</dt>
+  <dd>A flush-left paragraph describing what happens. Borrowed from screenplay.</dd>
+  <dt>anchor</dt>
+  <dd>A named position in the story. <code>&lt;anchor: NAME&gt;</code>. Used by <code>since()</code> and <code>played()</code> queries.</dd>
+  <dt>beat</dt>
+  <dd>A named scene. Declared with <code>==</code>. The smallest unit the playhead can jump to.</dd>
+  <dt>booth</dt>
+  <dd>The live-show operator's station. Just another client of the same Loom runtime.</dd>
+  <dt>broadcast</dt>
+  <dd>A directive that sends content to a filtered subset of the audience.</dd>
+  <dt>character</dt>
+  <dd>A first-class entity with properties, knowledge, disposition, goals, and hooks. Declared with <code>CHARACTER</code>.</dd>
+  <dt>choice</dt>
+  <dd>A reader-driven branch. Starts with <code>*</code> (once-only) or <code>+</code> (sticky).</dd>
+  <dt>cohort</dt>
+  <dd>A named group of participants. Declared with <code>COHORT</code>.</dd>
+  <dt>directive</dt>
+  <dd>A runtime instruction in angle brackets. <code>&lt;sfx: bell&gt;</code>.</dd>
+  <dt>disposition</dt>
+  <dd>A character's feeling toward another character. <code>trusts</code>, <code>respects</code>, <code>fears</code>.</dd>
+  <dt>divert</dt>
+  <dd>A jump to another beat. <code>-&gt; ringing</code>.</dd>
+  <dt>generator</dt>
+  <dd>A long-running coroutine that yields ambient content. Declared with <code>GENERATOR</code> or inside a character.</dd>
+  <dt>goal</dt>
+  <dd>A small state machine on a character with active / complete / fail predicates.</dd>
+  <dt>hook</dt>
+  <dd>An event-triggered piece of behaviour on a character. <code>on meeting Player</code>, <code>on trust passes 60</code>.</dd>
+  <dt>interpolation</dt>
+  <dd>Putting a value into text with <code>{…}</code>.</dd>
+  <dt>knot</dt>
+  <dd>Another word for "beat declaration." The <code>==</code> marker. Borrowed from Ink.</dd>
+  <dt>knowledge</dt>
+  <dd>What a character has learned. Declared inside <code>knows:</code>.</dd>
+  <dt>ledger</dt>
+  <dd>The story's permanent record. Every change writes to it. Queryable.</dd>
+  <dt>let</dt>
+  <dd>A reactive binding — a name for a live formula.</dd>
+  <dt>location</dt>
+  <dd>A named place in the world. Declared with <code>LOCATION</code>.</dd>
+  <dt>participant</dt>
+  <dd>A real audience member in a live show. First-class in the runtime.</dd>
+  <dt>parenthetical</dt>
+  <dd>A direction for the performer, in <code>(parens)</code>.</dd>
+  <dt>playhead</dt>
+  <dd>The runtime's cursor through the story. Like a needle on a record.</dd>
+  <dt>project</dt>
+  <dd>A folder of <code>.loom</code> files rooted at <code>main.loom</code>.</dd>
+  <dt>reactive</dt>
+  <dd>Updates automatically when inputs change. <code>let</code>s and predicates are reactive.</dd>
+  <dt>scene</dt>
+  <dd>A multi-step coroutine with labelled inner states. Declared with <code>SCENE</code>.</dd>
+  <dt>scope (live)</dt>
+  <dd>The filter used by <code>&lt;broadcast:&gt;</code> — who hears this content.</dd>
+  <dt>slot (typed)</dt>
+  <dd>A hole in a beat / character / scene that the caller fills.</dd>
+  <dt>speaker cue</dt>
+  <dd>An ALL CAPS name on its own line indicating who speaks next.</dd>
+  <dt>sticky choice</dt>
+  <dd>A choice that doesn't disappear after being picked. Starts with <code>+</code>.</dd>
+  <dt>trait</dt>
+  <dd>A reusable behaviour bundle mixed into a character with <code>is</code>.</dd>
+  <dt>tunnel</dt>
+  <dd>A divert that returns. <code>-&gt; (x) -&gt;</code> goes; <code>&lt;-</code> comes back.</dd>
+  <dt>weave</dt>
+  <dd>The branching graph traced by all possible playheads through the story.</dd>
+</dl>
+
+<h2 id="errors">52. Common errors and what they mean <span class="pill intermediate">intermediate</span></h2>
+
+<dl class="glossary">
+  <dt>UnterminatedBlockComment</dt>
+  <dd>You opened <code>/*</code> and never closed it with <code>*/</code>. Find the opener and add a closer.</dd>
+  <dt>UnknownDivertTarget</dt>
+  <dd>You wrote <code>-&gt; foo</code> but no beat named <code>foo</code> exists anywhere in the project. Check spelling, or qualify with a folder if two beats share the name.</dd>
+  <dt>AmbiguousDivertTarget</dt>
+  <dd>Two beats with the same name exist in different files. Qualify the divert: <code>-&gt; Lighthouse/opening</code>.</dd>
+  <dt>RequiredSlotUnfilled</dt>
+  <dd>A character or trait has a required slot (no default) that nothing has filled. Either give it a default, or fill it in the child that instantiates the template.</dd>
+  <dt>UnknownDirective</dt>
+  <dd>You wrote <code>&lt;flash:&gt;</code> but no <code>flash</code> directive is registered. Check the verb name, or have the studio add it.</dd>
+  <dt>BadKnowledgeValue</dt>
+  <dd>You tried to <code>&lt;set: Wren.knows.bell_origin := maybe&gt;</code> but <code>bell_origin</code> only accepts <code>unknown | suspects | confirmed</code>. Use one of the declared values.</dd>
+  <dt>NoEntryBeat</dt>
+  <dd>Your <code>main.loom</code> has no <code>entry:</code> and no top-level <code>==</code>. Add an entry beat.</dd>
+</dl>
+
+<div class="callout tip">
+  <strong>Reading errors.</strong> Loom errors always point at a file
+  and line. The editor surfaces them inline. When in doubt, the error
+  message is more accurate than your memory — read the line it's
+  pointing at carefully before changing anything else.
+</div>
+
+<hr class="section">
+
+<h2 id="onward">Where to go from here</h2>
+
+<p>
+  You now know enough Loom to write a working story end-to-end —
+  branching, with characters who have feelings and memory, optionally
+  with live audience members and ambient world life.
+</p>
+
+<p>The natural next steps:</p>
+
+<ul>
+  <li>Read the <strong>worked examples</strong> in
+    <code>packages/loom/examples/</code> — short, self-contained projects
+    that demonstrate one feature each.</li>
+  <li>Skim the <strong>spec</strong> at <code>docs/dev/loom-v3.html</code>
+    for the full surface, including features this guide skipped (factions,
+    items, scene-coordinated multi-character scenes, multi-user authoring).</li>
+  <li>Look at the <strong>per-package</strong> <code>CLAUDE.md</code>
+    files in <code>packages/loom/</code> if you want to know how Loom is
+    implemented under the hood.</li>
+</ul>
+
+<p>
+  And when you're stuck, the best move is usually to step away from the
+  computer, sketch the scene as you'd act it out at a table read, and
+  then come back and write only the lines you'd actually say. Loom is
+  designed so the thing you write at the table is the thing the runtime
+  runs.
+</p>
+
+<div class="footer">
+  <p>
+    Loom v3 — narrative language for branching, reactive, and live
+    stories. This reference covers the user-facing surface; the
+    canonical design lives at <code>docs/dev/loom-v3.html</code>.
+  </p>
+</div>
+
+</body>
+</html>

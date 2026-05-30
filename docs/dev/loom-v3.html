@@ -431,11 +431,14 @@ the silence after the bell carries better than the dialogue.
 <ul>
   <li><strong>Header</strong> — a Markdown-style <code># Title</code>
     plus <code>key: value</code> properties.</li>
-  <li><strong>Declarations</strong> — <code>CHARACTER</code>,
+  <li><strong>Declarations</strong> — <code>ROLE</code> (a.k.a.
+    <code>CHARACTER</code>), <code>PERSON</code>, <code>ROSTER</code>,
     <code>ITEM</code>, <code>LOCATION</code>, <code>FACTION</code>,
     <code>STATS</code>, <code>TREE</code>, <code>GENERATOR</code>,
-    <code>SCENE</code>, <code>COHORT</code>, plus top-level
-    <code>let</code> bindings.</li>
+    <code>SCENE</code>, <code>COHORT</code>, <code>TRAIT</code>, plus
+    top-level <code>let</code> bindings. Every declaration is a class
+    (§9.6) — properties, <code>init</code>, <code>method</code>,
+    <code>self</code>.</li>
   <li><strong>Beats</strong> — <code>== knot_name</code> followed by a
     contract (<code>cast:</code>, <code>setting:</code>) and a woven
     body.</li>
@@ -878,6 +881,153 @@ CHARACTER ChattyGuard is Guard
   inherited hook by name: <code>on meeting Player: none</code>.
 </p>
 
+<h3 id="class-layer">9.6 The class layer — <code>init</code>, <code>self</code>, <code>method</code></h3>
+
+<p>
+  Every declarable kind in Loom — <code>CHARACTER</code>,
+  <code>TRAIT</code>, <code>ITEM</code>, <code>FACTION</code>,
+  <code>STATS</code>, <code>COHORT</code>, <code>LOCATION</code>,
+  <code>ROLE</code>, <code>SCENE</code>, <code>GENERATOR</code> — is a
+  <strong>class</strong>. The body declarations (properties, hooks,
+  generators, beats, goals, scenes) are members. Two extra forms turn
+  the class shape into a full object model: <code>init</code> for
+  construction, and <code>method</code> for callable behaviour. Inside
+  either, <code>self</code> refers to the instance under construction
+  or under call.
+</p>
+
+<pre>STATS Combat
+  attribute strength = 10, range 1 to 30
+  attribute agility  = 10, range 1 to 30
+
+  init(strength: int? = none, agility: int? = none)
+    if strength is not none
+      self.strength = strength
+    if agility is not none
+      self.agility = agility
+
+  axis level
+    mode:  xp_curve
+    curve: level * level * 50
+
+  pool health
+    max:   self.max_health
+    regen: 2/s when not self.in_combat
+
+  stat max_health = 50 + self.strength * 5
+  stat damage     = 8 + self.strength * 0.5
+
+  method swing(target)
+    let blow = self.damage + d6()
+    target.health -= blow
+    return blow
+
+  method exhausted? = self.health.current &lt; self.health.max * 0.2
+</pre>
+
+<p>
+  Construction happens at the call site. <code>stats: Combat(strength:
+  12)</code> instantiates a <code>Combat</code> object, runs
+  <code>init</code> with the named args, and binds the result to the
+  enclosing <code>stats</code> slot. The instance lives <em>inside</em>
+  the owning character; it is not flattened.
+</p>
+
+<pre>CHARACTER Wren is Keeper, Combatant
+  stats:    Combat(strength: 12)        ← real constructor call
+  loot:     LootBag(gold: 5)
+  voice:    female_alto
+
+== bell_strike
+  &lt;set: Wren.stats.health -= 4&gt;        ← canonical path
+  &lt;if: Wren.stats.exhausted?&gt;          ← method call (`?` predicate name allowed)
+    -&gt; collapse as Wren
+</pre>
+
+<h4 id="self-resolution">9.6.1 Dotted access and the embedded-profile fold</h4>
+
+<p>
+  Every member of an embedded profile is also reachable directly on the
+  owner — <em>read-only</em>, by name, with the profile's name resolving
+  the collision. The two forms are equivalent for reads:
+</p>
+
+<pre>Wren.strength            ≡ Wren.stats.strength
+Wren.health              ≡ Wren.stats.health.current
+Wren.health.max          ≡ Wren.stats.health.max
+Wren.damage              ≡ Wren.stats.damage
+Wren.swing(Goblin)       ≡ Wren.stats.swing(Goblin)        ← method fold
+</pre>
+
+<p>
+  Writes are <em>not</em> folded: <code>&lt;set: Wren.strength :=
+  14&gt;</code> is a parse-time error pointing at the canonical
+  <code>Wren.stats.strength</code>. Reads fold because authors think
+  "Wren's damage"; writes don't fold because the canonical owner of
+  mutable state must be obvious in the source. The fold also fails — at
+  bundle time — if two embedded profiles export the same name; the
+  author has to write the qualified form.
+</p>
+
+<h4 id="self-rules">9.6.2 What <code>self</code> means</h4>
+
+<p>
+  <code>self</code> is the bound instance. Inside <code>init</code> it
+  is the object being constructed; inside <code>method</code>, a
+  <code>stat</code> expression, a <code>pool</code> max/regen
+  expression, a hook body, a goal predicate, or any member-scope
+  expression, it is the owning instance. Inside a <code>method</code>
+  on a <code>STATS</code> profile, <code>self.strength</code> resolves
+  to the profile instance, not to the surrounding character; if the
+  method needs its owner, the profile receives it as an implicit
+  argument: <code>self.owner</code>.
+</p>
+
+<pre>STATS Combat
+  method describe()
+    return "{self.owner.name} hits for {self.damage}"   ← profile sees its owner
+</pre>
+
+<h4 id="ctor-shorthand">9.6.3 Constructor shorthand</h4>
+
+<p>
+  The "<code>strength: 12</code>" form authors used in v2 wasn't wrong
+  — it was just <em>too convenient to give up</em>. v3 keeps it as
+  sugar for the constructor call. An indented property block under a
+  profile slot lowers to a constructor call whose named args are the
+  block keys, in source order:
+</p>
+
+<pre>// these three forms are identical:
+stats: Combat(strength: 12, agility: 14)
+
+stats: Combat
+  strength: 12
+  agility:  14
+
+stats.strength: 12          ← single-slot override; the rest default
+stats.agility:  14
+</pre>
+
+<p>
+  The block form is the friendly default in tutorials; the call form
+  is the one IDEs round-trip and the runtime sees. The dotted form is
+  the convenience for two- or three-line overrides without nesting.
+  All three resolve to the same <code>StatsInstance</code>.
+</p>
+
+<h4 id="ctor-rules">9.6.4 What classes without an <code>init</code> do</h4>
+
+<p>
+  A declaration with no <code>init</code> gets a synthesised
+  constructor whose parameters are exactly the kind's writable
+  properties with defaults, in declaration order. Inheritance composes
+  inits the same way it composes hooks: the parent's <code>init</code>
+  runs first (top-down), then each <code>is</code>-mixed trait's, then
+  the child's. <code>super(...)</code> is available inside a child
+  <code>init</code> to pass explicit args up.
+</p>
+
 <h2 id="simulacra">10. Simulacra — characters as small simulations</h2>
 
 <p>
@@ -1054,9 +1204,18 @@ CHARACTER ChattyGuard is Guard
   stat damage     = 8 + strength * 0.5 + (equipped?.bonus or 0)
 
 CHARACTER Wren is Keeper, Combatant
-  stats: Combat                              ← include the profile
-  strength: 12
+  stats: Combat(strength: 12)                ← real constructor call (see §9.6)
 </pre>
+
+<p>
+  <code>strength: 12</code> is <em>not</em> a property of Wren — it is
+  a constructor argument to the <code>Combat</code> profile Wren
+  embeds. Wren has a <code>stats</code> slot of type <code>Combat</code>;
+  the embedded profile owns <code>strength</code>. Authors still write
+  <code>Wren.strength</code> in expressions thanks to the read-side fold
+  (§9.6.1), but the source of truth is <code>Wren.stats.strength</code>
+  and that is the path the runtime, ledger, and writes use.
+</p>
 
 <table>
   <tr><th>Primitive</th><th>Meaning</th></tr>
@@ -1242,16 +1401,266 @@ SCENE investigate(character)
   before dropping a focal frame.
 </p>
 
-<h2 id="live">13. Live performance — participants, cohorts, improv, broadcasts</h2>
+<h2 id="live">13. Live performance — roles, people, rosters, cast</h2>
 
 <p>
-  Live immersive theatre is what falls out of the rest of the
-  language when <em>participants</em> are first-class. The pieces
-  here are all that's needed; cast, story, stats, hooks all work the
-  same on stage as on a controller.
+  v2 hard-coded "audience member" as <code>PARTICIPANT</code> and left
+  scripted characters in a separate world. That split breaks the moment
+  a show has any of: an actor playing a named role, an audience member
+  promoted into a named role mid-show, a swing performer covering
+  someone who didn't arrive, an AI agent driving an NPC. Real
+  non-linear multi-participant theatre needs one model where the
+  <em>role</em> and the <em>person playing it</em> are different
+  things, freely re-bindable, and both inspectable.
 </p>
 
-<h3 id="participants">13.1 Participants &amp; cohorts</h3>
+<p>v3 collapses the live-performance surface into four nouns:</p>
+
+<table>
+  <tr><th>Noun</th><th>Is</th><th>Lifespan</th><th>Example</th></tr>
+  <tr>
+    <td><strong><code>ROLE</code></strong></td>
+    <td>A scripted character template — class, props, hooks, goals, stats. The fictional entity.</td>
+    <td>Compile-time. Reusable.</td>
+    <td><code>ROLE Wren is Keeper, Combatant</code></td>
+  </tr>
+  <tr>
+    <td><strong><code>PERSON</code></strong></td>
+    <td>A real human (or AI agent) the show knows about — pronouns, devices, accessibility, contact, schedule.</td>
+    <td>Persistent. Survives shows.</td>
+    <td><code>PERSON jamie_lee</code></td>
+  </tr>
+  <tr>
+    <td><strong><code>ROSTER</code></strong></td>
+    <td>A planned line-up for a specific run — who is expected, in what role, in what cohort, with what swings.</td>
+    <td>Pre-event → showtime.</td>
+    <td><code>ROSTER preview_night_05_28</code></td>
+  </tr>
+  <tr>
+    <td><strong><code>CAST</code></strong></td>
+    <td>The runtime binding "person X is currently playing role Y." Live, mutable, ledger-backed.</td>
+    <td>Showtime only.</td>
+    <td><code>&lt;cast: jamie_lee as Wren&gt;</code></td>
+  </tr>
+</table>
+
+<p>
+  <strong>CHARACTER is an alias for ROLE</strong> — every existing
+  <code>CHARACTER Wren is …</code> stays valid, and a project may mix
+  the two keywords freely. The doc uses <code>ROLE</code> below because
+  it makes the model legible; tutorials and the friendly reference use
+  <code>CHARACTER</code> because that's what writers already type.
+</p>
+
+<p>
+  <code>PARTICIPANT</code> stops being a kind. The phrase
+  <code>as Participant</code> still works inside hooks and diverts —
+  it's now an alias for "the person this event is about" (§13.5). The
+  generic, name-less "audience member" case is just a PERSON with no
+  ROLE bound, or with the synthetic ROLE <code>Audience</code> that
+  every project gets for free.
+</p>
+
+<h3 id="role">13.1 <code>ROLE</code> — the fictional entity</h3>
+
+<p>
+  A <code>ROLE</code> is exactly what <code>CHARACTER</code> always was:
+  a class (§9.6) with props, stats, hooks, goals, generators, beats. It
+  has no inherent notion of <em>who</em> is playing it. A role can be
+  played by an AI agent driving NPC behaviour, by a credited performer,
+  by a swing, by an audience member who was promoted into it, by
+  nobody at all (a "ghost" presence that fires hooks but produces no
+  output). Everything in §9 and §10 applies.
+</p>
+
+<pre>ROLE Wren is Keeper, Combatant
+  voice:        female_alto
+  stats:        Combat(strength: 12)
+  trusts Player: 30 of 100
+
+  on meeting Player
+    -&gt; introduce_self as self          ← self = the role's bound instance
+</pre>
+
+<h3 id="person">13.2 <code>PERSON</code> — the real human</h3>
+
+<p>
+  A <code>PERSON</code> is a class too, but its properties model the
+  human, not the fiction: pronouns, display name, accessibility notes,
+  device address, content tolerances, schedule. Persons live in the
+  project (the company's <code>people/</code> folder) and survive
+  individual runs.
+</p>
+
+<pre>PERSON jamie_lee
+  display_name:    Jamie Lee
+  pronouns:        they/them
+  email:           jamie@example.com
+  device:          jamie_phone_01
+  content_tolerance: [no_strobe, no_loud_bells]
+  accessibility:   [step_free]
+  notes:           Veteran swing. Comfortable in the Bell Tower.
+
+PERSON anonymous_walkup       ← audience members get a per-show PERSON minted
+  display_name:    Guest 12
+  device:          wristband_12
+</pre>
+
+<p>
+  The minimal PERSON is just a <code>display_name</code> + a
+  <code>device</code> (or no device at all — purely physical
+  attendance). Every other field is optional. Walk-up audience members
+  are minted into ephemeral PERSONs at the door — a kiosk, the
+  booth, or a join handshake — and the runtime treats them
+  identically to known performers. The split between "audience" and
+  "cast" is a binding, not a kind.
+</p>
+
+<h3 id="roster">13.3 <code>ROSTER</code> — planning a specific run</h3>
+
+<p>
+  A <code>ROSTER</code> is the rehearsal-and-houseplan view: <em>for
+  this performance, who is expected to play what, who covers whom, who
+  starts where</em>. Rosters are first-class declarations so they
+  round-trip into the booth UI, into the simulator, into export.
+</p>
+
+<pre>ROSTER preview_night_05_28
+  date:     2026-05-28T19:30
+  capacity: 24
+
+  cast
+    Wren        := jamie_lee
+    Bellkeeper  := raja_park
+    Initiate    := any of [audience]        ← role filled by walk-ups
+    Singer      := any of [pat_eberle, kim_ho, audience]
+
+  swings
+    Wren        := [raja_park, kim_ho]      ← covers in priority order
+    Bellkeeper  := [jamie_lee]
+
+  cohorts
+    Initiates   start with: [audience]
+    Singers     start with: [pat_eberle, kim_ho]
+
+  locations
+    BellTower   start with: [jamie_lee]     ← pre-show placement
+
+  notes
+    raja_park:     Late call — orientation skip if not in by 19:25
+    no_strobe:     Honour PERSON.content_tolerance during act two
+</pre>
+
+<p>
+  Roster slots accept <strong>concrete bindings</strong> (a named
+  PERSON), <strong>open holes</strong> (<code>any of [...]</code> — a
+  set of acceptable PERSONs, or the synthetic set
+  <code>audience</code> for any walk-up), and <strong>swing
+  chains</strong> (priority-ordered fallbacks). A roster slot left
+  empty is legal — it just means the role plays as a "ghost" until
+  someone is cast in. Diagnostics flag a roster whose holes can't be
+  filled by its declared pool, but never refuse to load — the booth
+  must be able to open a show with gaps and fix them at the door.
+</p>
+
+<p>
+  Loading a roster at showtime is one directive:
+  <code>&lt;load_roster: preview_night_05_28&gt;</code>. The runtime
+  walks the cast block and emits <code>CastBound</code> envelopes for
+  each concrete binding, <code>CastHoleOpened</code> envelopes for
+  each unfilled hole. The booth UI lists the holes and offers
+  per-PERSON fill from the live attendance set.
+</p>
+
+<h3 id="cast">13.4 <code>CAST</code> — runtime binding</h3>
+
+<p>
+  At runtime, the binding "person ↔ role" is mutable state owned by the
+  <code>CastRegistry</code>. Every relevant operation is a directive
+  with a ledger envelope:
+</p>
+
+<table>
+  <tr><th>Directive</th><th>Effect</th><th>Ledger</th></tr>
+  <tr><td><code>&lt;cast: jamie_lee as Wren&gt;</code></td>
+      <td>bind <code>jamie_lee</code> to <code>Wren</code></td>
+      <td><code>CastBound</code></td></tr>
+  <tr><td><code>&lt;uncast: Wren&gt;</code></td>
+      <td>release Wren's binding; role plays as ghost</td>
+      <td><code>CastReleased</code></td></tr>
+  <tr><td><code>&lt;recast: Wren := kim_ho&gt;</code></td>
+      <td>atomic swap (preserves running scenes, stats, goals)</td>
+      <td><code>CastSwapped</code></td></tr>
+  <tr><td><code>&lt;promote: anonymous_walkup_12 as Initiate&gt;</code></td>
+      <td>turn a walk-up audience PERSON into a named role mid-show</td>
+      <td><code>CastBound</code> + <code>RolePromoted</code></td></tr>
+  <tr><td><code>&lt;demote: kim_ho&gt;</code></td>
+      <td>kim_ho stops playing whatever role; remains a PERSON in attendance</td>
+      <td><code>CastReleased</code></td></tr>
+  <tr><td><code>&lt;enroll: jamie_lee → Initiates&gt;</code></td>
+      <td>cohort membership (unchanged from v2)</td>
+      <td><code>CohortEnrolled</code></td></tr>
+</table>
+
+<p>
+  Recast is the deep one: the role's stats, goals, hooks, and any
+  in-flight scene/generator stay alive. Only the player changes. This
+  is what lets a director swap a fainted performer mid-act without
+  losing the show's running state.
+</p>
+
+<h3 id="participant-alias">13.5 The <code>as Participant</code> alias</h3>
+
+<p>
+  In a hook or a divert, <code>Participant</code> resolves to "the
+  PERSON this event is about" — the joiner of a join event, the mover
+  of a location event, the audience member whose device tapped a cue.
+  It's a binding name, not a type. The scoped-beat form
+  (<code>-&gt; orientation as Participant</code>) overlays
+  <code>self</code> = that PERSON inside the target beat, so expressions
+  like <code>self.display_name</code>, <code>self.content_tolerance</code>,
+  or <code>self.role.trust(Player)</code> all resolve.
+</p>
+
+<pre>on participant joins
+  &lt;enroll: Participant → Initiates&gt;
+  -&gt; orientation as Participant         ← inside, `self` is that PERSON
+
+== orientation
+  cast: self
+  &lt;if: self.content_tolerance contains no_strobe&gt;
+    -&gt; gentle_intro as self
+  -&gt; standard_intro as self
+</pre>
+
+<p>
+  When the PERSON is also currently <em>playing a ROLE</em>, both faces
+  are addressable: <code>self</code> is the PERSON, <code>self.role</code>
+  is the ROLE instance they're bound to (or <code>none</code> if they're
+  unbound audience). The reverse exists too: from a ROLE-scoped beat,
+  <code>self.player</code> is the PERSON currently cast in it. Both can
+  be <code>none</code> — a PERSON not playing a role; a role with no
+  player. Authors test with <code>self.role?</code> /
+  <code>self.player?</code>.
+</p>
+
+<h3 id="presence">13.6 Presence — locations and cohorts on PERSONs</h3>
+
+<p>
+  Location and cohort membership belong to the <em>person</em>, not the
+  role. (Re-casting a fainted Wren to a swing doesn't teleport Wren's
+  body across the venue.) <code>LOCATION</code> and <code>COHORT</code>
+  retain their existing declarations and capacity semantics from v2;
+  the only change is that membership lookups now go through PERSON:
+</p>
+
+<pre>count(jamie_lee in BellTower)         ← presence query
+[p for p in Persons where p in Initiates and p.role? is Initiate]
+self.player.location                  ← from inside a ROLE method
+Wren.player?.device                   ← may be none if no one is cast
+</pre>
+
+<h3 id="cohorts">13.7 Cohorts and locations</h3>
 
 <pre>COHORT Initiates
   label:    The Initiates
@@ -1261,22 +1670,16 @@ LOCATION BellTower
   label:    The Bell Tower
   capacity: 12
 
-on participant joins
-  &lt;enroll: Participant → Initiates&gt;
-  -&gt; orientation as Participant
-
 on participant enters BellTower
   -&gt; bell_first_visit as Participant
 </pre>
 
 <p>
-  The <code>as Participant</code> modifier scopes a beat to one
-  audience member — inside such a beat, <code>trust</code> resolves to
-  <code>Participant.trust</code>, not a show-global. Many participants
-  can play the same beat simultaneously without interfering.
+  Same syntax as v2. The only thing that changed underneath is what a
+  "participant" <em>is</em>: a PERSON, not a separate kind.
 </p>
 
-<h3 id="broadcast">13.2 Broadcast scopes</h3>
+<h3 id="broadcast">13.8 Broadcast scopes</h3>
 
 <pre>&lt;broadcast: participant(Participant)&gt;
   NARRATOR
@@ -1297,7 +1700,7 @@ on participant enters BellTower
   broadcast's content stream.
 </p>
 
-<h3 id="improv">13.3 Improv with pluggable advancement</h3>
+<h3 id="improv">13.9 Improv with pluggable advancement</h3>
 
 <pre>BELLKEEPER
   (improv duration: 45s, advance on: any [pedal, speech(anchor phrase), gesture(Bow)])
@@ -1317,14 +1720,78 @@ on participant enters BellTower
   <code>any</code>, <code>quorum(N)</code>) match v2.
 </p>
 
-<h3 id="live-patching">13.4 Live patching from the booth</h3>
+<h3 id="live-patching">13.10 Live patching from the booth</h3>
+
+<p>
+  The booth and simulator both bind the same panel surface (§13.11) on
+  top of the runtime; "live patching" is just the operator side of
+  inspection. Below is what the operator can do.
+</p>
 
 <p>
   The booth UI — a Prism app on the same <code>LoomRuntime</code> —
-  can skip a participant past a beat, force-fire a cue, re-cast a
-  role, retire a participant who left, hot-reload a <code>.loom</code>
-  patch without stopping the show. Every booth action is a Loro CRDT
-  op on the same store. The booth is just another client.
+  can skip a PERSON past a beat, force-fire a cue, recast a role,
+  uncast a person who left, promote a walk-up, hot-reload a
+  <code>.loom</code> patch without stopping the show. Every booth
+  action is a Loro CRDT op on the same store. The booth is just
+  another client.
+</p>
+
+<h3 id="panels">13.11 Inspection panels — simulator and runtime parity</h3>
+
+<p>
+  The simulator (rehearsal-time) and the runtime booth (showtime) share
+  one inspection surface. Both bind to the same registries; the only
+  difference is whether time is mocked or real. The surface is built
+  out of four panels, each of which addresses the model the same way
+  whether you are sitting at a sim or running the show.
+</p>
+
+<table>
+  <tr><th>Panel</th><th>Lists</th><th>Drill-in shows</th></tr>
+  <tr>
+    <td><strong>People</strong></td>
+    <td>Every PERSON the runtime knows about</td>
+    <td>display name, pronouns, content tolerances, device status, current location, cohort memberships, current cast binding (<code>self.role</code>), recent ledger envelopes about them</td>
+  </tr>
+  <tr>
+    <td><strong>Roles</strong></td>
+    <td>Every ROLE declared in the bundle (concrete + abstract)</td>
+    <td>stats (with embedded profile fold), disposition matrix, knowledge schema state, active goal + goal queue, recent hooks fired, current player (<code>self.player</code>), in-flight scenes/generators</td>
+  </tr>
+  <tr>
+    <td><strong>Roster</strong></td>
+    <td>The loaded ROSTER + its swing chains + the live cast registry</td>
+    <td>hole status (filled / open / contested), swap history, recast suggestions from swing chains, one-click cast/uncast/recast/promote</td>
+  </tr>
+  <tr>
+    <td><strong>Stage</strong></td>
+    <td>Locations + cohorts</td>
+    <td>capacity vs. occupancy, who is where (PERSON list with their bound role inline), broadcast-scope preview, pending improv beats</td>
+  </tr>
+</table>
+
+<p>
+  Each panel row exposes a context object whose dotted paths are the
+  same the language sees. The Roles panel selecting Wren binds
+  <code>self = Wren</code> for the side pane; expressions evaluable in
+  the language (<code>self.stats.health</code>,
+  <code>self.player.display_name</code>,
+  <code>self.goals.find_keeper.state</code>) are exactly what the
+  inspector reads. No second model, no fixture-shaped DTO between the
+  runtime and the panel.
+</p>
+
+<p>
+  The People panel is the side that v2 never had a clean answer for:
+  it is where the operator sees that <em>Jamie Lee</em> (PERSON) is
+  currently playing <em>Wren</em> (ROLE), is standing in the BellTower,
+  is enrolled in Initiates, has flagged <code>no_strobe</code> as a
+  content tolerance, and last triggered a <code>bell_strike</code>
+  cue. The Roles panel is the same data viewed through the fiction:
+  Wren has 12 strength, is pursuing the <code>find_keeper</code> goal,
+  is currently played by Jamie Lee. Pick whichever face the moment
+  needs.
 </p>
 
 <h2 id="directives">14. Runtime directives — Luau function calls</h2>

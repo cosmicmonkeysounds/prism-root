@@ -25,6 +25,7 @@ use crate::ast::DeclarationKind;
 /// first whitespace-delimited word and matches against this list.
 pub const DECLARATIONS: &[&str] = &[
     "CHARACTER",
+    "ROLE",
     "TRAIT",
     "ITEM",
     "LOCATION",
@@ -34,6 +35,8 @@ pub const DECLARATIONS: &[&str] = &[
     "GENERATOR",
     "SCENE",
     "COHORT",
+    "PERSON",
+    "ROSTER",
 ];
 
 /// Directive verbs whose **shape** is part of the grammar (spec §14.2).
@@ -59,7 +62,20 @@ pub const SYNTACTIC_DIRECTIVES: &[&str] = &[
 /// Builtin directive verbs registered by `loom_runtime::builtins`.
 /// Highlighted distinctly so authors can tell core verbs from
 /// project-defined Luau directives at a glance.
-pub const BUILTIN_DIRECTIVES: &[&str] = &["sfx", "cue", "pause", "anchor", "fire", "set"];
+pub const BUILTIN_DIRECTIVES: &[&str] = &[
+    "sfx",
+    "cue",
+    "pause",
+    "anchor",
+    "fire",
+    "set",
+    "cast",
+    "uncast",
+    "recast",
+    "promote",
+    "demote",
+    "load_roster",
+];
 
 /// Contract-zone property keys that have grammar-level meaning under a
 /// `==` knot opener or beat heading (spec §6, §13).
@@ -88,7 +104,9 @@ pub const SCENE_HEADING_PREFIXES: &[&str] = &["INT.", "EXT.", "INT/EXT", "INT./E
 /// Reserved keyword words that appear *inside* lines (not as openers):
 /// `let`, `is` (mixin), `with` (divert parameters), `END` (divert
 /// target).
-pub const RESERVED_INLINE: &[&str] = &["let", "is", "with", "END", "super", "none"];
+pub const RESERVED_INLINE: &[&str] = &[
+    "let", "is", "with", "END", "super", "none", "self", "init", "method",
+];
 
 /// Live-performance vocabulary (spec §13) — keywords the editor
 /// highlights distinctly so authors can read participant flow,
@@ -212,6 +230,7 @@ pub fn declarations_with_kind() -> impl Iterator<Item = (&'static str, Declarati
     use DeclarationKind::*;
     [
         ("CHARACTER", Character),
+        ("ROLE", Role),
         ("TRAIT", Trait),
         ("ITEM", Item),
         ("LOCATION", Location),
@@ -221,6 +240,8 @@ pub fn declarations_with_kind() -> impl Iterator<Item = (&'static str, Declarati
         ("GENERATOR", Generator),
         ("SCENE", Scene),
         ("COHORT", Cohort),
+        ("PERSON", Person),
+        ("ROSTER", Roster),
     ]
     .into_iter()
 }

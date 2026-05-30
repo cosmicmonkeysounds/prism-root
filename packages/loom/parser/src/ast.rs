@@ -104,6 +104,143 @@ pub struct Declaration {
     /// Structured body for FACTION (spec §9).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub faction: Option<FactionBody>,
+    /// Structured body for PERSON (spec v3 §13.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person: Option<PersonBody>,
+    /// Structured body for ROSTER (spec v3 §13.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roster: Option<RosterBody>,
+    pub span: Span,
+}
+
+/// Structured PERSON body (spec v3 §13.2). A PERSON is a real human
+/// (or AI agent) — display name, pronouns, device, accessibility,
+/// content tolerances. Persons survive individual shows.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PersonBody {
+    pub display_name: Option<String>,
+    pub pronouns: Option<String>,
+    pub email: Option<String>,
+    pub device: Option<String>,
+    /// `content_tolerance: [no_strobe, no_loud_bells]` — comma-list of bare names.
+    pub content_tolerance: Vec<String>,
+    /// `accessibility: [step_free]`.
+    pub accessibility: Vec<String>,
+    pub notes: Option<String>,
+    /// All `key: value` lines in source order for round-trip.
+    pub properties: IndexMap<String, PropertyValue>,
+}
+
+/// Structured ROSTER body (spec v3 §13.3). The lineup for a specific
+/// run — who is expected, in what role, in what cohort, with what
+/// swing chain.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RosterBody {
+    /// ISO-ish date string (the parser does not enforce a calendar).
+    pub date: Option<String>,
+    /// Soft cap on expected attendees.
+    pub capacity: Option<u32>,
+    /// `cast` block — role → assignment (`jamie_lee`, `any of [...]`).
+    pub cast: Vec<RosterCastEntry>,
+    /// `swings` block — role → priority-ordered list of fallback persons.
+    pub swings: Vec<RosterSwingEntry>,
+    /// `cohorts` block — cohort → `start with: [person, …]`.
+    pub cohorts: Vec<RosterCohortEntry>,
+    /// `locations` block — location → `start with: [person, …]`.
+    pub locations: Vec<RosterLocationEntry>,
+    /// `notes` block — free-form `key: value` lines.
+    pub notes: IndexMap<String, PropertyValue>,
+    /// Every `key: value` on the opener level, for round-trip.
+    pub properties: IndexMap<String, PropertyValue>,
+}
+
+/// One row of a ROSTER `cast` block.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RosterCastEntry {
+    pub role: String,
+    pub assignment: RosterAssignment,
+    pub span: Span,
+}
+
+/// A ROSTER `cast`-block assignment.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum RosterAssignment {
+    /// `Wren := jamie_lee` — concrete binding to a named PERSON.
+    Person(String),
+    /// `Initiate := any of [audience]` — a pool of acceptable
+    /// PERSONs. The synthetic name `audience` matches any walk-up.
+    AnyOf(Vec<String>),
+    /// Empty / `none` — slot starts as a ghost (no player bound).
+    Ghost,
+}
+
+/// One row of a ROSTER `swings` block.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RosterSwingEntry {
+    pub role: String,
+    /// Priority-ordered fallback PERSON names.
+    pub fallbacks: Vec<String>,
+    pub span: Span,
+}
+
+/// One row of a ROSTER `cohorts` block.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RosterCohortEntry {
+    pub cohort: String,
+    pub start_with: Vec<String>,
+    pub span: Span,
+}
+
+/// One row of a ROSTER `locations` block.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RosterLocationEntry {
+    pub location: String,
+    pub start_with: Vec<String>,
+    pub span: Span,
+}
+
+/// `init(args)` constructor body — recognised inside every class-like
+/// declaration (CHARACTER / ROLE / TRAIT / STATS / ITEM / FACTION /
+/// PERSON / ROSTER / COHORT / LOCATION). Spec v3 §9.6.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct InitDecl {
+    /// Parameter names in declaration order. The default-value tail
+    /// (`= none`) is preserved on each entry.
+    pub params: Vec<InitParam>,
+    pub body: Vec<RawLine>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InitParam {
+    pub name: String,
+    /// Raw type spelling (`int?`, `string`, …), if given.
+    pub raw_type: Option<String>,
+    /// Raw default expression text (`none`, `0`, …), if given.
+    pub default: Option<String>,
+}
+
+/// `method name(args)` — a callable on the instance. Spec v3 §9.6.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MethodDecl {
+    pub name: String,
+    pub params: Vec<InitParam>,
+    /// Inline `method exhausted? = self.health < ...` form lifts the
+    /// right-hand expression here. When set, `body` is empty.
+    pub inline_expr: Option<String>,
+    pub body: Vec<RawLine>,
+    pub span: Span,
+}
+
+/// A constructor call in a property-value position — `Combat(strength:
+/// 12, agility: 14)`. Used as the structured form of a `stats:` slot
+/// or any other typed slot that holds an embedded class instance.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConstructorCall {
+    /// Class name on the call — `Combat`, `LootBag`, …
+    pub class: String,
+    /// Named args in source order.
+    pub args: IndexMap<String, String>,
     pub span: Span,
 }
 
@@ -295,6 +432,17 @@ pub struct CharacterBody {
     /// `stats: Combat` — name of the STATS profile this character
     /// instantiates. Sugar over `properties["stats"]`.
     pub stats_profile: Option<String>,
+    /// Structured constructor call form — `stats: Combat(strength: 12)`.
+    /// When present, `stats_profile` carries the class name and this
+    /// holds the named arguments (spec v3 §9.6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stats_ctor: Option<ConstructorCall>,
+    /// `init(args)` constructor body, when declared (spec v3 §9.6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub init: Option<InitDecl>,
+    /// `method name(args)` callables on the instance (spec v3 §9.6).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub methods: Vec<MethodDecl>,
     /// `trusts X: N of M [mirror …]` etc.
     pub disposition: Vec<DispositionAxis>,
     /// `reacts <cond> → <tag>`.
@@ -445,6 +593,14 @@ pub struct StatsBody {
     pub axes: Vec<AxisDecl>,
     pub pools: Vec<PoolDecl>,
     pub stats: Vec<StatExprDecl>,
+    /// `init(args)` constructor (spec v3 §9.6). When absent, a
+    /// synthesised constructor takes named args for each writable
+    /// attribute and applies them in source order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub init: Option<InitDecl>,
+    /// `method name(args)` callables (spec v3 §9.6).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub methods: Vec<MethodDecl>,
 }
 
 /// `attribute strength = 10, range 1 to 30` (spec §11).
@@ -512,6 +668,9 @@ pub struct TreeNodeDecl {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum DeclarationKind {
     Character,
+    /// Friendly alias for [`Self::Character`] (spec v3 §13). Parses
+    /// identically; bundles materialise into the same role registry.
+    Role,
     Trait,
     Item,
     Location,
@@ -521,6 +680,10 @@ pub enum DeclarationKind {
     Generator,
     Scene,
     Cohort,
+    /// A real human (or AI agent) the show knows about (spec v3 §13.2).
+    Person,
+    /// A planned line-up for a specific run (spec v3 §13.3).
+    Roster,
 }
 
 impl DeclarationKind {
@@ -528,6 +691,7 @@ impl DeclarationKind {
     pub fn keyword(self) -> &'static str {
         match self {
             Self::Character => "CHARACTER",
+            Self::Role => "ROLE",
             Self::Trait => "TRAIT",
             Self::Item => "ITEM",
             Self::Location => "LOCATION",
@@ -537,12 +701,15 @@ impl DeclarationKind {
             Self::Generator => "GENERATOR",
             Self::Scene => "SCENE",
             Self::Cohort => "COHORT",
+            Self::Person => "PERSON",
+            Self::Roster => "ROSTER",
         }
     }
 
     pub fn from_keyword(word: &str) -> Option<Self> {
         Some(match word {
             "CHARACTER" => Self::Character,
+            "ROLE" => Self::Role,
             "TRAIT" => Self::Trait,
             "ITEM" => Self::Item,
             "LOCATION" => Self::Location,
@@ -552,8 +719,17 @@ impl DeclarationKind {
             "GENERATOR" => Self::Generator,
             "SCENE" => Self::Scene,
             "COHORT" => Self::Cohort,
+            "PERSON" => Self::Person,
+            "ROSTER" => Self::Roster,
             _ => return None,
         })
+    }
+
+    /// True for kinds that share the CHARACTER body shape — properties,
+    /// hooks, generators, stats inclusion, disposition, knowledge. ROLE
+    /// is a strict alias.
+    pub fn is_role_like(self) -> bool {
+        matches!(self, Self::Character | Self::Role)
     }
 }
 

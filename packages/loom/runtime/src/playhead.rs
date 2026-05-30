@@ -137,6 +137,13 @@ struct Frame {
     /// (or absence) is captured here; popping the frame restores
     /// every entry so the binding doesn't leak project-wide.
     let_overrides: indexmap::IndexMap<String, Option<Value>>,
+    /// True when this frame was entered via a `<-` tunnel — the
+    /// matching saved continuation sits on top of
+    /// `pending_returns`. False for plain `->` diverts (including
+    /// hook-fired diverts). Tracked so an `-> END` inside the frame
+    /// pops the right amount of bookkeeping when treating END as
+    /// "I'm done; whoever called me carries on".
+    tunneled: bool,
 }
 
 pub struct Playhead {
@@ -423,7 +430,13 @@ impl Playhead {
             let next = match self.queue.pop_front() {
                 Some(y) => y,
                 None => {
-                    // Beat exhausted without an explicit divert.
+                    // Beat exhausted without an explicit divert. If an
+                    // outer caller is still on the stack, fall back
+                    // into it just like an implicit `-> END`; only
+                    // halt once nothing's left.
+                    if self.pop_frame_for_completion() {
+                        continue;
+                    }
                     return Ok(self.halt());
                 }
             };
@@ -492,7 +505,7 @@ impl Playhead {
                         target: target.name.clone(),
                         beat: beat.name.clone(),
                     });
-                    self.enter_beat(beat_ref);
+                    self.enter_beat_tunneled(beat_ref);
                     // Re-park the saved continuation behind a Return
                     // sentinel so the next `<-` pops the frame and
                     // resumes the saved queue.
@@ -516,7 +529,15 @@ impl Playhead {
                     }
                 }
                 Yield::End => {
-                    return Ok(self.halt());
+                    // Treat `-> END` as "this beat is done" rather than
+                    // "halt the whole show" whenever there's still an
+                    // outer frame to return to (a divert / hook-fired
+                    // divert / tunnel left a caller in play). The true
+                    // halt only fires once the stack is back to its
+                    // entry-beat root and no more body remains.
+                    if !self.pop_frame_for_completion() {
+                        return Ok(self.halt());
+                    }
                 }
                 Yield::Directive(directive) => {
                     // `<shuffle: a | b | c>` / `<cycle: a | b | c>` —
@@ -1124,11 +1145,25 @@ impl Playhead {
         self.enter_beat_with(beat_ref, None, indexmap::IndexMap::new());
     }
 
+    fn enter_beat_tunneled(&mut self, beat_ref: BeatRef) {
+        self.enter_beat_inner(beat_ref, None, indexmap::IndexMap::new(), true);
+    }
+
     fn enter_beat_with(
         &mut self,
         beat_ref: BeatRef,
         scope_as: Option<String>,
         slots: indexmap::IndexMap<String, Vec<BodyItem>>,
+    ) {
+        self.enter_beat_inner(beat_ref, scope_as, slots, false);
+    }
+
+    fn enter_beat_inner(
+        &mut self,
+        beat_ref: BeatRef,
+        scope_as: Option<String>,
+        slots: indexmap::IndexMap<String, Vec<BodyItem>>,
+        tunneled: bool,
     ) {
         let beat = self.bundle.beat(beat_ref).clone();
         let file = self.bundle.file(beat_ref.file);
@@ -1142,11 +1177,39 @@ impl Playhead {
             scope_as,
             slots,
             let_overrides: indexmap::IndexMap::new(),
+            tunneled,
         });
         let lowered = self.lower_body(&beat.body);
         for y in lowered.into_iter().rev() {
             self.queue.push_front(y);
         }
+    }
+
+    /// Pop the topmost frame as if its body completed normally —
+    /// shared by `Yield::End` and "queue exhausted" so both forms of
+    /// "this beat is done" return to the caller instead of slamming
+    /// the entire show shut. Returns `false` (without mutating) when
+    /// the stack is already at its entry root, signalling the caller
+    /// to fall through to `halt()`. If the popped frame was a tunnel,
+    /// restores its saved continuation queue the same way
+    /// `Yield::Return` does.
+    fn pop_frame_for_completion(&mut self) -> bool {
+        if self.stack.len() <= 1 {
+            return false;
+        }
+        let was_tunneled = self.stack.last().map(|f| f.tunneled).unwrap_or(false);
+        self.pop_frame_restoring_lets();
+        self.ledger.push(Event::Returned);
+        if was_tunneled {
+            if let Some(saved) = self.pending_returns.pop() {
+                let mut resumed = saved;
+                while let Some(y) = self.queue.pop_back() {
+                    resumed.push_front(y);
+                }
+                self.queue = resumed;
+            }
+        }
+        true
     }
 
     fn halt(&mut self) -> Step {
@@ -2078,7 +2141,9 @@ Curtain.
         let src = "
 == opening
 First.
+
 Second.
+
 Third.
 ";
         let bundle = Arc::new(Bundle::from_sources([("main.loom", src)]));

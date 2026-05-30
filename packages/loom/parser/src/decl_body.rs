@@ -8,9 +8,11 @@
 //! what they saw before.
 
 use crate::ast::{
-    AttributeDecl, AxisDecl, CharacterBody, CohortBody, Declaration, DeclarationKind,
-    DispositionAxis, FactionBody, GeneratorBody, GeneratorDecl, GoalDecl, HookDecl, ItemBody,
-    KnowledgeField, LocationBody, PoolDecl, Property, PropertyValue, RawLine, ReactClause,
+    AttributeDecl, AxisDecl, CharacterBody, CohortBody, ConstructorCall, Declaration,
+    DeclarationKind, DispositionAxis, FactionBody, GeneratorBody, GeneratorDecl, GoalDecl,
+    HookDecl, InitDecl, InitParam, ItemBody, KnowledgeField, LocationBody, MethodDecl,
+    PersonBody, PoolDecl, Property, PropertyValue, RawLine, ReactClause, RosterAssignment,
+    RosterBody, RosterCastEntry, RosterCohortEntry, RosterLocationEntry, RosterSwingEntry,
     SceneBody, SceneState, SlotType, StatExprDecl, StatsBody, TreeBody, TreeNodeDecl,
 };
 use crate::diagnostics::{Code, Diagnostic};
@@ -22,7 +24,7 @@ use crate::source::Span;
 /// fallback.
 pub fn lower(decl: &mut Declaration, diagnostics: &mut Vec<Diagnostic>) {
     match decl.kind {
-        DeclarationKind::Character | DeclarationKind::Trait => {
+        DeclarationKind::Character | DeclarationKind::Role | DeclarationKind::Trait => {
             decl.character = Some(lower_character(&decl.body, diagnostics));
         }
         DeclarationKind::Stats => {
@@ -56,6 +58,12 @@ pub fn lower(decl: &mut Declaration, diagnostics: &mut Vec<Diagnostic>) {
                 inherits: decl.mixin.clone(),
                 properties: lower_typed_properties(&decl.body),
             });
+        }
+        DeclarationKind::Person => {
+            decl.person = Some(lower_person(&decl.body));
+        }
+        DeclarationKind::Roster => {
+            decl.roster = Some(lower_roster(&decl.body));
         }
     }
 }
@@ -534,6 +542,46 @@ fn lower_character(body: &[RawLine], diagnostics: &mut Vec<Diagnostic>) -> Chara
             continue;
         }
 
+        // `init(args)` constructor (spec v3 §9.6).
+        if is_init_opener(text) {
+            let (params, _inline_body) = parse_init_signature(text);
+            let mut init = InitDecl {
+                params,
+                body: Vec::new(),
+                span: line.span,
+            };
+            i += 1;
+            while i < body.len() && body[i].indent > base_indent {
+                init.body.push(body[i].clone());
+                init.span = Span::new(init.span.start, body[i].span.end);
+                i += 1;
+            }
+            out.init = Some(init);
+            continue;
+        }
+
+        // `method name(args)` (spec v3 §9.6). The inline `method foo =
+        // expr` form lifts the right-hand side onto `inline_expr` and
+        // leaves the body empty.
+        if let Some(rest) = text.strip_prefix("method ") {
+            if let Some(mut method) = parse_method_opener(rest, line.span) {
+                if method.inline_expr.is_none() {
+                    i += 1;
+                    while i < body.len() && body[i].indent > base_indent {
+                        method.body.push(body[i].clone());
+                        method.span = Span::new(method.span.start, body[i].span.end);
+                        i += 1;
+                    }
+                } else {
+                    i += 1;
+                }
+                out.methods.push(method);
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+
         // `generator name`.
         if let Some(rest) = text.strip_prefix("generator ") {
             let name = rest.trim().to_string();
@@ -586,10 +634,63 @@ fn lower_character(body: &[RawLine], diagnostics: &mut Vec<Diagnostic>) -> Chara
             continue;
         }
 
-        // Plain `key: value` property.
+        // Plain `key: value` property. Special-cases:
+        //   * `stats: Combat(strength: 12)` → structured ConstructorCall
+        //     captured on `stats_ctor`, with `stats_profile` carrying
+        //     the class name (spec v3 §9.6.3 canonical form).
+        //   * `stats: Combat` followed by an indented `strength: 12`
+        //     block → same lowering as the call form (spec v3 §9.6.3
+        //     block sugar). The inner lines are consumed.
+        //   * `stats.strength: 12` → dotted overrides folded into the
+        //     stats_ctor args (spec v3 §9.6.3 dotted sugar).
         if let Some((key, value)) = split_property(text) {
             if key == "stats" {
+                if let Some(call) = parse_constructor_call(value, line.span) {
+                    out.stats_profile = Some(call.class.clone());
+                    out.stats_ctor = Some(call);
+                    i += 1;
+                    continue;
+                }
+                // Bare `stats: Combat` — possibly followed by an
+                // indented block sugar.
                 out.stats_profile = Some(value.to_string());
+                let mut ctor = ConstructorCall {
+                    class: value.to_string(),
+                    args: indexmap::IndexMap::new(),
+                    span: line.span,
+                };
+                i += 1;
+                while i < body.len() && body[i].indent > base_indent {
+                    let inner = body[i].text.trim();
+                    if let Some((k, v)) = split_property(inner) {
+                        ctor.args.insert(k.to_string(), v.to_string());
+                        ctor.span = Span::new(ctor.span.start, body[i].span.end);
+                    }
+                    i += 1;
+                }
+                if !ctor.args.is_empty() {
+                    out.stats_ctor = Some(ctor);
+                }
+                continue;
+            }
+            // Dotted override `stats.<field>: <value>`.
+            if let Some(field) = key.strip_prefix("stats.") {
+                let entry = out.stats_ctor.get_or_insert_with(|| ConstructorCall {
+                    class: out.stats_profile.clone().unwrap_or_default(),
+                    args: indexmap::IndexMap::new(),
+                    span: line.span,
+                });
+                entry.args.insert(field.to_string(), value.to_string());
+                entry.span = Span::new(entry.span.start, line.span.end);
+                out.properties.insert(
+                    key.to_string(),
+                    PropertyValue {
+                        value: value.to_string(),
+                        span: line.span,
+                    },
+                );
+                i += 1;
+                continue;
             }
             out.properties.insert(
                 key.to_string(),
@@ -612,6 +713,170 @@ fn lower_character(body: &[RawLine], diagnostics: &mut Vec<Diagnostic>) -> Chara
         // body is still on `decl.body` for downstream tooling.
         i += 1;
     }
+    out
+}
+
+// ---------------------------------------------------------------------
+// Class layer — init / method / constructor calls (spec v3 §9.6)
+// ---------------------------------------------------------------------
+
+fn is_init_opener(text: &str) -> bool {
+    text == "init" || text.starts_with("init(") || text.starts_with("init ")
+}
+
+/// Parse `init(name: type? = default, …)` into a parameter list.
+/// Returns the params and any inline trailing expression (currently
+/// unused — `init = expr` forms are not in the spec but we accept the
+/// shape so we can extend later without breaking parses).
+fn parse_init_signature(text: &str) -> (Vec<InitParam>, Option<String>) {
+    let rest = text.trim_start_matches("init").trim();
+    if rest.is_empty() {
+        return (Vec::new(), None);
+    }
+    if let Some(stripped) = rest.strip_prefix('(') {
+        if let Some(end) = stripped.rfind(')') {
+            let inner = &stripped[..end];
+            return (parse_param_list(inner), None);
+        }
+    }
+    (Vec::new(), None)
+}
+
+fn parse_param_list(inner: &str) -> Vec<InitParam> {
+    let mut params = Vec::new();
+    for raw in split_top_level_commas(inner) {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        // `name: type? = default`
+        let (head, default) = match raw.split_once('=') {
+            Some((h, d)) => (h.trim(), Some(d.trim().to_string())),
+            None => (raw, None),
+        };
+        let (name, raw_type) = match head.split_once(':') {
+            Some((n, t)) => (n.trim().to_string(), Some(t.trim().to_string())),
+            None => (head.to_string(), None),
+        };
+        if name.is_empty() {
+            continue;
+        }
+        params.push(InitParam {
+            name,
+            raw_type,
+            default,
+        });
+    }
+    params
+}
+
+fn parse_method_opener(rest: &str, span: Span) -> Option<MethodDecl> {
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    // `method name = expr` — inline form.
+    if let Some((head, expr)) = rest.split_once('=') {
+        let head = head.trim();
+        // Watch for `method name() = expr` shape too.
+        let (name, params) = parse_method_head(head);
+        if name.is_empty() {
+            return None;
+        }
+        return Some(MethodDecl {
+            name,
+            params,
+            inline_expr: Some(expr.trim().to_string()),
+            body: Vec::new(),
+            span,
+        });
+    }
+    let (name, params) = parse_method_head(rest);
+    if name.is_empty() {
+        return None;
+    }
+    Some(MethodDecl {
+        name,
+        params,
+        inline_expr: None,
+        body: Vec::new(),
+        span,
+    })
+}
+
+fn parse_method_head(text: &str) -> (String, Vec<InitParam>) {
+    if let Some(open) = text.find('(') {
+        let head = text[..open].trim().to_string();
+        let tail = &text[open + 1..];
+        let close = tail.rfind(')').unwrap_or(tail.len());
+        let params = parse_param_list(&tail[..close]);
+        (head, params)
+    } else {
+        (text.trim().to_string(), Vec::new())
+    }
+}
+
+/// Recognise a constructor-call literal — `Combat(strength: 12)`. The
+/// class name must look like an identifier and the open-paren must
+/// immediately follow it (no space). Args are named (`name: value`).
+pub(crate) fn parse_constructor_call(text: &str, span: Span) -> Option<ConstructorCall> {
+    let text = text.trim();
+    let open = text.find('(')?;
+    let class = text[..open].trim();
+    if class.is_empty() {
+        return None;
+    }
+    if !class
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return None;
+    }
+    if !class
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_uppercase() || c == '_')
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let tail = &text[open + 1..];
+    let close = tail.rfind(')')?;
+    let inner = &tail[..close];
+    let mut args = indexmap::IndexMap::new();
+    for raw in split_top_level_commas(inner) {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        if let Some((k, v)) = raw.split_once(':') {
+            args.insert(k.trim().to_string(), v.trim().to_string());
+        }
+    }
+    Some(ConstructorCall {
+        class: class.to_string(),
+        args,
+        span,
+    })
+}
+
+fn split_top_level_commas(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    let bytes = text.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        match b as char {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(text[start..i].to_string());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(text[start..].to_string());
     out
 }
 
@@ -893,6 +1158,44 @@ fn lower_stats(body: &[RawLine], diagnostics: &mut Vec<Diagnostic>) -> StatsBody
             continue;
         }
 
+        // `init(args)` — STATS classes can have constructors too (spec v3 §9.6).
+        if is_init_opener(text) {
+            let (params, _) = parse_init_signature(text);
+            let mut init = InitDecl {
+                params,
+                body: Vec::new(),
+                span: line.span,
+            };
+            i += 1;
+            while i < body.len() && body[i].indent > base_indent {
+                init.body.push(body[i].clone());
+                init.span = Span::new(init.span.start, body[i].span.end);
+                i += 1;
+            }
+            out.init = Some(init);
+            continue;
+        }
+
+        // `method name(args)` — STATS class methods (spec v3 §9.6).
+        if let Some(rest) = text.strip_prefix("method ") {
+            if let Some(mut method) = parse_method_opener(rest, line.span) {
+                if method.inline_expr.is_none() {
+                    i += 1;
+                    while i < body.len() && body[i].indent > base_indent {
+                        method.body.push(body[i].clone());
+                        method.span = Span::new(method.span.start, body[i].span.end);
+                        i += 1;
+                    }
+                } else {
+                    i += 1;
+                }
+                out.methods.push(method);
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+
         i += 1;
     }
     out
@@ -977,4 +1280,218 @@ fn lower_tree(body: &[RawLine], diagnostics: &mut Vec<Diagnostic>) -> TreeBody {
         i += 1;
     }
     out
+}
+
+// ---------------------------------------------------------------------
+// PERSON (spec v3 §13.2)
+// ---------------------------------------------------------------------
+
+fn lower_person(body: &[RawLine]) -> PersonBody {
+    let mut out = PersonBody::default();
+    for line in body {
+        let text = line.text.trim();
+        let Some((key, value)) = split_property(text) else {
+            continue;
+        };
+        match key {
+            "display_name" => out.display_name = Some(value.to_string()),
+            "pronouns" => out.pronouns = Some(value.to_string()),
+            "email" => out.email = Some(value.to_string()),
+            "device" => out.device = Some(value.to_string()),
+            "notes" => out.notes = Some(value.to_string()),
+            "content_tolerance" => out.content_tolerance = parse_bracketed_list(value),
+            "accessibility" => out.accessibility = parse_bracketed_list(value),
+            _ => {}
+        }
+        out.properties.insert(
+            key.to_string(),
+            PropertyValue {
+                value: value.to_string(),
+                span: line.span,
+            },
+        );
+    }
+    out
+}
+
+/// Split `[a, b, c]` (or bare `a, b, c`) into a vec of trimmed tokens.
+fn parse_bracketed_list(raw: &str) -> Vec<String> {
+    let trimmed = raw
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    trimmed
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+// ---------------------------------------------------------------------
+// ROSTER (spec v3 §13.3)
+// ---------------------------------------------------------------------
+
+fn lower_roster(body: &[RawLine]) -> RosterBody {
+    let mut out = RosterBody::default();
+    let base_indent = body.first().map(|l| l.indent).unwrap_or(0);
+
+    let mut i = 0;
+    while i < body.len() {
+        let line = &body[i];
+        if line.indent > base_indent {
+            i += 1;
+            continue;
+        }
+        let text = line.text.trim();
+
+        // Section openers.
+        match text {
+            "cast" | "cast:" => {
+                i += 1;
+                while i < body.len() && body[i].indent > base_indent {
+                    let inner = body[i].text.trim();
+                    if let Some(entry) = parse_cast_entry(inner, body[i].span) {
+                        out.cast.push(entry);
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            "swings" | "swings:" => {
+                i += 1;
+                while i < body.len() && body[i].indent > base_indent {
+                    let inner = body[i].text.trim();
+                    if let Some(entry) = parse_swing_entry(inner, body[i].span) {
+                        out.swings.push(entry);
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            "cohorts" | "cohorts:" => {
+                i += 1;
+                while i < body.len() && body[i].indent > base_indent {
+                    let inner = body[i].text.trim();
+                    if let Some(entry) = parse_cohort_entry(inner, body[i].span) {
+                        out.cohorts.push(entry);
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            "locations" | "locations:" => {
+                i += 1;
+                while i < body.len() && body[i].indent > base_indent {
+                    let inner = body[i].text.trim();
+                    if let Some(entry) = parse_location_entry(inner, body[i].span) {
+                        out.locations.push(entry);
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            "notes" | "notes:" => {
+                i += 1;
+                while i < body.len() && body[i].indent > base_indent {
+                    let inner = body[i].text.trim();
+                    if let Some((k, v)) = split_property(inner) {
+                        out.notes.insert(
+                            k.to_string(),
+                            PropertyValue {
+                                value: v.to_string(),
+                                span: body[i].span,
+                            },
+                        );
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            _ => {}
+        }
+
+        if let Some((key, value)) = split_property(text) {
+            match key {
+                "date" => out.date = Some(value.to_string()),
+                "capacity" => out.capacity = value.parse::<u32>().ok(),
+                _ => {}
+            }
+            out.properties.insert(
+                key.to_string(),
+                PropertyValue {
+                    value: value.to_string(),
+                    span: line.span,
+                },
+            );
+        }
+        i += 1;
+    }
+    out
+}
+
+fn parse_cast_entry(text: &str, span: Span) -> Option<RosterCastEntry> {
+    // `Wren        := jamie_lee`  or  `Initiate    := any of [audience]`
+    let (role_part, rhs) = text.split_once(":=")?;
+    let role = role_part.trim().to_string();
+    let rhs = rhs.trim();
+    if role.is_empty() {
+        return None;
+    }
+    let assignment = if rhs.is_empty() || rhs == "none" {
+        RosterAssignment::Ghost
+    } else if let Some(rest) = rhs.strip_prefix("any of ") {
+        RosterAssignment::AnyOf(parse_bracketed_list(rest))
+    } else {
+        RosterAssignment::Person(rhs.to_string())
+    };
+    Some(RosterCastEntry {
+        role,
+        assignment,
+        span,
+    })
+}
+
+fn parse_swing_entry(text: &str, span: Span) -> Option<RosterSwingEntry> {
+    let (role_part, rhs) = text.split_once(":=")?;
+    let role = role_part.trim().to_string();
+    let fallbacks = parse_bracketed_list(rhs.trim());
+    if role.is_empty() {
+        return None;
+    }
+    Some(RosterSwingEntry {
+        role,
+        fallbacks,
+        span,
+    })
+}
+
+fn parse_cohort_entry(text: &str, span: Span) -> Option<RosterCohortEntry> {
+    // `Initiates   start with: [audience]`
+    let (name_part, rest) = text.split_once("start with:")?;
+    let cohort = name_part.trim().to_string();
+    if cohort.is_empty() {
+        return None;
+    }
+    Some(RosterCohortEntry {
+        cohort,
+        start_with: parse_bracketed_list(rest.trim()),
+        span,
+    })
+}
+
+fn parse_location_entry(text: &str, span: Span) -> Option<RosterLocationEntry> {
+    let (name_part, rest) = text.split_once("start with:")?;
+    let location = name_part.trim().to_string();
+    if location.is_empty() {
+        return None;
+    }
+    Some(RosterLocationEntry {
+        location,
+        start_with: parse_bracketed_list(rest.trim()),
+        span,
+    })
 }

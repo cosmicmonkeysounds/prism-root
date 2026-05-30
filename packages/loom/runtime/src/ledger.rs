@@ -148,6 +148,22 @@ pub enum Event {
     /// `<after: cond>` latched true on this beat — subsequent visits
     /// play the `after` arm without re-checking the condition (spec §14.2).
     AfterLatched { beat: String, anchor: String },
+    /// A PERSON was bound to a ROLE (spec v3 §13.4 `<cast:>`).
+    CastBound { person: String, role: String },
+    /// A ROLE's player binding was released (spec v3 §13.4 `<uncast:>`).
+    CastReleased { person: String, role: String },
+    /// Atomic player swap on a running ROLE (spec v3 §13.4 `<recast:>`).
+    CastSwapped {
+        role: String,
+        old_player: String,
+        new_player: String,
+    },
+    /// An audience walk-up PERSON was promoted into a named ROLE
+    /// (spec v3 §13.4 `<promote:>`).
+    RolePromoted { person: String, role: String },
+    /// A ROSTER definition was loaded — the cast block emitted into
+    /// the runtime registry (spec v3 §13.3 `<load_roster:>`).
+    RosterLoaded { roster: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

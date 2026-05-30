@@ -94,9 +94,7 @@ impl LspWorkspace {
     #[wasm_bindgen]
     pub fn definition(&self, uri: &str, line: u32, character: u32) -> Result<JsValue, JsError> {
         let url = parse_url(uri)?;
-        let def = self
-            .inner
-            .definition_at(&url, Position { line, character });
+        let def = self.inner.definition_at(&url, Position { line, character });
         to_js(&def)
     }
 

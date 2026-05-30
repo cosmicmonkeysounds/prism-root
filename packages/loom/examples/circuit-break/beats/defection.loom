@@ -1,0 +1,80 @@
+# Defection — NineIron pulls a small breakaway group (up to six)
+# into a maintenance locker. The Playwright cherry-picks: usually
+# four chatters and two mods, or two of each plus two neutrals.
+# This is the act-break.
+
+== defection
+  cast: NineIron
+  setting: NineIronHide
+
+<broadcast: cohort(Defectors)>
+  NARRATOR
+    The walls in here are not stickered. The fans are not on full.
+    There is one chair and it is occupied.
+
+NINEIRON
+  (improv duration: 180s, advance on: quorum(4) [speech(motherboard), gesture(nod)])
+  (Sit. Show the rebar arm. Tell the truth: there's no chatter-mod
+   war. There's a Motherboard. You were a Cyborg for six months.
+   Take questions; do not flinch from the weird ones. Let the
+   audience drag the truth out of you in their own order — the
+   advance signal is when four people say the word "Motherboard"
+   without you saying it first.)
+
+<set: NineIron.knows.motherboard_named = true>
+<set: Motherboard.knows.revealed = true>
+
+# Once the defectors know, the broadcast bridges them back to the
+# leaders. The Playwright cues Vex / Praxis to react over the relay.
+<broadcast: cohort(Chatters)>
+  NINEIRON
+    (over the relay, to anyone still in the Chatter Camp)
+    Vex. Listen to me. The mods are not the enemy. Bring them in.
+
+<broadcast: cohort(Mods)>
+  NINEIRON
+    (over the relay, to anyone still at the Outpost)
+    Praxis. The chatters aren't lying. Meet at the fountain.
+
+* The defectors choose: storm the Core.
+  -> storm_core
+* The defectors choose: unite the factions in the Plaza.
+  -> unite
+* The defectors choose: scatter and live to fight another night.
+  -> scatter
+
+# ------------------------------------------------------------------
+# Failure mode — Chatters and Mods collide before NineIron can
+# intervene. The Cyborgs come out on top by default.
+# ------------------------------------------------------------------
+
+== faction_war
+  cast: Vex, Praxis
+  setting: Plaza
+
+<broadcast: location(Plaza)>
+  NARRATOR
+    The cohorts meet at the fountain. The fountain is, as ever, dry.
+
+VEX | PRAXIS
+  (improv duration: 90s, advance on: any [gesture(strike), speech(stop)])
+  (Have at it. Shout each other down. Let audience members on each
+   side actually argue. The Playwright is waiting for the Cyborg
+   performers to file in silently from the door — when the room
+   notices them, advance.)
+
+<broadcast: location(Plaza)>
+  NARRATOR
+    Eight figures walk out of the door behind the fountain. They are
+    in step. They are looking at no one in particular and at
+    everyone in general.
+
+CYBORG
+  (improv duration: 60s, advance on: quorum(8) [gesture(still)])
+  (One cyborg per faction-member up front. Approach. Touch a
+   shoulder. The audience-member they touch is, with their consent,
+   removed from their faction cohort and enrolled into Cyborgs.)
+
+<enroll: cohort(Cyborgs)>
+
+-> ending_assimilated

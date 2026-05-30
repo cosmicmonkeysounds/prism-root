@@ -138,6 +138,70 @@ impl PoolState {
 }
 
 impl StatsInstance {
+    /// Build a fresh instance with constructor arguments applied
+    /// (spec v3 §9.6 — `Combat(strength: 12)`). Each `name = value`
+    /// pair overrides the attribute of that name; unknown names are
+    /// ignored silently so authors can pass extra context through
+    /// without breaking parse.
+    pub fn from_profile_with_args<S, V>(
+        profile: &StatsProfile,
+        args: impl IntoIterator<Item = (S, V)>,
+        world: &World,
+    ) -> Self
+    where
+        S: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let mut inst = Self::from_profile(profile, world);
+        for (k, v) in args {
+            let name = k.as_ref();
+            let raw = v.as_ref().trim();
+            if !inst.attributes.contains_key(name) {
+                continue;
+            }
+            // Try literal number first; fall through to expression eval
+            // against the empty world (lets `12`, `10 + 2`, `default`
+            // all work without a runtime context).
+            let parsed: Option<f64> = raw.parse::<f64>().ok().or_else(|| {
+                expr::parse(raw)
+                    .ok()
+                    .and_then(|e| {
+                        expr::eval(&e, world, &mut |fname, _| {
+                            Err(ExprError::UnknownFunction(fname.into()))
+                        })
+                        .ok()
+                    })
+                    .and_then(|v| match v {
+                        Value::Number(n) => Some(n),
+                        _ => None,
+                    })
+            });
+            if let Some(n) = parsed {
+                let (min, max) = inst
+                    .attribute_ranges
+                    .get(name)
+                    .copied()
+                    .unwrap_or((f64::NEG_INFINITY, f64::INFINITY));
+                inst.attributes
+                    .insert(name.to_string(), n.clamp(min, max));
+            }
+        }
+        // Pool maxes derived from attributes need to be re-resolved
+        // after we updated them.
+        let scoped = world_with_attributes(world, &inst.attributes);
+        for pool in &profile.pools {
+            let max = resolve_pool_max(pool, &scoped, &inst.stat_expressions);
+            if let Some(state) = inst.pools.get_mut(&pool.name) {
+                let was_full = (state.current - state.max).abs() < f64::EPSILON;
+                state.max = max;
+                if was_full {
+                    state.current = max;
+                }
+            }
+        }
+        inst
+    }
+
     /// Build a fresh instance from a profile, seeding attributes to
     /// their defaults and pools to their `max` value.
     pub fn from_profile(profile: &StatsProfile, world: &World) -> Self {
@@ -551,6 +615,8 @@ mod tests {
                     span: span(),
                 },
             ],
+            init: None,
+            methods: Vec::new(),
         }
     }
 

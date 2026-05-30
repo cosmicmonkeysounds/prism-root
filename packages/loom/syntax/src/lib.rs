@@ -428,6 +428,9 @@ pub fn declaration_scope(kind: DeclarationKind) -> &'static str {
         DeclarationKind::Generator => "entity.name.type.generator.loom",
         DeclarationKind::Scene => "entity.name.type.scene.loom",
         DeclarationKind::Cohort => "entity.name.type.cohort.loom",
+        DeclarationKind::Role => "entity.name.type.role.loom",
+        DeclarationKind::Person => "entity.name.type.person.loom",
+        DeclarationKind::Roster => "entity.name.type.roster.loom",
     }
 }
 

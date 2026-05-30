@@ -1,0 +1,305 @@
+# Circuit Break — a live immersive theatre piece for ~24 audience.
+#
+# Audience members ("participants") arrive in the Plaza. Over the
+# evening they enroll into one of three cohorts — Chatters, Mods, or
+# (against their knowledge, at first) Cyborgs. Performers run improv
+# beats in five physical locations; the Playwright drives advances
+# from the simulator, watching cohort counts and broadcasts on the
+# ledger.
+#
+# The show is reactive: every beat reads the live `Tension` world
+# value and the dispositions / knowledge of Vex and Praxis, and routes
+# through different branches accordingly. The simulator's Graph tab
+# can edit any of these mid-show.
+
+entry: arrival
+
+# ------------------------------------------------------------------
+# Cohorts — audience subsets the Playwright herds into and out of.
+# ------------------------------------------------------------------
+
+COHORT Audience
+  label: The Audience
+  capacity: 32
+
+COHORT Chatters
+  label: The Chatters
+  capacity: 24
+
+COHORT Mods
+  label: The Mods
+  capacity: 24
+
+COHORT Cyborgs
+  label: The Cyborgs
+  capacity: 12
+
+COHORT Defectors
+  label: The Defectors (pulled aside by NineIron)
+  capacity: 6
+
+# ------------------------------------------------------------------
+# Locations — physical stations in the venue. Performers live here.
+# ------------------------------------------------------------------
+
+LOCATION Plaza
+  label: The Uplink Plaza
+  ambient: neon-static
+  capacity: 32
+
+LOCATION ChatterCamp
+  label: The Chatter Camp (data-hall, stickered to hell)
+  ambient: shoutcast-loop
+  capacity: 24
+
+LOCATION ModOutpost
+  label: The Mod Outpost (former server room, fans on full)
+  ambient: server-fans
+  capacity: 24
+
+LOCATION NineIronHide
+  label: NineIron's locker
+  ambient: distant-drip
+  capacity: 8
+
+LOCATION MotherboardCore
+  label: The Core
+  ambient: green-silicon-hum
+  capacity: 32
+
+# ------------------------------------------------------------------
+# Performers — each is a real human actor running a station.
+# Tracked as characters so disposition can shift and hooks can fire
+# when a cohort reaches a threshold.
+# ------------------------------------------------------------------
+
+CHARACTER Vex
+  trusts Chatters: 60 of 100
+  reacts trust > 80 -> vex_committed
+  reacts trust < 30 -> vex_breaking
+
+  knows:
+    motherboard_named: bool = false
+    saw_cyborg: bool = false
+
+  on Chatters.trust drops below 30:
+    <set: Tension += 15>
+    -> vex_breaking
+
+CHARACTER Praxis
+  trusts Mods: 60 of 100
+  reacts trust > 80 -> praxis_committed
+  reacts trust < 30 -> praxis_breaking
+
+  knows:
+    motherboard_named: bool = false
+    saw_cyborg: bool = false
+
+CHARACTER NineIron
+  trusts Defectors: 50 of 100
+
+  knows:
+    motherboard_named: bool = false
+
+CHARACTER Motherboard
+  knows:
+    revealed: bool = false
+
+# ------------------------------------------------------------------
+# Opening pageant — everyone in the Plaza. The first arrival beat
+# is the same regardless; what comes next is decided by how the
+# audience reacts (Tension goes up with crowd silence, down with
+# applause). The Playwright sets Tension from the simulator's Graph
+# inspector while watching the room.
+# ------------------------------------------------------------------
+
+== arrival
+  cast: Vex, Praxis
+  setting: Plaza
+
+<set: Tension = 25>
+
+The house lights drop. A thousand dead screens flicker once, in
+unison, then resume their static. The Audience filters into the
+Plaza — neon underfoot, two banners overhead.
+
+<broadcast: location(Plaza)>
+  NARRATOR
+    Welcome to The Stack. Tonight, you choose a side. Tonight, you
+    find out what the sides are.
+
+VEX | PRAXIS
+  (improv duration: 60s, advance on: quorum(8) [speech(go), gesture(Cue)])
+  (Argue about the city. Vex pitches reform; Praxis pitches order.
+   Pull individual audience members into your camp by talking
+   directly to them.)
+
+<broadcast: location(Plaza)>
+  NARRATOR
+    The fountain at the center is dry. The crown sigil between the
+    banners is fresh. Nobody admits drawing it.
+
+# Branching on Tension — the room reads itself.
+<if: Tension > 60>
+  <broadcast: location(Plaza)>
+    NARRATOR
+      Somebody coughs and it lands like a gunshot.
+  -> early_glitch
+<else if: Tension < 15>
+  <broadcast: location(Plaza)>
+    NARRATOR
+      Laughter, somewhere. Vex shoots a look. Praxis shrugs.
+  -> camps_open
+<else>
+  * The Playwright opens the camps.
+    -> camps_open
+  * The Playwright triggers a Cyborg sighting first.
+    -> early_glitch
+
+# ------------------------------------------------------------------
+# Branch — Camps open normally. Audience flows out of the Plaza.
+# ------------------------------------------------------------------
+
+== camps_open
+  cast: Vex, Praxis
+  setting: Plaza
+
+<broadcast: location(Plaza)>
+  VEX
+    Camp's open. Real talk, real food, real plan. Follow me if you've
+    had enough of being deleted.
+
+<broadcast: location(Plaza)>
+  PRAXIS
+    Outpost is open. We have rules, we have light, we have an exit
+    strategy. Anyone tired of screaming, walk with me.
+
+VEX | PRAXIS
+  (improv duration: 90s, advance on: quorum(12) [pedal])
+  (Recruit. Tag audience members into your cohort by name. The
+   Playwright watches Chatters / Mods counts on the ledger and
+   advances when both cohorts have at least 6 enrolled.)
+
+# Stat-aware: if the room split evenly, normal faction break; if one
+# leader landed almost all the recruits, the other one starts to
+# crack and we route through the defection arc instead.
+<if: Vex.trusts.Chatters > 80 and Praxis.trusts.Mods < 40>
+  <set: Tension += 20>
+  <broadcast: location(Plaza)>
+    NARRATOR
+      Praxis loses the room and doesn't quite hide it.
+  -> defection
+<else if: Praxis.trusts.Mods > 80 and Vex.trusts.Chatters < 40>
+  <set: Tension += 20>
+  <broadcast: location(Plaza)>
+    NARRATOR
+      Vex stops smiling. The Plaza door slams once on the way out.
+  -> defection
+<else>
+  * Vex and Praxis lead their cohorts out.
+    -> faction_break
+
+# ------------------------------------------------------------------
+# Branch — Early glitch. A cyborg appears before camps open. This
+# pushes the whole crowd into faster decisions; Vex and Praxis both
+# pretend they didn't see what they saw.
+# ------------------------------------------------------------------
+
+== early_glitch
+  cast: Vex, Praxis
+  setting: Plaza
+
+<set: Tension += 25>
+
+<broadcast: location(Plaza)>
+  NARRATOR
+    A door behind the fountain grinds open on its own. Something
+    walks out and is, on inspection, mostly cable.
+
+<set: Vex.knows.motherboard_named = true>
+<set: Praxis.knows.motherboard_named = true>
+<set: Vex.knows.saw_cyborg = true>
+<set: Praxis.knows.saw_cyborg = true>
+
+CYBORG
+  (improv duration: 30s, advance on: all [gesture(recoil)])
+  (Stand utterly still. Turn the head ninety degrees, then a hundred,
+   then back. Make eye contact with three specific audience members.
+   Then walk back through the door.)
+
+VEX
+  (improv duration: 45s, advance on: any [speech(go), gesture(Cue)])
+  (Pretend you didn't see it. Recruit harder. Audience members who
+   ask about the cyborg get vague answers — until you crack.)
+
+PRAXIS
+  (improv duration: 45s, advance on: any [speech(go), gesture(Cue)])
+  (Same: deny, then pivot to recruitment. Praxis cracks faster than
+   Vex.)
+
+# Tension after a glitch decides the next move.
+<if: Tension > 70>
+  <broadcast: location(Plaza)>
+    NARRATOR
+      Nobody in the Plaza is performing anymore.
+  -> defection
+<else>
+  * Audience members head to the camps anyway.
+    -> faction_break
+  * The Playwright pulls a small group aside to NineIron now.
+    -> defection
+
+# ------------------------------------------------------------------
+# Reactive Vex states — fired by `reacts` clauses on the CHARACTER
+# block above. The runtime detours through these whenever the trust
+# threshold crosses, then returns control via the divert at the end.
+# ------------------------------------------------------------------
+
+== vex_committed
+  cast: Vex
+  setting: ChatterCamp
+
+VEX
+  (improv duration: 30s, advance on: any [speech(go)])
+  (Make a promise to the Chatter cohort you cannot, technically,
+   keep. Mean it.)
+
+<set: Tension -= 10>
+<-
+
+== vex_breaking
+  cast: Vex
+  setting: ChatterCamp
+
+<set: Tension += 15>
+
+VEX
+  (improv duration: 30s, advance on: any [gesture(turn-away)])
+  (Lose the room. Address one specific audience member who left.
+   Ask, quietly, what you did wrong.)
+
+<-
+
+== praxis_committed
+  cast: Praxis
+  setting: ModOutpost
+
+PRAXIS
+  (improv duration: 30s, advance on: any [speech(go)])
+  (Deputize three Mods on the spot. Hand out armbands. Mean it.)
+
+<set: Tension -= 10>
+<-
+
+== praxis_breaking
+  cast: Praxis
+  setting: ModOutpost
+
+<set: Tension += 15>
+
+PRAXIS
+  (improv duration: 30s, advance on: any [gesture(slump)])
+  (Sit down on the desk. Drop the gavel. Tell the cohort, exactly,
+   what you were afraid of.)
+
+<-

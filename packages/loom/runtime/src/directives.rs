@@ -82,6 +82,28 @@ pub fn parse(raw: &str) -> Result<DirectiveCall, DirectiveError> {
             assign: Some(assign),
         });
     }
+    // Spec v3 §13.4 — `<cast: X as Y>` / `<promote: X as Y>` /
+    // `<recast: X := Y>`. Rewrite the surface syntax into a canonical
+    // named-arg form so the standard expr parser handles it without
+    // tripping on the `as`/`:=` infix.
+    let rest_owned;
+    let rest = match kind.as_str() {
+        "cast" | "promote" => match split_top_level(rest, " as ") {
+            Some((p, r)) => {
+                rest_owned = format!("person: {}, role: {}", p.trim(), r.trim());
+                rest_owned.as_str()
+            }
+            None => rest,
+        },
+        "recast" => match split_top_level(rest, ":=") {
+            Some((r, p)) => {
+                rest_owned = format!("role: {}, to: {}", r.trim(), p.trim());
+                rest_owned.as_str()
+            }
+            None => rest,
+        },
+        _ => rest,
+    };
     let (positional, named) = parse_args(rest)?;
     Ok(DirectiveCall {
         kind,
@@ -156,6 +178,46 @@ fn is_ident(s: &str) -> bool {
         _ => return false,
     }
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Find the first top-level occurrence of `needle` in `text`,
+/// respecting parentheses / brackets / braces and string quotes.
+/// Returns the slices before and after the match, or `None` if the
+/// needle is not present at depth 0.
+fn split_top_level<'a>(text: &'a str, needle: &str) -> Option<(&'a str, &'a str)> {
+    if needle.is_empty() {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut i = 0;
+    while i + needle_bytes.len() <= bytes.len() {
+        let c = bytes[i] as char;
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '"' | '\'' => {
+                quote = Some(c);
+                i += 1;
+                continue;
+            }
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0 && bytes[i..i + needle_bytes.len()] == *needle_bytes {
+            return Some((&text[..i], &text[i + needle_bytes.len()..]));
+        }
+        i += 1;
+    }
+    None
 }
 
 fn split_top_level_commas(text: &str) -> Vec<&str> {
@@ -299,6 +361,11 @@ pub struct CallContext<'a> {
     pub assign: Option<&'a Assign>,
     pub world: &'a mut World,
     pub ledger: &'a mut Ledger,
+    /// The raw call's expression forms. Lets handlers that need an
+    /// identifier verbatim (cast/recast/promote, whose args are
+    /// PERSON / ROLE names that should *not* go through world lookup)
+    /// read the original `Expr::Path` instead of the evaluated `Null`.
+    pub call: &'a DirectiveCall,
 }
 
 pub enum HandlerOutcome {
@@ -404,6 +471,7 @@ pub fn dispatch(
             assign: call.assign.as_ref(),
             world,
             ledger,
+            call,
         };
         handler.call(&mut ctx)?
     };
@@ -413,9 +481,7 @@ pub fn dispatch(
 fn eval_args(args: &[Expr], world: &World) -> Result<Vec<Value>, DirectiveError> {
     let mut out = Vec::with_capacity(args.len());
     for a in args {
-        out.push(expr::eval(a, world, &mut |name, _args| {
-            Err(ExprError::UnknownFunction(name.into()))
-        })?);
+        out.push(expr::eval(a, world, &mut scope_dsl_call_fn)?);
     }
     Ok(out)
 }
@@ -426,14 +492,26 @@ fn eval_named(
 ) -> Result<IndexMap<String, Value>, DirectiveError> {
     let mut out = IndexMap::new();
     for (k, v) in args {
-        out.insert(
-            k.clone(),
-            expr::eval(v, world, &mut |name, _args| {
-                Err(ExprError::UnknownFunction(name.into()))
-            })?,
-        );
+        out.insert(k.clone(), expr::eval(v, world, &mut scope_dsl_call_fn)?);
     }
     Ok(out)
+}
+
+/// Fallback call_fn used when evaluating directive args. `broadcast` /
+/// `enroll` accept a scope DSL (`cohort(X)`, `participant(X)`,
+/// `location(X)`, `all`) that doesn't survive as a regular expression
+/// call. Stringify those forms so the surrounding expression
+/// evaluates; the broadcast / enroll handlers don't currently consume
+/// the value, but it now reaches the generic `Event::Directive`
+/// envelope intact instead of erroring out.
+fn scope_dsl_call_fn(name: &str, args: Vec<expr::CallArg<'_>>) -> Result<Value, ExprError> {
+    match name {
+        "cohort" | "participant" | "location" | "all" => {
+            let inner: Vec<String> = args.iter().map(|a| a.as_name()).collect();
+            Ok(Value::String(format!("{}({})", name, inner.join(", "))))
+        }
+        _ => Err(ExprError::UnknownFunction(name.into())),
+    }
 }
 
 #[cfg(test)]

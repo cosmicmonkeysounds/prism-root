@@ -1,0 +1,139 @@
+# Endings — each is a curtain-call beat in a specific location.
+# The Playwright cues lighting / music transitions on the
+# Ended ledger envelope.
+
+== unite
+  cast: Vex, Praxis, NineIron
+  setting: Plaza
+
+<broadcast: location(Plaza)>
+  NARRATOR
+    The defectors bring the leaders to the fountain. Under a flag
+    nobody had time to make.
+
+VEX | PRAXIS
+  (improv duration: 90s, advance on: quorum(6) [gesture(handshake)])
+  (Apologize to each other. Specifically — name three things you
+   were wrong about. The audience may add a fourth.)
+
+<broadcast: location(Plaza)>
+  NARRATOR
+    The two cohorts merge in front of the door. Behind the door, the
+    Motherboard is, for the first time in five years, hearing more
+    than one voice agree.
+
+-> motherboard_intro
+
+== scatter
+  cast: NineIron
+  setting: NineIronHide
+
+NINEIRON
+  (improv duration: 60s, advance on: quorum(4) [gesture(nod)])
+  (Tell each defector individually where to walk to after the show.
+   Give them a sticker, a sigil, a promise. Don't make eye contact
+   while you do it — this is goodbye.)
+
+<broadcast: cohort(Defectors)>
+  NARRATOR
+    The defectors leave through the side exit. The show, for them,
+    is over. The show, for everyone else, has thirty more minutes.
+
+-> ending_scattered
+
+# ------------------------------------------------------------------
+# Curtain-call beats.
+# ------------------------------------------------------------------
+
+== ending_destroyed
+  cast: Vex, Praxis, NineIron, Motherboard
+  setting: MotherboardCore
+
+<broadcast: location(MotherboardCore)>
+  NARRATOR
+    Two keys, somehow produced from two unrelated pockets, touch in
+    the air above the chair. The chair empties. The hum stops. The
+    house lights, for a moment, come up clean.
+
+  (improv duration: 60s, advance on: quorum(8) [gesture(applaud)])
+  (Curtain call. Performers turn to the audience. The Cyborg cohort
+   removes its prosthetics on stage.)
+
+-> END
+
+== ending_mod_succession
+  cast: Praxis, Motherboard
+  setting: MotherboardCore
+
+<broadcast: location(MotherboardCore)>
+  NARRATOR
+    A Mod — the audience-member Praxis dispatched first — sits in
+    the chair. The hum changes pitch. Praxis stands at attention.
+
+  (improv duration: 45s, advance on: quorum(4) [gesture(applaud)])
+  (Curtain call. The new occupant gives one short speech in
+   character. Then they break character. The applause is also the
+   exorcism.)
+
+-> END
+
+== ending_chatter_assimilated
+  cast: Vex, Motherboard
+  setting: MotherboardCore
+
+<broadcast: location(MotherboardCore)>
+  NARRATOR
+    A Chatter accepts "a stage forever." The Cyborg cohort moves to
+    receive them. Vex shouts a name that may or may not be theirs.
+
+  (improv duration: 45s, advance on: quorum(4) [gesture(applaud)])
+  (Curtain call. The Chatters cohort sings something the audience
+   half-remembers. The Mods cohort joins in by the second chorus.)
+
+-> END
+
+== ending_walked_late
+  cast: Motherboard, NineIron
+  setting: MotherboardCore
+
+<broadcast: location(MotherboardCore)>
+  NARRATOR
+    Nobody takes the offer. Nobody attacks. The Audience, slowly,
+    turns around and walks out of the Core. The Motherboard does
+    not stop them. It does not need to.
+
+  (improv duration: 60s, advance on: quorum(6) [gesture(applaud)])
+  (Curtain call. NineIron, last out, looks back at the chair
+   exactly once.)
+
+-> END
+
+== ending_assimilated
+  cast: Motherboard
+  setting: Plaza
+
+<broadcast: location(Plaza)>
+  NARRATOR
+    The cyborgs walk among the cohorts now. So do half the
+    audience-members who came in as Chatters or Mods.
+
+  (improv duration: 30s, advance on: quorum(4) [gesture(applaud)])
+  (Curtain call under bad lighting. The Cyborg performers do not
+   remove their prosthetics.)
+
+-> END
+
+== ending_scattered
+  cast: NineIron
+  setting: Plaza
+
+<broadcast: location(Plaza)>
+  NARRATOR
+    The remaining audience, three cohorts and a leadership in
+    tatters, drifts out of the Plaza. The lights stutter once on
+    the way down. Somebody, somewhere, notices.
+
+  (improv duration: 30s, advance on: quorum(4) [gesture(applaud)])
+  (Curtain call as soft as you can make it.)
+
+-> END
