@@ -3,6 +3,7 @@ import { DockShell } from '@/components/dock/DockShell'
 import { StatusBar } from '@/components/shell/StatusBar'
 import { CommandPalette } from '@/components/shell/CommandPalette'
 import { SettingsPanel } from '@/components/shell/SettingsPanel'
+import { DetailOverlay } from '@/components/detail/DetailOverlay'
 import { useWorkspace } from '@/store/workspace'
 import { useSettings } from '@/store/settings'
 
@@ -30,6 +31,7 @@ export default function App() {
       <StatusBar />
       <CommandPalette />
       <SettingsPanel />
+      <DetailOverlay />
     </div>
   )
 }

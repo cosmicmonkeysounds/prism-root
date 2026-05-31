@@ -120,7 +120,7 @@ struct PendingChoice {
 }
 
 /// One in-flight beat. Tunnel calls push; `<-` returns pop.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Frame {
     beat: BeatRef,
     /// `-> beat as Participant` modifier (spec §13.1). When set,
@@ -146,6 +146,7 @@ struct Frame {
     tunneled: bool,
 }
 
+#[derive(Clone)]
 pub struct Playhead {
     bundle: Arc<Bundle>,
     queue: VecDeque<Yield>,
@@ -199,7 +200,14 @@ pub struct Playhead {
     participant_locations: std::collections::HashMap<String, String>,
 }
 
-#[derive(Debug)]
+/// Opaque, cloneable handle to a captured playhead state.
+/// Produced by [`Playhead::snapshot`]; consumed by
+/// [`Playhead::restore`]. The interior is `pub(crate)` so the mesh +
+/// loom-play driver can also fork from it.
+#[derive(Clone)]
+pub struct PlayheadSnapshot(pub(crate) Playhead);
+
+#[derive(Clone, Debug)]
 struct LetSlot {
     name: String,
     expr: Expr,
@@ -1432,6 +1440,21 @@ impl Playhead {
     /// coroutines.
     pub fn scheduler(&self) -> &crate::scheduler::Scheduler {
         &self.scheduler
+    }
+
+    /// Capture the playhead's full mutable state for later replay or
+    /// branching (Loom IDE redesign §5.1). Cheap relative to a fresh
+    /// `Playhead::new` because the bundle + registry are `Arc`-shared.
+    pub fn snapshot(&self) -> PlayheadSnapshot {
+        PlayheadSnapshot(self.clone())
+    }
+
+    /// Overwrite this playhead with a previously captured snapshot.
+    /// The bundle and registry on the snapshot win; callers wanting to
+    /// rewind a head that has since hot-reloaded a new bundle should
+    /// snapshot post-reload.
+    pub fn restore(&mut self, snapshot: &PlayheadSnapshot) {
+        *self = snapshot.0.clone();
     }
 
     /// Inspect ledger events written since the last drain, derive

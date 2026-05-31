@@ -14,16 +14,64 @@ import type { PresenceState, PresenceTracker } from "./presence";
 // ── envelope shapes (mirror `prism-core::network::relay::message`) ──
 
 /**
- * Phase 7 — server-side play. The transcript is opaque to the wire
+ * Server-side play state. The transcript is opaque to the wire
  * layer (it's `loom_runtime::ledger::Event[]`); consumers cast or
  * re-derive as needed.
+ *
+ * Phase 4 of the Loom IDE redesign (docs/dev/loom-ide-redesign.md §5):
+ * one session has many heads. Each head has its own ledger + world
+ * + tracks + choices; the `primary` head is the editor's default
+ * focus. Snapshots are server-side anchors for time-travel forks.
  */
-export interface PlayStatePayload {
-    workspace: string;
+export interface PlayEnvelopeMeta {
+    track: number;
+    cause: number | null;
+}
+
+export interface PlayTrackInfo {
+    id: number;
+    /** "booth" | "main" | "role" | "person" | "cohort" | "generator" */
+    kind: string;
+    label: string;
+}
+
+export interface PlayHeadState {
+    id: string;
+    /** `headId` if this head was forked from another live head. */
+    parent: string | null;
+    /** `snapId` if this head was created from a snapshot. */
+    forkedFrom: string | null;
     transcript: unknown[];
+    meta: PlayEnvelopeMeta[];
     choices: { index: number; text: string; sticky: boolean }[];
     ended: boolean;
+    world: [string, string][];
+    tracks: PlayTrackInfo[];
+}
+
+export interface PlaySnapshotInfo {
+    id: string;
+    headId: string;
+    at: number;
+    label: string | null;
+}
+
+export interface PlayStatePayload {
+    workspace: string;
+    primary: string;
     starter: string;
+    heads: PlayHeadState[];
+    snapshots: PlaySnapshotInfo[];
+}
+
+/**
+ * Convenience selector — the active head's state. Returns `null`
+ * when there's no session or the primary head doesn't exist (the
+ * latter is defensive; the server guarantees it).
+ */
+export function primaryHead(play: PlayStatePayload | null): PlayHeadState | null {
+    if (!play) return null;
+    return play.heads.find((h) => h.id === play.primary) ?? null;
 }
 
 export interface PlayFile {
@@ -51,8 +99,35 @@ type Envelope =
           kind: "play-start";
           payload: { workspace: string; files: PlayFile[] };
       }
-    | { kind: "play-choice"; payload: { workspace: string; index: number } }
+    | {
+          kind: "play-choice";
+          payload: { workspace: string; index: number; head?: string };
+      }
     | { kind: "play-stop"; payload: { workspace: string } }
+    | {
+          kind: "play-fork";
+          payload: {
+              workspace: string;
+              parent?: string;
+              from_snapshot?: string;
+          };
+      }
+    | {
+          kind: "play-snapshot";
+          payload: { workspace: string; head?: string; label?: string };
+      }
+    | {
+          kind: "play-restore";
+          payload: { workspace: string; head: string; snapshot: string };
+      }
+    | {
+          kind: "play-drop-head";
+          payload: { workspace: string; head: string };
+      }
+    | {
+          kind: "play-set-primary";
+          payload: { workspace: string; head: string };
+      }
     | { kind: "play-state"; payload: PlayStatePayload }
     | { kind: "ping"; payload?: Record<string, never> }
     | { kind: "pong"; payload?: Record<string, never> };
@@ -188,10 +263,10 @@ export class LoomSyncClient {
     }
 
     /** Phase 7 — advance the server's play session by selecting a choice. */
-    sendChoice(workspaceId: string, index: number): void {
+    sendChoice(workspaceId: string, index: number, head?: string): void {
         this.sendEnvelope({
             kind: "play-choice",
-            payload: { workspace: workspaceId, index },
+            payload: { workspace: workspaceId, index, head },
         });
     }
 
@@ -200,6 +275,51 @@ export class LoomSyncClient {
         this.sendEnvelope({
             kind: "play-stop",
             payload: { workspace: workspaceId },
+        });
+    }
+
+    // ── Phase 4: branching ──────────────────────────────────────────
+
+    forkPlay(workspaceId: string, opts?: { parent?: string; from_snapshot?: string }): void {
+        this.sendEnvelope({
+            kind: "play-fork",
+            payload: {
+                workspace: workspaceId,
+                parent: opts?.parent,
+                from_snapshot: opts?.from_snapshot,
+            },
+        });
+    }
+
+    snapshotPlay(workspaceId: string, opts?: { head?: string; label?: string }): void {
+        this.sendEnvelope({
+            kind: "play-snapshot",
+            payload: {
+                workspace: workspaceId,
+                head: opts?.head,
+                label: opts?.label,
+            },
+        });
+    }
+
+    restorePlay(workspaceId: string, head: string, snapshot: string): void {
+        this.sendEnvelope({
+            kind: "play-restore",
+            payload: { workspace: workspaceId, head, snapshot },
+        });
+    }
+
+    dropHead(workspaceId: string, head: string): void {
+        this.sendEnvelope({
+            kind: "play-drop-head",
+            payload: { workspace: workspaceId, head },
+        });
+    }
+
+    setPrimaryHead(workspaceId: string, head: string): void {
+        this.sendEnvelope({
+            kind: "play-set-primary",
+            payload: { workspace: workspaceId, head },
         });
     }
 

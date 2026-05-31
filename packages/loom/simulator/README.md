@@ -1,5 +1,15 @@
 # Loom Runtime / Simulator
 
+> **Status: deprecated, kept runnable.** The Loom IDE redesign
+> ([`docs/dev/loom-ide-redesign.md`](../../docs/dev/loom-ide-redesign.md))
+> folded every panel in this simulator into the React editor under
+> `packages/loom/editor` as first-class dock panels (Transcript,
+> Ledger, World, Timeline, Inspector, Choices, Graph). The Python
+> simulator is no longer the primary play surface — it stays here as
+> a zero-setup local debugger until the editor reaches feature
+> parity (Inspector + Graph land with Phase 3 of the redesign;
+> branching Timeline lands with Phase 4).
+
 A small PySide6 GUI that drives `loom-play` (the Loom runtime CLI) so
 friends can play through any `.loom` project without setting up the
 full editor / relay stack.

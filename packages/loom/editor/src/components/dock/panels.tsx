@@ -7,6 +7,18 @@ import { SearchPanel } from '@/components/search/SearchPanel'
 import { CloudPanel } from '@/components/cloud/CloudPanel'
 import { RemoteEditor } from '@/components/cloud/RemoteEditor'
 import { PlayPanel } from '@/components/cloud/PlayPanel'
+import { TranscriptPanel } from '@/components/runner/Transcript'
+import { ChoicesPanel } from '@/components/runner/Choices'
+import { LedgerPanel } from '@/components/runner/Ledger'
+import { WorldPanel } from '@/components/runner/World'
+import { TimelinePanel } from '@/components/runner/Timeline'
+import { InspectorPanel } from '@/components/runner/Inspector'
+import { GraphPanel } from '@/components/runner/Graph'
+import { DetailPanelHost as DetailHost } from '@/components/detail/DetailPanelHost'
+import { CastPanel } from '@/components/runner/Cast'
+import { BoothPanel } from '@/components/runner/Booth'
+import { OutlinePanel } from '@/components/runner/Outline'
+import { ReferencesPanel } from '@/components/runner/References'
 
 export const FilesPanel = () => <Sidebar />
 
@@ -41,3 +53,16 @@ export const PlayPanelHost = () => (
     <PlayPanel />
   </div>
 )
+
+export const TranscriptPanelHost = () => <TranscriptPanel />
+export const ChoicesPanelHost = () => <ChoicesPanel />
+export const LedgerPanelHost = () => <LedgerPanel />
+export const WorldPanelHost = () => <WorldPanel />
+export const TimelinePanelHost = () => <TimelinePanel />
+export const InspectorPanelHost = () => <InspectorPanel />
+export const GraphPanelHost = () => <GraphPanel />
+export const DetailPanelHost = () => <DetailHost />
+export const CastPanelHost = () => <CastPanel />
+export const BoothPanelHost = () => <BoothPanel />
+export const OutlinePanelHost = () => <OutlinePanel />
+export const ReferencesPanelHost = () => <ReferencesPanel />

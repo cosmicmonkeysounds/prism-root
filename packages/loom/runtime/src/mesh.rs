@@ -122,6 +122,17 @@ impl Cell {
 /// to the wrapped Playhead. The Mesh's `step` returns the same `Step`
 /// the inner Playhead does; the per-envelope metadata captures the
 /// track id so editor consumers see the graph shape from day one.
+/// Opaque, cloneable handle to a captured mesh state. Produced by
+/// [`Mesh::snapshot`]; consumed by [`Mesh::restore`] (or by a fresh
+/// [`Mesh::fork`] that then immediately `restore`s).
+#[derive(Clone)]
+pub struct MeshSnapshot {
+    head: crate::playhead::PlayheadSnapshot,
+    tracks: HashMap<TrackId, Track>,
+    next_track_id: u32,
+}
+
+#[derive(Clone)]
 pub struct Mesh {
     head: Playhead,
     tracks: HashMap<TrackId, Track>,
@@ -291,6 +302,32 @@ impl Mesh {
 
     pub fn playhead_mut(&mut self) -> &mut Playhead {
         &mut self.head
+    }
+
+    /// Snapshot the full mesh state (playhead + track registry +
+    /// id counter). The bundle is `Arc`-shared so cost scales with
+    /// runtime state, not bundle size. See the Loom IDE redesign §5.1.
+    pub fn snapshot(&self) -> MeshSnapshot {
+        MeshSnapshot {
+            head: self.head.snapshot(),
+            tracks: self.tracks.clone(),
+            next_track_id: self.next_track_id,
+        }
+    }
+
+    /// Overwrite the mesh in-place with a previously captured snapshot.
+    pub fn restore(&mut self, snap: &MeshSnapshot) {
+        self.head.restore(&snap.head);
+        self.tracks = snap.tracks.clone();
+        self.next_track_id = snap.next_track_id;
+    }
+
+    /// Produce a detached mesh that shares the bundle but owns an
+    /// independent playhead + track registry. The fork starts from
+    /// the current live state of `self`; combine with [`Self::restore`]
+    /// to fork from a captured past instead.
+    pub fn fork(&self) -> Mesh {
+        self.clone()
     }
 
     /// Fold the ledger into a vector of [`Cell`]s belonging to

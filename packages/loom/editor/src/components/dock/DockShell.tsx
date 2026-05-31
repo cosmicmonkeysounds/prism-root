@@ -4,10 +4,11 @@ import {
   DockviewApi,
   DockviewReact,
   themeAbyss,
-  type AddPanelPositionOptions,
   type DockviewReadyEvent,
 } from 'dockview-react'
 import { panelComponents, PANEL_ORDER, PANEL_TITLES, type PanelId } from './panel-registry'
+import { usePresets } from '@/store/presets'
+import { positionFor, setActiveDockApi } from './util'
 
 const SHORTCUTS: Record<PanelId, { combo: string; label: string }> = {
   files: { combo: 'mod+b', label: '⌘B' },
@@ -17,48 +18,18 @@ const SHORTCUTS: Record<PanelId, { combo: string; label: string }> = {
   cloud: { combo: 'mod+k', label: '⌘K' },
   remote: { combo: 'mod+2', label: '⌘2' },
   play: { combo: 'mod+shift+p', label: '⌘⇧P' },
-}
-
-function positionFor(api: DockviewApi, id: PanelId): AddPanelPositionOptions | undefined {
-  const editor = api.getPanel('editor')
-  const canvas = api.getPanel('canvas')
-  const files = api.getPanel('files')
-  const remote = api.getPanel('remote')
-
-  if (id === 'files') {
-    const ref = editor ?? canvas
-    return ref ? { referencePanel: ref.id, direction: 'left' } : undefined
-  }
-  if (id === 'search') {
-    if (files) return { referencePanel: files.id, direction: 'within' }
-    const ref = editor ?? canvas
-    return ref ? { referencePanel: ref.id, direction: 'left' } : undefined
-  }
-  if (id === 'cloud') {
-    if (files) return { referencePanel: files.id, direction: 'within' }
-    const ref = editor ?? canvas
-    return ref ? { referencePanel: ref.id, direction: 'left' } : undefined
-  }
-  if (id === 'editor') {
-    if (canvas) return { referencePanel: canvas.id, direction: 'above' }
-    if (files) return { referencePanel: files.id, direction: 'right' }
-    return undefined
-  }
-  if (id === 'remote') {
-    if (editor) return { referencePanel: editor.id, direction: 'within' }
-    if (canvas) return { referencePanel: canvas.id, direction: 'above' }
-    return undefined
-  }
-  if (id === 'play') {
-    if (remote) return { referencePanel: remote.id, direction: 'right' }
-    if (editor) return { referencePanel: editor.id, direction: 'right' }
-    return undefined
-  }
-  // canvas
-  if (remote) return { referencePanel: remote.id, direction: 'below' }
-  if (editor) return { referencePanel: editor.id, direction: 'below' }
-  if (files) return { referencePanel: files.id, direction: 'right' }
-  return undefined
+  transcript: { combo: 'mod+shift+t', label: '⌘⇧T' },
+  choices: { combo: 'mod+shift+c', label: '⌘⇧C' },
+  ledger: { combo: 'mod+shift+l', label: '⌘⇧L' },
+  world: { combo: 'mod+shift+w', label: '⌘⇧W' },
+  timeline: { combo: 'mod+shift+m', label: '⌘⇧M' },
+  inspector: { combo: 'mod+shift+i', label: '⌘⇧I' },
+  graph: { combo: 'mod+shift+g', label: '⌘⇧G' },
+  detail: { combo: 'mod+shift+d', label: '⌘⇧D' },
+  cast: { combo: 'mod+shift+a', label: '⌘⇧A' },
+  booth: { combo: 'mod+shift+b', label: '⌘⇧B' },
+  outline: { combo: 'mod+shift+o', label: '⌘⇧O' },
+  references: { combo: 'mod+shift+r', label: '⌘⇧R' },
 }
 
 type PanelSize = { width: number; height: number }
@@ -154,14 +125,112 @@ function PanelIcon({ id }: { id: PanelId }) {
       </svg>
     )
   }
+  if (id === 'transcript') {
+    return (
+      <svg {...common} aria-hidden>
+        <path d="M4 6h16M4 11h16M4 16h10" />
+      </svg>
+    )
+  }
+  if (id === 'choices') {
+    return (
+      <svg {...common} aria-hidden>
+        <path d="M9 6h11M9 12h11M9 18h11" />
+        <circle cx="5" cy="6" r="1.5" />
+        <circle cx="5" cy="12" r="1.5" />
+        <circle cx="5" cy="18" r="1.5" />
+      </svg>
+    )
+  }
+  if (id === 'ledger') {
+    return (
+      <svg {...common} aria-hidden>
+        <rect x="4" y="4" width="16" height="16" rx="1" />
+        <path d="M4 9h16M4 14h16M9 4v16" />
+      </svg>
+    )
+  }
+  if (id === 'world') {
+    return (
+      <svg {...common} aria-hidden>
+        <circle cx="12" cy="12" r="8" />
+        <path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16" />
+      </svg>
+    )
+  }
+  if (id === 'timeline') {
+    return (
+      <svg {...common} aria-hidden>
+        <path d="M3 6h18M3 12h18M3 18h18" />
+        <rect x="5" y="4" width="3" height="4" fill="currentColor" stroke="none" />
+        <rect x="11" y="10" width="3" height="4" fill="currentColor" stroke="none" />
+        <rect x="16" y="16" width="3" height="4" fill="currentColor" stroke="none" />
+      </svg>
+    )
+  }
+  if (id === 'inspector') {
+    return (
+      <svg {...common} aria-hidden>
+        <circle cx="11" cy="11" r="6" />
+        <path d="m20 20-3.5-3.5M9 11h4M11 9v4" />
+      </svg>
+    )
+  }
+  if (id === 'graph') {
+    return (
+      <svg {...common} aria-hidden>
+        <circle cx="6" cy="6" r="2.5" />
+        <circle cx="18" cy="6" r="2.5" />
+        <circle cx="12" cy="18" r="2.5" />
+        <path d="M7.7 7.7 11 16.2M16.3 7.7 13 16.2M8 6h8" />
+      </svg>
+    )
+  }
+  if (id === 'detail') {
+    return (
+      <svg {...common} aria-hidden>
+        <rect x="4" y="4" width="16" height="16" rx="1" />
+        <path d="M8 9h8M8 13h8M8 17h5" />
+      </svg>
+    )
+  }
+  if (id === 'cast') {
+    return (
+      <svg {...common} aria-hidden>
+        <circle cx="9" cy="9" r="3" />
+        <path d="M3 19a6 6 0 0 1 12 0" />
+        <circle cx="17" cy="7" r="2" />
+        <path d="M21 16a4 4 0 0 0-7-2.6" />
+      </svg>
+    )
+  }
+  if (id === 'booth') {
+    return (
+      <svg {...common} aria-hidden>
+        <rect x="3" y="6" width="18" height="12" rx="1" />
+        <circle cx="9" cy="12" r="2" />
+        <path d="M15 10v4M18 9v6" />
+      </svg>
+    )
+  }
+  if (id === 'outline') {
+    return (
+      <svg {...common} aria-hidden>
+        <path d="M4 6h6M4 10h10M4 14h6M4 18h12" />
+      </svg>
+    )
+  }
+  if (id === 'references') {
+    return (
+      <svg {...common} aria-hidden>
+        <path d="M7 7h10v10H7z" />
+        <path d="M3 3h8v4H3zM13 17h8v4h-8z" />
+      </svg>
+    )
+  }
   return (
     <svg {...common} aria-hidden>
-      <circle cx="6" cy="6" r="2.5" />
-      <circle cx="18" cy="6" r="2.5" />
-      <circle cx="12" cy="18" r="2.5" />
-      <path d="M7.7 7.7 11 16.2" />
-      <path d="M16.3 7.7 13 16.2" />
-      <path d="M8 6h8" />
+      <rect x="4" y="4" width="16" height="16" rx="2" />
     </svg>
   )
 }
@@ -173,6 +242,9 @@ export function DockShell() {
 
   const onReady = useCallback((event: DockviewReadyEvent) => {
     apiRef.current = event.api
+    // Stash the live API so non-React surfaces (Phase 5 preset menu in
+    // the status bar) can hand it to `usePresets.apply/saveCurrent`.
+    setActiveDockApi(event.api)
 
     const filesWidth = Math.round(window.innerWidth / 4)
     const files = event.api.addPanel({
@@ -224,6 +296,7 @@ export function DockShell() {
 
   useEffect(() => () => {
     apiRef.current = null
+    setActiveDockApi(null)
   }, [])
 
   const toggle = useCallback((id: PanelId) => {
@@ -232,6 +305,31 @@ export function DockShell() {
     if (api.getPanel(id)) closePanel(api, id, sizesRef.current)
     else openPanel(api, id, sizesRef.current)
   }, [])
+
+  // Phase 5 — workspace presets. Cmd+Alt+1..5 cycles the five
+  // builtins; user-saved presets are reachable from the StatusBar
+  // switcher.
+  const applyPreset = usePresets((s) => s.apply)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey
+      if (!mod || !e.altKey || e.shiftKey) return
+      const map: Record<string, string> = {
+        '1': 'builtin-author',
+        '2': 'builtin-direct',
+        '3': 'builtin-debug',
+        '4': 'builtin-perform',
+        '5': 'builtin-read',
+      }
+      const id = map[e.key]
+      if (!id) return
+      e.preventDefault()
+      const api = apiRef.current
+      if (api) applyPreset(api, id)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [applyPreset])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -246,6 +344,18 @@ export function DockShell() {
       else if (k === '2' && !e.shiftKey) target = 'remote'
       else if (k === 'k' && !e.shiftKey) target = 'cloud'
       else if (k === 'p' && e.shiftKey) target = 'play'
+      else if (k === 't' && e.shiftKey) target = 'transcript'
+      else if (k === 'c' && e.shiftKey) target = 'choices'
+      else if (k === 'l' && e.shiftKey) target = 'ledger'
+      else if (k === 'w' && e.shiftKey) target = 'world'
+      else if (k === 'm' && e.shiftKey) target = 'timeline'
+      else if (k === 'i' && e.shiftKey) target = 'inspector'
+      else if (k === 'g' && e.shiftKey) target = 'graph'
+      else if (k === 'd' && e.shiftKey) target = 'detail'
+      else if (k === 'a' && e.shiftKey) target = 'cast'
+      else if (k === 'b' && e.shiftKey) target = 'booth'
+      else if (k === 'o' && e.shiftKey) target = 'outline'
+      else if (k === 'r' && e.shiftKey) target = 'references'
       if (!target) return
       e.preventDefault()
       toggle(target)

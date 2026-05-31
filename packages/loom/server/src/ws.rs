@@ -79,13 +79,47 @@ enum Incoming {
         files: Vec<PlayFile>,
     },
     /// Phase 7 — advance the active session by index.
+    /// Phase 4 (IDE redesign): optional `head` field, defaults to the
+    /// session's primary head.
     PlayChoice {
         workspace: String,
         index: usize,
+        head: Option<String>,
     },
     /// Phase 7 — tear the session down.
     PlayStop {
         workspace: String,
+    },
+    /// Phase 4 (IDE redesign) — branch a head. With `from_snapshot`,
+    /// the new head starts from that captured state; otherwise it
+    /// forks the live state of `parent` (or the primary head).
+    PlayFork {
+        workspace: String,
+        parent: Option<String>,
+        from_snapshot: Option<String>,
+    },
+    /// Phase 4 — capture the head's current state under an opaque id.
+    PlaySnapshot {
+        workspace: String,
+        head: Option<String>,
+        label: Option<String>,
+    },
+    /// Phase 4 — rewind a head to a captured snapshot.
+    PlayRestore {
+        workspace: String,
+        head: String,
+        snapshot: String,
+    },
+    /// Phase 4 — discard a non-primary head.
+    PlayDropHead {
+        workspace: String,
+        head: String,
+    },
+    /// Phase 4 — change which head is the session's "primary" (the
+    /// default for choose/snapshot when no explicit head is given).
+    PlaySetPrimary {
+        workspace: String,
+        head: String,
     },
     Ping,
 }
@@ -534,48 +568,92 @@ async fn handle_socket(socket: WebSocket, state: Arc<LoomRelayState>) {
                     }
                 }
             }
-            Incoming::PlayChoice { workspace, index } => {
-                if auth.is_none() {
-                    let _ = out_tx.send(
-                        Outgoing::Error {
-                            message: "play-choice before auth".into(),
-                        }
-                        .to_ws(),
-                    );
+            Incoming::PlayChoice {
+                workspace,
+                index,
+                head,
+            } => {
+                if !require_authed_subscribed(&auth, &subs, &workspace, "play-choice", &out_tx) {
                     continue;
                 }
-                let Some(hub) = subs.get(&workspace).cloned() else {
-                    let _ = out_tx.send(
-                        Outgoing::Error {
-                            message: format!("play-choice for unsubscribed workspace {workspace}"),
-                        }
-                        .to_ws(),
-                    );
-                    continue;
-                };
-                match state.play.choose(&workspace, index) {
-                    Ok(snap) => {
-                        let msg = Outgoing::PlayState(snap);
-                        let _ = out_tx.send(msg.to_ws());
-                        let _ = hub.tx.send(WsBroadcast {
-                            from_peer: peer_id.clone(),
-                            message: msg,
-                        });
-                    }
-                    Err(e) => {
-                        let _ = out_tx.send(
-                            Outgoing::Error {
-                                message: format!("play-choice: {e}"),
-                            }
-                            .to_ws(),
-                        );
-                    }
+                let hub = subs.get(&workspace).cloned().unwrap();
+                match state.play.choose(&workspace, head.as_deref(), index) {
+                    Ok(snap) => broadcast_play_state(snap, &out_tx, &hub.tx, &peer_id),
+                    Err(e) => send_error(&out_tx, format!("play-choice: {e}")),
                 }
             }
             Incoming::PlayStop { workspace } => {
                 state.play.stop(&workspace);
-                // No broadcast — clients just stop receiving updates;
-                // a fresh `play-start` will re-broadcast.
+            }
+            Incoming::PlayFork {
+                workspace,
+                parent,
+                from_snapshot,
+            } => {
+                if !require_authed_subscribed(&auth, &subs, &workspace, "play-fork", &out_tx) {
+                    continue;
+                }
+                let hub = subs.get(&workspace).cloned().unwrap();
+                match state
+                    .play
+                    .fork(&workspace, parent.as_deref(), from_snapshot.as_deref())
+                {
+                    Ok((snap, _new_head)) => {
+                        broadcast_play_state(snap, &out_tx, &hub.tx, &peer_id);
+                    }
+                    Err(e) => send_error(&out_tx, format!("play-fork: {e}")),
+                }
+            }
+            Incoming::PlaySnapshot {
+                workspace,
+                head,
+                label,
+            } => {
+                if !require_authed_subscribed(&auth, &subs, &workspace, "play-snapshot", &out_tx) {
+                    continue;
+                }
+                let hub = subs.get(&workspace).cloned().unwrap();
+                match state.play.snapshot_head(&workspace, head.as_deref(), label) {
+                    Ok((snap, _snap_id)) => {
+                        broadcast_play_state(snap, &out_tx, &hub.tx, &peer_id);
+                    }
+                    Err(e) => send_error(&out_tx, format!("play-snapshot: {e}")),
+                }
+            }
+            Incoming::PlayRestore {
+                workspace,
+                head,
+                snapshot,
+            } => {
+                if !require_authed_subscribed(&auth, &subs, &workspace, "play-restore", &out_tx) {
+                    continue;
+                }
+                let hub = subs.get(&workspace).cloned().unwrap();
+                match state.play.restore(&workspace, &head, &snapshot) {
+                    Ok(snap) => broadcast_play_state(snap, &out_tx, &hub.tx, &peer_id),
+                    Err(e) => send_error(&out_tx, format!("play-restore: {e}")),
+                }
+            }
+            Incoming::PlayDropHead { workspace, head } => {
+                if !require_authed_subscribed(&auth, &subs, &workspace, "play-drop-head", &out_tx) {
+                    continue;
+                }
+                let hub = subs.get(&workspace).cloned().unwrap();
+                match state.play.drop_head(&workspace, &head) {
+                    Ok(snap) => broadcast_play_state(snap, &out_tx, &hub.tx, &peer_id),
+                    Err(e) => send_error(&out_tx, format!("play-drop-head: {e}")),
+                }
+            }
+            Incoming::PlaySetPrimary { workspace, head } => {
+                if !require_authed_subscribed(&auth, &subs, &workspace, "play-set-primary", &out_tx)
+                {
+                    continue;
+                }
+                let hub = subs.get(&workspace).cloned().unwrap();
+                match state.play.set_primary(&workspace, &head) {
+                    Ok(snap) => broadcast_play_state(snap, &out_tx, &hub.tx, &peer_id),
+                    Err(e) => send_error(&out_tx, format!("play-set-primary: {e}")),
+                }
             }
         }
     }
@@ -593,6 +671,50 @@ async fn handle_socket(socket: WebSocket, state: Arc<LoomRelayState>) {
     }
     drop(out_tx);
     let _ = sink_task.await;
+}
+
+/// Phase 4 helper: precondition shared by every play-* command.
+/// Sends an `error` envelope to the caller and returns false when the
+/// connection is unauthed or not subscribed to the workspace.
+fn require_authed_subscribed(
+    auth: &Option<AuthedSession>,
+    subs: &HashMap<String, Arc<WorkspaceHub>>,
+    workspace: &str,
+    cmd: &str,
+    out_tx: &tokio::sync::mpsc::UnboundedSender<Message>,
+) -> bool {
+    if auth.is_none() {
+        send_error(out_tx, format!("{cmd} before auth"));
+        return false;
+    }
+    if !subs.contains_key(workspace) {
+        send_error(
+            out_tx,
+            format!("{cmd} for unsubscribed workspace {workspace}"),
+        );
+        return false;
+    }
+    true
+}
+
+fn send_error(out_tx: &tokio::sync::mpsc::UnboundedSender<Message>, message: String) {
+    let _ = out_tx.send(Outgoing::Error { message }.to_ws());
+}
+
+/// Send a `play-state` snapshot to the originator AND fan it out to
+/// every other subscriber on the workspace.
+fn broadcast_play_state(
+    snap: crate::play::PlayStateSnapshot,
+    out_tx: &tokio::sync::mpsc::UnboundedSender<Message>,
+    hub_tx: &tokio::sync::broadcast::Sender<WsBroadcast>,
+    peer_id: &str,
+) {
+    let msg = Outgoing::PlayState(snap);
+    let _ = out_tx.send(msg.to_ws());
+    let _ = hub_tx.send(WsBroadcast {
+        from_peer: peer_id.to_string(),
+        message: msg,
+    });
 }
 
 /// Remove the given peer's presence entry and broadcast the

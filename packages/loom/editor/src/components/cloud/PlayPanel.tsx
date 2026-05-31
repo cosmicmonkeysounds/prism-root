@@ -7,6 +7,7 @@
 // / `sendChoice` / `stopPlay` through the same store.
 
 import { useSession } from "@/store/session";
+import { primaryHead } from "@/lib/sync";
 import clsx from "clsx";
 
 type LedgerEvent = unknown;
@@ -71,11 +72,11 @@ export function PlayPanel() {
                 </span>
             </header>
 
-            <Transcript events={play?.transcript ?? []} />
+            <Transcript events={(primaryHead(play)?.transcript ?? []) as LedgerEvent[]} />
 
             <Choices
-                ended={play?.ended ?? false}
-                choices={play?.choices ?? []}
+                ended={primaryHead(play)?.ended ?? false}
+                choices={primaryHead(play)?.choices ?? []}
                 hasPlay={play !== null}
                 onChoose={sendChoice}
             />

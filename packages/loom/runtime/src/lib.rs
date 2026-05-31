@@ -57,14 +57,14 @@ pub use coroutine::{Coroutine, CoroutineStatus, Program as CoroutineProgram, Tie
 pub use directives::{DirectiveCall, DirectiveError, Registry};
 pub use expr::{Value, World};
 pub use ledger::{CellKind, ChoiceOption, EnvelopeMeta, Event, Ledger, TrackId};
-pub use mesh::{Cell, Driver, Mesh, Track, TrackIdentity};
+pub use mesh::{Cell, Driver, Mesh, MeshSnapshot, Track, TrackIdentity};
 pub use live::{
     parse_broadcast_scope, BroadcastScope, Cohort, ImprovController, ImprovHandle, ImprovOutcome,
     LiveError, LiveStage, Location, Participant, ParticipantId,
 };
 pub use luau::{register_core_builtins, LuauRegistry};
 pub use meridian::{AxisMode, AxisState, PoolState, StatsInstance, StatsProfile, Tree};
-pub use playhead::{PlayError, Playhead, Step};
+pub use playhead::{PlayError, Playhead, PlayheadSnapshot, Step};
 pub use resolver::ResolveError;
 pub use scheduler::{Budgets, Cadence, Scheduler};
 pub use simulacra::{

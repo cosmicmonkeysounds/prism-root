@@ -59,7 +59,7 @@ impl Default for Cadence {
 
 /// One ready coroutine handle. The scheduler owns the `Coroutine`
 /// directly — there is no separate task / handle indirection.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CoroutineHandle {
     pub coroutine: Coroutine,
     /// Wall clock at which a `WaitDuration` is allowed to resume.
@@ -67,7 +67,7 @@ pub struct CoroutineHandle {
 }
 
 /// Three-tier coroutine scheduler.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Scheduler {
     pub focal: Vec<CoroutineHandle>,
     pub active: Vec<CoroutineHandle>,

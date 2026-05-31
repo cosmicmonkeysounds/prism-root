@@ -142,9 +142,15 @@ interface SessionState {
     /** Phase 7 — start a play session against the active workspace. */
     startPlay: () => void;
     /** Phase 7 — advance an active session by choice index. */
-    sendChoice: (index: number) => void;
+    sendChoice: (index: number, head?: string) => void;
     /** Phase 7 — tear the active session down. */
     stopPlay: () => void;
+    // Phase 4 (Loom IDE redesign §5): branching controls.
+    forkPlay: (opts?: { parent?: string; fromSnapshot?: string }) => void;
+    snapshotPlay: (opts?: { head?: string; label?: string }) => void;
+    restorePlay: (head: string, snapshot: string) => void;
+    dropHead: (head: string) => void;
+    setPrimaryHead: (head: string) => void;
 }
 
 let wasmPromise: Promise<typeof import("@/loom-wasm/loom_wasm")> | null = null;
@@ -441,10 +447,10 @@ export const useSession = create<SessionState>((set, get) => {
             state.sync.startPlay(state.active.meta.id, files);
         },
 
-        sendChoice: (index) => {
+        sendChoice: (index, head) => {
             const state = get();
             if (!state.active || !state.sync) return;
-            state.sync.sendChoice(state.active.meta.id, index);
+            state.sync.sendChoice(state.active.meta.id, index, head);
         },
 
         stopPlay: () => {
@@ -454,6 +460,36 @@ export const useSession = create<SessionState>((set, get) => {
             set((s) =>
                 s.active ? { active: { ...s.active, play: null } } : s,
             );
+        },
+
+        // ── Phase 4: branching ──────────────────────────────────────
+        forkPlay: (opts) => {
+            const state = get();
+            if (!state.active || !state.sync) return;
+            state.sync.forkPlay(state.active.meta.id, {
+                parent: opts?.parent,
+                from_snapshot: opts?.fromSnapshot,
+            });
+        },
+        snapshotPlay: (opts) => {
+            const state = get();
+            if (!state.active || !state.sync) return;
+            state.sync.snapshotPlay(state.active.meta.id, opts);
+        },
+        restorePlay: (head, snapshot) => {
+            const state = get();
+            if (!state.active || !state.sync) return;
+            state.sync.restorePlay(state.active.meta.id, head, snapshot);
+        },
+        dropHead: (head) => {
+            const state = get();
+            if (!state.active || !state.sync) return;
+            state.sync.dropHead(state.active.meta.id, head);
+        },
+        setPrimaryHead: (head) => {
+            const state = get();
+            if (!state.active || !state.sync) return;
+            state.sync.setPrimaryHead(state.active.meta.id, head);
         },
 
         unbindFolder: async () => {

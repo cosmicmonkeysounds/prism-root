@@ -1,43 +1,111 @@
-//! `loom-play` — single-process interactive driver for a Loom project.
+//! `loom-play` — multi-head interactive driver for a Loom project.
 //!
-//! Loads a project from a directory, constructs a Playhead, and drives
-//! it over a JSON-line stdio protocol so an external GUI (e.g. the
-//! Python PySide6 simulator under `packages/loom/simulator/`) can play
-//! a show without re-implementing the runtime.
+//! Loads a project from a directory, constructs one default `Mesh`
+//! (head `"h0"`), and drives any number of additional heads over a
+//! JSON-line stdio protocol. Every head is an independent `Playhead`
+//! / `Mesh` over the same shared `Arc<Bundle>`; snapshots are cheap
+//! clones of mutable state only.
 //!
 //! ## Protocol
 //!
-//! Each line on stdout is one JSON object with a `"type"` tag:
-//! - `{"type":"ready","entry":"opening","diagnostics":[...]}`
-//! - `{"type":"tracks","tracks":[{"id":N,"kind":"role|person|cohort|generator|booth|main","label":"...","driver":"..."}, ...]}`
-//!   — emitted once on `ready` and again after `reload`
-//! - `{"type":"event","idx":N,"track":N,"cause":N|null,"event":{...}}` — a ledger
-//!   envelope with its mesh metadata (loom-editor.html §3)
-//! - `{"type":"cells","track":N,"cells":[{"kind":"BeatVisit","bundle_ref":"...","start":N,"end":N|null,"snapshot":"..."}, ...]}`
-//! - `{"type":"choice","options":[{"index":N,"text":"...","sticky":false}, ...]}`
-//! - `{"type":"awaiting","coroutine":N}`
-//! - `{"type":"ended"}`
-//! - `{"type":"world","entries":[["key","display"], ...]}`
-//! - `{"type":"error","message":"..."}`
+//! Each line on stdout is one JSON object with a `"type"` tag. Every
+//! payload that pertains to a specific head carries `"head": "hN"`
+//! (default `"h0"`):
+//! - `{"type":"ready","head":"h0","entry":"opening","diagnostics":[...]}`
+//! - `{"type":"tracks","head":"h0","tracks":[...]}`
+//!   — re-emitted on reload and after fork
+//! - `{"type":"event","head":"h0","idx":N,"track":N,"cause":N|null,"event":{...}}`
+//! - `{"type":"cells","head":"h0","track":N,"cells":[...]}`
+//! - `{"type":"choice","head":"h0","options":[...]}`
+//! - `{"type":"awaiting","head":"h0","coroutine":N}`
+//! - `{"type":"ended","head":"h0"}`
+//! - `{"type":"world","head":"h0","entries":[...]}`
+//! - `{"type":"snapshot","head":"h0","id":"s7","at":N}`
+//! - `{"type":"restored","head":"h0","id":"s7"}`
+//! - `{"type":"forked","head":"h1","from":"s7"|null,"parent":"h0"}`
+//! - `{"type":"dropped","head":"h1"}`
+//! - `{"type":"heads","heads":[{"id":"h0","primary":true,"halted":false,"ledger_len":N}, ...]}`
+//! - `{"type":"error","message":"..."}` (head-agnostic)
 //!
-//! Each line on stdin is one JSON command:
-//! - `{"cmd":"step"}` — advance until the next Choice / Awaiting / Ended
-//! - `{"cmd":"choose","index":N}` — pick a choice
-//! - `{"cmd":"world"}` — emit a world snapshot
-//! - `{"cmd":"tracks"}` — re-emit the current track list
-//! - `{"cmd":"cells","track":N}` — emit cells_for_track for one track
-//! - `{"cmd":"skip"}` — booth skip beat
-//! - `{"cmd":"force","raw":"sfx: ..."}` — booth force directive
-//! - `{"cmd":"reload"}` — re-load the project from disk and hot-reload
+//! Each line on stdin is one JSON command. Per-head commands accept
+//! an optional `"head"` (default `"h0"`):
+//! - `{"cmd":"step","head":"h0"}` — advance until the next Choice / Awaiting / Ended
+//! - `{"cmd":"choose","index":N,"head":"h0"}` — pick a choice
+//! - `{"cmd":"world","head":"h0"}` — emit a world snapshot
+//! - `{"cmd":"tracks","head":"h0"}` — re-emit the current track list
+//! - `{"cmd":"cells","track":N,"head":"h0"}` — emit cells_for_track for one track
+//! - `{"cmd":"skip","head":"h0"}` — booth skip beat
+//! - `{"cmd":"force","raw":"sfx: ...","head":"h0"}` — booth force directive
+//! - `{"cmd":"set","key":"...","value":...,"head":"h0"}` — route a `<set:>` through the booth
+//! - `{"cmd":"reload","head":"h0"}` — re-load the project from disk and hot-reload (all heads if head omitted? — current: per head)
+//! - `{"cmd":"snapshot","head":"h0"}` — capture; reply carries the new id
+//! - `{"cmd":"restore","head":"h0","id":"s7"}` — overwrite head with snapshot
+//! - `{"cmd":"fork","head":"h0"}` or `{"cmd":"fork","from":"s7"}` — spawn a new head
+//! - `{"cmd":"drop","head":"h1"}` — discard a non-primary head
+//! - `{"cmd":"heads"}` — re-emit the head listing
+//! - `{"cmd":"entities"}` — emit the bundle-wide entity schema (head-agnostic)
 //! - `{"cmd":"quit"}` — exit
 
+use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use loom_parser::ast::{BodyItem, Divert, Item};
-use loom_runtime::{Bundle, Mesh, Step, TrackId, TrackIdentity};
+use loom_runtime::{Bundle, Mesh, MeshSnapshot, Step, TrackId, TrackIdentity};
 use serde_json::{json, Value as JsonValue};
+
+/// Identifier handed back to clients for any per-head wire address.
+type HeadId = String;
+/// Identifier handed back to clients for any captured snapshot.
+type SnapshotId = String;
+
+/// Mutable driver state shared across the dispatch loop.
+struct Driver {
+    bundle: Arc<Bundle>,
+    root: PathBuf,
+    heads: HashMap<HeadId, Mesh>,
+    primary: HeadId,
+    snapshots: HashMap<SnapshotId, (HeadId, MeshSnapshot, usize)>,
+    next_head_id: u64,
+    next_snapshot_id: u64,
+}
+
+impl Driver {
+    fn new(bundle: Arc<Bundle>, root: PathBuf, mesh: Mesh) -> Self {
+        let primary: HeadId = "h0".into();
+        let mut heads = HashMap::new();
+        heads.insert(primary.clone(), mesh);
+        Self {
+            bundle,
+            root,
+            heads,
+            primary,
+            snapshots: HashMap::new(),
+            next_head_id: 1,
+            next_snapshot_id: 0,
+        }
+    }
+
+    fn fresh_head_id(&mut self) -> HeadId {
+        let id = format!("h{}", self.next_head_id);
+        self.next_head_id += 1;
+        id
+    }
+
+    fn fresh_snapshot_id(&mut self) -> SnapshotId {
+        let id = format!("s{}", self.next_snapshot_id);
+        self.next_snapshot_id += 1;
+        id
+    }
+
+    fn head_of(cmd: &JsonValue, default: &str) -> HeadId {
+        cmd.get("head")
+            .and_then(|v| v.as_str())
+            .unwrap_or(default)
+            .to_string()
+    }
+}
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -63,7 +131,7 @@ fn main() {
         .map(|r| bundle.beat(r).name.clone())
         .unwrap_or_default();
 
-    let mut mesh = match Mesh::new(Arc::clone(&bundle)) {
+    let mesh = match Mesh::new(Arc::clone(&bundle)) {
         Ok(m) => m,
         Err(e) => {
             emit_err(&format!("mesh init: {e}"));
@@ -71,18 +139,21 @@ fn main() {
         }
     };
 
+    let mut driver = Driver::new(Arc::clone(&bundle), root, mesh);
+    let primary = driver.primary.clone();
+
     emit(json!({
         "type": "ready",
+        "head": primary,
         "entry": entry,
         "diagnostics": diagnostics,
     }));
-    emit_tracks(&mesh);
+    emit_tracks(&driver, &primary);
 
-    // First batch — drive forward until we need user input.
-    pump(&mut mesh);
+    // First batch — drive forward until the primary head needs user input.
+    pump(&mut driver, &primary);
 
     let stdin = io::stdin();
-    let mut root = root;
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         let trimmed = line.trim();
@@ -96,89 +167,261 @@ fn main() {
                 continue;
             }
         };
-        match cmd.get("cmd").and_then(|v| v.as_str()).unwrap_or("") {
-            "step" => pump(&mut mesh),
+        let kind = cmd.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
+        match kind {
+            "step" => with_head(&mut driver, &cmd, pump),
             "choose" => {
                 let idx = cmd.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                if let Err(e) = mesh.choose(idx) {
-                    emit_err(&format!("choose: {e}"));
-                } else {
-                    pump(&mut mesh);
-                }
+                with_head(&mut driver, &cmd, |d, h| {
+                    let mesh = d.heads.get_mut(h).expect("head exists (checked)");
+                    match mesh.choose(idx) {
+                        Err(e) => emit_err(&format!("choose: {e}")),
+                        Ok(()) => pump(d, h),
+                    }
+                })
             }
-            "world" => emit_world(&mesh),
-            "entities" => emit_entities(&bundle),
-            "tracks" => emit_tracks(&mesh),
-            "cells" => {
+            "world" => with_head(&driver, &cmd, emit_world),
+            "tracks" => with_head(&driver, &cmd, emit_tracks),
+            "entities" => emit_entities(&driver.bundle),
+            "cells" => with_head(&driver, &cmd, |d, h| {
                 let track = cmd
                     .get("track")
                     .and_then(|v| v.as_u64())
                     .map(|n| TrackId(n as u32))
                     .unwrap_or(TrackId::MAIN);
-                emit_cells(&mesh, track);
-            }
+                emit_cells(d, h, track);
+            }),
             "set" => {
-                let key = cmd.get("key").and_then(|v| v.as_str()).unwrap_or("");
+                let key = cmd.get("key").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 match cmd.get("value") {
                     None => emit_err("set: missing key/value"),
                     Some(_) if key.is_empty() => emit_err("set: missing key/value"),
                     Some(value) => {
                         let lit = json_value_to_literal(value);
                         let raw = format!("set: {} = {}", key, lit);
-                        mesh.playhead_mut().booth_force_directive(raw);
-                        pump(&mut mesh);
+                        with_head(&mut driver, &cmd, |d, h| {
+                            let mesh = d.heads.get_mut(h).expect("head exists (checked)");
+                            mesh.playhead_mut().booth_force_directive(raw.clone());
+                            pump(d, h);
+                        });
                     }
                 }
             }
-            "skip" => {
+            "skip" => with_head(&mut driver, &cmd, |d, h| {
+                let mesh = d.heads.get_mut(h).expect("head exists (checked)");
                 mesh.playhead_mut().booth_skip_beat();
-                pump(&mut mesh);
-            }
+                pump(d, h);
+            }),
             "force" => {
                 let raw = cmd
                     .get("raw")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                mesh.playhead_mut().booth_force_directive(raw);
-                pump(&mut mesh);
+                with_head(&mut driver, &cmd, |d, h| {
+                    let mesh = d.heads.get_mut(h).expect("head exists (checked)");
+                    mesh.playhead_mut().booth_force_directive(raw.clone());
+                    pump(d, h);
+                })
             }
-            "reload" => match Bundle::load(&root) {
+            "reload" => match Bundle::load(&driver.root) {
                 Ok(b) => {
                     let new_bundle = Arc::new(b);
-                    if let Err(e) = mesh.playhead_mut().booth_hot_reload(Arc::clone(&new_bundle))
-                    {
-                        emit_err(&format!("hot reload: {e}"));
-                    } else {
-                        // Re-seed in case the new bundle introduced new
-                        // ROLEs / PERSONs / generators.
-                        mesh.seed_from_bundle(&new_bundle);
-                        emit_tracks(&mesh);
-                        pump(&mut mesh);
-                    }
+                    with_head(&mut driver, &cmd, |d, h| {
+                        let mesh = d.heads.get_mut(h).expect("head exists (checked)");
+                        if let Err(e) =
+                            mesh.playhead_mut().booth_hot_reload(Arc::clone(&new_bundle))
+                        {
+                            emit_err(&format!("hot reload: {e}"));
+                        } else {
+                            mesh.seed_from_bundle(&new_bundle);
+                            emit_tracks(d, h);
+                            pump(d, h);
+                        }
+                    });
+                    driver.bundle = new_bundle;
                 }
                 Err(e) => emit_err(&format!("reload load: {e}")),
             },
             "set_root" => {
                 if let Some(p) = cmd.get("path").and_then(|v| v.as_str()) {
-                    root = PathBuf::from(p);
+                    driver.root = PathBuf::from(p);
                 }
             }
+            "snapshot" => with_head(&mut driver, &cmd, do_snapshot),
+            "restore" => {
+                let id = cmd.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                with_head(&mut driver, &cmd, |d, h| do_restore(d, h, &id))
+            }
+            "fork" => {
+                let from = cmd.get("from").and_then(|v| v.as_str()).map(String::from);
+                let parent = Driver::head_of(&cmd, &driver.primary);
+                do_fork(&mut driver, &parent, from.as_deref());
+            }
+            "drop" => {
+                let target = Driver::head_of(&cmd, "");
+                do_drop(&mut driver, &target);
+            }
+            "heads" => emit_heads(&driver),
             "quit" => break,
             other => emit_err(&format!("unknown cmd: {other}")),
         }
     }
 }
 
-fn pump(mesh: &mut Mesh) {
+/// Resolve the head referenced by a command and dispatch `f` against
+/// it. Emits `error` if the head is unknown, never panics.
+fn with_head<R, F>(driver: R, cmd: &JsonValue, f: F)
+where
+    R: HeadCtx,
+    F: FnOnce(R::Target, &str),
+{
+    let head = Driver::head_of(cmd, driver.primary_id());
+    if !driver.has_head(&head) {
+        emit_err(&format!("unknown head: {head}"));
+        return;
+    }
+    let (ctx, _) = driver.into_ctx();
+    f(ctx, &head);
+}
+
+/// Tiny trait so `with_head` accepts either `&Driver` (for read-only
+/// emit helpers) or `&mut Driver` (for mutating commands) without
+/// duplicating the head-lookup boilerplate.
+trait HeadCtx {
+    type Target;
+    fn primary_id(&self) -> &str;
+    fn has_head(&self, id: &str) -> bool;
+    fn into_ctx(self) -> (Self::Target, ());
+}
+
+impl<'a> HeadCtx for &'a Driver {
+    type Target = &'a Driver;
+    fn primary_id(&self) -> &str { &self.primary }
+    fn has_head(&self, id: &str) -> bool { self.heads.contains_key(id) }
+    fn into_ctx(self) -> (Self::Target, ()) { (self, ()) }
+}
+
+impl<'a> HeadCtx for &'a mut Driver {
+    type Target = &'a mut Driver;
+    fn primary_id(&self) -> &str { &self.primary }
+    fn has_head(&self, id: &str) -> bool { self.heads.contains_key(id) }
+    fn into_ctx(self) -> (Self::Target, ()) { (self, ()) }
+}
+
+fn do_snapshot(driver: &mut Driver, head: &str) {
+    let mesh = driver.heads.get(head).expect("head exists (checked)");
+    let at = mesh.ledger().len();
+    let snap = mesh.snapshot();
+    let id = driver.fresh_snapshot_id();
+    driver.snapshots.insert(id.clone(), (head.to_string(), snap, at));
+    emit(json!({
+        "type": "snapshot",
+        "head": head,
+        "id": id,
+        "at": at,
+    }));
+}
+
+fn do_restore(driver: &mut Driver, head: &str, id: &str) {
+    let snap = match driver.snapshots.get(id) {
+        Some((_origin, snap, _at)) => snap.clone(),
+        None => {
+            emit_err(&format!("unknown snapshot: {id}"));
+            return;
+        }
+    };
+    let mesh = driver.heads.get_mut(head).expect("head exists (checked)");
+    mesh.restore(&snap);
+    emit(json!({
+        "type": "restored",
+        "head": head,
+        "id": id,
+    }));
+    emit_tracks(driver, head);
+}
+
+fn do_fork(driver: &mut Driver, parent: &str, from: Option<&str>) {
+    let mesh = match from {
+        Some(snap_id) => match driver.snapshots.get(snap_id) {
+            Some((_origin, snap, _at)) => {
+                let mut fresh = Mesh::new(Arc::clone(&driver.bundle))
+                    .expect("bundle valid (already loaded)");
+                fresh.restore(snap);
+                fresh
+            }
+            None => {
+                emit_err(&format!("unknown snapshot: {snap_id}"));
+                return;
+            }
+        },
+        None => match driver.heads.get(parent) {
+            Some(m) => m.fork(),
+            None => {
+                emit_err(&format!("unknown head: {parent}"));
+                return;
+            }
+        },
+    };
+    let new_id = driver.fresh_head_id();
+    driver.heads.insert(new_id.clone(), mesh);
+    emit(json!({
+        "type": "forked",
+        "head": new_id,
+        "from": from,
+        "parent": parent,
+    }));
+    emit_tracks(driver, &new_id);
+}
+
+fn do_drop(driver: &mut Driver, head: &str) {
+    if head == driver.primary {
+        emit_err("cannot drop the primary head");
+        return;
+    }
+    if driver.heads.remove(head).is_some() {
+        emit(json!({"type": "dropped", "head": head}));
+    } else {
+        emit_err(&format!("unknown head: {head}"));
+    }
+}
+
+fn emit_heads(driver: &Driver) {
+    let mut heads: Vec<JsonValue> = driver
+        .heads
+        .iter()
+        .map(|(id, mesh)| {
+            json!({
+                "id": id,
+                "primary": *id == driver.primary,
+                "halted": mesh.playhead().halted(),
+                "ledger_len": mesh.ledger().len(),
+            })
+        })
+        .collect();
+    heads.sort_by(|a, b| {
+        a.get("id").and_then(|v| v.as_str())
+            .cmp(&b.get("id").and_then(|v| v.as_str()))
+    });
+    emit(json!({"type": "heads", "heads": heads}));
+}
+
+fn pump(driver: &mut Driver, head: &str) {
     // Drain Step::Event lines until we hit Choice / Awaiting / Ended
     // or exceed a safety budget for runaway loops. Each event is
-    // tagged with its track id + ledger index + cause so the
+    // tagged with its head + track id + ledger index + cause so the
     // simulator can build the multitrack canvas without a second pass.
     let mut budget = 10_000usize;
     loop {
+        let mesh = match driver.heads.get_mut(head) {
+            Some(m) => m,
+            None => {
+                emit_err(&format!("unknown head: {head}"));
+                return;
+            }
+        };
         if mesh.playhead().halted() {
-            emit(json!({ "type": "ended" }));
+            emit(json!({"type": "ended", "head": head}));
             return;
         }
         if budget == 0 {
@@ -186,32 +429,32 @@ fn pump(mesh: &mut Mesh) {
             return;
         }
         budget -= 1;
-        // Snapshot the ledger end before stepping so the new envelopes
-        // can be emitted with their (track, cause) metadata.
         let start = mesh.ledger().len();
         match mesh.step() {
-            Ok((_step_track, Step::Event(_ev))) => {
-                emit_new_envelopes(mesh, start);
+            Ok((_, Step::Event(_))) => {
+                emit_new_envelopes(mesh, head, start);
             }
             Ok((_, Step::Choice(options))) => {
-                emit_new_envelopes(mesh, start);
+                emit_new_envelopes(mesh, head, start);
                 emit(json!({
                     "type": "choice",
+                    "head": head,
                     "options": options,
                 }));
                 return;
             }
             Ok((_, Step::Awaiting { coroutine })) => {
-                emit_new_envelopes(mesh, start);
+                emit_new_envelopes(mesh, head, start);
                 emit(json!({
                     "type": "awaiting",
+                    "head": head,
                     "coroutine": coroutine,
                 }));
                 return;
             }
             Ok((_, Step::Ended)) => {
-                emit_new_envelopes(mesh, start);
-                emit(json!({ "type": "ended" }));
+                emit_new_envelopes(mesh, head, start);
+                emit(json!({"type": "ended", "head": head}));
                 return;
             }
             Err(e) => {
@@ -222,16 +465,13 @@ fn pump(mesh: &mut Mesh) {
     }
 }
 
-/// Emit every envelope written since `start` as a per-track-tagged
-/// `event` line. One stdin step typically produces one envelope but
-/// hook drains and booth directives can synthesise several; the
-/// simulator handles them all uniformly.
-fn emit_new_envelopes(mesh: &Mesh, start: usize) {
+fn emit_new_envelopes(mesh: &Mesh, head: &str, start: usize) {
     let events = mesh.ledger().events();
     let meta = mesh.ledger().meta();
     for idx in start..events.len() {
         emit(json!({
             "type": "event",
+            "head": head,
             "idx": idx,
             "track": meta[idx].track.0,
             "cause": meta[idx].cause,
@@ -240,7 +480,8 @@ fn emit_new_envelopes(mesh: &Mesh, start: usize) {
     }
 }
 
-fn emit_world(mesh: &Mesh) {
+fn emit_world(driver: &Driver, head: &str) {
+    let mesh = driver.heads.get(head).expect("head exists (checked)");
     let entries: Vec<(String, String)> = mesh
         .world()
         .entries()
@@ -248,13 +489,15 @@ fn emit_world(mesh: &Mesh) {
         .collect();
     emit(json!({
         "type": "world",
+        "head": head,
         "entries": entries,
     }));
 }
 
 /// Emit the track list. Each track has an id, a human-readable label,
 /// a kind tag the simulator uses for colour coding, and the driver.
-fn emit_tracks(mesh: &Mesh) {
+fn emit_tracks(driver: &Driver, head: &str) {
+    let mesh = driver.heads.get(head).expect("head exists (checked)");
     let mut tracks: Vec<JsonValue> = mesh
         .tracks()
         .map(|t| {
@@ -292,13 +535,15 @@ fn emit_tracks(mesh: &Mesh) {
     });
     emit(json!({
         "type": "tracks",
+        "head": head,
         "tracks": tracks,
     }));
 }
 
 /// Emit `cells_for_track` for one track. The simulator pulls cells
 /// lazily as it scrolls the multitrack canvas.
-fn emit_cells(mesh: &Mesh, track: TrackId) {
+fn emit_cells(driver: &Driver, head: &str, track: TrackId) {
+    let mesh = driver.heads.get(head).expect("head exists (checked)");
     let cells: Vec<JsonValue> = mesh
         .cells_for_track(track)
         .iter()
@@ -315,6 +560,7 @@ fn emit_cells(mesh: &Mesh, track: TrackId) {
         .collect();
     emit(json!({
         "type": "cells",
+        "head": head,
         "track": track.0,
         "cells": cells,
     }));
