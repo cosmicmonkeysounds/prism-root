@@ -11,6 +11,21 @@ via ⌘⌥1..5 and a StatusBar switcher; Cast / Booth / Outline /
 References panels round out the dock. The PySide6 simulator is
 deprecated but kept runnable as a local debugger.
 
+> **Direction change (2026-05-31).** The free-docking `dockview` shell
+> (activity bar + freely dockable panels + preset dropdown) proved
+> too chaotic: every panel toggle mutates the layout, there is no
+> stable "home," and the user must reassemble a workspace each
+> session. It is being replaced by a **modal, DaVinci-Resolve-style
+> topology** — a bottom **Mode Bar** switching five fixed,
+> purpose-built layouts (**Writing / Editing / Simulating /
+> Performing / Production**), a persistent context-sensitive
+> **Properties tray** on the right, and a **clips-on-tracks Timeline**
+> dock along the bottom. The full v2 spec is **Part II** at the end of
+> this document. Parts 0–8 describe the dockview shell that v2
+> supersedes; the focus/projection bus (§4), session model, detail
+> registry, and every leaf panel are **reused unchanged** as region
+> contents — v2 is a shell rewrite, not a panel rewrite.
+
 All Phase 1–6 follow-ups landed in a final pass (2026-05-31):
 
 - **Side sink** — additive right-edge drawer that stacks multiple
@@ -442,3 +457,408 @@ Phase 1 ships when:
 - `cargo run -p prism-cli -- test -p loom-runtime` passes including the new tests.
 - `loom-play` accepts `snapshot`/`restore`/`fork`/`drop`/`heads` and round-trips them in a manual stdio session.
 - `mesh_phase_a` / `mesh_phase_b` still pass unchanged.
+
+---
+
+# Part II — Modal topology (v2): the Studio shell
+
+Status: **Phases 1–2 landed** (2026-06-01); rest is spec. Supersedes
+the dockview shell in Parts 0–8. Decisions locked: layout via
+**`allotment`**, Timeline via **`dnd-timeline` + `@dnd-kit`
+(headless)**.
+
+**Landed 2026-06-01:**
+- **Studio shell (Phase 1).** `editor/src/store/mode.ts` (mode +
+  per-mode region sizes, persisted to `localStorage["loom.studio"]`) +
+  `editor/src/components/studio/{StudioShell,ModeBar,regions}.tsx`.
+  `App.tsx` renders `<StudioShell>` instead of `<DockShell>`; the five
+  modes render the existing leaf panels into fixed `allotment` regions;
+  `⌘1..⌘5` switch modes; the Mode Bar carries the rail/tray collapse
+  toggles. The StatusBar preset `<select>` is gone. `DockShell` /
+  `panels` / `panel-registry` / `presets` remain in-tree but unused
+  (dockview fallback for one release).
+- **Properties tray (Phase 2).** `editor/src/components/studio/PropertiesTray.tsx`
+  + `editor/src/lib/loom-ast.ts`. Tabbed, context-sensitive right rail
+  with per-mode tab sets + defaults. Author modes follow the editor
+  cursor — the tray shows the beat / declaration the cursor is inside,
+  sourced from the wasm `parse` AST (the runtime `DetailFor` needs a
+  play head, so it can't serve author time); clicking the title pins
+  focus to drive the References tab. Runtime modes reuse
+  `InspectorPanel`; Performing gets a Booth tab, Production a Deploy
+  tab. Editable write-back stays Phase 4.
+- **Parser edit primitive (Phase 4 groundwork).** `loom-parser` grew a
+  public `edit` module: `TextEdit`, `apply_edits`, `move_beat`,
+  `set_beat_property`, `Anchor`. Span-based byte-range splices that
+  leave untouched lines byte-identical (the §10 round-trip invariant),
+  with the minimal-diff guarantee covered by `parser/tests/edit_api.rs`.
+
+## 9. Why v2
+
+The v1 shell (`editor/src/components/dock/DockShell.tsx`) is VS Code's
+model: a vertical **activity bar** of 19 flat panel icons, plus a
+`dockview` free-docking canvas. Clicking an icon calls `toggle(id)`,
+which `addPanel`/`removePanel`s into the live grid, and dockview's
+auto-placement (`positionFor`) drops each new panel into a fresh
+column or split. Consequences:
+
+- **Every toggle mutates the spatial layout.** No stable home; the
+  arrangement drifts as you work — the "spawns new tabs / inserts new
+  columns" annoyance.
+- **19 sibling panels, no hierarchy.** Files, Editor, Timeline, Booth,
+  Cloud, Graph all rank equally; the user assembles a workspace from
+  scratch every session.
+- **Presets are an afterthought** — a `<select>` in the StatusBar
+  (`store/presets.ts` + `shell/StatusBar.tsx`) that still resolves to
+  free-floating dockview arrangements.
+
+DaVinci Resolve's page model is the fix: the workspace is **not** a
+freeform canvas but a small set of hand-designed, single-purpose
+"pages" switched from a persistent bottom bar. You never drag a panel
+in Resolve; each page is built for one job, with the Inspector (right)
+and Timeline (bottom) as recurring fixtures.
+
+Crucially, **almost all the content already exists.** The
+focus/projection bus (`store/focus.ts`), the detail registry
+(`detail/registry.tsx`), the session model (`store/session.ts`), and
+every leaf panel are reused as **region contents**. v2 replaces the
+frame and keeps the furniture.
+
+## 10. North star
+
+> One app, **five modes**, switched from a persistent **Mode Bar** at
+> the very bottom. Each mode is a **fixed, purpose-built layout** of
+> resizable regions — not free-floating panels. Switching modes is
+> instant and preserves the open project, the live play session, and
+> the current focus selection. A **context-sensitive Properties tray**
+> lives on the right of every mode; a **clips-on-tracks Timeline**
+> docks along the bottom of the modes that need it.
+
+| Mode | Job | Resolve analog |
+|---|---|---|
+| **Writing** | Author prose + `.loom` source | Edit (text / scripting) |
+| **Editing** | Arrange story structure — beats/scenes on tracks + the story graph | Cut/Edit + Fusion |
+| **Simulating** | Run & debug the story solo | Playback / preview |
+| **Performing** | Live multi-user performance + booth control | Live / multicam |
+| **Production** | Export, share, deploy, workspace management | Deliver |
+
+**Single source of truth — edits round-trip to `.loom`.** The project
+source stays canonical in every mode. Structural edits made through
+*any* surface — dragging a beat on the Editing timeline, editing cast /
+disposition in the Properties tray, rewiring diverts on the Graph —
+serialize back into `.loom` text (through the parser AST + the Loro
+doc), exactly as typing in the editor does. No mode keeps a private
+structural model that can drift from source.
+
+## 11. The fixed shell
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│ TOP BAR   Loom · «workspace»     ‹ transport ⏮ ⏯ ⏭ ⑂ 📌 ›    peers  ⌘K  ⚙ │
+├───────────┬──────────────────────────────────────────┬─────────────────────┤
+│           │                                          │                     │
+│  LEFT     │            CENTER STAGE                  │   RIGHT: PROPERTIES  │
+│  RAIL     │      (mode-specific main surface)        │   TRAY  (Inspector)  │
+│ (browser/ │                                          │   context-sensitive  │
+│   bin)    │                                          │   driven by focus bus│
+│           │                                          │                     │
+├───────────┴──────────────────────────────────────────┴─────────────────────┤
+│  BOTTOM DOCK: TIMELINE — clips on tracks   (Editing · Simulating · Performing) │
+├──────────────────────────────────────────────────────────────────────────┤
+│  MODE BAR   ✎ Writing   ▦ Editing   ▶ Simulating   ◉ Performing   ⇪ Production │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+Five regions, each driven by a mode-keyed component map:
+
+- **Top bar** — workspace name; global **transport** (play / pause /
+  step / stop / fork / snapshot, wired to `session.ts`'s
+  `startPlay` / `sendChoice` / `stopPlay` / `forkPlay` / `snapshotPlay`);
+  presence avatars; command palette; settings. Mode-agnostic.
+- **Left rail ("Bin")** — a mode-specific source browser. Collapsible.
+- **Center Stage** — the mode's primary work surface.
+- **Right tray (Properties / Inspector)** — persistent, context-sensitive,
+  driven by the focus bus (`useFocus.pinned ?? hover`). Collapsible.
+- **Bottom dock (Timeline)** — present only in Editing / Simulating /
+  Performing. Resizable height.
+- **Mode Bar** — the bottom-most strip; the primary navigation.
+  Large labelled icon+text targets, active mode lit. Bound to `⌘1`–`⌘5`.
+
+Region sizes persist **per mode** (Editing remembers its tall
+timeline; Writing remembers its narrow file rail).
+
+## 12. The five modes
+
+Each row: left rail · center · right-tray default · bottom timeline ·
+which **existing** components compose it.
+
+### ✎ Writing
+- **Left:** `files/Sidebar` + `files/FileTree` (file bin) + an Outline
+  tab (`runner/Outline.tsx`).
+- **Center:** `editor/Editor` (`Tabs` + `Breadcrumbs` + CodeMirror).
+  Optional vertical split with `canvas/Canvas` as a relationship map.
+- **Right tray:** symbol / character / beat properties from the cursor
+  via LSP, plus `runner/References.tsx`. (Author-time facet of
+  `DetailFor`.)
+- **Bottom timeline:** none (optional thin diagnostics strip).
+- *The old "Author" preset, made permanent and spatially stable.*
+
+### ▦ Editing — the structural heart (Resolve "Edit"/"Fusion")
+- **Left:** new **Story Bin** — beats, scenes, characters, items,
+  cohorts, locations (from the bundle / LSP `documentSymbols`). Drag a
+  beat → timeline.
+- **Center:** the **Story Graph** (`runner/Graph.tsx`, xyflow) as the
+  macro "viewer" — beats and diverts as a DAG.
+- **Right tray:** editable inspector for the selected beat / clip /
+  character (cast, setting, triggers, disposition).
+- **Bottom dock:** **Timeline — Editing facet.** Beats/scenes as
+  *clips* on character / cohort / location *tracks*; drag to reorder,
+  set durations / triggers, retime `at 6am`-style clock gates — every
+  such edit rewrites `.loom` source (§10).
+- *New mode. Graph + structural Timeline + editable Inspector — where
+  "clips on tracks" lives most literally.*
+
+### ▶ Simulating — run/debug solo (the old "Debug" preset, elevated)
+- **Left:** `runner/Choices.tsx` + heads list + snapshots.
+- **Center:** `runner/Transcript.tsx` (the "program monitor") above
+  `runner/World.tsx`.
+- **Right tray:** Inspector — latest or pinned envelope / world-key /
+  character (`DetailFor`, read facet).
+- **Bottom dock:** **Timeline — Run facet** (read-only ledger playback +
+  scrubber + right-click fork; today's `runner/Timeline.tsx` evolved).
+
+### ◉ Performing — live multi-user (old "Direct" + "Perform" + booth)
+- **Left:** `runner/Cast.tsx` + heads.
+- **Center:** live `Transcript` + `Choices`, presence-aware; multi-head
+  monitor.
+- **Right tray:** `runner/Booth.tsx` live-patch (skip / reload / force) +
+  selected head / participant inspector.
+- **Bottom dock:** **Timeline — multi-head lanes** (the head-tab + fork
+  model already in `Timeline.tsx` / `HeadTabs`).
+
+### ⇪ Production — deliver
+- **Left:** `cloud/CloudPanel.tsx` workspaces + relay.
+- **Center:** export / share / deploy config (`lib/export.ts`, the
+  share-link "Read" preview, `prism loom build` / `serve` affordances,
+  `cloud/RemoteEditor`).
+- **Right tray:** export & deploy settings, relay status, peers.
+- **Bottom timeline:** none.
+- *New framing around existing cloud / export plumbing.*
+
+## 13. The Timeline (centerpiece)
+
+Today's `runner/Timeline.tsx` already renders **tracks as rows**
+(130px label + lane) and **events as clips** (12px blocks) with cause
+arcs and head tabs — but blocks are uniform-width and packed
+sequentially (`nextX` per track): no time axis, no zoom, no durations,
+no playhead. Target:
+
+| Capability | Today | Target |
+|---|---|---|
+| X-axis | sequential packing | a **clock ruler** (story time) as master, with **zoom + pan**; ledger index recorded per clip |
+| Clips | uniform 12px squares | **extents** (a beat spans BeatEntered→exit), labels, kind-colored |
+| Playhead | none | a **scrubber** driving "current envelope" / replay |
+| Track headers | label only | collapse / mute-solo / reorder, kind grouping |
+| Interaction | hover→focus, right-click fork | + **drag / reorder / retrigger** (Editing facet); **scrub / fork** (Run facet) |
+| Branching | head tabs + diamond | head **lane bands** or DAG forks across heads |
+
+**Time semantics (hybrid).** The **story clock is the master ruler** —
+clips are positioned by the story time the runtime tracks
+(`Time.hour` / `Time.minute`; it already lowers `at 6am` / `at noon`
+into `WaitUntilClock`), so the x-axis reads like a real schedule. Each
+clip *also* records its **ledger index** (logical emission order) for
+stable identity, tie-breaking simultaneous events, and the Run-facet
+scrubber. **Cross-track tunnels** — a beat that diverts into another
+track and returns (`<-`; the `Tunneled` event) — are drawn as
+connectors spanning rows, distinct from ordinary `cause` arcs. Clips =
+beats (span), dialogue lines, directives, improv windows (`improv
+duration:`); tracks = characters / cohorts / locations / system;
+heads = branches.
+
+**Two facets, one component, headless via `dnd-timeline`:**
+
+- **Run facet** (Simulating / Performing) — read-only over the live
+  `head.transcript` / `meta` / `tracks`, + scrubber + fork. Drag
+  disabled. Low-risk evolution of the existing SVG renderer.
+- **Editing facet** (Editing) — authorable: drag beats to reorder /
+  retime; resize to set durations / triggers. Every edit rewrites
+  `.loom` source (§10) — beats serialize back through the parser AST +
+  Loro doc.
+
+`dnd-timeline` is **headless** — it owns the timeframe / pan / zoom /
+drag math and sortable rows; we render our own beat/envelope clip
+components. That is the right call because our "clips" are narrative
+events, not media. Sketch:
+
+```tsx
+<TimelineContext range={{ start: 0, end: ledgerLength }}>
+  {tracks.map((track) => (
+    <Row id={track.id} key={track.id}>          {/* useRow() */}
+      {clipsFor(track).map((clip) => (
+        <Clip key={clip.id} item={clip}          {/* useItem() */}
+              editable={mode === 'editing'} />
+      ))}
+    </Row>
+  ))}
+</TimelineContext>
+```
+
+Long ledgers/tracks are virtualized with `@tanstack/react-virtual`
+(headless, horizontal + vertical windowing) to hold 60fps at thousands
+of envelopes.
+
+## 14. Properties tray — promoting `DetailFor`
+
+The tray's brain already exists: `detail/registry.tsx` exports
+`DetailFor`, a per-`FocusRef`-kind renderer (Envelope / Character /
+Track / WorldKey / Beat), and `runner/Inspector.tsx` already delegates
+to `DetailFor(pinned)`. v2:
+
+1. **Persistent right region in every mode** (not a summoned dock
+   panel / popover). Bound to `useFocus.pinned ?? hover` — hover
+   previews, click pins (the bus already works this way).
+2. **Per-mode default** when nothing is selected: Writing → symbol at
+   cursor; Editing → selected beat; Simulating → latest envelope;
+   Performing → selected head / participant; Production → export
+   settings.
+3. **Editable in author modes** — rename a beat's cast, edit a
+   character's disposition, set a clip trigger. Author-time edits
+   serialize back to `.loom` source (§10) via the Loro doc; live tweaks
+   during a play session go through the booth / runtime. This turns the
+   tray from a debugger into Resolve's actual Inspector.
+4. **Tray tabs** (Resolve-style): e.g. *Properties · References ·
+   History* for one entity.
+
+The popover / modal / side sinks in `focus.ts` stay for *secondary*
+peeks; the right tray becomes the *primary* sink.
+
+**Status (2026-06-01):** the read surface landed — tabbed tray (1),
+per-mode defaults (2), and tray tabs (4), with author-time detail
+sourced from the AST that follows the cursor
+(`components/studio/PropertiesTray.tsx` + `lib/loom-ast.ts`). Editable
+fields (3) are Phase 4, gated on the wasm `edit` binding.
+
+## 15. Code model
+
+A small new store + a shell component; everything else is reused.
+
+```ts
+// store/mode.ts  (new)
+type Mode = 'writing' | 'editing' | 'simulating' | 'performing' | 'production'
+type ModeUi = {
+  cols: number[]          // allotment horizontal sizes [left, center, right]
+  rows: number[]          // allotment vertical sizes [stage, timeline]
+  leftTab: string
+  trayTab: string
+  trayOpen: boolean
+  timelineZoom: number
+}
+type ModeState = {
+  mode: Mode
+  setMode(m: Mode): void
+  ui: Record<Mode, ModeUi>     // persisted per mode (localStorage)
+  setUi(m: Mode, patch: Partial<ModeUi>): void
+}
+```
+
+```tsx
+// StudioShell.tsx — replaces DockShell
+<div className="flex flex-col h-full">
+  <TopBar />
+  <div className="flex-1 min-h-0">
+    <Allotment defaultSizes={ui.cols} onChange={(c) => setUi(mode, { cols: c })}>
+      <Allotment.Pane minSize={180} preferredSize={260} snap>
+        <LeftRail mode={mode} />
+      </Allotment.Pane>
+      <Allotment.Pane>
+        <Allotment vertical defaultSizes={ui.rows}
+                   onChange={(r) => setUi(mode, { rows: r })}>
+          <Allotment.Pane><CenterStage mode={mode} /></Allotment.Pane>
+          {hasTimeline(mode) && (
+            <Allotment.Pane minSize={120} preferredSize={240} snap>
+              <TimelineDock mode={mode} />
+            </Allotment.Pane>
+          )}
+        </Allotment>
+      </Allotment.Pane>
+      <Allotment.Pane minSize={240} preferredSize={320} snap visible={ui.trayOpen}>
+        <PropertiesTray mode={mode} />
+      </Allotment.Pane>
+    </Allotment>
+  </div>
+  <ModeBar mode={mode} onPick={setMode} />
+</div>
+```
+
+(`allotment` has no built-in `autoSaveId`; sizes persist via `onChange`
+→ `store/mode.ts` → localStorage. Pane collapse uses `visible`; `snap`
+gives the snap-to-collapse feel for rails.)
+
+- **Reused unchanged:** `store/focus.ts`, `store/session.ts`,
+  `store/workspace.ts`, `detail/registry.tsx`, and every leaf panel
+  (`Transcript`, `Choices`, `Ledger`, `World`, `Cast`, `Booth`,
+  `Graph`, `Editor`, `FileTree`, …) — now rendered into fixed regions
+  instead of dockview groups.
+- **Retired:** the activity bar + per-panel toggle keybindings
+  (`DockShell.tsx`), the StatusBar preset `<select>`
+  (`StatusBar.tsx`), and `presets.ts`'s free-layout concept (becomes
+  "saved region sizes within a mode," or is dropped). `dockview` is
+  removed once all five modes ship.
+- **Keybindings migrate:** `⌘1..5` → modes; transport keys
+  (space = play/pause, `[` / `]` = step); per-panel `⌘⇧X` toggles
+  retire or become "focus region."
+
+## 16. External libraries (decisions)
+
+| Need | Choice | Notes |
+|---|---|---|
+| Fixed region layout | **`allotment`** | Resizable split views, min/max/preferred size, snap-to-collapse, `visible` panes; sizes persisted via `onChange` into `store/mode.ts`. |
+| Timeline interaction | **`dnd-timeline` + `@dnd-kit/core`** (+ `sortable`, `modifiers`) | Headless timeline (pan / zoom / drag / sortable rows) on dnd-kit; we render our own beat/envelope clips. Fits the DAG/branch model; powers the Editing facet's drag-to-retime. |
+| Big-ledger performance | **`@tanstack/react-virtual`** | Headless horizontal + vertical windowing for long ledgers in Timeline / Transcript / Ledger. |
+| Keep | `@xyflow/react`, CodeMirror, `zustand`, `loro` | Graph stays xyflow; mode store stays zustand (no `xstate` needed). |
+| Rejected | `dockview` (free docking), Twick / Remotion / React Video Editor | Free docking is the problem being removed; the video SDKs are wrong-domain and heavy. `react-resizable-panels` was a viable layout alternative; `allotment` chosen. |
+
+Net new deps: `allotment`, `@dnd-kit/core` (+ `sortable`, `modifiers`),
+`dnd-timeline`, `@tanstack/react-virtual`. All small, MIT/permissive,
+tree-shakeable.
+
+## 17. Migration phases
+
+1. **Shell swap.** ✅ *Landed 2026-06-01.* `store/mode.ts` +
+   `<StudioShell>` (`allotment`) + Mode Bar (`⌘1..5`); each mode's
+   existing panel set renders into fixed regions. No leaf-panel
+   changes; dockview kept importable for one release as a fallback.
+2. **Properties tray.** ✅ *Landed 2026-06-01.* Tabbed right rail with
+   per-mode tab sets + defaults; author modes follow the cursor via the
+   AST (`PropertiesTray.tsx` + `lib/loom-ast.ts`); runtime modes reuse
+   `InspectorPanel`. Editable write-back deferred to phase 4.
+3. **Timeline v2 — Run facet.** Ruler + zoom + pan + playhead + clip
+   extents over the live ledger (read-only), on `dnd-timeline` +
+   `react-virtual`.
+4. **Editing mode + Editing facet.** Story Bin; drag / reorder /
+   retrigger beats, round-tripping to `.loom` source; editable
+   Inspector.
+5. **Polish & deliver.** Transport bar; Performing presence;
+   Production/Deliver mode; per-mode saved layouts; remove `dockview`
+   + activity bar.
+
+## 18. Resolved decisions & deferred work
+
+- **Timeline x-axis — hybrid (decided).** Story clock is the master
+  ruler; ledger index is recorded per clip; cross-track tunnels are
+  drawn as connectors. See §13.
+- **Editing-facet write-back — source is canonical (decided; primitive
+  landed).** Structural edits in any mode rewrite `.loom` source via the
+  parser AST + Loro doc (§10) — no parallel structural model. The
+  foundational primitive shipped 2026-06-01 in `loom-parser::edit`:
+  spans were already byte-accurate and the comment pre-pass blanks
+  rather than drops, so structural edits are pure byte-range splices
+  (`TextEdit` / `apply_edits`) that leave untouched lines identical.
+  `move_beat` and `set_beat_property` are implemented and tested for the
+  minimal-diff invariant. **Remaining, gating the Editing facet:** more
+  operations (insert/remove beat, reorder body items, retime clock
+  gates), a wasm binding so `LoomDoc` can apply edits, editor wiring
+  (drag → edit), and — only for edits that genuinely *reformat* rather
+  than splice — a trivia-preserving re-emit path.
+- **Collab/presence under fixed modes — deferred.** Out of scope for
+  now; `mode` is local UI state. Revisit whether peers should see each
+  other's mode once the shell lands.

@@ -1,8 +1,6 @@
 import { useWorkspace } from '@/store/workspace'
 import { useSettings } from '@/store/settings'
 import { languageForPath, languageLabel } from '@/lib/language'
-import { usePresets, allPresets } from '@/store/presets'
-import { getActiveDockApi } from '@/components/dock/util'
 
 export function StatusBar() {
   const activePath = useWorkspace((s) => s.activePath)
@@ -26,7 +24,6 @@ export function StatusBar() {
         )}
       </div>
       <div className="flex items-center gap-4">
-        <PresetSwitcher />
         {cursor && (
           <span>
             Ln {cursor.line}, Col {cursor.column}
@@ -52,63 +49,5 @@ export function StatusBar() {
         {lang && <span className="text-zinc-400">{lang}</span>}
       </div>
     </footer>
-  )
-}
-
-function PresetSwitcher() {
-  const custom = usePresets((s) => s.custom)
-  const active = usePresets((s) => s.active)
-  const apply = usePresets((s) => s.apply)
-  const save = usePresets((s) => s.saveCurrent)
-  const del = usePresets((s) => s.delete)
-  const presets = allPresets(custom)
-  const current = presets.find((p) => p.id === active)
-  return (
-    <div className="flex items-center gap-1">
-      <select
-        aria-label="Workspace preset"
-        value={active ?? ''}
-        onChange={(e) => {
-          const api = getActiveDockApi()
-          if (!api) return
-          if (e.target.value) apply(api, e.target.value)
-        }}
-        className="bg-zinc-950 text-zinc-300 border border-white/10 rounded px-1 py-px hover:text-zinc-100"
-        title="Switch workspace preset (⌘⌥1..5 for builtins)"
-      >
-        <option value="">Workspace…</option>
-        {presets.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.builtin ? '◇ ' : ''}
-            {p.name}
-          </option>
-        ))}
-      </select>
-      <button
-        type="button"
-        onClick={() => {
-          const api = getActiveDockApi()
-          if (!api) return
-          const name = window.prompt('Preset name', current?.name ?? 'My workspace')
-          if (name) save(api, name)
-        }}
-        className="hover:text-zinc-200"
-        title="Save current layout as a new preset"
-      >
-        +
-      </button>
-      {current && !current.builtin && (
-        <button
-          type="button"
-          onClick={() => {
-            if (window.confirm(`Delete preset "${current.name}"?`)) del(current.id)
-          }}
-          className="hover:text-rose-400"
-          title="Delete the active preset"
-        >
-          ×
-        </button>
-      )}
-    </div>
   )
 }

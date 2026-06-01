@@ -39,9 +39,8 @@ WREN
 
 fn play_to_end(mesh: &mut Mesh) {
     for _ in 0..64 {
-        match mesh.step().expect("step") {
-            (_, Step::Ended) => return,
-            _ => {}
+        if let (_, Step::Ended) = mesh.step().expect("step") {
+            return;
         }
     }
     panic!("mesh did not halt within 64 steps");

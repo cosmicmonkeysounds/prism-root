@@ -12,6 +12,7 @@ A local-first IDE with a visual canvas, running entirely in the browser.
 - Tailwind CSS v4 (`@tailwindcss/vite`)
 - `@uiw/react-codemirror` (one-dark theme, per-language extensions)
 - `@xyflow/react` for the canvas
+- `allotment` for the fixed modal-shell region splits (IDE redesign v2)
 - `zustand` for state
 - `pnpm` for package management
 
@@ -19,10 +20,30 @@ A local-first IDE with a visual canvas, running entirely in the browser.
 ```
 src/
   lib/        # fs (File System Access), language (CM extensions)
-  store/      # zustand workspace store
-  components/ # Sidebar, FileTree, Tabs, Editor, Canvas, SplitPane, StatusBar
-  App.tsx     # three-pane shell
+  store/      # zustand stores: workspace (files), session (relay/play),
+              #   focus (projection bus), mode (modal shell)
+  components/ # studio/ (StudioShell + ModeBar + per-mode regions),
+              #   files, editor, canvas, runner, cloud, detail, shell
+  App.tsx     # top bar + StudioShell + status bar + overlays
 ```
+
+## Shell (v2 modal topology)
+
+The IDE is one app with five **modes** — Writing / Editing /
+Simulating / Performing / Production — switched from a bottom **Mode
+Bar** (`⌘1..⌘5`), DaVinci-Resolve-style. Each mode is a fixed,
+resizable `allotment` layout (left rail · center stage · right
+properties tray · optional bottom Timeline dock) that composes the
+existing leaf panels; `store/mode.ts` owns the active mode + per-mode
+region sizes (persisted to `localStorage["loom.studio"]`). The right
+**Properties tray** (`components/studio/PropertiesTray.tsx`) is tabbed
+and context-sensitive: author modes follow the editor cursor and read
+the active file's AST via `lib/loom-ast.ts`; runtime modes reuse the
+focus-driven `InspectorPanel`. This
+replaced the old `dockview` activity-bar + free-docking +
+workspace-preset model (`components/dock/*`, `store/presets.ts` — still
+in-tree, unused, kept one release as a fallback). Full design:
+[`docs/dev/loom-ide-redesign.md` Part II](../../../docs/dev/loom-ide-redesign.md).
 
 ## Conventions
 - Path alias `@/*` → `src/*`.
@@ -83,7 +104,7 @@ That one command rebuilds the wasm bundle, builds `loom-relayd`, and
 starts the Vite editor (HMR) on `:5173` + the relay (API + WS) on
 `:7878` under one supervised process — Ctrl+C stops both. Open the
 printed editor URL, register, create a workspace in the Cloud panel,
-hit `⌘⌥3` for the Debug preset, click **Start play** in the Choices
-panel — Timeline / Ledger / World / Detail populate together and
+hit `⌘3` for **Simulating** mode, click **Start play** in the Choices
+panel — Transcript / World / Timeline / Inspector populate together and
 every hover/click links all panels through the focus + projection
 bus.

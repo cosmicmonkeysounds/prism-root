@@ -33,12 +33,14 @@ pub mod comments;
 pub mod decl_body;
 pub mod diagnostics;
 pub mod directives;
+pub mod edit;
 pub mod keywords;
 pub mod lexer;
 pub mod parser;
 pub mod source;
 
-pub use ast::LoomFile;
+pub use ast::{Item, LoomFile};
 pub use diagnostics::{Code, Diagnostic, Severity};
+pub use edit::{apply_edits, move_beat, set_beat_property, Anchor, EditError, TextEdit};
 pub use parser::parse;
 pub use source::{Position, Span};

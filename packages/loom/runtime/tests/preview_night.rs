@@ -56,9 +56,8 @@ fn preview_night_loads_persons_rosters_and_runs_cast_directives() {
     // Play the prologue — should fire <load_roster:> and <cast:>.
     let mut p = Playhead::new(Arc::new(bundle)).expect("playhead");
     for _ in 0..32 {
-        match p.step().expect("step") {
-            Step::Ended => break,
-            _ => {}
+        if let Step::Ended = p.step().expect("step") {
+            break;
         }
     }
 

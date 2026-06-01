@@ -6,7 +6,7 @@ tools) without dragging the runtime + scheduler + Luau bridge along.
 
 | Crate                  | Role                                                            |
 |------------------------|-----------------------------------------------------------------|
-| [`parser`](./parser)   | Lexer, AST, diagnostics, keyword table for the `.loom` surface  |
+| [`parser`](./parser)   | Lexer, AST, diagnostics, keyword table, span-preserving structural `edit` API for the `.loom` surface |
 | [`runtime`](./runtime) | Bundle, resolver, playhead, ledger, reactive graph, scheduler, directive registry, Luau bridge |
 | [`lsp`](./lsp)         | Stdio JSON-RPC server backed by `loom-parser` + a workspace-wide name index |
 | [`syntax`](./syntax)   | TextMate grammar generator (driven by `loom-parser::keywords`) + Zed / VSCode extension shells |
@@ -281,6 +281,12 @@ Run/Debug surface the simulator used to (Transcript / Ledger /
 Timeline / World / Inspector / Detail / Cast / Booth / Graph /
 Outline / References) plus workspace presets, the focus + projection
 bus, multi-head branching play, and booth live-patch over the relay.
+
+**Shell (v2, phase 1 landed):** those surfaces now live inside a modal
+**Studio** shell — five modes (Writing / Editing / Simulating /
+Performing / Production) on a bottom Mode Bar (`⌘1..⌘5`), each a fixed
+`allotment` layout — replacing the dockview activity-bar + workspace
+presets. See [`docs/dev/loom-ide-redesign.md` Part II](../../docs/dev/loom-ide-redesign.md).
 
 See [`docs/dev/loom-ide-redesign.md` §0](../../docs/dev/loom-ide-redesign.md#0-running-the-ide)
 for the launch flows, the step-by-step "drive the full simulator

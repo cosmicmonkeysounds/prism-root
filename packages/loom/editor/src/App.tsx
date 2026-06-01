@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { DockShell } from '@/components/dock/DockShell'
+import { StudioShell } from '@/components/studio/StudioShell'
 import { StatusBar } from '@/components/shell/StatusBar'
 import { CommandPalette } from '@/components/shell/CommandPalette'
 import { SettingsPanel } from '@/components/shell/SettingsPanel'
@@ -26,7 +26,7 @@ export default function App() {
       </header>
 
       <main className="flex-1 min-h-0">
-        <DockShell />
+        <StudioShell />
       </main>
 
       <StatusBar />
