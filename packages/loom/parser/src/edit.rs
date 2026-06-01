@@ -19,7 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ast::{Beat, Item, LoomFile};
+use crate::ast::{Beat, BodyItem, Divert, Item, LoomFile};
 use crate::source::Span;
 
 /// A single byte-range splice into the original source. `start..end`
@@ -150,11 +150,10 @@ pub fn set_beat_property(
     Ok(vec![TextEdit { start, end: start, replacement }])
 }
 
-/// Move the beat named `beat` to the position described by `anchor`,
-/// rewriting the source as a delete + insert pair. Every other item's
-/// bytes are preserved verbatim; only the separators at the removal and
-/// insertion seams are normalised to a single blank line. Returns an
-/// empty edit list when the move is a no-op.
+/// Move the beat named `beat` to the position described by `anchor`.
+/// Rewrites the source as a delete + insert pair; every other item's
+/// bytes are preserved verbatim, only the seam separators normalise to
+/// a blank line. Returns an empty edit list when the move is a no-op.
 pub fn move_beat(
     source: &str,
     file: &LoomFile,
@@ -162,43 +161,116 @@ pub fn move_beat(
     anchor: Anchor,
 ) -> Result<Vec<TextEdit>, EditError> {
     let i = beat_index(file, beat).ok_or_else(|| EditError::BeatNotFound(beat.to_string()))?;
-    let n = file.items.len();
+    let target = anchor_index(file, &anchor)?;
+    let blocks = item_blocks(source, file);
+    Ok(reorder_block_edits(source, &blocks, i, target))
+}
 
-    let target = match &anchor {
+/// Insert a new (empty) `== name` beat at `anchor`. The new beat is
+/// bracketed by blank lines; every existing line stays byte-identical.
+pub fn insert_beat(
+    source: &str,
+    file: &LoomFile,
+    name: &str,
+    anchor: Anchor,
+) -> Result<Vec<TextEdit>, EditError> {
+    let target = anchor_index(file, &anchor)?;
+    let blocks = item_blocks(source, file);
+    let ins = if target < blocks.len() { blocks[target].0 } else { source.len() };
+    let preceding = &source[..ins];
+    let trailing = preceding.bytes().rev().take_while(|&c| c == b'\n').count();
+    let mut replacement = String::new();
+    if !preceding.is_empty() {
+        replacement.push_str(&"\n".repeat(2usize.saturating_sub(trailing)));
+    }
+    replacement.push_str(&format!("== {name}\n\n"));
+    Ok(vec![TextEdit { start: ins, end: ins, replacement }])
+}
+
+/// Delete the beat named `beat` (its full block, including the trailing
+/// separator up to the next item). Other items stay byte-identical.
+pub fn remove_beat(
+    source: &str,
+    file: &LoomFile,
+    beat: &str,
+) -> Result<Vec<TextEdit>, EditError> {
+    let i = beat_index(file, beat).ok_or_else(|| EditError::BeatNotFound(beat.to_string()))?;
+    let blocks = item_blocks(source, file);
+    let (bs, be) = blocks[i];
+    Ok(vec![TextEdit { start: bs, end: be, replacement: String::new() }])
+}
+
+/// Reorder a beat's body items: move the item at index `from` to index
+/// `to` (final positions, 0-based over the beat's `body`). Returns an
+/// empty edit list when out of range or a no-op.
+pub fn move_body_item(
+    source: &str,
+    file: &LoomFile,
+    beat: &str,
+    from: usize,
+    to: usize,
+) -> Result<Vec<TextEdit>, EditError> {
+    let b = beat_at(file, beat).ok_or_else(|| EditError::BeatNotFound(beat.to_string()))?;
+    let body = &b.body;
+    if from >= body.len() || to >= body.len() || from == to {
+        return Ok(vec![]);
+    }
+    let starts: Vec<usize> = body
+        .iter()
+        .map(|it| line_bounds(source, body_item_span(it).start.byte as usize).0)
+        .collect();
+    let region_end = (b.span.end.byte as usize).min(source.len());
+    let n = starts.len();
+    let blocks: Vec<(usize, usize)> = (0..n)
+        .map(|k| (starts[k], if k + 1 < n { starts[k + 1] } else { region_end }))
+        .collect();
+    // Translate "final index `to`" into the reorder helper's
+    // "insert before original index" convention.
+    let target = if to > from { to + 1 } else { to };
+    Ok(reorder_block_edits(source, &blocks, from, target))
+}
+
+/// Resolve an [`Anchor`] to a target index in `file.items`.
+fn anchor_index(file: &LoomFile, anchor: &Anchor) -> Result<usize, EditError> {
+    Ok(match anchor {
         Anchor::Start => 0,
-        Anchor::End => n,
+        Anchor::End => file.items.len(),
         Anchor::Before(name) => {
             beat_index(file, name).ok_or_else(|| EditError::AnchorNotFound(name.clone()))?
         }
         Anchor::After(name) => {
             beat_index(file, name).ok_or_else(|| EditError::AnchorNotFound(name.clone()))? + 1
         }
-    };
+    })
+}
 
-    // Moving a beat to where it already is changes nothing.
-    if target == i || target == i + 1 {
-        return Ok(vec![]);
+/// Move block `i` to just before block `target` (`target == len` =>
+/// end). Returns `[]` for a no-op. Shared by `move_beat` /
+/// `move_body_item`; `blocks` partition the editable region.
+fn reorder_block_edits(
+    source: &str,
+    blocks: &[(usize, usize)],
+    i: usize,
+    target: usize,
+) -> Vec<TextEdit> {
+    let n = blocks.len();
+    if i >= n || target == i || target == i + 1 {
+        return vec![];
     }
-
-    let blocks = item_blocks(source, file);
     let (bs, be) = blocks[i];
     let content = source[bs..be].trim_end();
     let moved = format!("{content}\n\n");
-
     let del = TextEdit { start: bs, end: be, replacement: String::new() };
-
     let ins = if target < n { blocks[target].0 } else { source.len() };
     let preceding = &source[..ins];
-    let trailing_newlines = preceding.bytes().rev().take_while(|&c| c == b'\n').count();
+    let trailing = preceding.bytes().rev().take_while(|&c| c == b'\n').count();
     let mut replacement = String::new();
     if !preceding.is_empty() {
-        // Guarantee a blank line before the inserted beat.
-        replacement.push_str(&"\n".repeat(2usize.saturating_sub(trailing_newlines)));
+        replacement.push_str(&"\n".repeat(2usize.saturating_sub(trailing)));
     }
     replacement.push_str(&moved);
     let insert = TextEdit { start: ins, end: ins, replacement };
-
-    Ok(vec![del, insert])
+    vec![del, insert]
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +313,33 @@ fn item_blocks(source: &str, file: &LoomFile) -> Vec<(usize, usize)> {
     (0..n)
         .map(|k| (starts[k], if k + 1 < n { starts[k + 1] } else { source.len() }))
         .collect()
+}
+
+/// The source span of a beat body item, across every `BodyItem` kind.
+fn body_item_span(item: &BodyItem) -> Span {
+    match item {
+        BodyItem::SceneHeading(l) | BodyItem::Action(l) | BodyItem::Metadata(l) => l.span,
+        BodyItem::Dialogue(d) => d.span,
+        BodyItem::Choice(c) => c.span,
+        BodyItem::Divert(d) => divert_span(d),
+        BodyItem::Directive(d) => d.span,
+        BodyItem::Conditional(c) => c.span,
+        BodyItem::Match(m) => m.span,
+        BodyItem::EachVisit(e) => e.span,
+        BodyItem::AfterMorph(a) => a.span,
+        BodyItem::InlineLet(i) => i.span,
+        BodyItem::DirectiveBlock(d) => d.span,
+        BodyItem::SlotPlaceholder(s) => s.span,
+    }
+}
+
+fn divert_span(d: &Divert) -> Span {
+    match d {
+        Divert::To { span, .. }
+        | Divert::Tunnel { span, .. }
+        | Divert::Return { span }
+        | Divert::End { span } => *span,
+    }
 }
 
 /// `(line_start, line_end)` byte range of the physical line containing

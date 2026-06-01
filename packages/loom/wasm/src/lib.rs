@@ -134,6 +134,38 @@ pub fn apply_move_beat(
     loom_parser::apply_edits(source, &edits).map_err(|e| JsError::new(&e.to_string()))
 }
 
+/// Insert a new empty `== name` beat at `anchor_kind` (`before` /
+/// `after` / `start` / `end`; `anchor_name` is the reference beat for
+/// before/after). Returns the rewritten source.
+#[wasm_bindgen]
+pub fn apply_insert_beat(
+    source: &str,
+    name: &str,
+    anchor_kind: &str,
+    anchor_name: &str,
+) -> Result<String, JsError> {
+    let anchor = match anchor_kind {
+        "before" => loom_parser::Anchor::Before(anchor_name.to_string()),
+        "after" => loom_parser::Anchor::After(anchor_name.to_string()),
+        "start" => loom_parser::Anchor::Start,
+        "end" => loom_parser::Anchor::End,
+        other => return Err(JsError::new(&format!("unknown anchor kind: {other}"))),
+    };
+    let (file, _) = loom_parser::parse(source);
+    let edits = loom_parser::insert_beat(source, &file, name, anchor)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    loom_parser::apply_edits(source, &edits).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Delete the beat named `beat`, returning the rewritten source.
+#[wasm_bindgen]
+pub fn apply_remove_beat(source: &str, beat: &str) -> Result<String, JsError> {
+    let (file, _) = loom_parser::parse(source);
+    let edits =
+        loom_parser::remove_beat(source, &file, beat).map_err(|e| JsError::new(&e.to_string()))?;
+    loom_parser::apply_edits(source, &edits).map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Diagnostics-only variant for lint passes that don't need the AST.
 /// Roughly 30 % faster on long files because the AST serialisation
 /// pass is skipped.

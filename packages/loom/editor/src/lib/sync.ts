@@ -26,6 +26,12 @@ import type { PresenceState, PresenceTracker } from "./presence";
 export interface PlayEnvelopeMeta {
     track: number;
     cause: number | null;
+    /**
+     * Story clock (minutes since midnight) at emit time, or null/absent
+     * when the story has no `Time.hour`. The timeline uses it as the
+     * master axis, falling back to ledger index when unavailable.
+     */
+    clock?: number | null;
 }
 
 export interface PlayTrackInfo {

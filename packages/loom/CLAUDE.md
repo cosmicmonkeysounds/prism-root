@@ -10,7 +10,7 @@ tools) without dragging the runtime + scheduler + Luau bridge along.
 | [`runtime`](./runtime) | Bundle, resolver, playhead, ledger, reactive graph, scheduler, directive registry, Luau bridge |
 | [`lsp`](./lsp)         | Stdio JSON-RPC server backed by `loom-parser` + a workspace-wide name index |
 | [`syntax`](./syntax)   | TextMate grammar generator (driven by `loom-parser::keywords`) + Zed / VSCode extension shells |
-| [`wasm`](./wasm)       | `wasm-bindgen` surface for the parser — `parse` / `diagnose` / `emit_tmgrammar` + `apply_beat_property` / `apply_move_beat` structural edits, consumed by the React editor |
+| [`wasm`](./wasm)       | `wasm-bindgen` surface for the parser — `parse` / `diagnose` / `emit_tmgrammar` + `apply_beat_property` / `apply_move_beat` / `apply_insert_beat` / `apply_remove_beat` structural edits, consumed by the React editor |
 | [`server`](./server)   | Multi-user backbone — `loom-relayd` axum server hosting per-workspace Loro CRDTs over `prism-core::network::relay`. See [`docs/dev/loom-multiuser.md`](../../docs/dev/loom-multiuser.md). |
 | [`editor`](./editor)   | React/Vite/CodeMirror web IDE — the user-facing front end |
 | [`examples`](./examples) | Reference `.loom` projects used by `loom-runtime` integration tests and as authoring tutorials |

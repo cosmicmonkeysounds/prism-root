@@ -243,6 +243,12 @@ pub struct EnvelopeMeta {
     /// Index into the ledger of the envelope that caused this one.
     /// `None` for root envelopes.
     pub cause: Option<u32>,
+    /// Story clock (minutes since midnight) at emit time, or `None`
+    /// when the world has no `Time.hour`. The editor timeline uses this
+    /// as its master axis, falling back to ledger index when absent
+    /// (IDE redesign v2 §13).
+    #[serde(default)]
+    pub clock: Option<u32>,
 }
 
 impl Default for EnvelopeMeta {
@@ -250,6 +256,7 @@ impl Default for EnvelopeMeta {
         Self {
             track: TrackId::MAIN,
             cause: None,
+            clock: None,
         }
     }
 }
@@ -277,6 +284,11 @@ pub struct Ledger {
     /// `"<booth>"` sentinel for the operator track.
     #[serde(skip)]
     name_to_track: std::collections::HashMap<String, TrackId>,
+    /// Story clock (minutes since midnight) stamped onto subsequently
+    /// pushed envelopes; the playhead refreshes it from the world each
+    /// step. Transient — derivable from replay, so not serialised.
+    #[serde(skip)]
+    current_clock: Option<u32>,
 }
 
 /// Reserved name for the Booth track in [`Ledger::register_track`] /
@@ -296,17 +308,27 @@ impl Ledger {
     /// track's previous envelope.
     pub fn push_on(&mut self, track: TrackId, event: Event) {
         let cause = self.track_tails.get(&track).copied();
-        self.push_with_meta(event, EnvelopeMeta { track, cause });
+        self.push_with_meta(event, EnvelopeMeta { track, cause, clock: None });
     }
 
     /// Push an envelope with explicit metadata — used by the
     /// hook-drain path to attribute a `HookFired` to its triggering
     /// envelope rather than the per-track tail.
-    pub fn push_with_meta(&mut self, event: Event, meta: EnvelopeMeta) {
+    pub fn push_with_meta(&mut self, event: Event, mut meta: EnvelopeMeta) {
+        if meta.clock.is_none() {
+            meta.clock = self.current_clock;
+        }
         let idx = self.events.len() as u32;
         self.events.push(event);
         self.meta.push(meta);
         self.track_tails.insert(meta.track, idx);
+    }
+
+    /// Set the story clock (minutes since midnight, or `None`) stamped
+    /// onto subsequently-pushed envelopes. Refreshed by the playhead
+    /// from the world each step.
+    pub fn set_clock(&mut self, clock: Option<u32>) {
+        self.current_clock = clock;
     }
 
     pub fn events(&self) -> &[Event] {
@@ -487,6 +509,16 @@ mod tests {
         assert_eq!(l.last_speaker_to("Wren"), Some("Player"));
         assert_eq!(l.last_speaker_to("Player"), Some("Wren"));
         assert_eq!(l.last_speaker_to("Stranger"), None);
+    }
+
+    #[test]
+    fn set_clock_stamps_pushed_envelopes() {
+        let mut l = Ledger::default();
+        l.push(Event::Action { text: "before".into() });
+        assert_eq!(l.meta()[0].clock, None);
+        l.set_clock(Some(390)); // 06:30
+        l.push(Event::Action { text: "after".into() });
+        assert_eq!(l.meta()[1].clock, Some(390));
     }
 
     #[test]

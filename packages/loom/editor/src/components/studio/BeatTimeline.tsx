@@ -98,11 +98,45 @@ export function BeatTimeline() {
     }
   }
 
+  const addBeat = () => {
+    if (!edit || contents == null || !activePath) return
+    const name = window.prompt('New beat name')?.trim()
+    if (!name) return
+    try {
+      const next = edit.insertBeat(contents, name, 'end', '')
+      if (next !== contents) updateContents(activePath, next)
+    } catch {
+      /* invalid name — leave source untouched */
+    }
+  }
+  const onRemove = (name: string) => {
+    if (!edit || contents == null || !activePath) return
+    if (!window.confirm(`Delete beat "${name}"? This rewrites the .loom source.`)) return
+    try {
+      const next = edit.removeBeat(contents, name)
+      if (next !== contents) updateContents(activePath, next)
+    } catch {
+      /* ignore */
+    }
+  }
+
   return (
     <div className="h-full flex flex-col bg-[#15191e]">
       <div className="h-7 px-2 flex items-center text-[11px] text-zinc-400 border-b border-white/10 shrink-0">
         <span className="text-zinc-300 font-medium">Beats</span>
         <span className="ml-2 text-zinc-600">{beats.length}</span>
+        <button
+          type="button"
+          onClick={addBeat}
+          disabled={!edit}
+          className={clsx(
+            'ml-3 px-1.5 rounded border border-dashed border-white/20',
+            edit ? 'text-zinc-300 hover:text-zinc-100 hover:border-white/40' : 'text-zinc-700',
+          )}
+          title="Add a beat at the end"
+        >
+          + beat
+        </button>
         <span className="ml-auto text-zinc-600">drag to reorder → rewrites source</span>
       </div>
       <div className="flex-1 min-h-0 overflow-auto p-3">
@@ -110,7 +144,12 @@ export function BeatTimeline() {
           <SortableContext items={names} strategy={horizontalListSortingStrategy}>
             <div className="flex items-stretch gap-2 min-h-[64px]">
               {beats.map((b) => (
-                <BeatChip key={b.name} beat={b} onPin={() => pin({ kind: 'beat', name: b.name })} />
+                <BeatChip
+                  key={b.name}
+                  beat={b}
+                  onPin={() => pin({ kind: 'beat', name: b.name })}
+                  onRemove={() => onRemove(b.name)}
+                />
               ))}
             </div>
           </SortableContext>
@@ -120,7 +159,15 @@ export function BeatTimeline() {
   )
 }
 
-function BeatChip({ beat, onPin }: { beat: BeatInfo; onPin: () => void }) {
+function BeatChip({
+  beat,
+  onPin,
+  onRemove,
+}: {
+  beat: BeatInfo
+  onPin: () => void
+  onRemove: () => void
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: beat.name,
   })
@@ -134,14 +181,26 @@ function BeatChip({ beat, onPin }: { beat: BeatInfo; onPin: () => void }) {
         width,
       }}
       className={clsx(
-        'rounded-md border bg-indigo-500/15 border-indigo-400/30 p-2 flex flex-col cursor-grab select-none shrink-0',
+        'relative rounded-md border bg-indigo-500/15 border-indigo-400/30 p-2 flex flex-col cursor-grab select-none shrink-0',
         isDragging && 'opacity-60 ring-1 ring-blue-400 z-10',
       )}
       {...attributes}
       {...listeners}
       onClick={onPin}
     >
-      <span className="text-[12px] text-indigo-100 font-medium truncate">{beat.name}</span>
+      <button
+        type="button"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation()
+          onRemove()
+        }}
+        className="absolute top-0.5 right-1 text-zinc-500 hover:text-rose-400 text-xs leading-none"
+        title="Delete beat"
+      >
+        ×
+      </button>
+      <span className="text-[12px] text-indigo-100 font-medium truncate pr-3">{beat.name}</span>
       <span className="text-[10px] text-zinc-500">
         {beat.size} item{beat.size === 1 ? '' : 's'}
       </span>

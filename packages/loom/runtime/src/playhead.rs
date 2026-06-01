@@ -369,7 +369,20 @@ impl Playhead {
     /// Advance to the next visible step. Returns [`Step::Choice`]
     /// when the playhead is waiting on `choose`; callers must call
     /// [`Playhead::choose`] before stepping again.
+    /// Story clock (minutes since midnight) from the world, or `None`
+    /// when `Time.hour` isn't set. Stamped onto emitted envelopes so
+    /// the editor timeline can use a clock axis (IDE redesign §13).
+    fn world_clock(&self) -> Option<u32> {
+        let h = self.world.get("Time.hour").as_number()?;
+        let m = self.world.get("Time.minute").as_number().unwrap_or(0.0);
+        Some(((h as i64) * 60 + (m as i64)).clamp(0, 24 * 60 - 1) as u32)
+    }
+
     pub fn step(&mut self) -> Result<Step, PlayError> {
+        // Stamp envelopes emitted during this step with the current
+        // story clock so the timeline can place them on a time axis.
+        let clock = self.world_clock();
+        self.ledger.set_clock(clock);
         if self.halted {
             return Ok(Step::Ended);
         }
@@ -1566,6 +1579,7 @@ impl Playhead {
                 crate::ledger::EnvelopeMeta {
                     track,
                     cause: Some(*cause_idx),
+                    clock: None,
                 },
             );
         }

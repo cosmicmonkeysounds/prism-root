@@ -462,10 +462,11 @@ Phase 1 ships when:
 
 # Part II — Modal topology (v2): the Studio shell
 
-Status: **Phases 1–5 landed** (2026-06-01) — all migration phases. The
-Timeline clock-master axis & multi-head lanes (§13) are the main
-remaining item. The dockview shell in Parts 0–8 is now fully removed
-(dead files deleted, `dockview-react` uninstalled). Decisions locked: layout via
+Status: **Phases 1–5 landed** (2026-06-01) — all migration phases, plus
+the §13 Timeline **clock axis** + **multi-head lanes** and the deeper
+**edit ops** (insert / remove beat, reorder body items). The dockview
+shell in Parts 0–8 is fully removed (dead files deleted,
+`dockview-react` uninstalled). Decisions locked: layout via
 **`allotment`**, Timeline via **`dnd-timeline` + `@dnd-kit`
 (headless)**.
 
@@ -740,11 +741,19 @@ as `studio/BeatTimeline.tsx` (author beats as sortable chips → source
 rewrite). **`dnd-timeline` was *not* adopted** — its README is too
 sparse to integrate safely and our axis is ledger-index, not
 wall-clock, so it bought little; we use **`@dnd-kit` directly** (the
-other half of the chosen stack) with a custom renderer. The
-clock-master ruler and simultaneous multi-head lanes remain deferred
-(both need a per-envelope clock + branch geometry the runtime doesn't
-emit yet); the x-axis helpers are factored so a clock accessor can swap
-in without touching layout.
+other half of the chosen stack) with a custom renderer.
+
+**Clock axis + multi-head lanes — landed 2026-06-01.** The runtime now
+stamps each envelope with a story clock: `EnvelopeMeta.clock` (minutes
+since midnight, `runtime/src/ledger.rs`) is filled from the world's
+`Time.hour` / `Time.minute` at each `playhead.step` and flows through
+the server's play-state into the editor's `meta.clock`. The Timeline
+offers a **clock / index axis toggle** (clock auto-selected when ≥2
+distinct clock values exist; ruler labelled `H:MM`; beats span by
+elapsed time) and a **lanes toggle**: `tracks` (the per-track view of
+the primary head) vs `heads` (one lane per live head, a fork diamond at
+each head's `forkedFrom` snapshot index, click a lane to make it
+primary).
 
 ## 14. Properties tray — promoting `DetailFor`
 
@@ -901,13 +910,16 @@ tree-shakeable.
   rather than drops, so structural edits are pure byte-range splices
   (`TextEdit` / `apply_edits`) that leave untouched lines identical.
   `move_beat` and `set_beat_property` are implemented and tested for the
-  minimal-diff invariant. **Wired end-to-end 2026-06-01:** the wasm
-  crate's `apply_beat_property` / `apply_move_beat` drive editable tray
-  fields and the `BeatTimeline` drag (Phase 4). **Remaining:** more
-  operations (insert/remove beat, reorder body items, retime clock
-  gates), a cloud-doc path that applies edits as minimal Loro splices
-  (today author edits go through the FSA `updateContents`), and — only
-  for edits that genuinely *reformat* rather than splice — a
+  minimal-diff invariant. **Wired end-to-end:** the wasm crate's
+  `apply_beat_property` / `apply_move_beat` / `apply_insert_beat` /
+  `apply_remove_beat` drive editable tray fields, the `BeatTimeline`
+  drag, and its `+ beat` / delete affordances; `move_body_item`
+  (reorder body items within a beat) is implemented + tested at the
+  parser level, UI pending. **Remaining:** `retime` clock gates (no
+  clear beat-level clock-gate construct yet — deferred pending a spec),
+  a cloud-doc path that applies edits as minimal Loro splices (today
+  author edits go through the FSA `updateContents`), and — only for
+  edits that genuinely *reformat* rather than splice — a
   trivia-preserving re-emit path.
 - **Collab/presence under fixed modes — deferred.** Out of scope for
   now; `mode` is local UI state. Revisit whether peers should see each

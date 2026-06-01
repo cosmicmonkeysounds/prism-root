@@ -41,6 +41,9 @@ pub mod source;
 
 pub use ast::{Item, LoomFile};
 pub use diagnostics::{Code, Diagnostic, Severity};
-pub use edit::{apply_edits, move_beat, set_beat_property, Anchor, EditError, TextEdit};
+pub use edit::{
+    apply_edits, insert_beat, move_beat, move_body_item, remove_beat, set_beat_property, Anchor,
+    EditError, TextEdit,
+};
 pub use parser::parse;
 pub use source::{Position, Span};

@@ -99,7 +99,10 @@ function TButton({
 }
 
 function Presence() {
-  const peers = useSession((s) => s.active?.peers ?? [])
+  // NB: keep the `?? []` OUTSIDE the selector — returning a fresh array
+  // from a zustand selector breaks `useSyncExternalStore`'s snapshot
+  // caching and spins an infinite render loop.
+  const peers = useSession((s) => s.active?.peers) ?? []
   if (peers.length === 0) return null
   return (
     <div className="flex items-center -space-x-1" title={`${peers.length} collaborator${peers.length === 1 ? '' : 's'}`}>

@@ -185,6 +185,10 @@ export type LoomEditApi = {
   setBeatProperty: (source: string, beat: string, key: string, value: string) => string
   /** Move a beat relative to `anchorName`; returns the new source. */
   moveBeat: (source: string, beat: string, anchor: Anchor, anchorName: string) => string
+  /** Insert a new empty beat at `anchor`; returns the new source. */
+  insertBeat: (source: string, name: string, anchor: Anchor, anchorName: string) => string
+  /** Delete a beat; returns the new source. */
+  removeBeat: (source: string, beat: string) => string
 }
 
 /** Returns the structural-edit API once wasm loads, or `null`. */
@@ -198,6 +202,8 @@ export function useLoomEdit(): LoomEditApi | null {
         setApi({
           setBeatProperty: (s, b, k, v) => m.apply_beat_property(s, b, k, v),
           moveBeat: (s, b, a, n) => m.apply_move_beat(s, b, a, n),
+          insertBeat: (s, nm, a, n) => m.apply_insert_beat(s, nm, a, n),
+          removeBeat: (s, b) => m.apply_remove_beat(s, b),
         })
       })
       .catch(() => {

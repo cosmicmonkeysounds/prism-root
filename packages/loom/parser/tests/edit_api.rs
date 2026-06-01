@@ -3,7 +3,10 @@
 //! source as minimal byte-range splices, leaving every untouched line
 //! byte-identical (so collaborative Loro merges stay clean).
 
-use loom_parser::{apply_edits, move_beat, parse, set_beat_property, Anchor, Item};
+use loom_parser::{
+    apply_edits, insert_beat, move_beat, move_body_item, parse, remove_beat, set_beat_property,
+    Anchor, Item,
+};
 
 const SAMPLE: &str = r#"# Saltmere
 entry: opening
@@ -153,4 +156,53 @@ fn unknown_beat_is_an_error() {
 #[test]
 fn empty_edits_roundtrip_identity() {
     assert_eq!(apply_edits(SAMPLE, &[]).unwrap(), SAMPLE);
+}
+
+#[test]
+fn insert_beat_at_end_appends() {
+    let (file, _) = parse(SAMPLE);
+    let edits = insert_beat(SAMPLE, &file, "interlude", Anchor::End).unwrap();
+    let out = apply_edits(SAMPLE, &edits).unwrap();
+    assert_eq!(beat_names(&out), vec!["opening", "ringing", "interlude"]);
+    assert_eq!(parse(&out).1.len(), parse(SAMPLE).1.len());
+    // The pre-existing beats are byte-identical.
+    assert!(out.contains("== ringing\n  cast: Wren, Player\n\nThe sound carries.\n\n-> END"));
+    assert!(out.contains("== interlude"));
+}
+
+#[test]
+fn insert_beat_before_anchor() {
+    let (file, _) = parse(SAMPLE);
+    let edits =
+        insert_beat(SAMPLE, &file, "prologue", Anchor::Before("opening".to_string())).unwrap();
+    let out = apply_edits(SAMPLE, &edits).unwrap();
+    assert_eq!(beat_names(&out), vec!["prologue", "opening", "ringing"]);
+}
+
+#[test]
+fn remove_beat_deletes_block() {
+    let (file, _) = parse(SAMPLE);
+    let edits = remove_beat(SAMPLE, &file, "opening").unwrap();
+    let out = apply_edits(SAMPLE, &edits).unwrap();
+    assert_eq!(beat_names(&out), vec!["ringing"]);
+    // opening's body (and its trailing comment) is gone; ringing + the
+    // character declaration are byte-identical.
+    assert!(!out.contains("first beat comment"));
+    assert!(out.contains("== ringing\n  cast: Wren, Player"));
+    assert!(out.contains("CHARACTER Wren is Keeper\n  hp: 80"));
+    assert_eq!(parse(&out).1.len(), parse(SAMPLE).1.len());
+}
+
+#[test]
+fn move_body_item_reorders_within_beat() {
+    let (file, _) = parse(SAMPLE);
+    // opening.body = [Action, Dialogue, Divert]; move the Action (0) to
+    // the end (2) — it should land after the `-> ringing` divert.
+    let edits = move_body_item(SAMPLE, &file, "opening", 0, 2).unwrap();
+    let out = apply_edits(SAMPLE, &edits).unwrap();
+    assert_eq!(parse(&out).1.len(), parse(SAMPLE).1.len());
+    assert_eq!(beat_names(&out), vec!["opening", "ringing"]);
+    // The action (with its comment) survived and now follows the divert.
+    assert!(out.contains("first beat comment"));
+    assert!(out.find("-> ringing").unwrap() < out.find("A bell rope swings.").unwrap());
 }
