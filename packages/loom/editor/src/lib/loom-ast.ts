@@ -135,20 +135,22 @@ export function summarize(ast: LoomFileAst): FileSummaryData {
 
 type ParseFn = (source: string) => LoomParseResult
 
-let parserPromise: Promise<ParseFn> | null = null
+type LoomMod = typeof import('@/loom-wasm/loom_wasm')
 
-async function loadParser(): Promise<ParseFn> {
-  if (!parserPromise) {
-    parserPromise = (async () => {
-      const mod = await import('@/loom-wasm/loom_wasm')
-      await mod.default()
-      return (source: string) => mod.parse(source) as LoomParseResult
+let modPromise: Promise<LoomMod> | null = null
+
+async function loadMod(): Promise<LoomMod> {
+  if (!modPromise) {
+    modPromise = (async () => {
+      const m = await import('@/loom-wasm/loom_wasm')
+      await m.default()
+      return m
     })().catch((err) => {
-      parserPromise = null
+      modPromise = null
       throw err
     })
   }
-  return parserPromise
+  return modPromise
 }
 
 /** Returns the wasm `parse` fn once loaded, or `null` while loading. */
@@ -156,9 +158,9 @@ export function useLoomParser(): ParseFn | null {
   const [fn, setFn] = useState<ParseFn | null>(null)
   useEffect(() => {
     let alive = true
-    loadParser()
-      .then((f) => {
-        if (alive) setFn(() => f)
+    loadMod()
+      .then((m) => {
+        if (alive) setFn(() => (src: string) => m.parse(src) as LoomParseResult)
       })
       .catch(() => {
         /* parser unavailable — tray falls back to a loading state */
@@ -168,4 +170,42 @@ export function useLoomParser(): ParseFn | null {
     }
   }, [])
   return fn
+}
+
+// ---------------------------------------------------------------------------
+// Structural source edits (Phase 4) — rewrite `.loom` text in place via
+// the wasm `apply_*` functions backed by `loom-parser::edit`. Each is a
+// span-preserving splice: untouched lines stay byte-identical.
+// ---------------------------------------------------------------------------
+
+export type Anchor = 'before' | 'after' | 'start' | 'end'
+
+export type LoomEditApi = {
+  /** Set / insert a beat contract property; returns the new source. */
+  setBeatProperty: (source: string, beat: string, key: string, value: string) => string
+  /** Move a beat relative to `anchorName`; returns the new source. */
+  moveBeat: (source: string, beat: string, anchor: Anchor, anchorName: string) => string
+}
+
+/** Returns the structural-edit API once wasm loads, or `null`. */
+export function useLoomEdit(): LoomEditApi | null {
+  const [api, setApi] = useState<LoomEditApi | null>(null)
+  useEffect(() => {
+    let alive = true
+    loadMod()
+      .then((m) => {
+        if (!alive) return
+        setApi({
+          setBeatProperty: (s, b, k, v) => m.apply_beat_property(s, b, k, v),
+          moveBeat: (s, b, a, n) => m.apply_move_beat(s, b, a, n),
+        })
+      })
+      .catch(() => {
+        /* edit API unavailable — tray fields stay read-only */
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+  return api
 }

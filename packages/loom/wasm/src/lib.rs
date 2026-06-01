@@ -91,6 +91,49 @@ pub fn parse(source: &str) -> Result<JsValue, JsError> {
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
 }
 
+/// Set a beat's contract property (`cast:`, `setting:`, …) and return
+/// the rewritten source. A span-preserving splice: every untouched
+/// line is byte-identical (IDE redesign v2 §10 — edits round-trip to
+/// `.loom` source). Inserts the line if the property is absent;
+/// returns the source unchanged when the value already matches.
+#[wasm_bindgen]
+pub fn apply_beat_property(
+    source: &str,
+    beat: &str,
+    key: &str,
+    value: &str,
+) -> Result<String, JsError> {
+    let (file, _) = loom_parser::parse(source);
+    let edits = loom_parser::set_beat_property(source, &file, beat, key, value)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    loom_parser::apply_edits(source, &edits).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Move a beat relative to another (or to file start / end) and return
+/// the rewritten source. `anchor_kind` is `before` / `after` / `start`
+/// / `end`; `anchor_name` names the reference beat for `before` /
+/// `after` (ignored otherwise). The moved beat's bytes and every other
+/// beat's bytes are preserved; only the seam separators are normalised.
+#[wasm_bindgen]
+pub fn apply_move_beat(
+    source: &str,
+    beat: &str,
+    anchor_kind: &str,
+    anchor_name: &str,
+) -> Result<String, JsError> {
+    let anchor = match anchor_kind {
+        "before" => loom_parser::Anchor::Before(anchor_name.to_string()),
+        "after" => loom_parser::Anchor::After(anchor_name.to_string()),
+        "start" => loom_parser::Anchor::Start,
+        "end" => loom_parser::Anchor::End,
+        other => return Err(JsError::new(&format!("unknown anchor kind: {other}"))),
+    };
+    let (file, _) = loom_parser::parse(source);
+    let edits = loom_parser::move_beat(source, &file, beat, anchor)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    loom_parser::apply_edits(source, &edits).map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Diagnostics-only variant for lint passes that don't need the AST.
 /// Roughly 30 % faster on long files because the AST serialisation
 /// pass is skipped.
@@ -124,5 +167,22 @@ mod tests {
     fn js_severity_serializes_lowercase() {
         let json = serde_json::to_string(&JsSeverity::Error).unwrap();
         assert_eq!(json, "\"error\"");
+    }
+
+    #[test]
+    fn apply_beat_property_rewrites_source() {
+        let src = "== a\n  cast: X\n\n== b\n  cast: Y\n";
+        let out = apply_beat_property(src, "a", "cast", "Z").ok().unwrap();
+        assert!(out.contains("  cast: Z"));
+        // The other beat is byte-identical.
+        assert!(out.contains("== b\n  cast: Y"));
+    }
+
+    #[test]
+    fn apply_move_beat_reorders_source() {
+        let src = "== a\n  cast: X\n\n== b\n  cast: Y\n";
+        let out = apply_move_beat(src, "a", "end", "").ok().unwrap();
+        // `b` now precedes `a`.
+        assert!(out.find("== b").unwrap() < out.find("== a").unwrap());
     }
 }

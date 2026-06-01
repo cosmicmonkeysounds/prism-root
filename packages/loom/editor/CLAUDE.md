@@ -13,6 +13,7 @@ A local-first IDE with a visual canvas, running entirely in the browser.
 - `@uiw/react-codemirror` (one-dark theme, per-language extensions)
 - `@xyflow/react` for the canvas
 - `allotment` for the fixed modal-shell region splits (IDE redesign v2)
+- `@dnd-kit` (core + sortable) for the Editing-facet beat reorder
 - `zustand` for state
 - `pnpm` for package management
 
@@ -39,10 +40,11 @@ region sizes (persisted to `localStorage["loom.studio"]`). The right
 **Properties tray** (`components/studio/PropertiesTray.tsx`) is tabbed
 and context-sensitive: author modes follow the editor cursor and read
 the active file's AST via `lib/loom-ast.ts`; runtime modes reuse the
-focus-driven `InspectorPanel`. This
-replaced the old `dockview` activity-bar + free-docking +
-workspace-preset model (`components/dock/*`, `store/presets.ts` — still
-in-tree, unused, kept one release as a fallback). Full design:
+focus-driven `InspectorPanel`. A global `TopBar` adds a
+play/stop/fork/snapshot transport, relay status, and a presence strip.
+This replaced the old `dockview` activity-bar + free-docking +
+workspace-preset model — `components/dock/*` + `store/presets.ts` are
+removed and `dockview-react` is uninstalled. Full design:
 [`docs/dev/loom-ide-redesign.md` Part II](../../../docs/dev/loom-ide-redesign.md).
 
 ## Conventions
@@ -63,6 +65,10 @@ in-tree, unused, kept one release as a fallback). Full design:
 - `src/lib/loom-lint.ts` — `linter()` extension that calls the
   wasm-compiled real parser (`diagnose(source)`) and maps byte spans
   to CodeMirror diagnostics. Loaded lazily on first `.loom` open.
+- `src/lib/loom-ast.ts` — author-time AST access (wasm `parse`) for the
+  Properties tray, plus `useLoomEdit` wrapping the wasm
+  `apply_beat_property` / `apply_move_beat` structural edits (Phase 4 —
+  editable tray fields + `BeatTimeline` drag-to-reorder rewrite source).
 
 To regenerate the wasm bundle after editing `packages/loom/parser` or
 `packages/loom/wasm`, run `pnpm wasm:build` (release) or

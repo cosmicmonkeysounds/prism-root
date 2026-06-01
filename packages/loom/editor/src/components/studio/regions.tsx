@@ -21,6 +21,8 @@ import { WorldPanel } from '@/components/runner/World'
 import { CastPanel } from '@/components/runner/Cast'
 import { TimelinePanel } from '@/components/runner/Timeline'
 import { CloudPanel } from '@/components/cloud/CloudPanel'
+import { BeatTimeline } from './BeatTimeline'
+import { useSession } from '@/store/session'
 
 /** Fills an allotment pane and clips overflow so leaf panels scroll. */
 export function Region({ children }: { children: ReactNode }) {
@@ -58,6 +60,10 @@ function VSplit({ top, bottom }: { top: ReactNode; bottom: ReactNode }) {
 }
 
 function DeliverStage() {
+  const status = useSession((s) => s.status)
+  const wsName = useSession((s) => s.active?.meta.name ?? null)
+  const relay = useSession((s) => s.relayUrl)
+  const peers = useSession((s) => s.active?.peers.length ?? 0)
   return (
     <div className="h-full w-full overflow-auto bg-zinc-950 text-zinc-300 p-6 text-sm">
       <div className="text-[10px] uppercase tracking-widest text-zinc-500">Production</div>
@@ -66,13 +72,22 @@ function DeliverStage() {
         Export, share, and deploy this workspace. Manage the relay and
         workspaces from the left rail.
       </p>
-      <ul className="mt-4 space-y-2 text-zinc-400">
+      <dl className="mt-4 grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 text-xs">
+        <dt className="text-zinc-500">relay</dt>
+        <dd className="text-zinc-200 break-all">{relay}</dd>
+        <dt className="text-zinc-500">status</dt>
+        <dd className="text-zinc-200">{status}</dd>
+        <dt className="text-zinc-500">workspace</dt>
+        <dd className="text-zinc-200">{wsName ?? '—'}</dd>
+        <dt className="text-zinc-500">collaborators</dt>
+        <dd className="text-zinc-200">{peers}</dd>
+      </dl>
+      <ul className="mt-5 space-y-2 text-zinc-400">
         <li><code className="text-zinc-200">prism loom build</code> — vite build + relay binary.</li>
         <li><code className="text-zinc-200">prism loom serve</code> — single-binary deployment (editor + API + WS).</li>
-        <li>Share-link <span className="text-zinc-200">Read</span> mode — full-bleed transcript for an audience.</li>
       </ul>
       <p className="text-zinc-600 text-xs mt-6">
-        Phase 1 stub — export / deploy controls land in a later phase.
+        Export / one-click deploy controls land in a later phase.
       </p>
     </div>
   )
@@ -112,6 +127,8 @@ export function CenterStage({ mode }: { mode: Mode }) {
 }
 
 export function TimelineDock({ mode }: { mode: Mode }) {
-  void mode
+  // Editing facet — author beats, draggable to reorder (writes source).
+  // Run facet — the live ledger (Simulating / Performing).
+  if (mode === 'editing') return <BeatTimeline />
   return <TimelinePanel />
 }

@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @import "@xyflow/react/dist/style.css";
-@import "dockview-react/dist/styles/dockview.css";
 
 html, body, #root {
   height: 100%;

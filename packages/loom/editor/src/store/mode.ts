@@ -105,6 +105,8 @@ type ModeState = {
   setUi(m: Mode, patch: Partial<ModeUi>): void
   toggleTray(): void
   toggleRail(): void
+  /** Reset one mode's region sizes + visibility to the shipped defaults. */
+  reset(m: Mode): void
 }
 
 export const useMode = create<ModeState>((set, get) => {
@@ -128,6 +130,11 @@ export const useMode = create<ModeState>((set, get) => {
     toggleRail: () => {
       const m = get().mode
       get().setUi(m, { railOpen: !get().ui[m].railOpen })
+    },
+    reset: (m) => {
+      const ui = { ...get().ui, [m]: defaultUi()[m] }
+      set({ ui })
+      persist(get().mode, ui)
     },
   }
 })

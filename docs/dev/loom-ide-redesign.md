@@ -462,8 +462,10 @@ Phase 1 ships when:
 
 # Part II — Modal topology (v2): the Studio shell
 
-Status: **Phases 1–2 landed** (2026-06-01); rest is spec. Supersedes
-the dockview shell in Parts 0–8. Decisions locked: layout via
+Status: **Phases 1–5 landed** (2026-06-01) — all migration phases. The
+Timeline clock-master axis & multi-head lanes (§13) are the main
+remaining item. The dockview shell in Parts 0–8 is now fully removed
+(dead files deleted, `dockview-react` uninstalled). Decisions locked: layout via
 **`allotment`**, Timeline via **`dnd-timeline` + `@dnd-kit`
 (headless)**.
 
@@ -491,6 +493,31 @@ the dockview shell in Parts 0–8. Decisions locked: layout via
   `set_beat_property`, `Anchor`. Span-based byte-range splices that
   leave untouched lines byte-identical (the §10 round-trip invariant),
   with the minimal-diff guarantee covered by `parser/tests/edit_api.rs`.
+- **Timeline v2 — Run facet (Phase 3).** `runner/Timeline.tsx` rebuilt
+  as clips-on-tracks: a fixed track gutter + a zoomable/pannable lane
+  with a ruler, clip extents (beats span to the next `BeatEntered`),
+  a playhead (tracks the focused envelope), cause-arc toggle, and
+  viewport culling. X-axis is ledger index; the hybrid clock-master
+  axis (§13) and simultaneous multi-head lanes are deferred (need a
+  per-envelope clock the runtime doesn't emit yet). Built on `@dnd-kit`
+  directly rather than `dnd-timeline` (see §13 note).
+- **Editable tray + Editing facet (Phase 4).** The wasm crate exposes
+  `apply_beat_property` / `apply_move_beat` (over `loom-parser::edit`),
+  rebuilt into the committed bundle; `lib/loom-ast.ts` wraps them as
+  `useLoomEdit`. The Properties tray's beat-contract fields are now
+  editable (+ "add field"), and the Editing-mode bottom dock is
+  `studio/BeatTimeline.tsx` — author beats as `@dnd-kit/sortable` chips
+  that rewrite `.loom` source on reorder. Both paths write via
+  `useWorkspace.updateContents`, so a tray edit or a beat drag *is* a
+  source edit (the §10 invariant, end to end).
+- **Polish & cleanup (Phase 5).** `studio/TopBar.tsx` — a global
+  transport (play / stop / fork / snapshot wired to the session), live
+  relay-status dot, and a presence strip — replaces the static header.
+  Per-mode layout **reset** (`useMode.reset`); the Production Deliver
+  stage shows live relay / workspace / collaborator status. The
+  `dockview` shell is gone: `components/dock/*` + `store/presets.ts`
+  deleted, the `dockview-react` dependency + its CSS import removed
+  (editor CSS bundle 149 KB → 55 KB).
 
 ## 9. Why v2
 
@@ -702,9 +729,22 @@ events, not media. Sketch:
 </TimelineContext>
 ```
 
-Long ledgers/tracks are virtualized with `@tanstack/react-virtual`
-(headless, horizontal + vertical windowing) to hold 60fps at thousands
-of envelopes.
+Long ledgers/tracks are kept at 60fps via viewport culling (only clips
+intersecting the visible scroll range render); `@tanstack/react-virtual`
+is the upgrade path if culling proves insufficient.
+
+**Status / deviation (2026-06-01).** The Run facet landed
+(`runner/Timeline.tsx`): track gutter + zoomable lane, ruler, clip
+extents, playhead, cause-arc toggle, culling. The Editing facet landed
+as `studio/BeatTimeline.tsx` (author beats as sortable chips → source
+rewrite). **`dnd-timeline` was *not* adopted** — its README is too
+sparse to integrate safely and our axis is ledger-index, not
+wall-clock, so it bought little; we use **`@dnd-kit` directly** (the
+other half of the chosen stack) with a custom renderer. The
+clock-master ruler and simultaneous multi-head lanes remain deferred
+(both need a per-envelope clock + branch geometry the runtime doesn't
+emit yet); the x-axis helpers are factored so a clock accessor can swap
+in without touching layout.
 
 ## 14. Properties tray — promoting `DetailFor`
 
@@ -831,15 +871,22 @@ tree-shakeable.
    per-mode tab sets + defaults; author modes follow the cursor via the
    AST (`PropertiesTray.tsx` + `lib/loom-ast.ts`); runtime modes reuse
    `InspectorPanel`. Editable write-back deferred to phase 4.
-3. **Timeline v2 — Run facet.** Ruler + zoom + pan + playhead + clip
-   extents over the live ledger (read-only), on `dnd-timeline` +
-   `react-virtual`.
-4. **Editing mode + Editing facet.** Story Bin; drag / reorder /
-   retrigger beats, round-tripping to `.loom` source; editable
-   Inspector.
-5. **Polish & deliver.** Transport bar; Performing presence;
-   Production/Deliver mode; per-mode saved layouts; remove `dockview`
-   + activity bar.
+3. **Timeline v2 — Run facet.** ✅ *Landed 2026-06-01.* Ruler + zoom +
+   pan + playhead + clip extents over the live ledger (read-only) with
+   viewport culling (`runner/Timeline.tsx`); ledger-index axis. Built on
+   `@dnd-kit`, not `dnd-timeline` (see §13). Clock axis + multi-head
+   lanes deferred.
+4. **Editing facet + editable Inspector.** ✅ *Landed 2026-06-01.*
+   Editing-mode dock is `studio/BeatTimeline.tsx` (author beats as
+   draggable chips → `apply_move_beat` → source); the tray's beat
+   contract fields edit via `apply_beat_property`. Deferred:
+   run-timeline clip drag, declaration-body edits, cloud-doc minimal
+   Loro splices.
+5. **Polish & deliver.** ✅ *Landed 2026-06-01.* Global transport
+   `TopBar` (play / stop / fork / snapshot + relay status + presence
+   strip); per-mode layout reset; Production/Deliver status panel;
+   `dockview`, the activity bar, and `store/presets.ts` removed +
+   `dockview-react` uninstalled.
 
 ## 18. Resolved decisions & deferred work
 
@@ -854,11 +901,14 @@ tree-shakeable.
   rather than drops, so structural edits are pure byte-range splices
   (`TextEdit` / `apply_edits`) that leave untouched lines identical.
   `move_beat` and `set_beat_property` are implemented and tested for the
-  minimal-diff invariant. **Remaining, gating the Editing facet:** more
+  minimal-diff invariant. **Wired end-to-end 2026-06-01:** the wasm
+  crate's `apply_beat_property` / `apply_move_beat` drive editable tray
+  fields and the `BeatTimeline` drag (Phase 4). **Remaining:** more
   operations (insert/remove beat, reorder body items, retime clock
-  gates), a wasm binding so `LoomDoc` can apply edits, editor wiring
-  (drag → edit), and — only for edits that genuinely *reformat* rather
-  than splice — a trivia-preserving re-emit path.
+  gates), a cloud-doc path that applies edits as minimal Loro splices
+  (today author edits go through the FSA `updateContents`), and — only
+  for edits that genuinely *reformat* rather than splice — a
+  trivia-preserving re-emit path.
 - **Collab/presence under fixed modes — deferred.** Out of scope for
   now; `mode` is local UI state. Revisit whether peers should see each
   other's mode once the shell lands.

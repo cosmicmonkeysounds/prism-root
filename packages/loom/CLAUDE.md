@@ -10,7 +10,7 @@ tools) without dragging the runtime + scheduler + Luau bridge along.
 | [`runtime`](./runtime) | Bundle, resolver, playhead, ledger, reactive graph, scheduler, directive registry, Luau bridge |
 | [`lsp`](./lsp)         | Stdio JSON-RPC server backed by `loom-parser` + a workspace-wide name index |
 | [`syntax`](./syntax)   | TextMate grammar generator (driven by `loom-parser::keywords`) + Zed / VSCode extension shells |
-| [`wasm`](./wasm)       | `wasm-bindgen` surface for the parser — `parse` / `diagnose` / `emit_tmgrammar` consumed by the React editor |
+| [`wasm`](./wasm)       | `wasm-bindgen` surface for the parser — `parse` / `diagnose` / `emit_tmgrammar` + `apply_beat_property` / `apply_move_beat` structural edits, consumed by the React editor |
 | [`server`](./server)   | Multi-user backbone — `loom-relayd` axum server hosting per-workspace Loro CRDTs over `prism-core::network::relay`. See [`docs/dev/loom-multiuser.md`](../../docs/dev/loom-multiuser.md). |
 | [`editor`](./editor)   | React/Vite/CodeMirror web IDE — the user-facing front end |
 | [`examples`](./examples) | Reference `.loom` projects used by `loom-runtime` integration tests and as authoring tutorials |
@@ -282,11 +282,14 @@ Timeline / World / Inspector / Detail / Cast / Booth / Graph /
 Outline / References) plus workspace presets, the focus + projection
 bus, multi-head branching play, and booth live-patch over the relay.
 
-**Shell (v2, phase 1 landed):** those surfaces now live inside a modal
-**Studio** shell — five modes (Writing / Editing / Simulating /
+**Shell (v2, phases 1–4 landed):** those surfaces now live inside a
+modal **Studio** shell — five modes (Writing / Editing / Simulating /
 Performing / Production) on a bottom Mode Bar (`⌘1..⌘5`), each a fixed
 `allotment` layout — replacing the dockview activity-bar + workspace
-presets. See [`docs/dev/loom-ide-redesign.md` Part II](../../docs/dev/loom-ide-redesign.md).
+presets. A tabbed, cursor-following Properties tray; a clips-on-tracks
+Run-facet Timeline; and an Editing facet where editing tray fields or
+dragging beat chips rewrites `.loom` source through the parser's
+`edit` ops. See [`docs/dev/loom-ide-redesign.md` Part II](../../docs/dev/loom-ide-redesign.md).
 
 See [`docs/dev/loom-ide-redesign.md` §0](../../docs/dev/loom-ide-redesign.md#0-running-the-ide)
 for the launch flows, the step-by-step "drive the full simulator

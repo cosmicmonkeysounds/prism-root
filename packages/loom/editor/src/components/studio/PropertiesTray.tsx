@@ -34,6 +34,7 @@ import {
   itemPayload,
   propText,
   summarize,
+  useLoomEdit,
   useLoomParser,
   type LoomFileAst,
 } from '@/lib/loom-ast'
@@ -108,7 +109,9 @@ function AuthorProperties() {
   const cursor = useWorkspace((s) => s.cursor)
   const pinned = useFocus((s) => s.pinned)
   const pin = useFocus((s) => s.pin)
+  const updateContents = useWorkspace((s) => s.updateContents)
   const parse = useLoomParser()
+  const edit = useLoomEdit()
 
   const isLoom = !!activePath && activePath.endsWith('.loom')
   const result = useMemo(() => {
@@ -130,17 +133,43 @@ function AuthorProperties() {
   else if (pinned?.kind === 'character') item = findDeclaration(ast, pinned.name)
   if (!item && cursor) item = itemAtLine(ast, cursor.line - 1)
 
+  const path = activePath
+  const src = contents
+  const onSet =
+    edit && src != null
+      ? (beat: string, key: string, value: string) => {
+          try {
+            const next = edit.setBeatProperty(src, beat, key, value)
+            if (next !== src) updateContents(path, next)
+          } catch {
+            /* invalid edit — leave source untouched */
+          }
+        }
+      : undefined
+
   return (
     <div className="h-full overflow-auto bg-zinc-950 font-mono">
       <div className="px-3 py-1.5 border-b border-white/5 text-[10px] uppercase tracking-widest text-zinc-600 truncate">
-        {base(activePath)}
+        {base(path)}
       </div>
-      {item ? <ItemDetail item={item} onPin={pin} /> : <FileSummary ast={ast} />}
+      {item ? (
+        <ItemDetail item={item} onPin={pin} onSet={onSet} />
+      ) : (
+        <FileSummary ast={ast} />
+      )}
     </div>
   )
 }
 
-function ItemDetail({ item, onPin }: { item: unknown; onPin: (ref: FocusRef | null) => void }) {
+function ItemDetail({
+  item,
+  onPin,
+  onSet,
+}: {
+  item: unknown
+  onPin: (ref: FocusRef | null) => void
+  onSet?: (beat: string, key: string, value: string) => void
+}) {
   const kind = itemKind(item)
   const data = itemPayload(item)
   const name = String(field(data, 'name') ?? '')
@@ -158,11 +187,15 @@ function ItemDetail({ item, onPin }: { item: unknown; onPin: (ref: FocusRef | nu
           onPin={() => onPin({ kind: 'beat', name })}
         />
         <Section title="Contract">
-          {contract.length === 0 ? (
-            <Empty msg="No contract." />
-          ) : (
-            contract.map(([k, pv]) => <Row key={k} label={k} value={propText(pv)} />)
+          {contract.length === 0 && !onSet && <Empty msg="No contract." />}
+          {contract.map(([k, pv]) =>
+            onSet ? (
+              <EditableRow key={k} label={k} value={propText(pv)} onCommit={(v) => onSet(name, k, v)} />
+            ) : (
+              <Row key={k} label={k} value={propText(pv)} />
+            ),
           )}
+          {onSet && <AddField onAdd={(k, v) => onSet(name, k, v)} />}
         </Section>
         <Section title="Body">
           {breakdown.length === 0 ? (
@@ -316,6 +349,76 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function Empty({ msg }: { msg: string }) {
   return <div className="px-3 py-2 text-zinc-600 text-xs italic">{msg}</div>
+}
+
+function EditableRow({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string
+  value: string
+  onCommit: (v: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(value)
+  const [seenValue, setSeenValue] = useState(value)
+  // Resync the draft when the upstream value changes and we're not
+  // mid-edit — the "adjust state during render" pattern (not an effect).
+  if (!editing && value !== seenValue) {
+    setSeenValue(value)
+    setDraft(value)
+  }
+  return (
+    <div className="flex gap-3 px-3 py-1 border-b border-white/5 text-xs items-center">
+      <div className="text-zinc-500 w-28 shrink-0 truncate">{label}</div>
+      {editing ? (
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            setEditing(false)
+            if (draft !== value) onCommit(draft)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+            else if (e.key === 'Escape') {
+              setDraft(value)
+              setEditing(false)
+            }
+          }}
+          className="flex-1 min-w-0 bg-zinc-900 border border-blue-400/40 rounded px-1 text-zinc-100 outline-none"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="flex-1 min-w-0 text-left text-zinc-200 break-words hover:bg-white/5 rounded px-1"
+          title="Click to edit — writes back to .loom source"
+        >
+          {value || <span className="text-zinc-600 italic">empty</span>}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function AddField({ onAdd }: { onAdd: (key: string, value: string) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        const key = window.prompt('New property name (e.g. setting)')?.trim()
+        if (!key) return
+        const value = window.prompt(`Value for ${key}`)?.trim() ?? ''
+        onAdd(key, value)
+      }}
+      className="mx-3 my-1 px-2 py-0.5 text-[11px] text-zinc-400 border border-dashed border-white/15 rounded hover:text-zinc-200 hover:border-white/30"
+    >
+      + field
+    </button>
+  )
 }
 
 function base(path: string): string {
