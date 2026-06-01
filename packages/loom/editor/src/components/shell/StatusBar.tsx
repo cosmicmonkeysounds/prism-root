@@ -1,7 +1,7 @@
 import { useWorkspace } from '@/store/workspace'
 import { useSettings } from '@/store/settings'
 import { languageForPath, languageLabel } from '@/lib/language'
-import { usePresets } from '@/store/presets'
+import { usePresets, allPresets } from '@/store/presets'
 import { getActiveDockApi } from '@/components/dock/util'
 
 export function StatusBar() {
@@ -56,11 +56,12 @@ export function StatusBar() {
 }
 
 function PresetSwitcher() {
-  const presets = usePresets((s) => s.all())
+  const custom = usePresets((s) => s.custom)
   const active = usePresets((s) => s.active)
   const apply = usePresets((s) => s.apply)
   const save = usePresets((s) => s.saveCurrent)
   const del = usePresets((s) => s.delete)
+  const presets = allPresets(custom)
   const current = presets.find((p) => p.id === active)
   return (
     <div className="flex items-center gap-1">

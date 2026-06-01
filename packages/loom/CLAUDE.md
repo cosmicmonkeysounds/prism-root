@@ -239,7 +239,25 @@ packages/loom/editor/dist`.
 
 ### Dev-loop (no self-hosting)
 
-Two-process flow when iterating on the React editor itself:
+One command starts both servers:
+
+```
+prism loom dev
+# → Editor (HMR): http://127.0.0.1:5173
+# → Relay (API+WS): http://127.0.0.1:7878
+```
+
+The CLI prebuilds the wasm bundle + relay binary, then runs Vite
+(`pnpm dev`) + `loom-relayd --cors permissive` under the prism
+supervisor (colored prefixed logs, Ctrl+C fan-out). The editor reads
+`VITE_LOOM_RELAY` so the API + WS URLs always hit the right port even
+with `--ui-port` / `--relay-port` overrides.
+
+Useful flags: `--host 0.0.0.0` (LAN), `--ui-only` / `--relay-only`,
+`--no-wasm` (skip the wasm preflight), `--ship` (release relay).
+
+Manual two-process equivalent, if you want to drive each half
+yourself:
 
 ```
 pnpm --filter loom-app dev    # Vite at :5173 (HMR)
@@ -247,6 +265,23 @@ cargo run -p loom-server --bin loom-relayd -- --cors permissive
                               # API + WS at :7878
 ```
 
-The editor detects it's running on a dev port (`:5173` / `:4173`) and
-points at `127.0.0.1:7878`; the relay's permissive CORS layer lets the
-browser complete the cross-origin handshake.
+If you change `parser` / `runtime` / `lsp` / `wasm` without going
+through `prism loom dev`, rebuild the editor's wasm bundle so the
+LSP / lint surfaces pick up the change:
+
+```
+pnpm --filter loom-app wasm:build:dev   # fast, larger output
+pnpm --filter loom-app wasm:build       # release, slower
+```
+
+### Full IDE walkthrough
+
+The React editor under `packages/loom/editor` now hosts every
+Run/Debug surface the simulator used to (Transcript / Ledger /
+Timeline / World / Inspector / Detail / Cast / Booth / Graph /
+Outline / References) plus workspace presets, the focus + projection
+bus, multi-head branching play, and booth live-patch over the relay.
+
+See [`docs/dev/loom-ide-redesign.md` §0](../../docs/dev/loom-ide-redesign.md#0-running-the-ide)
+for the launch flows, the step-by-step "drive the full simulator
+inside the IDE" walkthrough, and the keybinding reference.

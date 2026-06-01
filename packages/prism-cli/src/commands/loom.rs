@@ -50,6 +50,11 @@ pub enum LoomKind {
     /// then execs `python3 packages/loom/simulator/simulator.py`.
     /// Friends only need `pip install pyside6` once.
     Sim(LoomSimArgs),
+    /// One-shot dev environment: prebuilds the wasm bundle + relay
+    /// binary, then runs the Vite editor (HMR) and `loom-relayd` side
+    /// by side under the prism supervisor. Prints both URLs so you
+    /// can click through to either.
+    Dev(LoomDevArgs),
 }
 
 #[derive(Debug, Args)]
@@ -118,6 +123,36 @@ pub struct LoomServeArgs {
     pub no_auto_build: bool,
 }
 
+#[derive(Debug, Args)]
+pub struct LoomDevArgs {
+    /// TCP port for the Vite editor (HMR). Defaults to 5173 — the
+    /// editor's runtime auto-detection treats 5173/4173 as dev ports
+    /// and points its API+WS URLs at `127.0.0.1:<relay-port>`.
+    #[arg(long, default_value_t = 5173)]
+    pub ui_port: u16,
+    /// TCP port for `loom-relayd`. Defaults to 7878.
+    #[arg(long, default_value_t = 7878)]
+    pub relay_port: u16,
+    /// Bind address. Defaults to `127.0.0.1`; pass `0.0.0.0` to
+    /// expose both servers on the LAN.
+    #[arg(long, default_value = "127.0.0.1")]
+    pub host: String,
+    /// Run only the Vite editor (skip the relay).
+    #[arg(long, conflicts_with = "relay_only")]
+    pub ui_only: bool,
+    /// Run only the relay (skip Vite).
+    #[arg(long)]
+    pub relay_only: bool,
+    /// Skip the wasm-bundle preflight rebuild. The editor falls back
+    /// to whatever is committed in `editor/src/loom-wasm`.
+    #[arg(long)]
+    pub no_wasm: bool,
+    /// Use the release-profile relay binary (slow compile, fast
+    /// runtime). Defaults to debug.
+    #[arg(long)]
+    pub ship: bool,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum LoomCorsArg {
     SameOrigin,
@@ -139,6 +174,7 @@ pub fn run(args: &LoomArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> 
         LoomKind::Build(args) => run_build(args, workspace, dry_run),
         LoomKind::Serve(args) => run_serve(args, workspace, dry_run),
         LoomKind::Sim(args) => run_sim(args, workspace, dry_run),
+        LoomKind::Dev(args) => run_dev(args, workspace, dry_run),
     }
 }
 
@@ -277,6 +313,109 @@ fn run_serve(args: &LoomServeArgs, workspace: &Workspace, dry_run: bool) -> Resu
     }
 
     super::execute_plan(&plan, dry_run)
+}
+
+fn run_dev(args: &LoomDevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
+    if args.ui_only && args.relay_only {
+        return Err(anyhow!("--ui-only and --relay-only are mutually exclusive"));
+    }
+
+    let editor_dir = loom_editor_dir(workspace);
+    let mut preflight: Vec<CommandBuilder> = Vec::new();
+    let mut supervised: Vec<CommandBuilder> = Vec::new();
+
+    // Preflight: wasm bundle so the editor's LSP / lint flows light
+    // up against the latest parser+runtime+lsp on a cold checkout.
+    if !args.no_wasm && !args.relay_only {
+        preflight.push(
+            CommandBuilder::pnpm()
+                .arg("wasm:build:dev")
+                .cwd(editor_dir.clone())
+                .label("loom-wasm-build"),
+        );
+    }
+
+    // Preflight: build the relay binary so the supervisor execs an
+    // already-warm binary (no cold cargo compile inside the noisy
+    // multi-process log stream).
+    if !args.ui_only {
+        preflight.push(server_build_builder(workspace, args.ship));
+    }
+
+    // Supervised: Vite editor.
+    let editor_url = format!("http://{}:{}", args.host, args.ui_port);
+    let relay_url = format!("http://{}:{}", args.host, args.relay_port);
+    if !args.relay_only {
+        // `pnpm dev` defaults to vite; we forward `--host` + `--port`
+        // so the editor + relay can co-bind cleanly.
+        let mut vite = CommandBuilder::pnpm()
+            .arg("dev")
+            .arg("--host")
+            .arg(args.host.clone())
+            .arg("--port")
+            .arg(args.ui_port.to_string())
+            .cwd(editor_dir.clone())
+            .label("loom-editor");
+        // VITE_LOOM_RELAY lets the editor short-circuit its
+        // origin-based default for non-standard relay ports.
+        vite = vite.env("VITE_LOOM_RELAY", relay_url.clone());
+        supervised.push(vite);
+    }
+
+    // Supervised: relay binary.
+    if !args.ui_only {
+        let binary = workspace.bin_path("loom-relayd", args.ship);
+        let bind = format!("{}:{}", args.host, args.relay_port);
+        let serve = CommandBuilder::exec(&binary)
+            .arg("--bind")
+            .arg(bind)
+            .arg("--cors")
+            .arg("permissive")
+            .label("loom-relay")
+            .cwd(workspace.root());
+        supervised.push(serve);
+    }
+
+    // Headline so the URLs land before the supervisor's interleaved
+    // logs make them hard to spot.
+    if !dry_run {
+        eprintln!();
+        eprintln!("  Loom IDE dev session");
+        if !args.relay_only {
+            eprintln!("    Editor (HMR): {editor_url}");
+        }
+        if !args.ui_only {
+            eprintln!("    Relay (API+WS): {relay_url}");
+        }
+        eprintln!("    Press Ctrl+C to stop both.");
+        eprintln!();
+    }
+
+    // Preflights run sequentially through the shared `execute_plan`
+    // so a wasm-build failure aborts before the supervisor starts.
+    let code = super::execute_plan(&preflight, dry_run)?;
+    if code != 0 {
+        return Ok(code);
+    }
+
+    if dry_run {
+        for cmd in &supervised {
+            println!("$ {}", cmd.display());
+        }
+        return Ok(0);
+    }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async move {
+        let mut s = crate::supervisor::Supervisor::new();
+        for cmd in supervised {
+            s.add(cmd)?;
+        }
+        let outcome = s.run().await?;
+        Ok(outcome.exit_code)
+    })
 }
 
 fn loom_editor_dir(workspace: &Workspace) -> PathBuf {

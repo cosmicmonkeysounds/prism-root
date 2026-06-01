@@ -266,6 +266,14 @@ impl Workspace {
     pub fn document_symbols(&self, uri: &Url) -> Option<DocumentSymbolResponse> {
         symbols::document_symbols(self, uri)
     }
+
+    pub fn references_at(
+        &self,
+        uri: &Url,
+        pos: lsp_types::Position,
+    ) -> Vec<lsp_types::Location> {
+        crate::references::references_at(self, uri, pos)
+    }
 }
 
 /// Convert a parser [`Span`] to an LSP [`Range`]. Both use zero-based

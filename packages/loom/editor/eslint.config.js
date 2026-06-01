@@ -21,5 +21,20 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      // Allow the conventional `_`-prefix to mark a destructured / function
+      // argument we know is unused — primarily for the
+      // `const { [path]: _gone, ...rest } = obj` pattern that drops a
+      // property by rest-spread.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+        },
+      ],
+    },
   },
 ])

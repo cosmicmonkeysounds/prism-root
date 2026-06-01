@@ -368,6 +368,46 @@ impl PlaySession {
         Ok(())
     }
 
+    /// Booth live-patch (spec §13.4) — skip the current beat on
+    /// `head`, then advance until the next pause point.
+    fn booth_skip(&mut self, head: &str) -> Result<(), PlayError> {
+        let state = self.head_mut(head)?;
+        state.mesh.playhead_mut().booth_skip_beat();
+        state.advance()
+    }
+
+    /// Booth live-patch — inject a directive at the head of the
+    /// playhead's queue and resume.
+    fn booth_force(&mut self, head: &str, raw: String) -> Result<(), PlayError> {
+        let state = self.head_mut(head)?;
+        state.mesh.playhead_mut().booth_force_directive(raw);
+        state.advance()
+    }
+
+    /// Booth live-patch — reload the bundle from caller-supplied
+    /// sources and hot-swap it under every head. Ledger + world are
+    /// preserved on every head per the runtime contract; the playheads
+    /// re-enter the new bundle's entry beat. The bundle replaces
+    /// `self.bundle` so future forks-from-snapshot use the new sources.
+    fn booth_hot_reload(&mut self, files: Vec<(String, String)>) -> Result<(), PlayError> {
+        let bundle = Arc::new(Bundle::from_sources(files));
+        for state in self.heads.values_mut() {
+            state
+                .mesh
+                .playhead_mut()
+                .booth_hot_reload(Arc::clone(&bundle))
+                .map_err(|e| PlayError::Step(e.to_string()))?;
+            // Re-seed in case the new bundle introduced new
+            // ROLEs / PERSONs / generators.
+            state.mesh.seed_from_bundle(&bundle);
+            state.pending_choices.clear();
+            state.ended = false;
+            state.advance()?;
+        }
+        self.bundle = bundle;
+        Ok(())
+    }
+
     fn drop_head(&mut self, head: &str) -> Result<(), PlayError> {
         if head == self.primary {
             return Err(PlayError::CannotDropPrimary);
@@ -503,6 +543,46 @@ impl PlayHub {
         let session = self.session(workspace)?;
         let mut session = session.write().unwrap();
         session.restore(head, snapshot_id)?;
+        Ok(session.snapshot_view())
+    }
+
+    pub fn booth_skip(
+        &self,
+        workspace: &str,
+        head: Option<&str>,
+    ) -> Result<PlayStateSnapshot, PlayError> {
+        let session = self.session(workspace)?;
+        let mut session = session.write().unwrap();
+        let head_id = head
+            .map(String::from)
+            .unwrap_or_else(|| session.primary.clone());
+        session.booth_skip(&head_id)?;
+        Ok(session.snapshot_view())
+    }
+
+    pub fn booth_force(
+        &self,
+        workspace: &str,
+        head: Option<&str>,
+        raw: String,
+    ) -> Result<PlayStateSnapshot, PlayError> {
+        let session = self.session(workspace)?;
+        let mut session = session.write().unwrap();
+        let head_id = head
+            .map(String::from)
+            .unwrap_or_else(|| session.primary.clone());
+        session.booth_force(&head_id, raw)?;
+        Ok(session.snapshot_view())
+    }
+
+    pub fn booth_hot_reload(
+        &self,
+        workspace: &str,
+        files: Vec<(String, String)>,
+    ) -> Result<PlayStateSnapshot, PlayError> {
+        let session = self.session(workspace)?;
+        let mut session = session.write().unwrap();
+        session.booth_hot_reload(files)?;
         Ok(session.snapshot_view())
     }
 

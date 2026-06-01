@@ -93,24 +93,39 @@ function persist(state: StoredState): void {
 type PresetState = {
   custom: WorkspacePreset[]
   active: string | null
-  /** All presets the UI should show — builtins first, customs after. */
-  all(): WorkspacePreset[]
   apply(api: DockviewApi, id: string): void
   saveCurrent(api: DockviewApi, name: string): WorkspacePreset
   delete(id: string): void
   rename(id: string, name: string): void
 }
 
+/**
+ * Builtins-first concatenation of `custom` with the static
+ * `BUILTIN_PRESETS`. Lives outside the store so the array reference
+ * is stable for any given `custom` reference — selectors that read
+ * the full list must not allocate a fresh array per render or
+ * zustand will see a new value every time and trigger React error
+ * #185 (Maximum update depth exceeded).
+ */
+export function allPresets(custom: WorkspacePreset[]): WorkspacePreset[] {
+  // Cached so identical `custom` references return the same array.
+  if (allPresetsCache.custom === custom) return allPresetsCache.merged
+  const merged = [...BUILTIN_PRESETS, ...custom]
+  allPresetsCache = { custom, merged }
+  return merged
+}
+let allPresetsCache: {
+  custom: WorkspacePreset[]
+  merged: WorkspacePreset[]
+} = { custom: [], merged: BUILTIN_PRESETS }
+
 export const usePresets = create<PresetState>((set, get) => {
   const initial = loadFromStorage()
   return {
     custom: initial.custom,
     active: initial.active,
-    all() {
-      return [...BUILTIN_PRESETS, ...get().custom]
-    },
     apply(api, id) {
-      const preset = get().all().find((p) => p.id === id)
+      const preset = allPresets(get().custom).find((p) => p.id === id)
       if (!preset) return
       api.clear()
       if (preset.layout) {

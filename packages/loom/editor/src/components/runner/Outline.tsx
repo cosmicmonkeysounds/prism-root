@@ -1,35 +1,73 @@
-// Phase 6 of the Loom IDE redesign: Outline panel.
-// Will be backed by `loom-lsp`'s `textDocument/documentSymbol` once
-// the LSP runs inside the editor (currently only the parser/linter
-// half of the wasm bundle is loaded). Today: extracts beat / scene /
-// character headers from the active file by a single-line scan so the
-// slot has signal while the LSP integration lands.
+// Phase 6 / follow-up: Outline panel — driven by `loom-lsp`'s
+// `documentSymbol` over the wasm bundle. Re-syncs the active file's
+// contents into the LSP workspace on every change, then renders the
+// returned `DocumentSymbol[]` tree (single level for now — Loom's
+// grammar is flat).
 
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useWorkspace } from "@/store/workspace";
+import { lspWorkspace, uriFor } from "@/lib/lsp-client";
 
-type Symbol = { kind: string; name: string; line: number };
+type LspDocSymbol = {
+  name: string;
+  kind: number;
+  range: { start: { line: number; character: number } };
+};
 
-const HEADER_RE = /^\s*(==|SCENE|CHARACTER|TRAIT|STATS|TREE|ITEM|FACTION|COHORT|LOCATION|GENERATOR|PERSON|ROSTER|SCENE)\b\s*([^\s(]+)?/;
-
-function extract(text: string): Symbol[] {
-  const out: Symbol[] = [];
-  const lines = text.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const m = HEADER_RE.exec(lines[i]);
-    if (!m) continue;
-    const kind = m[1] === "==" ? "beat" : m[1].toLowerCase();
-    out.push({ kind, name: m[2] ?? "(unnamed)", line: i + 1 });
-  }
-  return out;
-}
+// Subset of LSP SymbolKind we care to label.
+const KIND_LABEL: Record<number, string> = {
+  3: "ns",
+  5: "class",
+  6: "method",
+  10: "enum",
+  11: "iface",
+  12: "function",
+  13: "variable",
+  17: "object",
+  19: "package",
+  22: "struct",
+  23: "event",
+  24: "operator",
+  25: "array",
+};
 
 export function OutlinePanel() {
   const activePath = useWorkspace((s) => s.activePath);
   const file = useWorkspace((s) =>
     activePath ? s.openFiles[activePath] : null,
   );
-  const symbols = useMemo(() => (file ? extract(file.contents) : []), [file]);
+  // Symbols are stored keyed by the path they belong to so a stale
+  // `setState` from a previous file never overwrites the current one.
+  const [state, setState] = useState<{
+    path: string | null;
+    symbols: LspDocSymbol[] | null;
+    error: string | null;
+  }>({ path: null, symbols: null, error: null });
+
+  useEffect(() => {
+    if (!activePath || !file) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const ws = await lspWorkspace();
+        ws.open(uriFor(activePath), file.contents);
+        const resp = ws.documentSymbols(uriFor(activePath));
+        if (cancelled) return;
+        const arr = Array.isArray(resp) ? (resp as LspDocSymbol[]) : [];
+        setState({ path: activePath, symbols: arr, error: null });
+      } catch (err) {
+        if (cancelled) return;
+        setState({ path: activePath, symbols: null, error: String(err) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activePath, file]);
+
+  const symbols = state.path === activePath ? state.symbols : null;
+  const error = state.path === activePath ? state.error : null;
+
   if (!activePath) {
     return (
       <div className="h-full grid place-items-center bg-zinc-950 text-zinc-500 text-xs px-4">
@@ -37,7 +75,14 @@ export function OutlinePanel() {
       </div>
     );
   }
-  if (symbols.length === 0) {
+  if (error) {
+    return (
+      <div className="h-full grid place-items-center bg-zinc-950 text-rose-300 text-xs px-4 text-center">
+        Outline failed: {error}
+      </div>
+    );
+  }
+  if (!symbols || symbols.length === 0) {
     return (
       <div className="h-full grid place-items-center bg-zinc-950 text-zinc-500 text-xs px-4 text-center">
         No top-level declarations in this file.
@@ -51,8 +96,12 @@ export function OutlinePanel() {
           key={i}
           className="flex gap-2 px-1 py-0.5 hover:bg-white/5 rounded"
         >
-          <span className="text-zinc-600 w-10 text-right">{s.line}</span>
-          <span className="text-amber-300 w-16 shrink-0">{s.kind}</span>
+          <span className="text-zinc-600 w-10 text-right">
+            {s.range.start.line + 1}
+          </span>
+          <span className="text-amber-300 w-16 shrink-0">
+            {KIND_LABEL[s.kind] ?? "decl"}
+          </span>
           <span className="text-zinc-200 truncate">{s.name}</span>
         </div>
       ))}

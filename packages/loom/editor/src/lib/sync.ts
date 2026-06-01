@@ -128,6 +128,18 @@ type Envelope =
           kind: "play-set-primary";
           payload: { workspace: string; head: string };
       }
+    | {
+          kind: "play-booth-skip";
+          payload: { workspace: string; head?: string };
+      }
+    | {
+          kind: "play-booth-force";
+          payload: { workspace: string; head?: string; raw: string };
+      }
+    | {
+          kind: "play-booth-reload";
+          payload: { workspace: string; files: PlayFile[] };
+      }
     | { kind: "play-state"; payload: PlayStatePayload }
     | { kind: "ping"; payload?: Record<string, never> }
     | { kind: "pong"; payload?: Record<string, never> };
@@ -320,6 +332,29 @@ export class LoomSyncClient {
         this.sendEnvelope({
             kind: "play-set-primary",
             payload: { workspace: workspaceId, head },
+        });
+    }
+
+    // ── Booth live-patch (spec §13.4) ─────────────────────────────
+
+    boothSkip(workspaceId: string, head?: string): void {
+        this.sendEnvelope({
+            kind: "play-booth-skip",
+            payload: { workspace: workspaceId, head },
+        });
+    }
+
+    boothForce(workspaceId: string, raw: string, head?: string): void {
+        this.sendEnvelope({
+            kind: "play-booth-force",
+            payload: { workspace: workspaceId, head, raw },
+        });
+    }
+
+    boothReload(workspaceId: string, files: PlayFile[]): void {
+        this.sendEnvelope({
+            kind: "play-booth-reload",
+            payload: { workspace: workspaceId, files },
         });
     }
 

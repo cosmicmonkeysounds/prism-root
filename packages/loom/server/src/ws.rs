@@ -121,6 +121,26 @@ enum Incoming {
         workspace: String,
         head: String,
     },
+    /// Booth live-patch (spec §13.4) — skip the current beat on a
+    /// head (defaults to primary).
+    PlayBoothSkip {
+        workspace: String,
+        head: Option<String>,
+    },
+    /// Booth live-patch — inject a directive at the head of the
+    /// playhead's queue. `raw` is the spec-form directive body, e.g.
+    /// `sfx: thunder` or `set: Wren.health = 5`.
+    PlayBoothForce {
+        workspace: String,
+        head: Option<String>,
+        raw: String,
+    },
+    /// Booth live-patch — hot-reload the bundle on every head from
+    /// freshly uploaded file sources.
+    PlayBoothReload {
+        workspace: String,
+        files: Vec<PlayFile>,
+    },
     Ping,
 }
 
@@ -431,6 +451,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<LoomRelayState>) {
                         }
                     }
                 });
+                // Phase 4 / loose ends: if a play session is already
+                // running on this workspace, hand the new subscriber
+                // its current snapshot so the runner panels populate
+                // immediately. Without this they'd sit empty until
+                // somebody on the workspace took the next action.
+                if let Some(snap) = state.play.snapshot(&workspace) {
+                    let _ = out_tx.send(Outgoing::PlayState(snap).to_ws());
+                }
                 subs.insert(workspace.clone(), hub);
                 sub_tasks.insert(workspace, task);
             }
@@ -653,6 +681,50 @@ async fn handle_socket(socket: WebSocket, state: Arc<LoomRelayState>) {
                 match state.play.set_primary(&workspace, &head) {
                     Ok(snap) => broadcast_play_state(snap, &out_tx, &hub.tx, &peer_id),
                     Err(e) => send_error(&out_tx, format!("play-set-primary: {e}")),
+                }
+            }
+            Incoming::PlayBoothSkip { workspace, head } => {
+                if !require_authed_subscribed(&auth, &subs, &workspace, "play-booth-skip", &out_tx)
+                {
+                    continue;
+                }
+                let hub = subs.get(&workspace).cloned().unwrap();
+                match state.play.booth_skip(&workspace, head.as_deref()) {
+                    Ok(snap) => broadcast_play_state(snap, &out_tx, &hub.tx, &peer_id),
+                    Err(e) => send_error(&out_tx, format!("play-booth-skip: {e}")),
+                }
+            }
+            Incoming::PlayBoothForce {
+                workspace,
+                head,
+                raw,
+            } => {
+                if !require_authed_subscribed(&auth, &subs, &workspace, "play-booth-force", &out_tx)
+                {
+                    continue;
+                }
+                let hub = subs.get(&workspace).cloned().unwrap();
+                match state.play.booth_force(&workspace, head.as_deref(), raw) {
+                    Ok(snap) => broadcast_play_state(snap, &out_tx, &hub.tx, &peer_id),
+                    Err(e) => send_error(&out_tx, format!("play-booth-force: {e}")),
+                }
+            }
+            Incoming::PlayBoothReload { workspace, files } => {
+                if !require_authed_subscribed(
+                    &auth,
+                    &subs,
+                    &workspace,
+                    "play-booth-reload",
+                    &out_tx,
+                ) {
+                    continue;
+                }
+                let hub = subs.get(&workspace).cloned().unwrap();
+                let sources: Vec<(String, String)> =
+                    files.into_iter().map(|f| (f.path, f.source)).collect();
+                match state.play.booth_hot_reload(&workspace, sources) {
+                    Ok(snap) => broadcast_play_state(snap, &out_tx, &hub.tx, &peer_id),
+                    Err(e) => send_error(&out_tx, format!("play-booth-reload: {e}")),
                 }
             }
         }

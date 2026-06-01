@@ -105,6 +105,54 @@ impl LspWorkspace {
         let url = parse_url(uri)?;
         to_js(&self.inner.document_symbols(&url))
     }
+
+    /// References to the identifier under the cursor — every
+    /// occurrence of the same alphanumeric/underscore token in every
+    /// open document. Returns `Location[]`.
+    #[wasm_bindgen]
+    pub fn references(
+        &self,
+        uri: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<JsValue, JsError> {
+        let url = parse_url(uri)?;
+        let refs = self
+            .inner
+            .references_at(&url, lsp_types::Position { line, character });
+        to_js(&refs)
+    }
+
+    /// Convenience: references to a *named* identifier without a
+    /// position. Synthesises a query by scanning every document for
+    /// `name`. Used by the editor's References panel when the user
+    /// pins a character / beat / world key in the focus bus (no
+    /// cursor — only the name).
+    #[wasm_bindgen(js_name = referencesByName)]
+    pub fn references_by_name(&self, name: &str) -> Result<JsValue, JsError> {
+        use lsp_types::{Location, Position, Range};
+        let mut out: Vec<Location> = Vec::new();
+        for (uri, doc) in self.inner.docs.iter() {
+            for (line_no, line_text) in doc.text.lines().enumerate() {
+                for (start, end) in loom_lsp::references::find_token_spans(line_text, name) {
+                    out.push(Location {
+                        uri: uri.clone(),
+                        range: Range {
+                            start: Position {
+                                line: line_no as u32,
+                                character: start as u32,
+                            },
+                            end: Position {
+                                line: line_no as u32,
+                                character: end as u32,
+                            },
+                        },
+                    });
+                }
+            }
+        }
+        to_js(&out)
+    }
 }
 
 impl Default for LspWorkspace {

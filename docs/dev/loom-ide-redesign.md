@@ -11,22 +11,166 @@ via ⌘⌥1..5 and a StatusBar switcher; Cast / Booth / Outline /
 References panels round out the dock. The PySide6 simulator is
 deprecated but kept runnable as a local debugger.
 
-Follow-ups not in this round:
-- Modal+side projection sinks (today they fall back to a centered
-  modal — Phase 3 first cut).
-- Snapshot/restore wired to a "right-click envelope → Fork from here"
-  context menu (the runtime + protocol both support it; the UI
-  affordance lands separately).
-- Booth live-patch (skip / force / hot-reload) over the relay — needs
-  new WS envelopes; today the stand-alone `loom-play` stdio driver
-  exposes them and the Booth panel surfaces a TODO note.
-- Outline + References upgrading from the local string-scan
-  placeholder to the in-editor `loom-lsp` workspace index.
+All Phase 1–6 follow-ups landed in a final pass (2026-05-31):
+
+- **Side sink** — additive right-edge drawer that stacks multiple
+  pinned details; Shift-click on any focusable promotes to side,
+  Alt-click forces modal. Esc clears the popover/modal sinks; the
+  drawer is dismissed per-entry via the × button.
+- **Right-click "Fork from here"** — Timeline envelopes open a
+  context menu with `Snapshot @ #N`, `Fork from #N`, and
+  `Open in detail panel`. Powered by the reusable
+  `useContextMenu`/`openContextMenu` primitive in
+  `@/store/context-menu` + `<ContextMenuHost>` mounted in App.
+- **Booth live-patch over relay** — new WS envelopes
+  `play-booth-skip` / `play-booth-force` / `play-booth-reload` route
+  to `PlayHub::booth_skip` / `booth_force` / `booth_hot_reload`,
+  which thread through `Playhead::booth_*` on every head (hot-reload
+  re-seeds tracks + advances each head past its first pause). Booth
+  panel exposes skip / hot-reload buttons and a directive entry
+  form.
+- **LSP-driven Outline / References** — Outline calls
+  `LspWorkspace.documentSymbols` and renders the LSP
+  `DocumentSymbol[]`; References calls the new
+  `LspWorkspace.referencesByName` (backed by a new
+  `loom-lsp::references` module + `Workspace::references_at`). The
+  wasm bundle was rebuilt to expose the new surface.
 
 Related design docs:
 - [`loom-v3.html`](./loom-v3.html) — language spec.
 - [`loom-editor.html`](./loom-editor.html) — original editor concept (Arrangement view §4.2 is the timeline ancestor).
 - [`loom-multiuser.md`](./loom-multiuser.md) — relay + collab protocol that the head-keyed messages extend.
+
+---
+
+## 0. Running the IDE
+
+### The one-shot — `prism loom dev`
+
+```
+prism loom dev
+```
+
+That's the whole launch. The CLI:
+1. Builds the wasm bundle (`pnpm wasm:build:dev`).
+2. Builds the relay binary (`cargo build -p loom-server`).
+3. Starts both servers under the prism supervisor with colored,
+   prefixed logs and Ctrl+C fan-out:
+   - **Editor (HMR)**: http://127.0.0.1:5173
+   - **Relay (API+WS)**: http://127.0.0.1:7878
+
+The Vite editor receives `VITE_LOOM_RELAY=http://127.0.0.1:7878` so
+its API + WS URLs always hit the right port even at non-default
+configurations. Open the editor URL in any Chromium browser, register,
+and you're playing.
+
+Useful flags:
+
+- `--ui-port 5174 --relay-port 7879` — non-default ports.
+- `--host 0.0.0.0` — expose both servers on the LAN.
+- `--ui-only` / `--relay-only` — run one half only (e.g. an external
+  relay you've already started).
+- `--no-wasm` — skip the wasm preflight (use the committed bundle).
+- `--ship` — release-profile relay (slow compile, fast steady state).
+- `--dry-run` — print every command without running.
+
+### Other launch flows
+
+Single-binary, closest to production (one Rust process serves the
+prebuilt editor `dist/` alongside the API + WS):
+
+```
+prism loom build              # vite build + cargo build -p loom-server
+prism loom serve --build      # boot loom-relayd → http://127.0.0.1:7878
+```
+
+`prism loom serve` flags: `--bind 0.0.0.0:7878`, `--ship`,
+`--editor-dist <path>`, `--cors permissive`. Equivalent bare-cargo
+invocation:
+
+```
+cargo run -p loom-server --bin loom-relayd -- \
+  --editor-dist packages/loom/editor/dist
+```
+
+Local debugger (no relay, no editor):
+
+```
+prism loom sim packages/loom/examples/saltmere
+```
+
+That's the PySide6 simulator — deprecated as the primary surface but
+still runnable for offline debugging.
+
+### Walking through the full simulator inside the IDE
+
+Once the relay + editor are up (Option A or B):
+
+1. **Open the editor** at the URL the launch command printed.
+2. **Register** a user and pick a username (capability tokens live in
+   `localStorage`).
+3. **Cloud panel (⌘K)** — create a workspace, link a local folder
+   (File System Access API → grants the editor read/write rights to a
+   directory of `.loom` files), or paste sources directly.
+4. **Workspace preset** — pick *Debug* from the StatusBar switcher
+   (or hit ⌘⌥3) to open Editor + Timeline + Ledger + World + Detail
+   panels at once. *Direct* (⌘⌥2) is the live-performance preset.
+5. **Choices panel (⌘⇧C)** — click **Start play**. The server boots a
+   `PlaySession` from the workspace's `.loom` files, advances to the
+   first choice or `Step::Awaiting`, and broadcasts `play-state` to
+   every subscriber.
+6. **Drive the show** by clicking choice buttons. Every panel updates
+   in lockstep: Timeline grows new envelopes on per-track rows,
+   Ledger appends rows, World re-renders mutated keys, Transcript
+   scrolls.
+7. **Hover anywhere** — every other panel dims unrelated elements and
+   highlights related ones in one frame.
+8. **Click anywhere** — opens the entity's detail in the configured
+   sink (most surfaces default to a popover; row labels go to the
+   dock Detail panel). **Shift-click** adds to the right-edge side
+   drawer (stack multiple); **Alt-click** opens a modal.
+9. **Right-click a Timeline envelope** for `Snapshot @ #N` /
+   `Fork from #N` / `Open in detail panel`.
+10. **Booth panel (⌘⇧B)** — head table with promote/drop/snapshot,
+    snapshot list with fork-from/restore, live-patch (skip beat,
+    hot-reload bundle, force-fire directive).
+11. **Save your layout** as a named preset via the **+** button next
+    to the StatusBar switcher.
+
+If you have collaborators running the same relay, every panel stays in
+sync over the WS broadcast — including head tabs (everyone sees the
+same set of live heads) and snapshots.
+
+### Quick reference: keybindings
+
+| Combo  | Panel                  | Combo    | Surface           |
+|--------|------------------------|----------|-------------------|
+| ⌘B     | Files                  | ⌘⇧F      | Search            |
+| ⌘1     | Editor                 | ⌘J       | Canvas            |
+| ⌘K     | Cloud                  | ⌘2       | Remote            |
+| ⌘⇧P    | Play (composite)       | ⌘⇧T      | Transcript        |
+| ⌘⇧C    | Choices                | ⌘⇧L      | Ledger            |
+| ⌘⇧W    | World                  | ⌘⇧M      | Timeline (mesh)   |
+| ⌘⇧I    | Inspector              | ⌘⇧D      | Detail            |
+| ⌘⇧G    | Graph                  | ⌘⇧A      | Cast              |
+| ⌘⇧B    | Booth                  | ⌘⇧O      | Outline           |
+| ⌘⇧R    | References             |          |                   |
+| ⌘⌥1..5 | Cycle built-in workspace presets (Author / Direct / Debug / Perform / Read) |
+
+All shortcuts toggle (open if absent, close if focused).
+
+### Verifying a working build
+
+The full test surface, all green at last check:
+
+```
+cargo test -p loom-runtime --test snapshot_fork   # 3/3 — branching invariants
+cargo test -p loom-server --lib play              # 4/4 — multi-head session
+cargo test -p loom-lsp --lib                      # 6/6 — completion/hover/refs
+cd packages/loom/editor && npx tsc -b             # type-check
+cd packages/loom/editor && pnpm lint              # 0 errors, 0 warnings
+cd packages/loom/editor && pnpm build             # vite production build
+```
 
 ---
 

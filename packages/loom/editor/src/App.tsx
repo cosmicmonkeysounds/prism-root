@@ -4,6 +4,7 @@ import { StatusBar } from '@/components/shell/StatusBar'
 import { CommandPalette } from '@/components/shell/CommandPalette'
 import { SettingsPanel } from '@/components/shell/SettingsPanel'
 import { DetailOverlay } from '@/components/detail/DetailOverlay'
+import { ContextMenuHost } from '@/components/shell/ContextMenu'
 import { useWorkspace } from '@/store/workspace'
 import { useSettings } from '@/store/settings'
 
@@ -32,6 +33,7 @@ export default function App() {
       <CommandPalette />
       <SettingsPanel />
       <DetailOverlay />
+      <ContextMenuHost />
     </div>
   )
 }

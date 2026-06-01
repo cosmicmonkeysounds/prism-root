@@ -40,6 +40,11 @@ const RELAY_KEY = "loom.relayUrl";
  * `127.0.0.1:7878` so `prism loom dev` works out of the box.
  */
 function defaultRelayUrl(): string {
+    // `prism loom dev` (and any other launcher) can pin the relay URL
+    // explicitly via `VITE_LOOM_RELAY`. Highest precedence — covers
+    // non-default ports and cross-machine setups.
+    const envUrl = import.meta.env?.VITE_LOOM_RELAY as string | undefined;
+    if (typeof envUrl === "string" && envUrl) return envUrl;
     if (typeof window === "undefined") return FALLBACK_RELAY;
     try {
         const origin = window.location.origin;
@@ -151,6 +156,10 @@ interface SessionState {
     restorePlay: (head: string, snapshot: string) => void;
     dropHead: (head: string) => void;
     setPrimaryHead: (head: string) => void;
+    // Booth live-patch.
+    boothSkip: (head?: string) => void;
+    boothForce: (raw: string, head?: string) => void;
+    boothReload: () => void;
 }
 
 let wasmPromise: Promise<typeof import("@/loom-wasm/loom_wasm")> | null = null;
@@ -490,6 +499,25 @@ export const useSession = create<SessionState>((set, get) => {
             const state = get();
             if (!state.active || !state.sync) return;
             state.sync.setPrimaryHead(state.active.meta.id, head);
+        },
+        boothSkip: (head) => {
+            const state = get();
+            if (!state.active || !state.sync) return;
+            state.sync.boothSkip(state.active.meta.id, head);
+        },
+        boothForce: (raw, head) => {
+            const state = get();
+            if (!state.active || !state.sync || !raw) return;
+            state.sync.boothForce(state.active.meta.id, raw, head);
+        },
+        boothReload: () => {
+            const state = get();
+            if (!state.active || !state.sync) return;
+            const files = state.active.doc.listFiles().map((p) => {
+                const path = String(p);
+                return { path, source: state.active!.doc.getText(path) ?? "" };
+            });
+            state.sync.boothReload(state.active.meta.id, files);
         },
 
         unbindFolder: async () => {

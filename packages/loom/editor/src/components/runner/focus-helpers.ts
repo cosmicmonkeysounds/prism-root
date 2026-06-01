@@ -36,8 +36,17 @@ export function useFocusableProps(ref: FocusRef, sink: DetailSink = 'panel') {
       onClick: (e: React.MouseEvent<HTMLElement>) => {
         const target = e.currentTarget as HTMLElement
         const r = target.getBoundingClientRect()
+        // Shift-click adds the entry to the right-edge side drawer
+        // instead of opening the default sink — same affordance for
+        // every focusable so multi-pin works uniformly across panels.
+        // Alt-click forces the modal sink.
+        const overrideSink: DetailSink = e.shiftKey
+          ? 'side'
+          : e.altKey
+            ? 'modal'
+            : sink
         openDetail(ref, {
-          sink,
+          sink: overrideSink,
           anchor: { x: r.left, y: r.top, width: r.width, height: r.height },
         })
         e.stopPropagation()

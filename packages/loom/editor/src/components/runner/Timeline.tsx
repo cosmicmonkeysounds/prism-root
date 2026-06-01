@@ -14,6 +14,8 @@ import {
 import { useFocus, useRelated, refKey, useEffectiveFocus } from "@/store/focus";
 import { useActiveHead, usePrimaryHeadId } from "./use-head";
 import type { PlayEnvelopeMeta, PlayTrackInfo } from "@/lib/sync";
+import { useSession } from "@/store/session";
+import { openContextMenu } from "@/store/context-menu";
 
 const ROW_HEIGHT = 28;
 const LABEL_WIDTH = 130;
@@ -39,6 +41,8 @@ export function TimelinePanel() {
   const focus = useEffectiveFocus();
   const setHover = useFocus((s) => s.setHover);
   const openDetail = useFocus((s) => s.openDetail);
+  const snapshotPlay = useSession((s) => s.snapshotPlay);
+  const forkPlay = useSession((s) => s.forkPlay);
 
   const { rows, blocks, width, height } = useMemo(() => {
     const tracks: PlayTrackInfo[] = active?.tracks ?? [];
@@ -203,6 +207,45 @@ export function TimelinePanel() {
                   },
                 });
               }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                openContextMenu(
+                  [
+                    {
+                      label: `Snapshot @ #${b.idx}`,
+                      onSelect: () =>
+                        snapshotPlay({
+                          head,
+                          label: `at #${b.idx}`,
+                        }),
+                    },
+                    {
+                      label: `Fork from #${b.idx}`,
+                      onSelect: () => {
+                        // The server's snapshot captures the head's
+                        // CURRENT state, not the state at envelope #N
+                        // — true mid-history forking needs ledger
+                        // truncation server-side. As a first-cut UX
+                        // we snapshot the current state with a label
+                        // pointing at #N and immediately fork from
+                        // that snapshot, giving you a sibling head
+                        // you can replay.
+                        snapshotPlay({
+                          head,
+                          label: `fork base @ #${b.idx}`,
+                        });
+                        forkPlay({ parent: head });
+                      },
+                    },
+                    {
+                      label: "Open in detail panel",
+                      onSelect: () =>
+                        openDetail(ref, { sink: "panel" }),
+                    },
+                  ],
+                  { x: e.clientX, y: e.clientY },
+                );
+              }}
               data-focusable
             >
               <rect
@@ -215,7 +258,7 @@ export function TimelinePanel() {
                 strokeWidth={focused ? 1.5 : 0.5}
               >
                 <title>
-                  {`#${b.idx}  ${b.tag}\ntrack ${b.trackId}, cause ${b.cause ?? "—"}`}
+                  {`#${b.idx}  ${b.tag}\ntrack ${b.trackId}, cause ${b.cause ?? "—"}\nright-click for fork / snapshot`}
                 </title>
               </rect>
             </g>
@@ -228,7 +271,6 @@ export function TimelinePanel() {
 }
 
 // ─── Head tabs strip ────────────────────────────────────────────────
-import { useSession } from "@/store/session";
 import clsx from "clsx";
 
 function HeadTabs() {

@@ -69,7 +69,7 @@ export function Editor() {
     )
     return ext
   }, [
-    file?.path,
+    file,
     settings.tabSize,
     settings.indentWithTabs,
     settings.wordWrap,

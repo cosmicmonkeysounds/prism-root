@@ -12,6 +12,7 @@ const POPOVER_MAX_HEIGHT = 420
 
 export function DetailOverlay() {
   const detail = useFocus((s) => s.detail)
+  const sideStack = useFocus((s) => s.sideStack)
   const closeDetail = useFocus((s) => s.closeDetail)
   const pin = useFocus((s) => s.pin)
 
@@ -22,22 +23,68 @@ export function DetailOverlay() {
         e.preventDefault()
         closeDetail()
         // For popover/modal, Esc also clears the pin so the timeline
-        // dim pass releases. The panel sink keeps the pin so the dock
-        // detail panel still has content.
-        if (detail.sink !== 'panel') pin(null)
+        // dim pass releases. The panel/side sinks keep the pin so
+        // the dock + side drawer still have content.
+        if (detail.sink !== 'panel' && detail.sink !== 'side') pin(null)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [detail, closeDetail, pin])
 
-  if (!detail || detail.sink === 'panel') return null
+  return (
+    <>
+      {sideStack.length > 0 && <SideDrawer />}
+      {detail && detail.sink === 'popover' && <Popover />}
+      {detail && detail.sink === 'modal' && <Modal />}
+    </>
+  )
+}
 
-  if (detail.sink === 'popover') return <Popover />
-  // Modal + side fall back to a centered overlay for now. Phase 3
-  // first cut: keep the surface uniform; bespoke side-by-side compare
-  // for the `side` sink is a follow-up.
-  return <Modal />
+// Drawer is mounted whenever `sideStack` is non-empty, independent of
+// `detail` — so opening another detail in `panel`/`popover` sink does
+// not collapse it.
+function SideDrawer() {
+  const stack = useFocus((s) => s.sideStack)
+  const closeSideAt = useFocus((s) => s.closeSideAt)
+  const clearSide = useFocus((s) => s.clearSide)
+  if (stack.length === 0) return null
+  return (
+    <aside
+      role="complementary"
+      aria-label="Side details"
+      style={{ zIndex: 900 }}
+      className="fixed right-0 top-9 bottom-6 w-[340px] flex flex-col border-l border-white/10 bg-zinc-950 shadow-2xl"
+    >
+      <header className="h-7 px-2 flex items-center text-[11px] text-zinc-500 border-b border-white/10 shrink-0">
+        <span>Side · {stack.length} pinned</span>
+        <button
+          type="button"
+          onClick={clearSide}
+          className="ml-auto hover:text-zinc-200"
+          title="Close all side details"
+        >
+          clear
+        </button>
+      </header>
+      <div className="flex-1 min-h-0 overflow-auto divide-y divide-white/10">
+        {stack.map((entry, i) => (
+          <div key={i} className="relative">
+            <button
+              type="button"
+              onClick={() => closeSideAt(i)}
+              className="absolute top-1 right-2 text-zinc-600 hover:text-rose-400 text-xs"
+              aria-label="Dismiss this side entry"
+              title="Dismiss"
+            >
+              ×
+            </button>
+            <DetailFor for={entry} />
+          </div>
+        ))}
+      </div>
+    </aside>
+  )
 }
 
 function Popover() {

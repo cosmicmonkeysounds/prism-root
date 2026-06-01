@@ -64,24 +64,42 @@ type FocusState = {
   hover: FocusRef | null
   pinned: FocusRef | null
   detail: DetailDescriptor | null
+  /** `side`-sink stack — additive, dismissed individually. */
+  sideStack: FocusRef[]
   setHover(ref: FocusRef | null): void
   pin(ref: FocusRef | null): void
   openDetail(ref: FocusRef, opts?: { sink?: DetailSink; anchor?: DetailDescriptor['anchor'] }): void
   closeDetail(): void
+  closeSideAt(index: number): void
+  clearSide(): void
 }
 
-export const useFocus = create<FocusState>((set) => ({
+export const useFocus = create<FocusState>((set, get) => ({
   hover: null,
   pinned: null,
   detail: null,
+  sideStack: [],
   setHover: (ref) => set({ hover: ref }),
   pin: (ref) => set({ pinned: ref }),
-  openDetail: (ref, opts) =>
-    set({
-      pinned: ref,
-      detail: { ref, sink: opts?.sink ?? 'panel', anchor: opts?.anchor },
-    }),
+  openDetail: (ref, opts) => {
+    const sink: DetailSink = opts?.sink ?? 'panel'
+    if (sink === 'side') {
+      // Additive: append unless already in the stack.
+      const existing = get().sideStack
+      const exists = existing.some((r) => refKey(r) === refKey(ref))
+      const sideStack = exists ? existing : [...existing, ref]
+      set({ pinned: ref, sideStack, detail: { ref, sink, anchor: opts?.anchor } })
+    } else {
+      set({
+        pinned: ref,
+        detail: { ref, sink, anchor: opts?.anchor },
+      })
+    }
+  },
   closeDetail: () => set({ detail: null }),
+  closeSideAt: (index) =>
+    set((s) => ({ sideStack: s.sideStack.filter((_, i) => i !== index) })),
+  clearSide: () => set({ sideStack: [] }),
 }))
 
 /** Effective focus for highlighting: hover wins, falls back to pinned. */

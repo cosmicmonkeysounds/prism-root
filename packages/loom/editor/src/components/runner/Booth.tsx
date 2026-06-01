@@ -18,7 +18,11 @@ export function BoothPanel() {
   const restorePlay = useSession((s) => s.restorePlay);
   const dropHead = useSession((s) => s.dropHead);
   const setPrimaryHead = useSession((s) => s.setPrimaryHead);
+  const boothSkip = useSession((s) => s.boothSkip);
+  const boothForce = useSession((s) => s.boothForce);
+  const boothReload = useSession((s) => s.boothReload);
   const [label, setLabel] = useState("");
+  const [directive, setDirective] = useState("");
 
   if (!play) {
     return (
@@ -155,12 +159,52 @@ export function BoothPanel() {
       </Section>
 
       <Section title="Live patch">
-        <div className="text-zinc-600 italic">
-          Skip beat / force directive / hot reload land when the relay
-          protocol grows the matching booth envelopes. For now,
-          drive these via the standalone <code>loom-play</code> stdio
-          driver (see <code>packages/loom/simulator</code>).
+        <div className="flex items-center gap-2 mb-2">
+          <button
+            type="button"
+            onClick={() => boothSkip(play.primary)}
+            className="px-2 py-0.5 rounded border border-amber-400/30 text-amber-300 hover:bg-amber-400/10"
+          >
+            skip beat
+          </button>
+          <button
+            type="button"
+            onClick={() => boothReload()}
+            className="px-2 py-0.5 rounded border border-white/10 text-zinc-300 hover:border-white/20"
+            title="Reload the bundle from the current workspace files on every head"
+          >
+            hot reload
+          </button>
         </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (directive.trim()) {
+              boothForce(directive.trim(), play.primary);
+              setDirective("");
+            }
+          }}
+          className="flex items-center gap-2"
+        >
+          <input
+            value={directive}
+            onChange={(e) => setDirective(e.target.value)}
+            placeholder="directive (e.g. sfx: thunder)"
+            className="bg-zinc-900 border border-white/10 rounded px-2 py-0.5 text-zinc-200 flex-1 min-w-0"
+          />
+          <button
+            type="submit"
+            disabled={!directive.trim()}
+            className={clsx(
+              "px-2 py-0.5 rounded border",
+              directive.trim()
+                ? "border-rose-400/30 text-rose-300 hover:bg-rose-400/10"
+                : "border-white/5 text-zinc-600",
+            )}
+          >
+            fire
+          </button>
+        </form>
       </Section>
     </div>
   );

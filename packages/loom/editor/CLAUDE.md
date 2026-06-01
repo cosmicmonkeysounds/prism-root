@@ -66,3 +66,24 @@ Two ways to run the editor:
 The default relay URL is computed in `src/store/session.ts`. To force
 a specific relay regardless of origin, set `localStorage["loom.relayUrl"]`
 or use the Cloud panel's "Relay URL" form.
+
+## Running the full simulator (Run / Debug surfaces)
+
+See [`docs/dev/loom-ide-redesign.md` §0 "Running the IDE"](../../../docs/dev/loom-ide-redesign.md#0-running-the-ide)
+for the full walkthrough: launch flows, the per-preset panel set,
+keybindings, the side-drawer / popover / modal / panel projection
+sinks, branching Timeline head tabs + right-click "Fork from here",
+and booth live-patch. The fast path:
+
+```
+prism loom dev
+```
+
+That one command rebuilds the wasm bundle, builds `loom-relayd`, and
+starts the Vite editor (HMR) on `:5173` + the relay (API + WS) on
+`:7878` under one supervised process — Ctrl+C stops both. Open the
+printed editor URL, register, create a workspace in the Cloud panel,
+hit `⌘⌥3` for the Debug preset, click **Start play** in the Choices
+panel — Timeline / Ledger / World / Detail populate together and
+every hover/click links all panels through the focus + projection
+bus.
