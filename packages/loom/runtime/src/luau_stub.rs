@@ -39,25 +39,18 @@ impl LuauRegistry {
         false
     }
 
-    pub fn load_extension(&self, path: &Path) -> Result<(), DirectiveError> {
-        Err(DirectiveError::BadArgs {
-            kind: "<extension>".into(),
-            message: format!(
-                "Luau extensions are not supported in this build (path: {}); \
-                 lua-on-web is tracked as a follow-up milestone",
-                path.display()
-            ),
-        })
+    pub fn load_extension(&self, _path: &Path) -> Result<(), DirectiveError> {
+        // No Luau VM on this build, so there is nothing to load. We
+        // *succeed* (rather than error) so a project that ships `.luau`
+        // extensions still loads and plays — the extension's directives
+        // degrade to logged envelopes via the registry's lenient mode
+        // (see `directives::Registry::lenient`). lua-on-web (a pure-Rust
+        // Lua VM) is tracked as a follow-up milestone.
+        Ok(())
     }
 
-    pub fn load_extension_str(&self, name: &str, _source: &str) -> Result<(), DirectiveError> {
-        Err(DirectiveError::BadArgs {
-            kind: "<extension>".into(),
-            message: format!(
-                "Luau extensions are not supported in this build (name: {name}); \
-                 lua-on-web is tracked as a follow-up milestone"
-            ),
-        })
+    pub fn load_extension_str(&self, _name: &str, _source: &str) -> Result<(), DirectiveError> {
+        Ok(())
     }
 
     pub fn dispatch(

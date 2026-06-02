@@ -351,7 +351,9 @@ function LinkSection() {
     const [busy, setBusy] = useState<null | "bind" | "unbind">(null);
     const [err, setErr] = useState<string | null>(null);
 
-    if (!active) return null;
+    // Linking a local folder only makes sense for a relay-hosted
+    // workspace; the local-play workspace already *is* the folder.
+    if (active?.kind !== "cloud") return null;
     const linked = active.linkedFolder;
 
     const onBind = async () => {

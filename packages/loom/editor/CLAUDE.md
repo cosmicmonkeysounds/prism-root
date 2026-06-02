@@ -94,13 +94,43 @@ The default relay URL is computed in `src/store/session.ts`. To force
 a specific relay regardless of origin, set `localStorage["loom.relayUrl"]`
 or use the Cloud panel's "Relay URL" form.
 
+## Playing — local (no relay) vs cloud
+
+Play works out of the box with **no relay and no account**. On boot the
+editor activates a `kind: "local"` workspace (`store/session.ts`
+`activateLocal`): it targets the open local folder's `.loom` files —
+preferring live, unsaved editor buffers — and falls back to a bundled
+example (`lib/example-project.ts`, the Saltmere tutorial) when no folder
+is open. **Start play** then runs the show entirely in the browser via
+the wasm `LoomSession` (`lib/local-play.ts`), which wraps
+`loom_runtime::session::PlaySession` compiled to wasm. Every transport
+action (`choose` / `fork` / `snapshot` / `restore` / head ops / booth
+live-patch) is dispatched against that local engine and writes the same
+`active.play` (`PlayStatePayload`) the relay would, so every Runner
+panel works identically.
+
+Opening a workspace from the **Cloud** panel (Production mode, `⌘5`)
+switches `active.kind` to `"cloud"` and routes the same transport
+through the relay WebSocket for collaboration. Closing it drops back to
+local play. The TopBar shows a `local` / `cloud` chip on the active
+workspace.
+
+Caveat: the Luau VM can't target wasm, so Lua-defined directives
+(`goal`/`heal`/`flash`/…) and `.luau` extensions degrade to logged
+envelopes in local play (the runtime registry is `lenient` there); the
+core narrative + the Rust directives are full-fidelity. Run the cloud
+relay for full Luau. A pure-Rust Lua VM for the browser is a follow-up.
+
 ## Running the full simulator (Run / Debug surfaces)
 
 See [`docs/dev/loom-ide-redesign.md` §0 "Running the IDE"](../../../docs/dev/loom-ide-redesign.md#0-running-the-ide)
 for the full walkthrough: launch flows, the per-preset panel set,
 keybindings, the side-drawer / popover / modal / panel projection
 sinks, branching Timeline head tabs + right-click "Fork from here",
-and booth live-patch. The fast path:
+and booth live-patch. The fastest path needs **nothing running** — open
+the editor (`pnpm dev`), hit `⌘3` for **Simulating** mode, and click
+**Start play** in the Choices panel; Transcript / World / Timeline /
+Inspector populate together off the local engine. For collaboration:
 
 ```
 prism loom dev
@@ -108,9 +138,6 @@ prism loom dev
 
 That one command rebuilds the wasm bundle, builds `loom-relayd`, and
 starts the Vite editor (HMR) on `:5173` + the relay (API + WS) on
-`:7878` under one supervised process — Ctrl+C stops both. Open the
-printed editor URL, register, create a workspace in the Cloud panel,
-hit `⌘3` for **Simulating** mode, click **Start play** in the Choices
-panel — Transcript / World / Timeline / Inspector populate together and
-every hover/click links all panels through the focus + projection
-bus.
+`:7878` under one supervised process — Ctrl+C stops both. Register and
+create a workspace in the Cloud panel to co-play; otherwise local play
+already works on `:5173` alone.

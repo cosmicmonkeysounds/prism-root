@@ -7,10 +7,10 @@ tools) without dragging the runtime + scheduler + Luau bridge along.
 | Crate                  | Role                                                            |
 |------------------------|-----------------------------------------------------------------|
 | [`parser`](./parser)   | Lexer, AST, diagnostics, keyword table, span-preserving structural `edit` API for the `.loom` surface |
-| [`runtime`](./runtime) | Bundle, resolver, playhead, ledger, reactive graph, scheduler, directive registry, Luau bridge |
+| [`runtime`](./runtime) | Bundle, resolver, playhead, ledger, reactive graph, scheduler, directive registry, multi-head play `session`, Luau bridge |
 | [`lsp`](./lsp)         | Stdio JSON-RPC server backed by `loom-parser` + a workspace-wide name index |
 | [`syntax`](./syntax)   | TextMate grammar generator (driven by `loom-parser::keywords`) + Zed / VSCode extension shells |
-| [`wasm`](./wasm)       | `wasm-bindgen` surface for the parser — `parse` / `diagnose` / `emit_tmgrammar` + `apply_beat_property` / `apply_move_beat` / `apply_insert_beat` / `apply_remove_beat` structural edits, consumed by the React editor |
+| [`wasm`](./wasm)       | `wasm-bindgen` surface — parser (`parse` / `diagnose` / `emit_tmgrammar` + `apply_*` structural edits), the `LspWorkspace`, and the `LoomSession` local play engine, consumed by the React editor |
 | [`server`](./server)   | Multi-user backbone — `loom-relayd` axum server hosting per-workspace Loro CRDTs over `prism-core::network::relay`. See [`docs/dev/loom-multiuser.md`](../../docs/dev/loom-multiuser.md). |
 | [`editor`](./editor)   | React/Vite/CodeMirror web IDE — the user-facing front end |
 | [`examples`](./examples) | Reference `.loom` projects used by `loom-runtime` integration tests and as authoring tutorials |
@@ -196,9 +196,28 @@ Divert ambiguity now resolves by preferring a same-file candidate
 `(from, to, insert)` change (longest common prefix + suffix diff)
 so local cursors and selections survive remote edits.
 
-Still to come: the editor-side booth panel (UI scaffold on top of
-the new `booth_*` runtime APIs) and the live SCENE / coroutine
-tracker view in the web client.
+Client-side local play landed 2026-06-01: the multi-head session
+engine moved out of `loom-server` into `loom_runtime::session`
+(`PlaySession` + the `PlayStateSnapshot` / `HeadSnapshot` view structs),
+so the server's `PlayHub` and the new wasm `LoomSession` drive the
+*identical* loop and emit the *identical* `play-state` JSON. The editor
+now plays any `.loom` workspace entirely in the browser with no relay
+and no account (`store/session.ts` `kind: "local"`, `lib/local-play.ts`,
+`lib/example-project.ts`); the relay path stays for collaboration
+(`kind: "cloud"`). Because the Luau VM can't target
+`wasm32-unknown-unknown`, `directives::Registry` runs in a `lenient`
+mode on no-Luau builds: a Lua-defined directive or `.luau` extension
+degrades to a logged `Event::Directive` envelope instead of aborting
+the session (native `luau` builds stay strict). The narrative engine
+itself — beats, choices, diverts, conditionals, world, characters,
+stats, the core Rust directives (`set`/`sfx`/`cue`/`broadcast`/`cast`/…)
+— is full-fidelity in the browser.
+
+Still to come: a pure-Rust Lua VM (piccolo) so Lua-defined directives
+and `.luau` extensions execute client-side instead of degrading; the
+editor-side booth panel (UI scaffold on top of the new `booth_*`
+runtime APIs); and the live SCENE / coroutine tracker view in the web
+client.
 
 ## Multi-user (Phases 1–8 landed)
 

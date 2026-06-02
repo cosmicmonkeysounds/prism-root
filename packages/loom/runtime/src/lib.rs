@@ -50,6 +50,7 @@ pub mod project;
 pub mod reactive;
 pub mod resolver;
 pub mod scheduler;
+pub mod session;
 pub mod simulacra;
 
 pub use bundle::{BeatIdx, BeatRef, Bundle, FileIdx, LoomFileEntry, ProjectDiagnostic};
@@ -67,6 +68,9 @@ pub use meridian::{AxisMode, AxisState, PoolState, StatsInstance, StatsProfile, 
 pub use playhead::{PlayError, Playhead, PlayheadSnapshot, Step};
 pub use resolver::ResolveError;
 pub use scheduler::{Budgets, Cadence, Scheduler};
+pub use session::{
+    HeadSnapshot, PlaySession, PlayStateSnapshot, SessionError, SnapshotInfo, TrackInfo,
+};
 pub use simulacra::{
     AxisValue, CharacterState, GoalEvent, GoalState, GoalStatus, HookEvent, HookSubscription, SetOp,
 };

@@ -11,6 +11,7 @@ import { useMode } from '@/store/mode'
 export function TopBar() {
   const status = useSession((s) => s.status)
   const wsName = useSession((s) => s.active?.meta.name ?? null)
+  const kind = useSession((s) => s.active?.kind ?? null)
   const username = useSession((s) => s.username)
   return (
     <header className="h-9 px-3 flex items-center gap-3 border-b border-white/10 bg-zinc-950 text-sm shrink-0">
@@ -18,6 +19,23 @@ export function TopBar() {
       <span className="text-zinc-500 text-xs truncate max-w-[220px]">
         {wsName ?? 'local workspace'}
       </span>
+      {kind && (
+        <span
+          title={
+            kind === 'local'
+              ? 'In-browser play — no relay needed'
+              : 'Relay-hosted collaborative workspace'
+          }
+          className={clsx(
+            'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded',
+            kind === 'local'
+              ? 'bg-emerald-500/10 text-emerald-300'
+              : 'bg-sky-500/10 text-sky-300',
+          )}
+        >
+          {kind}
+        </span>
+      )}
       <Transport />
       <div className="ml-auto flex items-center gap-3">
         <Presence />

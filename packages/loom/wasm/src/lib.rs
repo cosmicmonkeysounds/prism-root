@@ -20,8 +20,10 @@ use wasm_bindgen::prelude::*;
 
 pub mod loom_doc;
 pub mod lsp_workspace;
+pub mod play;
 pub use loom_doc::{LoomDoc, SubscriptionHandle};
 pub use lsp_workspace::LspWorkspace;
+pub use play::LoomSession;
 
 #[wasm_bindgen(start)]
 pub fn init() {

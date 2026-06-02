@@ -404,7 +404,21 @@ impl<'d> Parser<'d> {
                     end = span.end;
                     self.cursor += 1;
                 }
-                LineKind::Prose(text) | LineKind::SceneHeading(text) => {
+                LineKind::Prose(text) => {
+                    // A speech wrapped across several physical lines is
+                    // ONE dialogue line (and therefore one ledger
+                    // entry), not one per line. Accumulate the
+                    // consecutive prose run exactly the way action
+                    // paragraphs do — joined with a single space,
+                    // broken by a blank line (a gap in the source line
+                    // numbers; the scanner drops blanks) or a dedent.
+                    let opener = line.clone();
+                    let first = text.clone();
+                    let (value, span) = self.collect_action(&opener, &first);
+                    end = span.end;
+                    lines.push(DialogueLine::Text(Located { value, span }));
+                }
+                LineKind::SceneHeading(text) => {
                     let span = line.span();
                     lines.push(DialogueLine::Text(Located {
                         value: text.clone(),
@@ -1225,6 +1239,61 @@ WREN
             }
             other => panic!("expected divert, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn wrapped_dialogue_is_one_line() {
+        // A speech split across several physical lines (no blank
+        // between them) is a single dialogue line, joined with spaces.
+        let src = "\
+== opening
+  NARRATOR
+    Welcome to The Stack. Tonight, you choose a side. Tonight, you
+    find out what the sides are.
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            other => panic!("expected beat, got {other:?}"),
+        };
+        let dialogue = match &beat.body[0] {
+            BodyItem::Dialogue(d) => d,
+            other => panic!("expected dialogue, got {other:?}"),
+        };
+        assert_eq!(dialogue.lines.len(), 1, "wrapped speech should be one line");
+        match &dialogue.lines[0] {
+            DialogueLine::Text(t) => assert_eq!(
+                t.value,
+                "Welcome to The Stack. Tonight, you choose a side. \
+                 Tonight, you find out what the sides are."
+            ),
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn blank_line_splits_dialogue_into_two() {
+        // A blank line between two indented speeches under one speaker
+        // breaks them into separate dialogue lines.
+        let src = "\
+== opening
+  NARRATOR
+    First beat of the speech.
+
+    Second beat after a pause.
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            other => panic!("expected beat, got {other:?}"),
+        };
+        let dialogue = match &beat.body[0] {
+            BodyItem::Dialogue(d) => d,
+            other => panic!("expected dialogue, got {other:?}"),
+        };
+        assert_eq!(dialogue.lines.len(), 2, "a blank line should split the speech");
     }
 
     #[test]

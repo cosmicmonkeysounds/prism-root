@@ -15,7 +15,7 @@ import {
     loadUsername,
 } from "@/lib/auth";
 import { PresenceTracker, type PresenceState } from "@/lib/presence";
-import { LoomSyncClient, type PlayStatePayload } from "@/lib/sync";
+import { LoomSyncClient, type PlayFile, type PlayStatePayload } from "@/lib/sync";
 import { LoomWorkspaceClient, wsUrlFromRelay } from "@/lib/workspaces";
 import type { WorkspaceMeta } from "@/lib/workspaces";
 import type { LoomDoc } from "@/loom-wasm/loom_wasm";
@@ -27,6 +27,14 @@ import {
     unlinkManifest,
     type LoomProjectManifest,
 } from "@/lib/project";
+import { LocalPlayEngine } from "@/lib/local-play";
+import {
+    EXAMPLE_LABEL,
+    EXAMPLE_PATH,
+    EXAMPLE_SOURCE,
+} from "@/lib/example-project";
+import { useWorkspace } from "@/store/workspace";
+import { readFileText, type FsEntry } from "@/lib/fs";
 
 const FALLBACK_RELAY = "http://127.0.0.1:7878";
 const RELAY_KEY = "loom.relayUrl";
@@ -71,7 +79,17 @@ export type SessionStatus =
     | "connected"
     | "error";
 
+/**
+ * `local` = a single-user, in-browser workspace whose play session runs
+ * client-side via the wasm `LoomSession` (no relay, no account).
+ * `cloud` = a relay-hosted, collaborative workspace whose play session
+ * runs server-side over the WebSocket. Both flavours expose the same
+ * `play` shape so every Runner panel is agnostic.
+ */
+export type WorkspaceKind = "local" | "cloud";
+
 export interface ActiveWorkspace {
+    kind: WorkspaceKind;
     meta: WorkspaceMeta;
     doc: LoomDoc;
     files: string[];
@@ -79,7 +97,7 @@ export interface ActiveWorkspace {
     peers: PresenceState[];
     /** Local folder bound to this workspace, when one is linked. */
     linkedFolder: LinkedFolder | null;
-    /** Phase 7 — current server-hosted play session, if any. */
+    /** Current play session (server- or client-hosted), if any. */
     play: PlayStatePayload | null;
 }
 
@@ -121,6 +139,14 @@ interface SessionState {
 
     /** Make `id` the active remote workspace. */
     openWorkspace: (id: string) => Promise<void>;
+
+    /**
+     * Ensure a local (in-browser) workspace is active so play works
+     * without a relay. Targets the open local folder's `.loom` files,
+     * falling back to the bundled example. No-op when a cloud workspace
+     * is active, or when already on the same local target.
+     */
+    activateLocal: () => Promise<void>;
 
     /** Detach from the active workspace (keeps connection). */
     closeWorkspace: () => void;
@@ -185,9 +211,115 @@ function persistedRelay(): string {
     }
 }
 
+// ── local-workspace helpers ───────────────────────────────────────────
+//
+// The local play engine lives on the active record alongside the cloud
+// `__bridge` / `__cleanup` so it tears down with the workspace.
+type WithEngine = ActiveWorkspace & { __engine?: LocalPlayEngine };
+
+function engineOf(active: ActiveWorkspace | null): LocalPlayEngine | undefined {
+    return (active as WithEngine | null)?.__engine;
+}
+
+/** Recursively collect every `.loom` file in an FS tree. */
+function collectLoomEntries(
+    entry: FsEntry | null | undefined,
+    out: FsEntry[] = [],
+): FsEntry[] {
+    if (!entry) return out;
+    if (entry.kind === "file") {
+        if (entry.path.toLowerCase().endsWith(".loom")) out.push(entry);
+    } else {
+        for (const child of entry.children ?? []) collectLoomEntries(child, out);
+    }
+    return out;
+}
+
+/** Strip the workspace root-name prefix so bundle paths are project-relative. */
+function projectRelative(path: string, rootName: string): string {
+    const prefix = `${rootName}/`;
+    return path.startsWith(prefix) ? path.slice(prefix.length) : path;
+}
+
+/**
+ * Cheap, synchronous description of the current local play target — its
+ * stable id (so activation is idempotent) and `.loom` paths (so the
+ * "Start play" enabled check has something to count). No disk reads.
+ */
+function localTarget(): { id: string; name: string; paths: string[] } {
+    const ws = useWorkspace.getState();
+    const root = ws.root;
+    const entries = collectLoomEntries(root);
+    if (root && entries.length > 0) {
+        return {
+            id: `local:${root.name}`,
+            name: root.name,
+            paths: entries.map((e) => projectRelative(e.path, root.name)),
+        };
+    }
+    return { id: "local:example", name: EXAMPLE_LABEL, paths: [EXAMPLE_PATH] };
+}
+
+/**
+ * Resolve the bundle to play locally: the open folder's `.loom` files
+ * (live editor buffers win over on-disk content so you can play unsaved
+ * edits), or the bundled example when no folder / no `.loom` files.
+ */
+async function gatherLocalSources(): Promise<{ files: PlayFile[]; label: string }> {
+    const ws = useWorkspace.getState();
+    const root = ws.root;
+    const entries = collectLoomEntries(root);
+    if (root && entries.length > 0) {
+        const files: PlayFile[] = [];
+        for (const e of entries) {
+            const open = ws.openFiles[e.path];
+            let source: string;
+            if (open) {
+                source = open.contents;
+            } else {
+                try {
+                    source = await readFileText(e.handle as FileSystemFileHandle);
+                } catch {
+                    continue;
+                }
+            }
+            files.push({ path: projectRelative(e.path, root.name), source });
+        }
+        if (files.length > 0) return { files, label: root.name };
+    }
+    return {
+        files: [{ path: EXAMPLE_PATH, source: EXAMPLE_SOURCE }],
+        label: EXAMPLE_LABEL,
+    };
+}
+
 export const useSession = create<SessionState>((set, get) => {
     const persistedToken = loadSessionToken();
     const persistedUser = loadUsername();
+
+    // Run a local-engine mutation and store the resulting play state.
+    // Returns true when the active workspace is local (i.e. this call
+    // owns the transport and the caller should NOT fall through to the
+    // relay path).
+    const applyLocal = (
+        run: (engine: LocalPlayEngine) => PlayStatePayload,
+    ): boolean => {
+        const active = get().active;
+        if (!active || active.kind !== "local") return false;
+        const engine = engineOf(active);
+        if (!engine) return true;
+        try {
+            const play = run(engine);
+            set((s) =>
+                s.active?.kind === "local"
+                    ? { active: { ...s.active, play } }
+                    : s,
+            );
+        } catch (err) {
+            set({ error: errMsg(err) });
+        }
+        return true;
+    };
 
     return {
         relayUrl: persistedRelay(),
@@ -364,7 +496,12 @@ export const useSession = create<SessionState>((set, get) => {
             const handle = doc.subscribe(() => get().refreshActiveFiles());
             const cleanup = () => handle.unsubscribe();
 
+            // Switching to a cloud workspace: tear down any local play
+            // engine so its wasm session is freed.
+            engineOf(get().active)?.dispose();
+
             const active: ActiveWorkspace = {
+                kind: "cloud",
                 meta,
                 doc,
                 files: [],
@@ -404,9 +541,55 @@ export const useSession = create<SessionState>((set, get) => {
             get().refreshActiveFiles();
         },
 
+        activateLocal: async () => {
+            const state = get();
+            // Never clobber a live cloud workspace.
+            if (state.active?.kind === "cloud") return;
+            const target = localTarget();
+            // Idempotent: already on this exact local target.
+            if (
+                state.active?.kind === "local" &&
+                state.active.meta.id === target.id
+            ) {
+                return;
+            }
+            const wasm = await loadWasm();
+            // Re-check after the await — a cloud workspace may have
+            // opened while wasm loaded.
+            if (get().active?.kind === "cloud") return;
+            const doc = new wasm.LoomDoc();
+            // The local play engine reads files fresh at play time, so
+            // this doc is just a placeholder for the `ActiveWorkspace`
+            // shape — seed the paths so `doc.listFiles()` stays in step
+            // with `active.files`.
+            for (const p of target.paths) doc.setText(p, "");
+            const meta: WorkspaceMeta = {
+                id: target.id,
+                name: target.name,
+                owner: get().username ?? "you",
+                createdAt: "",
+            };
+            const active: ActiveWorkspace = {
+                kind: "local",
+                meta,
+                doc,
+                files: target.paths,
+                activePath: target.paths[0] ?? null,
+                peers: [],
+                linkedFolder: null,
+                play: null,
+            };
+            (active as WithEngine).__engine = new LocalPlayEngine();
+            // Dispose any prior local engine before swapping it out.
+            engineOf(state.active)?.dispose();
+            set({ active });
+        },
+
         bindFolder: async (root) => {
             const state = get();
-            if (!state.active) throw new Error("no active workspace");
+            if (state.active?.kind !== "cloud") {
+                throw new Error("open a cloud workspace before binding a folder");
+            }
             const existing = await readManifest(root);
             const manifest = await linkManifest(
                 root,
@@ -448,15 +631,47 @@ export const useSession = create<SessionState>((set, get) => {
 
         startPlay: () => {
             const state = get();
-            if (!state.active || !state.sync) return;
-            const files = state.active.doc.listFiles().map((p) => {
+            const active = state.active;
+            if (!active) return;
+            if (active.kind === "local") {
+                const engine = engineOf(active);
+                if (!engine) return;
+                // Read the live editor buffers / folder fresh, then run
+                // the show entirely in the browser.
+                void (async () => {
+                    try {
+                        const { files } = await gatherLocalSources();
+                        const play = await engine.start(
+                            files,
+                            get().username ?? "local",
+                        );
+                        set((s) =>
+                            s.active?.kind === "local"
+                                ? {
+                                      active: {
+                                          ...s.active,
+                                          play,
+                                          files: files.map((f) => f.path),
+                                      },
+                                  }
+                                : s,
+                        );
+                    } catch (err) {
+                        set({ error: errMsg(err) });
+                    }
+                })();
+                return;
+            }
+            if (!state.sync) return;
+            const files = active.doc.listFiles().map((p) => {
                 const path = String(p);
-                return { path, source: state.active!.doc.getText(path) ?? "" };
+                return { path, source: active.doc.getText(path) ?? "" };
             });
-            state.sync.startPlay(state.active.meta.id, files);
+            state.sync.startPlay(active.meta.id, files);
         },
 
         sendChoice: (index, head) => {
+            if (applyLocal((e) => e.choose(index, head))) return;
             const state = get();
             if (!state.active || !state.sync) return;
             state.sync.sendChoice(state.active.meta.id, index, head);
@@ -464,8 +679,19 @@ export const useSession = create<SessionState>((set, get) => {
 
         stopPlay: () => {
             const state = get();
-            if (!state.active || !state.sync) return;
-            state.sync.stopPlay(state.active.meta.id);
+            const active = state.active;
+            if (!active) return;
+            if (active.kind === "local") {
+                engineOf(active)?.dispose();
+                set((s) =>
+                    s.active?.kind === "local"
+                        ? { active: { ...s.active, play: null } }
+                        : s,
+                );
+                return;
+            }
+            if (!state.sync) return;
+            state.sync.stopPlay(active.meta.id);
             set((s) =>
                 s.active ? { active: { ...s.active, play: null } } : s,
             );
@@ -473,6 +699,8 @@ export const useSession = create<SessionState>((set, get) => {
 
         // ── Phase 4: branching ──────────────────────────────────────
         forkPlay: (opts) => {
+            if (applyLocal((e) => e.fork(opts?.parent, opts?.fromSnapshot)))
+                return;
             const state = get();
             if (!state.active || !state.sync) return;
             state.sync.forkPlay(state.active.meta.id, {
@@ -481,43 +709,70 @@ export const useSession = create<SessionState>((set, get) => {
             });
         },
         snapshotPlay: (opts) => {
+            if (applyLocal((e) => e.snapshot(opts?.head, opts?.label))) return;
             const state = get();
             if (!state.active || !state.sync) return;
             state.sync.snapshotPlay(state.active.meta.id, opts);
         },
         restorePlay: (head, snapshot) => {
+            if (applyLocal((e) => e.restore(head, snapshot))) return;
             const state = get();
             if (!state.active || !state.sync) return;
             state.sync.restorePlay(state.active.meta.id, head, snapshot);
         },
         dropHead: (head) => {
+            if (applyLocal((e) => e.dropHead(head))) return;
             const state = get();
             if (!state.active || !state.sync) return;
             state.sync.dropHead(state.active.meta.id, head);
         },
         setPrimaryHead: (head) => {
+            if (applyLocal((e) => e.setPrimary(head))) return;
             const state = get();
             if (!state.active || !state.sync) return;
             state.sync.setPrimaryHead(state.active.meta.id, head);
         },
         boothSkip: (head) => {
+            if (applyLocal((e) => e.boothSkip(head))) return;
             const state = get();
             if (!state.active || !state.sync) return;
             state.sync.boothSkip(state.active.meta.id, head);
         },
         boothForce: (raw, head) => {
+            if (!raw) return;
+            if (applyLocal((e) => e.boothForce(raw, head))) return;
             const state = get();
-            if (!state.active || !state.sync || !raw) return;
+            if (!state.active || !state.sync) return;
             state.sync.boothForce(state.active.meta.id, raw, head);
         },
         boothReload: () => {
             const state = get();
-            if (!state.active || !state.sync) return;
-            const files = state.active.doc.listFiles().map((p) => {
+            const active = state.active;
+            if (!active) return;
+            if (active.kind === "local") {
+                const engine = engineOf(active);
+                if (!engine) return;
+                void (async () => {
+                    try {
+                        const { files } = await gatherLocalSources();
+                        const play = engine.boothReload(files);
+                        set((s) =>
+                            s.active?.kind === "local"
+                                ? { active: { ...s.active, play } }
+                                : s,
+                        );
+                    } catch (err) {
+                        set({ error: errMsg(err) });
+                    }
+                })();
+                return;
+            }
+            if (!state.sync) return;
+            const files = active.doc.listFiles().map((p) => {
                 const path = String(p);
-                return { path, source: state.active!.doc.getText(path) ?? "" };
+                return { path, source: active.doc.getText(path) ?? "" };
             });
-            state.sync.boothReload(state.active.meta.id, files);
+            state.sync.boothReload(active.meta.id, files);
         },
 
         unbindFolder: async () => {
@@ -550,21 +805,27 @@ export const useSession = create<SessionState>((set, get) => {
 
         closeWorkspace: () => {
             const state = get();
-            if (!state.active) return;
+            const active = state.active;
+            if (!active) return;
             const cleanup = (
-                state.active as ActiveWorkspace & {
+                active as ActiveWorkspace & {
                     __cleanup?: () => void;
                 }
             ).__cleanup;
             cleanup?.();
             const bridge = (
-                state.active as ActiveWorkspace & {
+                active as ActiveWorkspace & {
                     __bridge?: LoomFolderBridge;
                 }
             ).__bridge;
             bridge?.dispose();
-            state.sync?.unsubscribe(state.active.meta.id);
+            engineOf(active)?.dispose();
+            const wasCloud = active.kind === "cloud";
+            if (wasCloud) state.sync?.unsubscribe(active.meta.id);
             set({ active: null });
+            // Closing a cloud workspace drops back to local play so the
+            // editor is never left without an active workspace.
+            if (wasCloud) void get().activateLocal();
         },
 
         refreshActiveFiles: () => {

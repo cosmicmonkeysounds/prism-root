@@ -390,6 +390,15 @@ pub struct Registry {
     /// any extension-author `directive name(args) end` definition is
     /// served from Lua.
     pub(crate) luau: Option<crate::luau::LuauRegistry>,
+    /// When set, a directive with no Rust handler and no Luau backing
+    /// surfaces as a generic `Event::Directive` envelope instead of a
+    /// hard [`DirectiveError::UnknownKind`]. This keeps a single
+    /// unhandled / Lua-only directive from aborting an entire play
+    /// session on builds where the Luau VM is unavailable (notably the
+    /// `wasm32-unknown-unknown` editor bundle — see `luau_stub`). The
+    /// directive is still recorded in the ledger, just without its
+    /// side effect. Native builds with the `luau` feature stay strict.
+    pub lenient: bool,
 }
 
 impl Registry {
@@ -419,6 +428,11 @@ impl Registry {
         if let Ok(luau) = crate::luau::LuauRegistry::with_core_builtins() {
             r.luau = Some(luau);
         }
+        // On builds without the Luau VM (the wasm editor bundle), any
+        // Lua-defined directive or extension is unreachable. Run lenient
+        // there so those directives degrade to a logged envelope rather
+        // than crashing the whole play session.
+        r.lenient = cfg!(not(feature = "luau"));
         r
     }
     /// Attach a pre-built Luau registry (extension loading, custom
@@ -456,6 +470,15 @@ pub fn dispatch(
                 if luau.contains(&call.kind) {
                     return luau.dispatch(call, world, ledger);
                 }
+            }
+            if registry.lenient {
+                // No Rust handler, no Lua backing — but we're forgiving
+                // on this build. Evaluate args best-effort and surface a
+                // generic envelope so the playhead logs the directive and
+                // keeps going instead of aborting the session.
+                let positional = eval_args(&call.positional, world).unwrap_or_default();
+                let named = eval_named(&call.named, world).unwrap_or_default();
+                return Ok((HandlerOutcome::Handled, positional, named));
             }
             return Err(DirectiveError::UnknownKind(call.kind.clone()));
         }
@@ -559,5 +582,29 @@ mod tests {
     #[test]
     fn rejects_set_without_assignment() {
         assert_eq!(parse("set: 42"), Err(DirectiveError::BadAssignment));
+    }
+
+    #[test]
+    fn strict_registry_rejects_unknown_directive() {
+        let reg = Registry::new();
+        let call = parse("heal: Wren, amount: 10").unwrap();
+        let mut world = World::default();
+        let mut ledger = Ledger::default();
+        let result = dispatch(&call, &reg, &mut world, &mut ledger);
+        assert!(matches!(result, Err(DirectiveError::UnknownKind(k)) if k == "heal"));
+    }
+
+    #[test]
+    fn lenient_registry_degrades_unknown_directive() {
+        let mut reg = Registry::new();
+        reg.lenient = true;
+        let call = parse("heal: Wren, amount: 10").unwrap();
+        let mut world = World::default();
+        let mut ledger = Ledger::default();
+        let (outcome, positional, named) =
+            dispatch(&call, &reg, &mut world, &mut ledger).expect("lenient dispatch");
+        assert!(matches!(outcome, HandlerOutcome::Handled));
+        assert_eq!(positional.len(), 1);
+        assert!(named.contains_key("amount"));
     }
 }
