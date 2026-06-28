@@ -356,6 +356,23 @@ impl Ledger {
         self.name_to_track.get(name).copied()
     }
 
+    /// Resolve a name to its track id, case-insensitively. Tracks are
+    /// registered under their CHARACTER declaration name (`Vex`), but
+    /// dialogue cues are written in screenplay ALL-CAPS (`VEX`); this
+    /// bridges the two so a `VEX | PRAXIS` line attributes to the
+    /// `Vex` row. Exact matches win before the case-folded scan so a
+    /// project that genuinely declares both `Vex` and `VEX` stays
+    /// unambiguous.
+    pub fn track_for_ci(&self, name: &str) -> Option<TrackId> {
+        if let Some(id) = self.name_to_track.get(name) {
+            return Some(*id);
+        }
+        self.name_to_track
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, id)| *id)
+    }
+
     /// Convenience for the common pattern "push on the named track
     /// if one exists, else on MAIN". Used by directive handlers and
     /// the live stage to attribute envelopes without first checking

@@ -1,0 +1,28 @@
+{
+  "name": "@loom/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Native TypeScript port of the Loom engine (parser + runtime + lsp + doc). Replaces the wasm bundle the editor consumed.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./parser": "./src/parser/index.ts",
+    "./runtime": "./src/runtime/index.ts",
+    "./lsp": "./src/lsp/index.ts",
+    "./doc": "./src/doc/loom-doc.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "serve": "tsx server/server.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/qrcode": "^1.5.5",
+    "qrcode": "^1.5.4",
+    "tsx": "^4.19.2",
+    "typescript": "~6.0.2",
+    "vitest": "^2.1.0"
+  }
+}

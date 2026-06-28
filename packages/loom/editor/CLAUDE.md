@@ -68,7 +68,18 @@ removed and `dockview-react` is uninstalled. Full design:
 - `src/lib/loom-ast.ts` — author-time AST access (wasm `parse`) for the
   Properties tray, plus `useLoomEdit` wrapping the wasm
   `apply_beat_property` / `apply_move_beat` structural edits (Phase 4 —
-  editable tray fields + `BeatTimeline` drag-to-reorder rewrite source).
+  editable tray fields rewrite source).
+- `src/lib/loom-story.ts` — pure helper that lifts a parsed `.loom`
+  file into a static **story model** (beats / characters / locations /
+  cohorts + beat→beat divert/choice/tunnel edges) and a reach-depth
+  layout. Feeds two *no-play-session* views of the Editing mode: the
+  center **`runner/Graph.tsx`** entity graph and the dock
+  **`studio/BeatTimeline.tsx`** beat flow-DAG (both xyflow). Node
+  double-click jumps to source via `workspace.revealActive` + Writing
+  mode. The Simulating **`runner/Timeline.tsx`** is unrelated (it reads
+  the live ledger): beats ride a dedicated spine band there, each track
+  shows its own envelopes, and a multi-speaker cue draws an interaction
+  link between the speakers' rows — see the runtime note below.
 
 To regenerate the wasm bundle after editing `packages/loom/parser` or
 `packages/loom/wasm`, run `pnpm wasm:build` (release) or

@@ -7,7 +7,11 @@
 // multi-speaker cue.
 
 export const EXAMPLE_LABEL = "Saltmere (example)";
-export const EXAMPLE_PATH = "saltmere.loom";
+// Must be `main.loom`: the bundle resolver only honours a header
+// `entry:` property on the project-root `main.loom` file (see
+// `loom_runtime::project`). A differently-named single file yields
+// `MissingMainFile` → no entry beat → "Start play" can't boot.
+export const EXAMPLE_PATH = "main.loom";
 
 export const EXAMPLE_SOURCE = `# Saltmere
 entry: opening

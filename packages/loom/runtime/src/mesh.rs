@@ -7,9 +7,15 @@
 //! the editor reads — track id, cause-edge, and (via cell envelopes)
 //! the boundaries of each historical unit.
 //!
-//! Phase B will give every ROLE / PERSON / COHORT / ambient generator
-//! their own `Track` with an explicit `Driver`; today, every push goes
-//! through [`crate::ledger::TrackId::MAIN`].
+//! Every ROLE / PERSON / COHORT / ambient generator is seeded its own
+//! `Track` and the playhead now *attributes* content-bearing envelopes
+//! to the right row: a spoken line lands on its speaker's track, a
+//! knowledge / disposition write on its subject's (see
+//! [`crate::playhead`] `track_for_event`). The narrative spine
+//! (beats, narration, diverts, system events) stays on
+//! [`crate::ledger::TrackId::MAIN`]. Full per-track *scheduling* with
+//! independent `Driver`s is still future work; today every track is
+//! walked by the single scripted playhead.
 //!
 //! The Mesh does not own the world or the ledger directly — those live
 //! on the wrapped Playhead so single-playhead callers and Mesh callers

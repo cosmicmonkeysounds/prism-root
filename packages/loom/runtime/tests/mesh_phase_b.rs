@@ -120,6 +120,66 @@ fn participant_envelopes_land_on_the_persons_track() {
 }
 
 #[test]
+fn dialogue_lands_on_the_speakers_character_track() {
+    // A spoken line attributes to its speaker's row, case-insensitively
+    // (the cue is screenplay ALL-CAPS `VEX`; the track is the `Vex`
+    // CHARACTER). A multi-speaker cue rides on the first speaker. A
+    // line by an undeclared role (`CYBORG`) and the narrative spine
+    // stay on `Main`.
+    const SRC: &str = "\
+entry: opening
+
+CHARACTER Vex
+CHARACTER Praxis
+
+== opening
+
+The lights drop.
+
+VEX | PRAXIS
+  Pick a side.
+
+CYBORG
+  Beep.
+
+-> END
+";
+    let bundle = Arc::new(Bundle::from_sources([("main.loom", SRC)]));
+    let mut mesh = Mesh::new(bundle).expect("mesh");
+    play_to_end(&mut mesh);
+
+    let vex = mesh.ledger().track_for("Vex").expect("Vex track seeded");
+    let main = TrackId::MAIN;
+
+    let on = |want: TrackId, pred: &dyn Fn(&Event) -> bool| {
+        mesh.ledger()
+            .iter_with_meta()
+            .any(|(_, e, m)| pred(e) && m.track == want)
+    };
+
+    // `VEX | PRAXIS` → Vex's row.
+    assert!(
+        on(vex, &|e| matches!(e, Event::Dialogue { speaker, .. } if speaker.contains("VEX"))),
+        "VEX | PRAXIS dialogue did not land on the Vex track"
+    );
+    // The undeclared `CYBORG` cue has no row → stays on Main.
+    assert!(
+        on(main, &|e| matches!(e, Event::Dialogue { speaker, .. } if speaker == "CYBORG")),
+        "undeclared CYBORG dialogue should fall back to Main"
+    );
+    // Narration stays on the spine.
+    assert!(
+        on(main, &|e| matches!(e, Event::Action { .. })),
+        "action/narration should stay on Main"
+    );
+    // No dialogue leaked onto Main from a declared speaker.
+    assert!(
+        !on(main, &|e| matches!(e, Event::Dialogue { speaker, .. } if speaker.contains("VEX"))),
+        "Vex dialogue must not also appear on Main"
+    );
+}
+
+#[test]
 fn cells_for_main_track_still_track_the_scripted_beats() {
     // Phase-A invariant still holds: the scripted spine sits on MAIN
     // even though other rows now carry their own envelopes.

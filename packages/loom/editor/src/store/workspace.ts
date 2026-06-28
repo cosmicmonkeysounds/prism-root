@@ -67,6 +67,8 @@ type WorkspaceState = {
   updateContents: (path: string, contents: string) => void
   setCursor: (cursor: CursorInfo | null) => void
   revealAt: (entry: FsEntry, line: number, column?: number) => Promise<void>
+  /** Reveal a 1-based line in the already-open active file (no reopen). */
+  revealActive: (line: number, column?: number) => void
   saveActive: () => Promise<void>
   saveAll: () => Promise<void>
   createNewFile: (name: string) => Promise<void>
@@ -391,6 +393,19 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       set((s) => ({
         pendingCursor: {
           path: entry.path,
+          line,
+          column,
+          token: (s.pendingCursor?.token ?? 0) + 1,
+        },
+      }))
+    },
+
+    revealActive: (line, column = 1) => {
+      const path = get().activePath
+      if (!path) return
+      set((s) => ({
+        pendingCursor: {
+          path,
           line,
           column,
           token: (s.pendingCursor?.token ?? 0) + 1,

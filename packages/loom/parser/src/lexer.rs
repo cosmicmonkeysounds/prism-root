@@ -102,7 +102,12 @@ pub enum LineKind {
 pub fn scan(source: &str) -> (Vec<ScannedLine>, Vec<Diagnostic>) {
     let (stripped, mut diagnostics) = crate::comments::strip(source);
     let source = stripped.as_str();
-    let mut lines = Vec::new();
+
+    // Pass 1: split into non-blank physical lines, recording indent +
+    // byte spans. Classification is deferred to pass 2 so a
+    // parenthetical that wraps across several lines can be stitched
+    // back into a single token first.
+    let mut raws: Vec<RawLine> = Vec::new();
     let mut byte: u32 = 0;
     for (line_idx, raw) in source.split_inclusive('\n').enumerate() {
         let line_start_byte = byte;
@@ -136,17 +141,89 @@ pub fn scan(source: &str) -> (Vec<ScannedLine>, Vec<Diagnostic>) {
 
         let start_byte = line_start_byte + content_offset as u32;
         let end_byte = start_byte + trimmed.len() as u32;
-        let kind = classify(trimmed, line_idx as u32, start_byte, &mut diagnostics);
-        lines.push(ScannedLine {
+        raws.push(RawLine {
             line: line_idx as u32,
             indent: indent as u32,
             text: trimmed.to_string(),
             start_byte,
             end_byte,
-            kind,
         });
     }
+
+    // Pass 2: stitch multi-line parentheticals, then classify. A
+    // performer cue / stage direction (spec §13.3) may wrap across
+    // several physical lines — `(Argue …\n Pull …\n directly to
+    // them.)`. Each physical line on its own would mis-classify (the
+    // opener as prose, the tail as a fresh paragraph), so when a line
+    // opens with `(` whose parens stay unbalanced we fold the
+    // contiguous, equally-or-more-indented continuation lines into one
+    // token before classification — joined with single spaces the same
+    // way the parser joins wrapped speech.
+    let mut lines = Vec::new();
+    let mut i = 0;
+    while i < raws.len() {
+        let opener = &raws[i];
+        let mut text = opener.text.clone();
+        let mut end_byte = opener.end_byte;
+        let mut consumed = 1;
+        if opener.text.starts_with('(') && paren_depth(&opener.text) > 0 {
+            let mut depth = paren_depth(&opener.text);
+            let mut last_line = opener.line;
+            let mut j = i + 1;
+            while depth > 0 {
+                let Some(cont) = raws.get(j) else { break };
+                // Continuations must be contiguous (no blank-line gap)
+                // and at least as indented as the opener; otherwise an
+                // unterminated paren would swallow the rest of the file.
+                if cont.line != last_line + 1 || cont.indent < opener.indent {
+                    break;
+                }
+                text.push(' ');
+                text.push_str(&cont.text);
+                depth += paren_depth(&cont.text);
+                end_byte = cont.end_byte;
+                last_line = cont.line;
+                j += 1;
+                consumed += 1;
+            }
+        }
+        let kind = classify(&text, opener.line, opener.start_byte, &mut diagnostics);
+        lines.push(ScannedLine {
+            line: opener.line,
+            indent: opener.indent,
+            text,
+            start_byte: opener.start_byte,
+            end_byte,
+            kind,
+        });
+        i += consumed;
+    }
     (lines, diagnostics)
+}
+
+/// A non-blank physical line recorded by pass 1 of [`scan`], before
+/// classification and before multi-line parentheticals are stitched.
+struct RawLine {
+    line: u32,
+    indent: u32,
+    text: String,
+    start_byte: u32,
+    end_byte: u32,
+}
+
+/// Net parenthesis depth of `text` — `(` count minus `)` count. A
+/// positive result means the line opened more groups than it closed,
+/// i.e. a parenthetical that continues onto the next physical line.
+fn paren_depth(text: &str) -> i32 {
+    let mut depth = 0i32;
+    for ch in text.chars() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    depth
 }
 
 /// Count leading-whitespace columns + the byte offset where content
@@ -514,6 +591,49 @@ mod tests {
             first("(quietly)\n"),
             LineKind::Parenthetical("quietly".into())
         );
+    }
+
+    #[test]
+    fn multiline_parenthetical_is_one_token() {
+        // A stage direction that wraps across physical lines (the
+        // closing `)` lands several lines down) is stitched back into a
+        // single parenthetical token, joined with single spaces.
+        let src = "  (Argue about the city. Vex pitches reform; Praxis pitches order.\n   Pull individual audience members into your camp by talking\n   directly to them.)\n";
+        let (lines, _) = scan(src);
+        assert_eq!(lines.len(), 1, "the three physical lines fold into one");
+        match &lines[0].kind {
+            LineKind::Parenthetical(inner) => assert_eq!(
+                inner,
+                "Argue about the city. Vex pitches reform; Praxis pitches order. Pull individual audience members into your camp by talking directly to them."
+            ),
+            other => panic!("expected parenthetical, got {other:?}"),
+        }
+        // Span covers from the opener through the closing paren.
+        assert_eq!(lines[0].start_byte, 2);
+        assert_eq!(lines[0].end_byte as usize, src.trim_end().len());
+    }
+
+    #[test]
+    fn balanced_paren_does_not_eat_next_line() {
+        // A single-line balanced parenthetical (even with nested
+        // groups) must not absorb the following line.
+        let src = "(improv duration: 60s, advance on: quorum(8) [a, b])\nNARRATOR\n";
+        let (lines, _) = scan(src);
+        assert_eq!(lines.len(), 2);
+        assert!(matches!(lines[0].kind, LineKind::Parenthetical(_)));
+        assert!(matches!(lines[1].kind, LineKind::Speaker(_)));
+    }
+
+    #[test]
+    fn unterminated_paren_stops_at_dedent() {
+        // A forgotten closing paren must not swallow the rest of the
+        // file: the indent guard breaks the fold at the next dedented
+        // structural line.
+        let src = "  (never closed paragraph that keeps going\n   and going\n== next_beat\n";
+        let (lines, _) = scan(src);
+        // Opener + continuation fold; the dedented knot marker stays put.
+        assert_eq!(lines.len(), 2);
+        assert!(matches!(lines[1].kind, LineKind::KnotMarker { .. }));
     }
 
     #[test]

@@ -4,6 +4,14 @@
 // runtime stamps `meta.clock`) toggleable with a ledger-index axis, and
 // **multi-head lanes** (one lane per live head) toggleable with the
 // per-track view of the primary head.
+//
+// Beats are no longer drawn as wide bars on the Main row (where they
+// buried the point events underneath); they ride a dedicated **Beats
+// band** under the ruler, as the story spine every track row reads
+// against. Each track row now shows only its own envelopes — dialogue
+// lands on the speaker's row (runtime attributes it there), so you can
+// see which characters are interacting. A multi-speaker cue draws an
+// **interaction link** connecting the speakers' rows at that moment.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
@@ -19,6 +27,7 @@ import { useSession } from "@/store/session";
 import { openContextMenu } from "@/store/context-menu";
 
 const ROW_HEIGHT = 30;
+const BAND_HEIGHT = 26;
 const LABEL_WIDTH = 150;
 const RULER_HEIGHT = 22;
 const MIN_PPU = 0.05;
@@ -38,6 +47,16 @@ type Clip = {
   tag: string;
   label: string;
   cause: number | null;
+  /** Multi-speaker cue → the other rows it links to (interaction). */
+  speakers?: string[];
+};
+
+type BeatSeg = {
+  idx: number;
+  head: string;
+  startU: number;
+  endU: number;
+  label: string;
 };
 
 type Row = {
@@ -58,6 +77,8 @@ function clipLabel(event: LedgerEvent): string {
     case "BeatEntered":
       return String(body.beat ?? "beat");
     case "Dialogue": {
+      const text = String(body.text ?? "").trim();
+      if (text) return text;
       const speakers = (body.speakers as string[]) ?? [body.speaker as string];
       return String(speakers?.[0] ?? "line");
     }
@@ -67,7 +88,9 @@ function clipLabel(event: LedgerEvent): string {
     case "ChoiceTaken":
       return `▸ ${body.text ?? ""}`;
     case "WorldSet":
-      return String(body.key ?? "set");
+      return String(body.path ?? body.key ?? "set");
+    case "KnowledgeChanged":
+      return `${body.character ?? "?"}.${body.field ?? "?"}`;
     case "Action":
       return "action";
     case "Scene":
@@ -112,6 +135,7 @@ export function TimelinePanel() {
   const [axisMode, setAxisMode] = useState<AxisMode>("clock");
   const [lanesMode, setLanesMode] = useState<LanesMode>("primary");
   const [showCauses, setShowCauses] = useState(false);
+  const [showLinks, setShowLinks] = useState(true);
   const [view, setView] = useState({ left: 0, width: 0 });
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -121,6 +145,7 @@ export function TimelinePanel() {
     const empty = {
       rows: [] as Row[],
       clips: [] as Clip[],
+      beats: [] as BeatSeg[],
       maxU: 0,
       clockAvailable: false,
       useClock: false,
@@ -146,6 +171,7 @@ export function TimelinePanel() {
     const snapById = new Map(play.snapshots.map((s) => [s.id, s]));
     const rows: Row[] = [];
     const clips: Clip[] = [];
+    const beats: BeatSeg[] = [];
     let rowIdx = 0;
     let maxU = 0;
 
@@ -180,23 +206,40 @@ export function TimelinePanel() {
         for (let i = 0; i < events.length; i++) {
           const m = meta[i];
           if (!m) continue;
+          const [tag, body] = eventTag(events[i]);
+          const startU = posOf(i);
+          // Beats become the spine band, not a row clip — so they no
+          // longer bury the point events sharing the Main row.
+          if (tag === "BeatEntered") {
+            beats.push({
+              idx: i,
+              head: h.id,
+              startU,
+              endU: Math.max(startU, endPosOf(i)),
+              label: String(body.beat ?? "beat"),
+            });
+            maxU = Math.max(maxU, endPosOf(i));
+            continue;
+          }
           const r = rowOf.get(m.track);
           if (r == null) continue;
-          const [tag] = eventTag(events[i]);
-          const startU = posOf(i);
-          const spanU = tag === "BeatEntered" ? Math.max(0, endPosOf(i) - startU) : 0;
+          const speakers =
+            tag === "Dialogue"
+              ? ((body.speakers as string[]) ?? []).filter(Boolean)
+              : undefined;
           clips.push({
             idx: i,
             head: h.id,
             row: r,
             startU,
-            spanU,
+            spanU: 0,
             colour: EVENT_COLORS[tag] ?? "#78909c",
             tag,
             label: clipLabel(events[i]),
             cause: m.cause,
+            speakers: speakers && speakers.length > 1 ? speakers : undefined,
           });
-          maxU = Math.max(maxU, startU + spanU);
+          maxU = Math.max(maxU, startU);
         }
       } else {
         const r = rowIdx;
@@ -233,7 +276,7 @@ export function TimelinePanel() {
         }
       }
     }
-    return { rows, clips, maxU, clockAvailable, useClock, posFor };
+    return { rows, clips, beats, maxU, clockAvailable, useClock, posFor };
   }, [play, axisMode, lanesMode]);
 
   // Auto-fit when the axis flips (clock & index need very different ppu).
@@ -265,21 +308,32 @@ export function TimelinePanel() {
     );
   }
 
-  const { rows, clips, maxU, clockAvailable, useClock, posFor } = built;
+  const { rows, clips, beats, maxU, clockAvailable, useClock, posFor } = built;
+  const hasBand = lanesMode === "primary" && beats.length > 0;
+  const bandH = hasBand ? BAND_HEIGHT : 0;
   const laneWidth = Math.max(view.width || 0, maxU * ppu + 48);
-  const bodyHeight = RULER_HEIGHT + rows.length * ROW_HEIGHT;
+  const rowsTop = RULER_HEIGHT + bandH;
+  const bodyHeight = rowsTop + rows.length * ROW_HEIGHT;
   const x = (u: number) => u * ppu;
   const focusKey = refKey(focus);
   const dimEnabled = lanesMode === "primary" && hover !== null;
   const dimEnv = (idx: number) => (dimEnabled && !related.envelopes.has(idx) ? 0.25 : 1);
 
-  const inView = (c: Clip) => {
+  // Speaker label (case-insensitive) → row index, for interaction links.
+  const rowByLabel = new Map<string, number>();
+  rows.forEach((r, i) => {
+    if (r.kind === "track") rowByLabel.set(r.label.toLowerCase(), i);
+  });
+  const rowCenter = (r: number) => rowsTop + r * ROW_HEIGHT + ROW_HEIGHT / 2;
+
+  const inView = (startU: number, spanU: number) => {
     if (!view.width) return true;
-    const cx = x(c.startU);
-    const cw = Math.max(MIN_CLIP_PX, c.spanU * ppu);
+    const cx = x(startU);
+    const cw = Math.max(MIN_CLIP_PX, spanU * ppu);
     return cx + cw >= view.left - 240 && cx <= view.left + view.width + 240;
   };
-  const visible = clips.filter(inView);
+  const visible = clips.filter((c) => inView(c.startU, c.spanU));
+  const visibleBeats = beats.filter((b) => inView(b.startU, b.endU - b.startU));
   const clipByKey = new Map(clips.map((c) => [`${c.head}:${c.idx}`, c]));
 
   // Playhead at the focused envelope (or the primary head's latest).
@@ -328,10 +382,16 @@ export function TimelinePanel() {
           {lanesMode === "all" ? "▤ heads" : "▦ tracks"}
         </button>
         {lanesMode === "primary" && (
-          <label className="ml-auto flex items-center gap-1 cursor-pointer select-none">
-            <input type="checkbox" checked={showCauses} onChange={(e) => setShowCauses(e.target.checked)} />
-            causes
-          </label>
+          <span className="ml-auto flex items-center gap-3">
+            <label className="flex items-center gap-1 cursor-pointer select-none" title="Connect co-speaking tracks">
+              <input type="checkbox" checked={showLinks} onChange={(e) => setShowLinks(e.target.checked)} />
+              links
+            </label>
+            <label className="flex items-center gap-1 cursor-pointer select-none" title="Draw cause → effect arcs">
+              <input type="checkbox" checked={showCauses} onChange={(e) => setShowCauses(e.target.checked)} />
+              causes
+            </label>
+          </span>
         )}
       </div>
 
@@ -339,6 +399,11 @@ export function TimelinePanel() {
         {/* Fixed gutter. */}
         <div className="shrink-0 bg-[#11151b] border-r border-white/10" style={{ width: LABEL_WIDTH }}>
           <div className="border-b border-white/10" style={{ height: RULER_HEIGHT }} />
+          {hasBand && (
+            <div className="flex items-center px-2 border-b border-white/10 bg-white/[0.03]" style={{ height: BAND_HEIGHT }}>
+              <span className="text-[10px] uppercase tracking-wide text-zinc-500">Beats</span>
+            </div>
+          )}
           {rows.map((row) => {
             if (row.kind === "head") {
               const active = row.isPrimary;
@@ -399,10 +464,45 @@ export function TimelinePanel() {
               ))}
             </div>
 
+            {/* Beats spine band. */}
+            {hasBand && (
+              <div className="absolute left-0 border-b border-white/10 bg-white/[0.02]"
+                style={{ top: RULER_HEIGHT, height: BAND_HEIGHT, width: laneWidth }}>
+                {visibleBeats.map((b) => {
+                  const ref = { kind: "envelope" as const, head: b.head, idx: b.idx };
+                  const focused = focusKey === refKey(ref);
+                  const w = Math.max(MIN_CLIP_PX, (b.endU - b.startU) * ppu - 1);
+                  return (
+                    <div key={`${b.head}:${b.idx}`} role="button" tabIndex={0}
+                      className="absolute top-1 bottom-1 rounded-sm overflow-hidden cursor-pointer flex items-center"
+                      style={{
+                        left: x(b.startU),
+                        width: w,
+                        background: "#3b3f73",
+                        outline: focused ? "1.5px solid #60a5fa" : "0.5px solid #11151b",
+                        opacity: dimEnv(b.idx),
+                      }}
+                      title={`beat ${b.label}`}
+                      onPointerEnter={() => setHover(ref)}
+                      onPointerLeave={() => setHover(null)}
+                      onClick={(e) => {
+                        const r = e.currentTarget.getBoundingClientRect();
+                        openDetail(ref, { sink: "popover", anchor: { x: r.left, y: r.top, width: r.width, height: r.height } });
+                      }}
+                      data-focusable>
+                      {w > 28 && (
+                        <span className="px-1 text-[9px] text-indigo-100 font-medium truncate">{b.label}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {/* Row gridlines + fork markers. */}
             {rows.map((row, i) => (
               <div key={row.key} className="absolute left-0 border-b border-white/5"
-                style={{ top: RULER_HEIGHT + i * ROW_HEIGHT, height: ROW_HEIGHT, width: laneWidth }}>
+                style={{ top: rowsTop + i * ROW_HEIGHT, height: ROW_HEIGHT, width: laneWidth }}>
                 {row.kind === "head" && row.forkAt != null && (
                   <div className="absolute" style={{ left: x(posFor(row.headId, row.forkAt)) - 4, top: ROW_HEIGHT / 2 - 4 }}
                     title={`forked at #${row.forkAt}`}>
@@ -412,17 +512,36 @@ export function TimelinePanel() {
               </div>
             ))}
 
-            {/* Cause arcs (primary mode only). */}
-            {showCauses && lanesMode === "primary" && (
-              <svg className="absolute left-0 pointer-events-none" style={{ top: RULER_HEIGHT, width: laneWidth, height: rows.length * ROW_HEIGHT }}>
-                {visible.map((c) => {
+            {/* Interaction links (co-speaker) + cause arcs. */}
+            {(showLinks || showCauses) && lanesMode === "primary" && (
+              <svg className="absolute left-0 pointer-events-none" style={{ top: 0, width: laneWidth, height: bodyHeight }}>
+                {showCauses && visible.map((c) => {
                   if (c.cause == null) return null;
                   const src = clipByKey.get(`${c.head}:${c.cause}`);
                   if (!src) return null;
                   return (
-                    <line key={`a${c.idx}`} x1={x(src.startU) + 4} y1={src.row * ROW_HEIGHT + ROW_HEIGHT / 2}
-                      x2={x(c.startU) + 2} y2={c.row * ROW_HEIGHT + ROW_HEIGHT / 2}
-                      stroke="#ef5350" strokeWidth={0.8} opacity={0.45} />
+                    <line key={`a${c.idx}`} x1={x(src.startU) + 4} y1={rowCenter(src.row)}
+                      x2={x(c.startU) + 2} y2={rowCenter(c.row)}
+                      stroke="#ef5350" strokeWidth={0.8} opacity={0.4} />
+                  );
+                })}
+                {showLinks && visible.map((c) => {
+                  if (!c.speakers) return null;
+                  const rowsOf = c.speakers
+                    .map((s) => rowByLabel.get(s.toLowerCase()))
+                    .filter((r): r is number => r != null);
+                  if (rowsOf.length < 2) return null;
+                  const lo = Math.min(...rowsOf);
+                  const hi = Math.max(...rowsOf);
+                  const cx = x(c.startU) + 1;
+                  return (
+                    <g key={`l${c.idx}`}>
+                      <line x1={cx} y1={rowCenter(lo)} x2={cx} y2={rowCenter(hi)}
+                        stroke="#34d399" strokeWidth={1} opacity={dimEnv(c.idx) * 0.7} />
+                      {rowsOf.map((r) => (
+                        <circle key={r} cx={cx} cy={rowCenter(r)} r={2.2} fill="#34d399" opacity={dimEnv(c.idx) * 0.9} />
+                      ))}
+                    </g>
                   );
                 })}
               </svg>
@@ -438,7 +557,7 @@ export function TimelinePanel() {
                   className="absolute rounded-sm overflow-hidden cursor-pointer flex items-center"
                   style={{
                     left: x(c.startU),
-                    top: RULER_HEIGHT + c.row * ROW_HEIGHT + 4,
+                    top: rowsTop + c.row * ROW_HEIGHT + 4,
                     width: w,
                     height: ROW_HEIGHT - 8,
                     background: c.colour,

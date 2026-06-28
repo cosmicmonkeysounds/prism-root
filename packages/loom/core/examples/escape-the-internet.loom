@@ -1,0 +1,111 @@
+# Escape the Internet
+
+entry: doors_open
+
+# ── Factions ────────────────────────────────────────────────────────
+# The two public sides party-goers choose between, plus the hidden
+# villain faction that captures people and traps them in the Internet.
+
+FACTION Mods
+  ethos: order
+  rival: Chatters
+
+FACTION Chatters
+  ethos: chaos
+  rival: Mods
+
+FACTION TheAlgorithm
+  ethos: control
+  hidden: true
+
+# ── Locations ───────────────────────────────────────────────────────
+
+LOCATION Party
+  label: The Party
+
+LOCATION Internet
+  label: The Internet
+  prison: true
+
+# ── Roles ───────────────────────────────────────────────────────────
+# Every party-goer is cast as a Guest. Their per-person state schema
+# (faction, score, captured) lives here, and the role's hooks fire for
+# each Guest with `self` bound to that person.
+
+ROLE Guest
+  faction: any of FACTION
+  score: 0 to 1000 = 0
+  captured: bool = false
+  on captured
+    <set: self.score -= 25>
+  on escape
+    <set: self.score += 100>
+    <broadcast: freedom to participant(self)>
+  on scan other
+    # A party-goer scans another's QR — peer ping (MagicBand model).
+    <broadcast: peer_ping to participant(other)>
+
+# ── Characters (actors) ─────────────────────────────────────────────
+
+CHARACTER Moderator_Prime
+  faction: Mods
+  trusts Guest: 50 of 100
+  on scan guest
+    -> mod_scan
+
+CHARACTER ModBot
+  faction: TheAlgorithm
+  on scan guest
+    <capture: guest into Internet>
+
+CHARACTER TheAdmin
+  faction: TheAlgorithm
+  on captured guest
+    <broadcast: doomed to participant(guest)>
+    <set: TheAdmin.captures += 1>
+    <if: TheAdmin.captures >= 2>
+      # Too many captures — the hidden villain faction is exposed.
+      <reveal: TheAlgorithm>
+
+CHARACTER Sentinel
+  faction: TheAlgorithm
+  # Reacts to a global installation cue (no subject) — an alarm.
+  on lockdown
+    <broadcast: lockdown_siren to faction(Mods) | faction(Chatters)>
+
+CHARACTER Recruiter
+  faction: Chatters
+  on scan guest
+    -> recruit
+
+# ── Beats (scripted interactions) ───────────────────────────────────
+# A beat plays in the binding scope of the hook that diverted to it, so
+# `guest` and `self` (Moderator_Prime) are already bound here.
+
+== mod_scan(guest)
+  cast: Moderator_Prime, guest
+  <if: guest.faction == Chatters>
+    MODERATOR_PRIME
+      A Chatter. Behave, or you're getting banned.
+    <set: Moderator_Prime.trusts.guest -= 10>
+  <else>
+    MODERATOR_PRIME
+      A fellow Mod. Good to see you.
+    <set: guest.score += 50>
+    <set: Moderator_Prime.trusts.guest += 10>
+    <respond: Verified Mod — score {guest.score}.>
+
+# A recruiter offers a live choice: the participant decides on their phone.
+== recruit(guest)
+  cast: Recruiter, guest
+  RECRUITER
+    The Chatters could use you. What do you say?
+  * Join the Chatters
+    <join: guest to Chatters>
+  * Stay loyal
+    <set: guest.score += 10>
+
+== doors_open
+  setting: Party
+  NARRATOR
+    Welcome to the internet. Choose your side: Mods or Chatters.

@@ -1821,6 +1821,50 @@ BELLKEEPER
     }
 
     #[test]
+    fn multiline_stage_direction_stays_one_dialogue_block() {
+        // Regression: a stage direction wrapping across several lines
+        // under a multi-speaker cue must stay ONE dialogue block with
+        // both speakers — not split into a fresh block per physical
+        // line (which made the simulator re-print VEX / PRAXIS mid-way
+        // through the direction). Mirrors circuit-break/main.loom §arrival.
+        let src = "\
+== arrival
+
+VEX | PRAXIS
+  (improv duration: 60s, advance on: quorum(8) [speech(go), gesture(Cue)])
+  (Argue about the city. Vex pitches reform; Praxis pitches order.
+   Pull individual audience members into your camp by talking
+   directly to them.)
+";
+        let (file, diags) = parse(src);
+        assert!(diags.is_empty(), "{diags:?}");
+        let beat = match &file.items[0] {
+            Item::Beat(b) => b,
+            _ => panic!(),
+        };
+        // Exactly one body item — the single dialogue block.
+        assert_eq!(beat.body.len(), 1, "should be one dialogue block");
+        let dialogue = match &beat.body[0] {
+            BodyItem::Dialogue(d) => d,
+            other => panic!("expected dialogue, got {other:?}"),
+        };
+        assert_eq!(dialogue.speakers, vec!["VEX", "PRAXIS"]);
+        assert!(dialogue.improv.is_some(), "improv directive parsed");
+        // The wrapped stage direction is one parenthetical, joined.
+        assert_eq!(
+            dialogue.parenthetical.as_deref(),
+            Some("Argue about the city. Vex pitches reform; Praxis pitches order. Pull individual audience members into your camp by talking directly to them.")
+        );
+        // Crucially, no stray dialogue lines were emitted from the
+        // continuation rows.
+        assert!(
+            dialogue.lines.is_empty(),
+            "continuation lines must not split into dialogue lines, got {:?}",
+            dialogue.lines
+        );
+    }
+
+    #[test]
     fn improv_quorum_n_parses() {
         let src = "\
 == opening

@@ -470,7 +470,7 @@ impl Playhead {
             match next {
                 Yield::Event(event) => {
                     let expanded = self.expand_event_inlines(event)?;
-                    self.ledger.push(expanded.clone());
+                    self.push_routed(expanded.clone());
                     return Ok(Step::Event(expanded));
                 }
                 Yield::Choice(options) => {
@@ -679,13 +679,13 @@ impl Playhead {
                             // `WorldSet` so the threshold-cross hook
                             // derivation continues to fire.
                             if assign.path.len() == 3 && assign.path[1] == "knows" {
-                                self.ledger.push(Event::KnowledgeChanged {
+                                self.push_routed(Event::KnowledgeChanged {
                                     character: assign.path[0].clone(),
                                     field: assign.path[2].clone(),
                                     value: new_value.display(),
                                 });
                             } else {
-                                self.ledger.push(Event::WorldSet {
+                                self.push_routed(Event::WorldSet {
                                     path: key,
                                     value: new_value.display(),
                                 });
@@ -910,6 +910,42 @@ impl Playhead {
             }
         }
         Ok(None)
+    }
+
+    /// Which track an event belongs on — *whose cursor* it rides
+    /// (loom-editor.html §3 + §11.2). A spoken line lands on the
+    /// speaker's row, a knowledge / disposition write on its subject's
+    /// row, so the canvas shows which characters are actually
+    /// interacting instead of stacking everything on `Main`. Anything
+    /// without a clear owner (narration, scene headings, diverts,
+    /// system events) stays on the narrative spine (`Main`).
+    fn track_for_event(&self, event: &Event) -> ledger::TrackId {
+        let owner: Option<&str> = match event {
+            Event::Dialogue {
+                speakers, speaker, ..
+            } => speakers
+                .first()
+                .map(String::as_str)
+                .or(Some(speaker.as_str()))
+                .filter(|s| !s.is_empty()),
+            Event::KnowledgeChanged { character, .. } => Some(character.as_str()),
+            // `<set: Vex.trusts.Player …>` — the leading path segment
+            // names the subject. `<set: Tension = 25>` has no dotted
+            // owner and stays on `Main`.
+            Event::WorldSet { path, .. } => path.split('.').next().filter(|s| path.contains('.')),
+            _ => None,
+        };
+        owner
+            .and_then(|name| self.ledger.track_for_ci(name))
+            .unwrap_or(ledger::TrackId::MAIN)
+    }
+
+    /// Push an event onto the ledger, routing it to its owning track
+    /// (see [`Self::track_for_event`]). The single seam every visible
+    /// envelope flows through so attribution stays consistent.
+    fn push_routed(&mut self, event: Event) {
+        let track = self.track_for_event(&event);
+        self.ledger.push_on(track, event);
     }
 
     /// Substitute `{expr}` chunks (spec §5 — the reader-facing

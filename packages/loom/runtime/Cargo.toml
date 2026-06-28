@@ -13,6 +13,14 @@ path = "src/lib.rs"
 name = "loom-play"
 path = "src/bin/loom_play.rs"
 
+# Golden-fixture dump tool for the TypeScript `@loom/core` port. Emits
+# parser / edit / play goldens the vitest parity harness checks against.
+# Build with `--no-default-features` so play transcripts run in the same
+# lenient (no-Luau) mode the browser engine uses.
+[[bin]]
+name = "loom-golden"
+path = "src/bin/loom_golden.rs"
+
 [features]
 # Luau bridge ships by default on native. Web builds (`loom-wasm`)
 # disable it via `default-features = false` because mluau requires
