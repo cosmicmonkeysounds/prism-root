@@ -52,11 +52,17 @@ describe("Store — durable round-trips", () => {
     expect(s.readJournal()).toEqual([]);
   });
 
-  it("persists sessions, defaulting to empty", () => {
+  it("persists sessions (capability entries), defaulting to empty", () => {
     const s = freshStore();
-    expect(s.loadSessions()).toEqual({ mod: [], prime: [] });
-    s.saveSessions({ mod: ["t1"], prime: [["t2", "Moderator_Prime"]] });
-    expect(s.loadSessions()).toEqual({ mod: ["t1"], prime: [["t2", "Moderator_Prime"]] });
+    expect(s.loadSessions()).toEqual([]);
+    s.saveSessions([
+      ["t1", { character: null, admin: true }],
+      ["t2", { character: "Moderator_Prime", admin: false }],
+    ]);
+    expect(s.loadSessions()).toEqual([
+      ["t1", { character: null, admin: true }],
+      ["t2", { character: "Moderator_Prime", admin: false }],
+    ]);
   });
 });
 

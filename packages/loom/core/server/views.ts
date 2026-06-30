@@ -18,10 +18,13 @@ export interface GuestView {
   captured: boolean;
   /** Outstanding choice options awaiting this guest, if any. */
   pendingChoice: string[] | null;
+  /** Channel the pending decision docks under (`"lobby"`, a DM, …). */
+  decisionChannel: string | null;
 }
 
-export function guestView(sim: Sim, id: string): GuestView {
+export function guestView(sim: Sim, id: string, decisionChannel: string | null = null): GuestView {
   const p = sim.persons.get(id);
+  const pendingChoice = sim.pendingChoiceFor(id);
   return {
     id,
     name: p?.name ?? id,
@@ -30,7 +33,8 @@ export function guestView(sim: Sim, id: string): GuestView {
     score: sim.scoreOf(id),
     location: sim.locationOf(id),
     captured: sim.isCaptured(id),
-    pendingChoice: sim.pendingChoiceFor(id),
+    pendingChoice,
+    decisionChannel: pendingChoice ? (decisionChannel ?? "lobby") : null,
   };
 }
 
@@ -44,6 +48,22 @@ export interface RosterRow {
   location: string | null;
   captured: boolean;
   score: number;
+}
+
+/** The operator's god-view of one guest. Null if the QR is unknown. */
+export function rosterRow(sim: Sim, id: string): RosterRow | null {
+  const p = sim.persons.get(id);
+  if (p === undefined) return null;
+  return {
+    id: p.id,
+    name: p.name,
+    role: p.role,
+    faction: sim.factionOf(p.id),
+    trueFaction: sim.trueFactionOf(p.id),
+    location: sim.locationOf(p.id),
+    captured: sim.isCaptured(p.id),
+    score: sim.scoreOf(p.id),
+  };
 }
 
 export interface FactionSummary {
@@ -77,16 +97,7 @@ export function modView(sim: Sim | null, phase: RuntimePhase, scenario: string |
   if (sim === null) {
     return { phase, scenario, roster: [], factions: [], locations: [], characters: [], ledgerLen: 0 };
   }
-  const roster: RosterRow[] = [...sim.persons.values()].map((p) => ({
-    id: p.id,
-    name: p.name,
-    role: p.role,
-    faction: sim.factionOf(p.id),
-    trueFaction: sim.trueFactionOf(p.id),
-    location: sim.locationOf(p.id),
-    captured: sim.isCaptured(p.id),
-    score: sim.scoreOf(p.id),
-  }));
+  const roster: RosterRow[] = [...sim.persons.keys()].map((id) => rosterRow(sim, id)!);
   const factions: FactionSummary[] = [...sim.model.factions.values()].map((f) => ({
     id: f.id,
     hidden: f.hidden,

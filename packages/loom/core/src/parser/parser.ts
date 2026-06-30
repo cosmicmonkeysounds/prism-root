@@ -9,7 +9,6 @@ import type {
   Conditional,
   ConditionalArm,
   DialogueBlock,
-  DialogueLine,
   Directive,
   DirectiveBlock,
   Divert,
@@ -279,51 +278,38 @@ class Parser {
     const bodyIndentFloor = opener.indent + 1;
     let parenthetical: string | null = null;
     let improv: ImprovDirective | null = null;
-    const lines: DialogueLine[] = [];
-    let end = scannedLineSpan(opener).end;
 
+    // Leading parenthetical / improv attach to the block (spec §13.3), not
+    // the line list. Consume them before the body proper.
     let line = this.peek();
+    while (line !== undefined && line.indent >= bodyIndentFloor && line.kind.kind === "parenthetical") {
+      const sp = scannedLineSpan(line);
+      const trimmedOwned = line.kind.text.replace(/^\s+/u, "");
+      if (improv === null && trimmedOwned.startsWith("improv")) {
+        improv = parseImprovParenthetical(trimmedOwned, sp, this.diagnostics);
+      } else if (parenthetical === null) {
+        parenthetical = line.kind.text;
+      } else {
+        break; // a third parenthetical is a normal line — the body owns it
+      }
+      this.cursor += 1;
+      line = this.peek();
+    }
+
+    // The body is parsed by the SAME loop a beat uses — so `<if>` / `<match>`
+    // / `<each visit>` / `<after>` / diverts / `<let>` / choices / directives
+    // all work inside a speaker block with zero special-casing. A bare prose
+    // line lands as `action`; the runtime emits it as the speaker's line.
+    const body: BodyItem[] = [];
+    let end = scannedLineSpan(opener).end;
     while (line !== undefined) {
       if (line.indent < bodyIndentFloor) break;
-      const k = line.kind;
-      if (k.kind === "parenthetical") {
-        const sp = scannedLineSpan(line);
-        const trimmedOwned = k.text.replace(/^\s+/u, "");
-        if (improv === null && trimmedOwned.startsWith("improv")) {
-          improv = parseImprovParenthetical(trimmedOwned, sp, this.diagnostics);
-        } else if (parenthetical === null && lines.length === 0) {
-          parenthetical = k.text;
-        } else {
-          lines.push({ kind: "parenthetical", value: { value: k.text, span: sp } });
-        }
-        end = sp.end;
-        this.cursor += 1;
-      } else if (k.kind === "divertLine") {
-        const sp = scannedLineSpan(line);
-        lines.push({ kind: "divert", value: parseDivertText(k.text, sp) });
-        end = sp.end;
-        this.cursor += 1;
-      } else if (k.kind === "tunnelReturn") {
-        const sp = scannedLineSpan(line);
-        lines.push({ kind: "divert", value: { kind: "return", span: sp } });
-        end = sp.end;
-        this.cursor += 1;
-      } else if (k.kind === "prose") {
-        const [value, sp] = this.collectAction(line, k.text);
-        end = sp.end;
-        lines.push({ kind: "text", value: { value, span: sp } });
-      } else if (k.kind === "sceneHeading") {
-        const sp = scannedLineSpan(line);
-        lines.push({ kind: "text", value: { value: k.text, span: sp } });
-        end = sp.end;
-        this.cursor += 1;
-      } else if (k.kind === "directive") {
-        const sp = scannedLineSpan(line);
-        lines.push({ kind: "directive", value: { raw: k.text, span: sp } });
-        end = sp.end;
-        this.cursor += 1;
+      const item = this.parseBodyItem(bodyIndentFloor);
+      if (item !== null) {
+        end = bodyItemEnd(item) ?? end;
+        body.push(item);
       } else {
-        break;
+        this.cursor += 1;
       }
       line = this.peek();
     }
@@ -337,7 +323,7 @@ class Parser {
       speakers,
       parenthetical,
       improv,
-      lines,
+      body,
       span: span(scannedLineSpan(opener).start, end),
     };
   }

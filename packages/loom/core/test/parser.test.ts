@@ -55,7 +55,7 @@ WREN
     const dialogue = dialogueOf(beat.body[1]!);
     expect(dialogue.speaker).toBe("WREN");
     expect(dialogue.parenthetical).toBe("quietly");
-    expect(dialogue.lines).toHaveLength(1);
+    expect(dialogue.body).toHaveLength(1);
     const choiceItem = beat.body[2]!;
     if (choiceItem.kind !== "choice") throw new Error("expected choice");
     expect(choiceItem.value.text).toBe("Ring the bell.");
@@ -77,10 +77,10 @@ WREN
     expect(diags).toHaveLength(0);
     const beat = beatOf(file.items[0]!);
     const dialogue = dialogueOf(beat.body[0]!);
-    expect(dialogue.lines).toHaveLength(1);
-    const ln = dialogue.lines[0]!;
-    expect(ln.kind).toBe("text");
-    if (ln.kind === "text") {
+    expect(dialogue.body).toHaveLength(1);
+    const ln = dialogue.body[0]!;
+    expect(ln.kind).toBe("action");
+    if (ln.kind === "action") {
       expect(ln.value.value).toBe(
         "Welcome to The Stack. Tonight, you choose a side. Tonight, you find out what the sides are.",
       );
@@ -98,7 +98,7 @@ WREN
     expect(diags).toHaveLength(0);
     const beat = beatOf(file.items[0]!);
     const dialogue = dialogueOf(beat.body[0]!);
-    expect(dialogue.lines).toHaveLength(2);
+    expect(dialogue.body).toHaveLength(2);
   });
 
   it("handles ink-style suppression", () => {
@@ -210,9 +210,9 @@ WREN
     expect(beat.contract.get("cast")!.value).toBe("Wren, Player");
     const dialogue = dialogueOf(beat.body[0]!);
     expect(dialogue.speaker).toBe("WREN");
-    const ln = dialogue.lines[0]!;
-    if (ln.kind === "text") expect(ln.value.value).toBe("It hasn't rung in three days.");
-    else throw new Error("expected text");
+    const ln = dialogue.body[0]!;
+    if (ln.kind === "action") expect(ln.value.value).toBe("It hasn't rung in three days.");
+    else throw new Error("expected action");
   });
 
   it("surfaces an unterminated block comment in parse", () => {
@@ -469,7 +469,7 @@ VEX | PRAXIS
     expect(dialogue.parenthetical).toBe(
       "Argue about the city. Vex pitches reform; Praxis pitches order. Pull individual audience members into your camp by talking directly to them.",
     );
-    expect(dialogue.lines).toHaveLength(0);
+    expect(dialogue.body).toHaveLength(0);
   });
 
   it("parses improv quorum(N)", () => {

@@ -25,6 +25,9 @@ src/
 server/
   server.ts      # the LAN event server (SSE + REST, hosts one live Sim)
   views.ts       # pure per-role projections (guest / mod / performer)
+  chat.ts        # server-authoritative chat: SimEvent → channel messages,
+                 #   the append-only ChatStore, history + moderation
+  store.ts       # durable event-sourced journal + persisted moderation
   public/        # the vanilla operator console served at /console
 examples/
   escape-the-internet.loom   # the reference scenario
@@ -94,6 +97,51 @@ console shows the event + performer codes (with a join-QR) to hand out to
 the room. Guests can also arrive via a `?code=<event-code>` link (what the
 QR encodes), which pre-fills the field. Matching is trimmed + case-insensitive.
 
+### Capabilities & scanning
+
+A login token carries **composable capabilities** (`server/session.ts`),
+not a single fixed role:
+
+- a **performer** holds a `character` — the identity they scan as;
+- an **admin** holds the moderator capability (open doors, moderate);
+- entering the moderator passcode while already signed in **upgrades the
+  same token** — so *a performer can also be an admin*;
+- a `{ character: null, admin: true }` token is a **headless admin**: an
+  operator with a scanner but no character/booth.
+
+Scanning is one capability-dispatched endpoint, **`POST /api/scan`**: a
+`character` cap runs that character's story scan (`on scan` hooks + the
+`respond` that streams back); an `admin` cap gets the guest identified for
+moderation. An admin may also pass **`as: <character>`** to scan *as* any
+character (firing that character's story beat) — the console's scanner has
+a "scan as…" selector whose default, **Silent**, is moderation-only. Admins
+then act via **`POST /api/mod/act`** (`capture` / `release` / `signal`),
+which reuses the sim's own primitives — so the moderation toolset grows by
+adding a case, not an endpoint. Both the console (headless) and the
+performer app (as an upgrade) expose the scanner + moderation buttons.
+
+### Chat & channels (the threaded model)
+
+Everything a participant sees is **composed server-side** (`server/chat.ts`)
+into channel-routed messages — the single source of truth the
+[`loom-play`](../play) client renders as Discord/Telegram-style threads:
+
+- `dialogue` → a **DM** channel (`dm:<Character>`); `broadcast` → the
+  **lobby** or a **`faction:<Id>`** channel; ambient + personal state beats
+  → the lobby. Each message carries an `audience` (`"all"` or guest ids).
+- On SSE connect a guest receives a **`history`** event (every thread
+  addressed to them, since the event began) then live **`message`** events
+  — so a **re-login replays the whole conversation**, never a blank feed.
+  Performer/mod consoles get the room's feed for context + moderation.
+- **Moderation:** `POST /api/mod/message { seq, hidden }` hides/shows a
+  message — guests in its audience see it vanish/return (a
+  `messageModerated` event), admins keep it flagged. `GET /api/history?role=
+  guest&id=<id>` returns a thread history (an admin token includes hidden
+  messages, for moderating any guest's threads).
+- A pending **decision** docks under a channel: the guest snapshot's
+  `decisionChannel` is the speaker's DM for a narrative `<choice>`, else the
+  lobby. The client badges + pins that thread until it's answered.
+
 ### Persistence (surviving restarts & drops)
 
 The sim is fully deterministic, so the server **event-sources** every
@@ -102,9 +150,13 @@ to `LOOM_STATE_DIR` (default `server/.loom-state/`) alongside the scenario,
 phase, the passcodes, and live session tokens. On boot it replays the
 journal into a fresh sim and rehydrates sessions — so a crash, laptop
 sleep, or Ctrl-C is transparent: **nobody re-authenticates and nobody
-loses their faction / score / place.** A wifi blip is handled client-side
-(the SSE stream auto-reconnects and the next snapshot rehydrates the UI).
-`mod load` / `mod reset` start a fresh timeline (clear the journal).
+loses their faction / score / place.** Chat history is **not** stored
+separately: replaying the journal through `server/chat.ts` re-derives the
+identical messages (same deterministic events → same `seq`s); only the set
+of moderator-hidden `seq`s is persisted (`hidden.json`) and re-applied. A
+wifi blip is handled client-side (the SSE stream auto-reconnects and the
+next snapshot rehydrates the UI). `mod load` / `mod reset` start a fresh
+timeline (clear the journal + chat + moderation).
 
 Environment: `LOOM_PORT` (7000), `LOOM_HOST` (0.0.0.0), `LOOM_EVENT_PASS`,
 `LOOM_PRIME_PASS`, `LOOM_MOD_PASS` (any unset code is auto-generated),

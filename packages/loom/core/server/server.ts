@@ -20,9 +20,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import QRCode from "qrcode";
 
 import { Sim, type SimEvent } from "../src/runtime/sim/index.ts";
-import { guestView, modView, primeView, type RuntimePhase } from "./views.ts";
+import { guestView, modView, primeView, rosterRow, type RuntimePhase } from "./views.ts";
 import { passOk, resolvePasscodes } from "./auth.ts";
+import { SessionStore } from "./session.ts";
 import { Store, type Mutation } from "./store.ts";
+import { ChatStore, composeGuestMessages, decisionChannelFor, visibleTo, type ChatMessage } from "./chat.ts";
 
 const PORT = Number(process.env.LOOM_PORT ?? 7000);
 const HOST = process.env.LOOM_HOST ?? "0.0.0.0";
@@ -89,8 +91,16 @@ const state: State = {
   scenarioSource: DEFAULT_SCENARIO,
 };
 
-const modTokens = new Set<string>();
-const primeTokens = new Map<string, string>(); // token → character
+// Token → capabilities. One session can be a performer, an admin, or both.
+const sessions = new SessionStore();
+
+// Server-authoritative chat: every visible message, routed to a channel.
+// Rebuilt deterministically from the journal on restart (see `restore`).
+const chat = new ChatStore();
+
+// Where each guest's currently-pending decision should dock (channel id).
+// Ephemeral — re-derived during replay alongside the chat store.
+const decisionChannels = new Map<string, string>();
 
 // ---------------------------------------------------------------------
 // SSE hub
@@ -110,7 +120,7 @@ function sseSend(res: ServerResponse, event: string, data: unknown): void {
 }
 
 function snapshotFor(client: Client): unknown {
-  if (client.role === "guest") return guestView(reqSim(), client.id);
+  if (client.role === "guest") return guestView(reqSim(), client.id, decisionChannels.get(client.id) ?? null);
   if (client.role === "prime") return primeView(state.sim, client.id);
   return modView(state.sim, state.phase, state.scenarioName);
 }
@@ -126,41 +136,42 @@ function pushSnapshots(): void {
   for (const c of clients) sseSend(c.res, "snapshot", snapshotFor(c));
 }
 
-function toGuest(id: string, event: string, data: unknown): void {
-  for (const c of clients) if (c.role === "guest" && c.id === id) sseSend(c.res, event, data);
-}
 function toPrime(character: string, event: string, data: unknown): void {
   for (const c of clients) if (c.role === "prime" && c.id === character) sseSend(c.res, event, data);
 }
-function toAll(event: string, data: unknown): void {
-  for (const c of clients) sseSend(c.res, event, data);
+
+/**
+ * Deliver one composed message to the clients that should see it: guests
+ * whose id is in the audience (hidden messages withheld), and every
+ * performer/mod console (the full feed, so admins can moderate live).
+ */
+function deliverMessage(m: ChatMessage): void {
+  for (const c of clients) {
+    if (c.role === "guest") {
+      if (!m.hidden && visibleTo(m, c.id)) sseSend(c.res, "message", m);
+    } else {
+      sseSend(c.res, "message", m);
+    }
+  }
 }
 
-/** Route the freshly-emitted ledger events to the clients that care. */
+/**
+ * Route a freshly-emitted batch of sim events. Performer scan readouts go
+ * straight to the booth; everything guest-facing is composed into channel
+ * messages (the single source of truth), appended to the chat store, and
+ * delivered. Pending decisions remember which channel they dock under.
+ */
 function fanout(events: SimEvent[]): void {
   for (const e of events) {
-    switch (e.type) {
-      case "broadcast":
-        for (const id of e.audience) toGuest(id, "notify", { cue: e.cue });
-        break;
-      case "dialogue":
-        for (const id of e.audience) toGuest(id, "line", { speaker: e.speaker, text: e.text });
-        break;
-      case "respond":
-        toPrime(e.to, "response", { text: e.text });
-        break;
-      case "choicePrompted":
-        if (e.person !== null) toGuest(e.person, "choice", { options: e.options });
-        break;
-      case "factionRevealed":
-        toAll("reveal", { faction: e.faction });
-        break;
-      case "ambient":
-        for (const c of clients) if (c.role === "guest") sseSend(c.res, "ambient", { text: e.text });
-        break;
-      default:
-        break;
+    if (e.type === "respond") toPrime(e.to, "response", { text: e.text });
+    if (e.type === "choicePrompted" && e.person !== null) {
+      decisionChannels.set(e.person, decisionChannelFor(events, e.person));
     }
+  }
+  for (const m of chat.append(composeGuestMessages(state.sim ?? EMPTY_SIM, events))) deliverMessage(m);
+  // A consumed choice clears its dock so the next snapshot drops the badge.
+  for (const id of [...decisionChannels.keys()]) {
+    if (state.sim?.pendingChoiceFor(id) == null) decisionChannels.delete(id);
   }
   pushSnapshots();
 }
@@ -189,7 +200,14 @@ function commit(m: Mutation, ...args: unknown[]): SimEvent[] {
 }
 
 function persistSessions(): void {
-  store.saveSessions({ mod: [...modTokens], prime: [...primeTokens] });
+  store.saveSessions(sessions.entries());
+}
+
+/** Wipe chat history + moderation when a fresh story timeline begins. */
+function resetChat(): void {
+  chat.clear();
+  store.clearHidden();
+  decisionChannels.clear();
 }
 
 function persistMeta(): void {
@@ -264,13 +282,9 @@ function str(body: Record<string, unknown>, key: string): string {
   return typeof v === "string" ? v : "";
 }
 
-function isMod(req: IncomingMessage, body: Record<string, unknown>): boolean {
-  const token = (req.headers["x-loom-token"] as string | undefined) ?? str(body, "token");
-  return modTokens.has(token);
-}
-function primeChar(req: IncomingMessage, body: Record<string, unknown>): string | null {
-  const token = (req.headers["x-loom-token"] as string | undefined) ?? str(body, "token");
-  return primeTokens.get(token) ?? null;
+/** The caller's session token, from the header or the body (`""` → undefined). */
+function tokenOf(req: IncomingMessage, body: Record<string, unknown>): string | undefined {
+  return (req.headers["x-loom-token"] as string | undefined) || str(body, "token") || undefined;
 }
 
 function loadScenario(source: string, name: string): void {
@@ -346,6 +360,10 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const client: Client = { role, id, res };
     clients.add(client);
     sseSend(res, "snapshot", snapshotFor(client));
+    // Replay history so a re-login (or late arrival) sees the conversation so
+    // far — a guest gets their own threads; a performer/mod console gets the
+    // whole room's feed (visible messages) for context + moderation.
+    sseSend(res, "history", role === "guest" ? chat.historyFor(id, false) : chat.all().filter((m) => !m.hidden));
     const ping = setInterval(() => res.write(":ping\n\n"), 25000);
     req.on("close", () => {
       clearInterval(ping);
@@ -360,11 +378,22 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const id = url.searchParams.get("id") ?? "";
     const view =
       role === "guest"
-        ? guestView(reqSim(), id)
+        ? guestView(reqSim(), id, decisionChannels.get(id) ?? null)
         : role === "prime"
           ? primeView(state.sim, id)
           : modView(state.sim, state.phase, state.scenarioName);
     sendJson(res, 200, view);
+    return;
+  }
+
+  // --- a participant's full thread history (since the event began) ---
+  // Guests get their own (hidden withheld); an admin token may inspect any
+  // guest's threads *including* hidden messages, to moderate them.
+  if (method === "GET" && path === "/api/history") {
+    const id = url.searchParams.get("id") ?? "";
+    const token = (req.headers["x-loom-token"] as string | undefined) || url.searchParams.get("token") || undefined;
+    const admin = sessions.canModerate(token);
+    sendJson(res, 200, { messages: chat.historyFor(id, admin) });
     return;
   }
 
@@ -408,45 +437,100 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       return void sendJson(res, 200, { ok: true });
     }
 
-    // --- performer (prime) actions ---
+    // --- performer (prime) login: grants the `character` capability ---
     case "/api/prime/login": {
       const character = str(body, "character");
       if (!passOk(str(body, "passcode"), PASS.prime)) return void sendJson(res, 403, { error: "bad passcode" });
       if (state.sim !== null && !state.sim.model.characters.has(character)) {
         return void sendJson(res, 404, { error: "unknown character" });
       }
-      const token = randomUUID();
-      primeTokens.set(token, character);
+      // Upgrade the caller's existing session if they have one (e.g. an
+      // admin picking up a character); otherwise mint a fresh token.
+      let token = tokenOf(req, body);
+      if (token && sessions.grant(token, { character })) {
+        /* upgraded in place */
+      } else {
+        token = randomUUID();
+        sessions.set(token, { character, admin: false });
+      }
       persistSessions();
-      return void sendJson(res, 200, { token, character });
-    }
-    case "/api/prime/scan": {
-      const character = primeChar(req, body);
-      if (character === null) return void sendJson(res, 403, { error: "not logged in" });
-      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
-      fanout(commit("scan", character, str(body, "target")));
-      return void sendJson(res, 200, { ok: true });
+      return void sendJson(res, 200, { token, character, admin: sessions.canModerate(token) });
     }
 
-    // --- moderator actions ---
+    // --- unified scan: capability decides what it does -------------------
+    case "/api/scan": {
+      const token = tokenOf(req, body);
+      if (!sessions.canScan(token)) return void sendJson(res, 403, { error: "no scan capability — sign in" });
+      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
+      const target = str(body, "target");
+      if (!state.sim!.persons.has(target)) return void sendJson(res, 404, { error: "unknown guest" });
+      const admin = sessions.canModerate(token);
+      // Scanner identity. A performer scans as their own character. An admin
+      // may instead pick any character via `as` (firing that character's
+      // story hooks); a blank `as` from a headless admin means a silent,
+      // moderation-only scan.
+      const chosen = str(body, "as");
+      let scanAs = sessions.characterOf(token);
+      if (chosen && admin) {
+        if (!state.sim!.model.characters.has(chosen)) return void sendJson(res, 404, { error: "unknown character" });
+        scanAs = chosen;
+      }
+      // A character identity → run the story scan (hooks + the `respond`
+      // that streams back to that booth). No character → silent.
+      let responses: string[] = [];
+      if (scanAs !== null) {
+        const events = commit("scan", scanAs, target);
+        // The scanner's readout — `respond` lines addressed to this scanner.
+        responses = events
+          .filter((e): e is Extract<SimEvent, { type: "respond" }> => e.type === "respond" && e.to === scanAs)
+          .map((e) => e.text);
+        fanout(events);
+      }
+      // Admins also get the guest identified for moderation; performers get
+      // a basic confirmation (their story beat also arrives over SSE).
+      return void sendJson(res, 200, {
+        ok: true,
+        scannedAs: scanAs,
+        canModerate: admin,
+        responses,
+        guest: admin
+          ? rosterRow(state.sim!, target)
+          : { id: target, name: state.sim!.persons.get(target)?.name ?? target, captured: state.sim!.isCaptured(target) },
+      });
+    }
+
+    // --- moderator login: grants the `admin` capability -----------------
     case "/api/mod/login": {
       if (!passOk(str(body, "passcode"), PASS.mod)) return void sendJson(res, 403, { error: "bad passcode" });
-      const token = randomUUID();
-      modTokens.add(token);
+      // Upgrade the caller's existing session (a performer becoming an admin
+      // keeps their token + character); otherwise mint a headless admin.
+      let token = tokenOf(req, body);
+      if (token && sessions.grant(token, { admin: true })) {
+        /* upgraded in place */
+      } else {
+        token = randomUUID();
+        sessions.set(token, { character: null, admin: true });
+      }
       persistSessions();
       // The mod is the trusted operator — hand back every code so the
       // console can show them: event (for guests), prime (for performers),
       // and mod itself (to recruit a co-moderator). Echoing mod back leaks
       // nothing: the caller just proved they already know it.
-      return void sendJson(res, 200, { token, eventPass: PASS.event, primePass: PASS.prime, modPass: PASS.mod });
+      return void sendJson(res, 200, {
+        token,
+        character: sessions.characterOf(token),
+        eventPass: PASS.event,
+        primePass: PASS.prime,
+        modPass: PASS.mod,
+      });
     }
     default:
       break;
   }
 
-  // everything below requires a mod token
+  // everything below requires the admin capability
   if (path.startsWith("/api/mod/")) {
-    if (!isMod(req, body)) return void sendJson(res, 403, { error: "moderators only" });
+    if (!sessions.canModerate(tokenOf(req, body))) return void sendJson(res, 403, { error: "moderators only" });
     switch (path) {
       case "/api/mod/load": {
         const source = str(body, "source") || DEFAULT_SCENARIO;
@@ -454,6 +538,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
         stopTicker();
         loadScenario(source, name);
         store.clearJournal(); // a new story starts a fresh timeline
+        resetChat();
         pendingTickMs = 0;
         persistMeta();
         pushSnapshots();
@@ -463,6 +548,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
         if (state.sim === null) {
           loadScenario(DEFAULT_SCENARIO, "escape-the-internet");
           store.clearJournal();
+          resetChat();
           pendingTickMs = 0;
         }
         state.phase = "open";
@@ -483,6 +569,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
         stopTicker();
         loadScenario(state.scenarioSource, state.scenarioName);
         store.clearJournal(); // wipe the timeline; the doors reopen empty
+        resetChat();
         pendingTickMs = 0;
         persistMeta();
         pushSnapshots();
@@ -498,6 +585,27 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
           joinUrl: joinBase(),
         });
       }
+      case "/api/mod/act": {
+        // Moderate a scanned guest. Reuses sim primitives so the action set
+        // grows by adding cases, not endpoints.
+        if (state.sim === null) return void sendJson(res, 409, { error: "no scenario loaded" });
+        const id = str(body, "id");
+        if (!state.sim.persons.has(id)) return void sendJson(res, 404, { error: "unknown guest" });
+        switch (str(body, "action")) {
+          case "capture":
+            fanout(commit("capture", id));
+            break;
+          case "release":
+            fanout(commit("escape", id));
+            break;
+          case "signal":
+            fanout(commit("signal", str(body, "name"), id));
+            break;
+          default:
+            return void sendJson(res, 400, { error: "unknown action" });
+        }
+        return void sendJson(res, 200, { ok: true, guest: rosterRow(state.sim, id) });
+      }
       case "/api/mod/signal": {
         if (state.sim === null) return void sendJson(res, 409, { error: "no scenario loaded" });
         const subject = str(body, "subject");
@@ -506,12 +614,35 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       }
       case "/api/mod/broadcast": {
         if (state.sim === null) return void sendJson(res, 409, { error: "no scenario loaded" });
-        // Drive a broadcast through a synthetic directive on the world.
-        const audience = state.sim.audienceFor(str(body, "scope"));
+        // An ad-hoc operator broadcast: route a synthetic broadcast event
+        // through the same composer so it lands in the right channel and can
+        // be moderated. (Not journaled — operator nudges don't replay.)
+        const scope = str(body, "scope");
         const cue = str(body, "cue") || "cue";
-        for (const id of audience) toGuest(id, "notify", { cue });
+        const synthetic: SimEvent = { type: "broadcast", cue, audience: state.sim.audienceFor(scope), scope };
+        const stored = chat.append(composeGuestMessages(state.sim, [synthetic]));
+        for (const m of stored) deliverMessage(m);
         pushSnapshots();
-        return void sendJson(res, 200, { ok: true, reached: audience.length });
+        return void sendJson(res, 200, { ok: true, reached: stored.reduce((n, m) => n + (m.audience === "all" ? -1 : m.audience.length), 0) });
+      }
+      case "/api/mod/message": {
+        // Hide or restore a single message. Guests in its audience see it
+        // vanish / reappear; performer consoles get the updated flag.
+        const seq = Number(body["seq"] ?? -1);
+        const hide = body["hidden"] === true;
+        const m = chat.setHidden(seq, hide);
+        if (m === null) return void sendJson(res, 404, { error: "unknown message" });
+        store.saveHidden(chat.hiddenSeqs());
+        for (const c of clients) {
+          if (c.role === "guest") {
+            if (!visibleTo(m, c.id)) continue;
+            if (m.hidden) sseSend(c.res, "messageModerated", { seq: m.seq, hidden: true });
+            else sseSend(c.res, "message", m); // restored → re-deliver in full
+          } else {
+            sseSend(c.res, "messageModerated", m); // admins: full payload + flag
+          }
+        }
+        return void sendJson(res, 200, { ok: true, seq, hidden: m.hidden });
       }
       default:
         return void sendJson(res, 404, { error: "unknown mod action" });
@@ -546,19 +677,34 @@ function restore(): Restored | null {
     const fn = (state.sim as unknown as Record<string, unknown>)[e.m];
     if (typeof fn === "function") {
       try {
-        (fn as (...a: unknown[]) => unknown).apply(state.sim, e.a);
+        const out = (fn as (...a: unknown[]) => unknown).apply(state.sim, e.a);
         events++;
+        // Re-derive chat from the same events live operation composed from,
+        // in the same order → identical `seq`s, so persisted moderation
+        // (keyed by seq) lines back up below.
+        if (Array.isArray(out)) {
+          const batch = out as SimEvent[];
+          for (const ev of batch) {
+            if (ev.type === "choicePrompted" && ev.person !== null) {
+              decisionChannels.set(ev.person, decisionChannelFor(batch, ev.person));
+            }
+          }
+          chat.append(composeGuestMessages(state.sim!, batch));
+        }
       } catch {
         /* tolerate a single bad/torn entry rather than abort recovery */
       }
     }
   }
+  chat.loadHidden(store.loadHidden());
+  for (const id of [...decisionChannels.keys()]) {
+    if (state.sim?.pendingChoiceFor(id) == null) decisionChannels.delete(id);
+  }
   state.phase = meta.phase;
-  const s = store.loadSessions();
-  for (const t of s.mod) modTokens.add(t);
-  for (const [t, c] of s.prime) primeTokens.set(t, c);
+  const entries = store.loadSessions();
+  sessions.load(entries);
   if (state.phase === "open") startTicker();
-  return { guests: state.sim?.persons.size ?? 0, events, sessions: s.mod.length + s.prime.length };
+  return { guests: state.sim?.persons.size ?? 0, events, sessions: entries.length };
 }
 
 const restored = restore();

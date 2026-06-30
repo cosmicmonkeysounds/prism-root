@@ -671,15 +671,17 @@ export interface DialogueBlock {
   speakers: string[];
   parenthetical: string | null;
   improv: ImprovDirective | null;
-  lines: DialogueLine[];
+  /**
+   * The speaker's block body — the *same* `BodyItem[]` a beat uses, so every
+   * control-flow form (`<if>` / `<match>` / `<each visit>` / `<after>` /
+   * diverts / `<let>` / choices / directives) works inside dialogue with no
+   * special-casing. A bare text line is `action`; when executed under a
+   * speaker the runtime emits it as that speaker's spoken line rather than
+   * narration. Coalescing of wrapped prose still happens at scan time.
+   */
+  body: BodyItem[];
   span: Span;
 }
-
-export type DialogueLine =
-  | { kind: "text"; value: Located<string> }
-  | { kind: "parenthetical"; value: Located<string> }
-  | { kind: "directive"; value: Directive }
-  | { kind: "divert"; value: Divert };
 
 export interface Choice {
   sticky: boolean;

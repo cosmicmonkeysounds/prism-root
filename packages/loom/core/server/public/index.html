@@ -272,7 +272,7 @@
             <button class="ghost" id="cambtn">📷 Use camera</button>
           </div>`);
         card.append(scanErr);
-        const doScan = (target) => api("/api/prime/scan", { target }, me.token).catch((e) => (scanErr.textContent = e.message));
+        const doScan = (target) => api("/api/scan", { target }, me.token).catch((e) => (scanErr.textContent = e.message));
         card.querySelector("#scanbtn").onclick = () => doScan(card.querySelector("#scanid").value.trim());
         card.querySelector("#cambtn").onclick = () => startCamera(doScan, scanErr);
         app.append(card,
@@ -352,6 +352,36 @@
         tools.querySelector("#sigbtn").onclick = () => api("/api/mod/signal", { name: tools.querySelector("#sig").value.trim() }, T).catch(alertErr);
         tools.querySelector("#bbtn").onclick = () => api("/api/mod/broadcast", { cue: tools.querySelector("#bcue").value.trim(), scope: tools.querySelector("#bscope").value.trim() }, T).catch(alertErr);
 
+        // Headless-admin scanner: scan a guest's QR to moderate them, or
+        // scan *as* a character to fire that character's story beat.
+        const scan = $(`<div class="card"><h2>Scan a guest</h2>
+          <select id="mscanas"><option value="">Silent — moderate only</option></select>
+          <input id="mscan" placeholder="Guest id (e.g. g-1a2b3c)" autocomplete="off" />
+          <button class="primary row" id="mscanbtn">Scan</button>
+          <button class="ghost row" id="mcambtn">📷 Use camera</button>
+          <div id="mscanout"></div>
+          <div class="err" id="mscanerr"></div></div>`);
+        const scanErr = scan.querySelector("#mscanerr");
+        const renderScanned = (g, responses) => {
+          const out = scan.querySelector("#mscanout");
+          out.innerHTML = "";
+          if (!g) return;
+          out.append($(`<div class="stat" style="margin-top:10px"><div><b>${g.name}</b> <span class="muted">${g.id}</span> ${pill(g.trueFaction)} ${g.captured ? '🔒 <span class="captured">captured</span>' : ""}</div></div>`));
+          // Echo what the scanned-as character "says" back (the respond line).
+          for (const line of responses || []) out.append($(`<div class="toast" style="margin-top:8px">🖥️ ${line}</div>`));
+          const act = (action, name) => api("/api/mod/act", { id: g.id, action, name }, T).then((r) => renderScanned(r.guest)).catch((e) => (scanErr.textContent = e.message));
+          const acts = $(`<div></div>`);
+          const mk = (label, action, cls) => { const b = $(`<button class="row ${cls || ""}">${label}</button>`); b.onclick = () => act(action); acts.append(b); };
+          if (g.captured) mk("Release", "release", "primary"); else mk("Capture", "capture", "");
+          out.append(acts);
+          const sig = $(`<div style="margin-top:8px"><input id="gsig" placeholder="Signal name (e.g. recruit)" /><button class="row" id="gsigbtn">Fire on this guest</button></div>`);
+          sig.querySelector("#gsigbtn").onclick = () => act("signal", sig.querySelector("#gsig").value.trim());
+          out.append(sig);
+        };
+        const doMScan = (target) => { scanErr.textContent = ""; if (target) api("/api/scan", { target, as: scan.querySelector("#mscanas").value }, T).then((r) => renderScanned(r.guest, r.responses)).catch((e) => (scanErr.textContent = e.message)); };
+        scan.querySelector("#mscanbtn").onclick = () => doMScan(scan.querySelector("#mscan").value.trim());
+        scan.querySelector("#mcambtn").onclick = () => startCamera(doMScan, scanErr);
+
         const roster = $(`<div class="card"><h2>Roster</h2><div id="rost"></div></div>`);
         const world = $(`<div class="card"><h2>Factions & locations</h2><div id="wld"></div></div>`);
 
@@ -359,7 +389,7 @@
         // be stale, and the server knows the LAN URL the join QR needs.
         // Fetching also re-validates the token (kicks back to login if not).
         const codesCard = $(`<div class="card"><h2>Passcodes</h2><div id="codes" class="muted">loading…</div></div>`);
-        app.append(ctrl, codesCard, tools, roster, world, switchBtn(() => ls.del("mod")));
+        app.append(ctrl, codesCard, scan, tools, roster, world, switchBtn(() => ls.del("mod")));
         api("/api/mod/codes", {}, T).then((c) => {
           codesCard.querySelector("#codes").outerHTML = `<div>
             <p class="muted">Read them out, or show the QR for guests to scan.</p>
@@ -376,6 +406,11 @@
         function alertErr(e) { const t = $(`<div class="err">${e.message}</div>`); ctrl.append(t); setTimeout(() => t.remove(), 3000); }
 
         const render = (v) => {
+          // Populate the "scan as" character list once the snapshot arrives.
+          const sel = scan.querySelector("#mscanas");
+          if (sel.options.length === 1 && v.characters && v.characters.length) {
+            for (const c of v.characters) { const o = document.createElement("option"); o.value = c; o.textContent = "as " + c; sel.append(o); }
+          }
           ctrl.querySelector("#phase").innerHTML =
             `Scenario <b>${v.scenario || "—"}</b> · <span class="pill ${v.phase === "open" ? "Mods" : "none"}">${v.phase}</span> · ${v.roster.length} guests · ${v.ledgerLen} events`;
           const rost = roster.querySelector("#rost");

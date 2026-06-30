@@ -102,20 +102,19 @@ CHARACTER Surveillance
 
 == mod_scan(guest)
   cast: Moderator_Prime, guest
-  <if: guest.faction == Chatters>
-    MODERATOR_PRIME
+
+  MODERATOR_PRIME
+    <if: guest.faction == Chatters>
       A Chatter. Behave, or you're getting banned.
-    <set: Moderator_Prime.trusts.guest -= 10>
-  <else>
-    <if: Moderator_Prime.trusts.guest > 55>
-      MODERATOR_PRIME
-        Always good to see a face I trust. Keep it up.
+      <set: Moderator_Prime.trusts.guest -= 10>
     <else>
-      MODERATOR_PRIME
+      <if: Moderator_Prime.trusts.guest > 55>
+        Always good to see a face I trust. Keep it up.
+      <else>
         A fellow Mod. Good to see you.
-    <set: guest.score += 50>
-    <set: Moderator_Prime.trusts.guest += 10>
-    <respond: Verified Mod — score {guest.score}, trust {Moderator_Prime.trusts.guest}.>
+        <set: guest.score += 50>
+        <set: Moderator_Prime.trusts.guest += 10>
+        <respond: Verified Mod — score {guest.score}, trust {Moderator_Prime.trusts.guest}.>
 
 # A recruiter offers a live choice: the participant decides on their phone.
 == recruit(guest)

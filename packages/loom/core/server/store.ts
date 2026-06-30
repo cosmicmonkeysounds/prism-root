@@ -21,6 +21,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileS
 import { join } from "node:path";
 
 import type { Passcodes } from "./auth.ts";
+import type { Session } from "./session.ts";
 import type { RuntimePhase } from "./views.ts";
 
 /** The sim mutations we journal — exactly the `Sim` methods the server calls. */
@@ -31,6 +32,7 @@ export type Mutation =
   | "scan"
   | "signal"
   | "escape"
+  | "capture"
   | "choose"
   | "tick";
 
@@ -47,17 +49,14 @@ export interface Meta {
   phase: RuntimePhase;
 }
 
-export interface Sessions {
-  /** Moderator session tokens. */
-  mod: string[];
-  /** Performer tokens paired with their character id. */
-  prime: Array<[string, string]>;
-}
+/** A persisted session: a token paired with the capabilities it carries. */
+export type SessionEntry = [string, Session];
 
 const CODES = "codes.json";
 const META = "meta.json";
 const JOURNAL = "journal.ndjson";
 const SESSIONS = "sessions.json";
+const HIDDEN = "hidden.json";
 
 /** Read + JSON-parse a file, returning `null` on any miss/corruption. */
 function readJson<T>(path: string): T | null {
@@ -130,11 +129,33 @@ export class Store {
 
   // --- live sessions ------------------------------------------------------
 
-  loadSessions(): Sessions {
-    return readJson<Sessions>(this.path(SESSIONS)) ?? { mod: [], prime: [] };
+  loadSessions(): SessionEntry[] {
+    // Tolerate a stale/incompatible file (e.g. a pre-capability
+    // `{mod, prime}` blob): anything that isn't the entry array is dropped,
+    // so a format change degrades to "everyone re-logs in" rather than a
+    // boot crash.
+    const v = readJson<unknown>(this.path(SESSIONS));
+    return Array.isArray(v) ? (v as SessionEntry[]) : [];
   }
-  saveSessions(sessions: Sessions): void {
-    writeFileSync(this.path(SESSIONS), JSON.stringify(sessions));
+  saveSessions(entries: SessionEntry[]): void {
+    writeFileSync(this.path(SESSIONS), JSON.stringify(entries));
+  }
+
+  // --- moderation (hidden message seqs) -----------------------------------
+  //
+  // Chat history itself is *not* persisted: it's re-derived deterministically
+  // by replaying the journal through the message composer. Moderation is the
+  // one exception — hiding a message isn't a sim event — so the set of hidden
+  // `seq`s is kept here and re-applied after the rebuild.
+
+  loadHidden(): number[] {
+    return readJson<number[]>(this.path(HIDDEN)) ?? [];
+  }
+  saveHidden(seqs: number[]): void {
+    writeFileSync(this.path(HIDDEN), JSON.stringify(seqs));
+  }
+  clearHidden(): void {
+    rmSync(this.path(HIDDEN), { force: true });
   }
 
   /** Has any prior run left state here to restore? */

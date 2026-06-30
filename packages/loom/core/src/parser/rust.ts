@@ -99,6 +99,31 @@ export function anyChar(s: string, pred: (ch: string) => boolean): boolean {
 }
 
 /**
+ * `s.lines()` — split on `\n`, dropping the line terminator and a
+ * trailing `\r` (so `\r\n` collapses too). An empty string yields no
+ * lines, and a trailing `\n` does not produce a final empty line —
+ * matching Rust's `str::lines`.
+ */
+export function lines(source: string): string[] {
+  const out: string[] = [];
+  let start = 0;
+  while (start <= source.length) {
+    const nl = source.indexOf("\n", start);
+    if (nl < 0) {
+      if (start < source.length) out.push(stripCarriageReturn(source.slice(start)));
+      break;
+    }
+    out.push(stripCarriageReturn(source.slice(start, nl)));
+    start = nl + 1;
+  }
+  return out;
+}
+
+function stripCarriageReturn(s: string): string {
+  return s.endsWith("\r") ? s.slice(0, -1) : s;
+}
+
+/**
  * `source.split_inclusive('\n')` — each chunk keeps its trailing `\n`.
  * A trailing chunk without a final newline is included as-is. An empty
  * source yields no chunks (matching Rust's `split_inclusive`).

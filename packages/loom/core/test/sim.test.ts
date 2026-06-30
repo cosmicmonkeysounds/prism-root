@@ -443,3 +443,149 @@ describe("Escape the Internet — relationship-driven dialogue", () => {
     expect(lines(sim.scan("Moderator_Prime", "g1"))).toContain("face I trust");
   });
 });
+
+describe("Escape the Internet — operator/admin moderation", () => {
+  it("capture() imprisons a guest and escape() frees them, scanner-less", () => {
+    const sim = fresh();
+    sim.createPerson("g1", "Alice");
+    sim.join("g1", "Chatters");
+    expect(sim.isCaptured("g1")).toBe(false);
+
+    sim.capture("g1");
+    expect(sim.isCaptured("g1")).toBe(true);
+
+    sim.capture("g1"); // idempotent — re-capturing is a no-op
+    expect(sim.isCaptured("g1")).toBe(true);
+
+    sim.escape("g1");
+    expect(sim.isCaptured("g1")).toBe(false);
+  });
+});
+
+describe("Loom — conditionals + directives inside a dialogue block", () => {
+  const SRC = `FACTION Mods
+FACTION Chatters
+
+ROLE Guest
+  score: 0 to 1000 = 0
+
+CHARACTER Host
+  faction: Mods
+  trusts Guest: 50 of 100
+  on scan guest
+    -> greet
+
+== greet(guest)
+  cast: Host, guest
+
+  HOST
+    <if: guest.faction == Chatters>
+      Careful, troublemaker.
+      <set: Host.trusts.guest -= 10>
+    <else>
+      <if: Host.trusts.guest > 55>
+        Welcome back, friend.
+      <else>
+        Good to see you.
+        <set: guest.score += 5>
+        <set: Host.trusts.guest += 10>
+`;
+
+  it("picks the branch's spoken line and runs only that branch's effects", () => {
+    const sim = Sim.fromSources(SRC);
+
+    // A Chatter → the warning line + the trust penalty; nothing else.
+    sim.createPerson("c", "Cara");
+    sim.join("c", "Chatters");
+    const chatter = dialogue(sim.scan("Host", "c")).join(" ");
+    expect(chatter).toContain("Careful, troublemaker");
+    expect(chatter).not.toContain("Good to see you");
+    expect(sim.world.get("Host.trusts.c")).toEqual({ kind: "number", value: 40 });
+    expect(sim.scoreOf("c")).toBe(0); // the else-branch effects never ran
+
+    // A Mod, first scan (trust 50) → inner else: greeting + score/trust bumps.
+    sim.createPerson("m", "Mo");
+    sim.join("m", "Mods");
+    const first = dialogue(sim.scan("Host", "m")).join(" ");
+    expect(first).toContain("Good to see you");
+    expect(sim.scoreOf("m")).toBe(5);
+    expect(sim.world.get("Host.trusts.m")).toEqual({ kind: "number", value: 60 });
+
+    // Same Mod, second scan (trust 60 > 55) → inner if: the trusted line,
+    // and NO further effects (that branch has none).
+    const second = dialogue(sim.scan("Host", "m")).join(" ");
+    expect(second).toContain("Welcome back, friend");
+    expect(second).not.toContain("Good to see you");
+    expect(sim.scoreOf("m")).toBe(5); // unchanged
+    expect(sim.world.get("Host.trusts.m")).toEqual({ kind: "number", value: 60 });
+  });
+});
+
+describe("Loom — match / each-visit / divert inside a dialogue block", () => {
+  const SRC = `FACTION Mods
+FACTION Chatters
+
+ROLE Guest
+  score: 0 to 1000 = 0
+
+CHARACTER Host
+  on scan guest
+    -> greet
+
+== greet(guest)
+  cast: Host, guest
+
+  HOST
+    <match: guest.faction>
+      Mods
+        Welcome, mod.
+      Chatters
+        Watch it, chatter.
+    Anyway —
+    -> tag
+
+== tag(guest)
+  cast: Host, guest
+  HOST
+    You're tagged.
+    <set: guest.score += 1>
+
+== mood(guest)
+  cast: Host, guest
+  HOST
+    <each visit>
+      first
+        Hello, newcomer.
+      then
+        Oh, you again.
+`;
+
+  it("runs <match>, a plain speaker line, and a divert — all inside one speaker block", () => {
+    const sim = Sim.fromSources(SRC);
+    sim.createPerson("m", "Mo");
+    sim.join("m", "Mods");
+    const out = dialogue(sim.scan("Host", "m")).join(" | ");
+    expect(out).toContain("Welcome, mod."); // matched arm, spoken by Host
+    expect(out).not.toContain("Watch it");
+    expect(out).toContain("Anyway —"); // plain speaker line after the match
+    expect(out).toContain("You're tagged."); // the in-dialogue divert reached `tag`
+    expect(sim.scoreOf("m")).toBe(1); // and `tag`'s effect ran
+
+    const sim2 = Sim.fromSources(SRC);
+    sim2.createPerson("c", "Cy");
+    sim2.join("c", "Chatters");
+    const out2 = dialogue(sim2.scan("Host", "c")).join(" | ");
+    expect(out2).toContain("Watch it, chatter.");
+    expect(out2).not.toContain("Welcome, mod.");
+  });
+
+  it("runs <each visit> inside a speaker block, attributed to the speaker", () => {
+    const sim = Sim.fromSources(SRC);
+    sim.createPerson("g", "Gee");
+    const from = sim.log.len();
+    sim.playBeat("mood", new Map([["self", "Host"], ["guest", "g"]]));
+    const said = sim.log.since(from).filter((e) => e.type === "dialogue") as Array<{ speaker: string; text: string }>;
+    expect(said.map((e) => e.text).join(" ")).toContain("Hello, newcomer.");
+    expect(said[0]!.speaker).toBe("HOST"); // spoken line (speaker cue), not narration
+  });
+});

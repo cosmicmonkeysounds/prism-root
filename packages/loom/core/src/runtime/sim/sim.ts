@@ -5,7 +5,7 @@
 //! QR scans, faction joins) and draining the reactive hook engine to a
 //! fixpoint. See `DESIGN.md`.
 
-import type { Beat, BodyItem, DialogueBlock } from "../../parser/index.ts";
+import type { Beat, BodyItem } from "../../parser/index.ts";
 import {
   CallArg,
   ExprError,
@@ -51,6 +51,12 @@ interface Frame {
   items: BodyItem[];
   index: number;
   bindings: Bindings;
+  /**
+   * The speaker whose block this frame (and its control-flow children) runs
+   * under, if any. When set, bare `action` text is emitted as this speaker's
+   * spoken line instead of narration — that's all "dialogue" means here.
+   */
+  speaker?: string;
 }
 
 /**
@@ -207,6 +213,18 @@ export class Sim {
   escape(person: string): SimEvent[] {
     const from = this.log.len();
     this.doEscape(person);
+    this.drain();
+    return this.log.since(from);
+  }
+
+  /**
+   * An operator/admin captures a guest directly (scanner-less moderation),
+   * routing through the same idempotent logic as the `<capture:>` directive.
+   * `by` is null since no character is attributed.
+   */
+  capture(person: string): SimEvent[] {
+    const from = this.log.len();
+    this.runCapture(person, new Map());
     this.drain();
     return this.log.since(from);
   }
@@ -459,8 +477,28 @@ export class Sim {
       const item = frame.items[frame.index]!;
       frame.index += 1;
       const b = frame.bindings;
+      // Control-flow children inherit the speaker so text nested in an
+      // `<if>`/`<match>`/`<each visit>` arm inside a dialogue block stays
+      // attributed to that speaker. A divert (below) deliberately does not.
+      const sp = frame.speaker;
       switch (item.kind) {
         case "action":
+          if (sp !== undefined) {
+            // Spoken line under a speaker. Pure parentheticals "(…)" are
+            // delivery notes, not spoken — skip them (prior behavior).
+            const t = item.value.value;
+            if (!/^\(.*\)$/u.test(t.trim())) {
+              this.record({
+                type: "dialogue",
+                speaker: sp,
+                text: this.interpolate(t, b),
+                audience: this.subjectAudience(b),
+              });
+            }
+          } else {
+            this.record({ type: "action", text: this.interpolate(item.value.value, b) });
+          }
+          break;
         case "sceneHeading":
           this.record({ type: "action", text: this.interpolate(item.value.value, b) });
           break;
@@ -468,19 +506,21 @@ export class Sim {
         case "slotPlaceholder":
           break;
         case "dialogue":
-          this.runDialogue(item.value, b);
+          // Enter the speaker's block — its body is plain BodyItems, run by
+          // this same loop with the speaker in scope.
+          stack.push({ items: item.value.body, index: 0, bindings: b, speaker: item.value.speaker });
           break;
         case "directive":
           this.runDirective(item.value.raw, b);
           break;
         case "directiveBlock":
           this.runDirective(item.value.directive.raw, b);
-          stack.push({ items: item.value.body, index: 0, bindings: b });
+          stack.push({ items: item.value.body, index: 0, bindings: b, speaker: sp });
           break;
         case "conditional":
           for (const arm of item.value.arms) {
             if (arm.condition === null || this.evalCond(arm.condition, b)) {
-              stack.push({ items: arm.body, index: 0, bindings: b });
+              stack.push({ items: arm.body, index: 0, bindings: b, speaker: sp });
               break;
             }
           }
@@ -490,20 +530,21 @@ export class Sim {
             items: this.evalCond(item.value.condition, b) ? item.value.after : item.value.otherwise,
             index: 0,
             bindings: b,
+            speaker: sp,
           });
           break;
         case "match": {
           const scrutinee = display(this.evalValue(item.value.scrutinee, b));
           for (const arm of item.value.arms) {
             if (arm.pattern === scrutinee) {
-              stack.push({ items: arm.body, index: 0, bindings: b });
+              stack.push({ items: arm.body, index: 0, bindings: b, speaker: sp });
               break;
             }
           }
           break;
         }
         case "eachVisit":
-          stack.push({ items: item.value.first, index: 0, bindings: b });
+          stack.push({ items: item.value.first, index: 0, bindings: b, speaker: sp });
           break;
         case "inlineLet":
           this.world.set(item.value.name, this.evalValue(item.value.expression, b));
@@ -538,6 +579,7 @@ export class Sim {
             items: f.items,
             index: f.index,
             bindings: f.bindings,
+            speaker: f.speaker,
           }));
           const queue = this.pendingChoices.get(person) ?? [];
           queue.push({ options, bindings: b, continuation });
@@ -552,20 +594,6 @@ export class Sim {
         }
       }
     }
-  }
-
-  private runDialogue(block: DialogueBlock, bindings: Bindings): void {
-    const text = block.lines
-      .filter((l) => l.kind === "text")
-      .map((l) => (l.kind === "text" ? l.value.value : ""))
-      .join(" ");
-    const audience = this.subjectAudience(bindings);
-    this.record({
-      type: "dialogue",
-      speaker: block.speaker,
-      text: this.interpolate(text, bindings),
-      audience,
-    });
   }
 
   /** Play a scripted beat in the given binding scope. */
