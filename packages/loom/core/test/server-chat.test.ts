@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { Sim, type SimEvent } from "../src/runtime/sim/index.ts";
@@ -9,8 +8,9 @@ import {
   visibleTo,
   type ChatMessage,
 } from "../server/chat.ts";
+import { scenarioSource } from "../examples/load.ts";
 
-const SCENARIO = readFileSync(new URL("../examples/escape-the-internet.loom", import.meta.url), "utf8");
+const SCENARIO = scenarioSource("escape-the-internet");
 
 /** Replay a fixed script against a fresh sim, composing as the server would. */
 function play(): { sim: Sim; store: ChatStore } {

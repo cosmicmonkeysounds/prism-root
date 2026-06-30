@@ -1,0 +1,64 @@
+# Beats — the Algorithm's dark patterns
+#
+# Every one of these is a polite little trap. The "easy" option always
+# raises heat and routes through `lockdown`; the careful option costs you
+# a beat of friction and keeps you clean.
+
+# The cookie banner — the friendliest trap on the floor.
+== cookie_consent(guest)
+  cast: Cookie_Banner, guest
+  COOKIE_BANNER
+    This site uses cookies. And eyes. And ears.
+    Do you accept all cookies?
+  * Accept all (it's easier)
+    <set: guest.heat += 25>
+    <respond: Tracking enabled. Thank you for your obedience.>
+    -> lockdown
+  * Reject non-essential
+    <set: guest.karma += 10>
+  + Pretend to read the 90-page policy
+    <set: guest.karma += 1>
+
+# An unskippable ad.
+== the_ad(guest)
+  cast: Ad_Popup, guest
+  AD_POPUP
+    You won't BELIEVE the one weird trick the Mods are hiding!
+    Skip in 5, 4, 3...
+  * Click the ad
+    The download starts before your thumb can stop it.
+    <set: guest.heat += 30>
+    -> lockdown
+  * Wait for the skip button
+    <set: guest.karma += 5>
+  * Actually buy the thing
+    <set: guest.score -= 20>
+    <set: guest.verified = true>
+
+# free_movie_HD_no_virus_trust_me.exe
+== download(guest)
+  cast: Download_Station, guest
+  DOWNLOAD_STATION
+    free_movie_HD_totally_no_virus_trust_me.exe is ready to run.
+  * Run it
+    <set: guest.heat += 35>
+    <respond: Trojan installed. The Algorithm thanks you for your trust.>
+    -> lockdown
+  * Scan it first, like a responsible packet
+    <set: guest.karma += 5>
+  + Walk away
+    <set: guest.karma += 1>
+
+# A paywall across reality itself.
+== paywall(guest)
+  cast: Paywall, guest
+  PAYWALL
+    To read the rest of reality, please subscribe.
+  * Pay up
+    <set: guest.score -= 15>
+    <set: guest.verified = true>
+  * Pirate it
+    <set: guest.heat += 25>
+    -> lockdown
+  + Hit the back button
+    <set: guest.karma += 1>

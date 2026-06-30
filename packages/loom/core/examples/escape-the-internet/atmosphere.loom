@@ -1,0 +1,27 @@
+# Atmosphere — the autonomous clock
+#
+# The world doesn't only wait for scans. The host ticks a steady clock
+# while the doors are open and these ambient generators emit a bark per
+# interval, cycled deterministically. None of them touch any individual
+# guest — they're pure mood. The threat in this world is reactive, not
+# ambient.
+
+GENERATOR FeedHum
+  tier: ambient
+  every 20s
+  yield bark from The feed scrolls on, indifferent. | Somewhere a notification chimes. | The Algorithm is always watching. | The walls of the Internet hum.
+
+GENERATOR GlitchStatic
+  tier: ambient
+  every 25s
+  yield bark from A pixel flickers where it shouldn't. | Static crawls across a dead channel. | For half a second, an exit sign that isn't there.
+
+GENERATOR AlgoWhisper
+  tier: ambient
+  every 35s
+  yield bark from The Algorithm recalculates. | Your engagement has been noted. | Recommended for you: obedience.
+
+GENERATOR Notifications
+  tier: ambient
+  every 45s
+  yield bark from 3 people liked your existence. | A stranger is typing... | Your screen time is up 400% this hour.

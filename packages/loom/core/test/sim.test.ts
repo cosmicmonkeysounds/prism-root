@@ -1,12 +1,9 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { Sim } from "../src/runtime/sim/index.ts";
 import type { SimEvent } from "../src/runtime/sim/index.ts";
+import { scenarioFiles, scenarioSource } from "../examples/load.ts";
 
-const SCENARIO = readFileSync(
-  new URL("../examples/escape-the-internet.loom", import.meta.url),
-  "utf8",
-);
+const SCENARIO = scenarioSource("escape-the-internet");
 
 function fresh(): Sim {
   return Sim.fromSources(SCENARIO);
@@ -24,28 +21,79 @@ function broadcasts(events: SimEvent[]): Array<{ cue: string; audience: string[]
 describe("Escape the Internet — model compile", () => {
   it("indexes every entity kind from the .loom source", () => {
     const sim = fresh();
-    expect([...sim.model.factions.keys()].sort()).toEqual(["Chatters", "Mods", "TheAlgorithm"]);
+    // Two public factions, two hidden ones (the villain + the resistance).
+    expect([...sim.model.factions.keys()].sort()).toEqual([
+      "Chatters",
+      "Glitchers",
+      "Mods",
+      "TheAlgorithm",
+    ]);
     expect(sim.model.factions.get("TheAlgorithm")!.hidden).toBe(true);
+    expect(sim.model.factions.get("Glitchers")!.hidden).toBe(true);
     expect(sim.model.factions.get("Mods")!.rival).toBe("Chatters");
     expect(sim.model.locations.get("Internet")!.prison).toBe(true);
+    expect(sim.model.locations.get("Servers")!.prison).toBe(true);
     expect(sim.model.locations.get("Party")!.prison).toBe(false);
     expect([...sim.model.characters.keys()].sort()).toEqual([
+      "Ad_Popup",
+      "Captcha",
+      "Comment_Section",
+      "Cookie_Banner",
+      "Crawler",
+      "DJ",
+      "Download_Station",
+      "Firewall_Terminal",
+      "Glitch",
+      "Hacker_Zero",
+      "Leaderboard",
+      "Like_Button",
       "ModBot",
+      "Mod_Karen",
       "Moderator_Prime",
+      "Newscaster",
+      "Notification_Bell",
+      "Paywall",
+      "Profile_Mirror",
       "Recruiter",
+      "Recycle_Bin",
+      "Search_Oracle",
       "Sentinel",
       "Surveillance",
+      "Sysadmin",
+      "Terminal",
       "TheAdmin",
+      "The_Banned",
+      "Troll_King",
+      "VPN_Node",
+      "Verified_Vera",
     ]);
     expect(sim.model.defaultRole).toBe("Guest");
     expect(sim.model.entry).toBe("doors_open");
     // The scanner characters carry `on scan` hooks; TheAdmin reacts to captures.
     expect(sim.model.characters.get("ModBot")!.hooks[0]!.verb).toBe("scan");
     expect(sim.model.roles.get("Guest")!.hooks.map((h) => h.verb).sort()).toEqual([
+      "betray",
       "captured",
+      "defect",
+      "enters",
       "escape",
       "scan",
     ]);
+  });
+
+  it("compiles the same world from the multi-file bundle as from the concatenation", () => {
+    // The project is authored across many files; bundling them separately
+    // (the real `Bundle` multi-file path) must yield the identical model.
+    const bundle = Sim.fromSources(...scenarioFiles("escape-the-internet"));
+    expect([...bundle.model.characters.keys()].sort()).toEqual(
+      [...fresh().model.characters.keys()].sort(),
+    );
+    expect(bundle.model.entry).toBe("doors_open");
+    expect(bundle.model.defaultRole).toBe("Guest");
+    // A divert target declared in `beats/algorithm.loom` resolves even though
+    // the hook that reaches it lives in `cast/algorithm.loom`.
+    expect(bundle.model.beats.has("lockdown")).toBe(true);
+    expect(bundle.model.gens.map((g) => g.id)).toContain("FeedHum");
   });
 });
 
@@ -147,13 +195,17 @@ describe("Escape the Internet — broadcast scopes", () => {
 
 describe("Escape the Internet — verification-driven hardening", () => {
   it("fires a character reaction to a global cue (null-param hook)", () => {
+    // A room-wide `blackout` the operator triggers from the booth — the DJ
+    // (a `self`-only `on blackout` hook) rallies both public factions. This
+    // is the one legitimate global cue; the Algorithm's lockdowns are never
+    // broadcast to the whole room.
     const sim = fresh();
     sim.createPerson("g1", "A");
     sim.createPerson("g2", "B");
     sim.join("g1", "Mods");
     sim.join("g2", "Chatters");
-    const events = sim.signal("lockdown");
-    const siren = broadcasts(events).find((b) => b.cue === "lockdown_siren");
+    const events = sim.signal("blackout");
+    const siren = broadcasts(events).find((b) => b.cue === "lights_out");
     expect(siren).toBeTruthy();
     expect(siren!.audience.sort()).toEqual(["g1", "g2"]);
   });
@@ -377,19 +429,25 @@ describe("Escape the Internet — the clock (autonomous life)", () => {
   function ambient(events: SimEvent[]): string[] {
     return events.filter((e) => e.type === "ambient").map((e) => (e as { text: string }).text);
   }
+  /** Only FeedHum's barks — several ambient generators run concurrently. */
+  function feedHum(events: SimEvent[]): string[] {
+    return events
+      .filter((e) => e.type === "ambient" && (e as { source: string }).source === "FeedHum")
+      .map((e) => (e as { text: string }).text);
+  }
 
   it("emits ambient generator barks only on the interval", () => {
     const sim = fresh();
-    expect(ambient(sim.tick(19000))).toHaveLength(0); // under 20s
-    const evs = sim.tick(2000); // crosses 20s
-    expect(ambient(evs)).toHaveLength(1);
+    expect(ambient(sim.tick(19000))).toHaveLength(0); // under every generator's interval
+    const evs = sim.tick(2000); // crosses 20s — only FeedHum is due
+    expect(feedHum(evs)).toHaveLength(1);
     expect((evs.find((e) => e.type === "ambient") as { source: string }).source).toBe("FeedHum");
   });
 
   it("cycles bark text deterministically through the generator", () => {
     const sim = fresh();
     const texts: string[] = [];
-    for (let i = 0; i < 4; i++) texts.push(...ambient(sim.tick(20000)));
+    for (let i = 0; i < 4; i++) texts.push(...feedHum(sim.tick(20000)));
     expect(texts).toHaveLength(4);
     expect(new Set(texts).size).toBe(4); // four distinct barks, in order
   });
@@ -401,27 +459,101 @@ describe("Escape the Internet — the clock (autonomous life)", () => {
     expect(sim.elapsed()).toBe(65000);
   });
 
-  it("ramps the Algorithm's threat and exposes the hidden faction at 90s", () => {
-    const sim = fresh();
-    sim.createPerson("g1", "A");
-    sim.join("g1", "Mods");
-    expect(sim.factionRevealed("TheAlgorithm")).toBe(false);
-    const evs = sim.tick(90000); // 30s/60s/90s → threat 1/2/3 → reveal
-    expect(sim.world.get("Surveillance.threat")).toEqual({ kind: "number", value: 3 });
-    expect(sim.factionRevealed("TheAlgorithm")).toBe(true);
-    const siren = evs.filter(
-      (e) => e.type === "broadcast" && (e as { cue: string }).cue === "lockdown_siren",
-    );
-    expect(siren.length).toBeGreaterThanOrEqual(1);
-    expect((siren[0] as { audience: string[] }).audience).toEqual(["g1"]);
-  });
-
-  it("does not fire timer/generator hooks via ordinary signals", () => {
+  it("runs a time-driven hook on tick but never via an ordinary signal", () => {
     const sim = fresh();
     const before = sim.log.len();
-    sim.signal("every"); // must not trip the `on every 30s` timer
-    expect(sim.world.peek("Surveillance.threat")).toBeNull();
+    // The clock is pure bookkeeping now — no ambient threat, no auto-lockdown.
+    sim.signal("every"); // must not trip the `on every 60s` sweep hook
+    expect(sim.world.peek("TheAlgorithm.sweeps")).toBeNull();
     expect(sim.log.since(before).filter((e) => e.type === "ambient")).toHaveLength(0);
+    // Only the tick advances it.
+    sim.tick(60000);
+    expect(sim.world.get("TheAlgorithm.sweeps")).toEqual({ kind: "number", value: 1 });
+  });
+});
+
+describe("Escape the Internet — targeted lockdown (anger the Algorithm)", () => {
+  it("locks down only the guest who angered the Algorithm, never the room", () => {
+    const sim = fresh();
+    sim.createPerson("g1", "A");
+    sim.createPerson("g2", "B");
+    // One flag from the Crawler is a warning (heat 40 < 75) — nobody jailed.
+    sim.scan("Crawler", "g1");
+    expect(sim.isCaptured("g1")).toBe(false);
+    expect(sim.world.get("g1.heat")).toEqual({ kind: "number", value: 40 });
+    // A second flag tips g1's *own* heat over the line → personal lockdown.
+    sim.scan("Crawler", "g1");
+    expect(sim.isCaptured("g1")).toBe(true);
+    expect(sim.locationOf("g1")).toBe("Internet");
+    expect(sim.world.get("g1.heat")).toEqual({ kind: "number", value: 0 }); // reset on lockdown
+    // g2 angered nobody beyond one flag → still free. No ambient lockdown.
+    sim.scan("Crawler", "g2");
+    expect(sim.isCaptured("g2")).toBe(false);
+    expect(sim.locationOf("g2")).not.toBe("Internet");
+  });
+
+  it("drags a severe offender straight into the deep Servers", () => {
+    const sim = fresh();
+    sim.createPerson("g1", "A");
+    sim.scan("Terminal", "g1");
+    expect(sim.pendingChoiceFor("g1")).toContain("Leak the Algorithm's source code");
+    sim.choose("g1", 2); // leak the source — heat 95 ≥ 90
+    expect(sim.isCaptured("g1")).toBe(true);
+    expect(sim.locationOf("g1")).toBe("Servers");
+  });
+
+  it("offers a captured guest the Glitchers' exploit, revealing the resistance", () => {
+    const sim = fresh();
+    sim.createPerson("g1", "A");
+    sim.scan("ModBot", "g1"); // jailed in the Internet
+    expect(sim.isCaptured("g1")).toBe(true);
+    sim.scan("Glitch", "g1"); // the resistance contact offers a way out
+    expect(sim.pendingChoiceFor("g1")).toEqual(["Take the exploit — run for it", "Not yet. Lay low."]);
+    expect(sim.factionRevealed("Glitchers")).toBe(false);
+    sim.choose("g1", 0); // run for it
+    expect(sim.isCaptured("g1")).toBe(false);
+    expect(sim.factionRevealed("Glitchers")).toBe(true); // first escape exposes them
+  });
+});
+
+describe("Escape the Internet — interactive props & performers", () => {
+  it("lets a guest manage their own heat: a prop can wipe the record", () => {
+    const sim = fresh();
+    sim.createPerson("g1", "Ada");
+    sim.scan("Crawler", "g1"); // flagged → heat 40
+    expect(sim.world.get("g1.heat")).toEqual({ kind: "number", value: 40 });
+    sim.scan("Recycle_Bin", "g1"); // the counter-play prop
+    sim.choose("g1", 0); // empty the bin
+    expect(sim.world.get("g1.heat")).toEqual({ kind: "number", value: 0 });
+    // ...so a follow-up flag is once again only a warning, not a lockdown.
+    sim.scan("Crawler", "g1");
+    expect(sim.isCaptured("g1")).toBe(false);
+  });
+
+  it("the Troll King's dare conscripts an unaligned guest into the Chatters", () => {
+    const sim = fresh();
+    sim.createPerson("g1", "Ada"); // no faction yet
+    expect(sim.factionOf("g1")).toBeNull();
+    sim.scan("Troll_King", "g1");
+    sim.choose("g1", 0); // light them up
+    expect(sim.factionOf("g1")).toBe("Chatters"); // `guest.faction == null` branch fired
+    expect(sim.world.get("g1.heat")).toEqual({ kind: "number", value: 25 });
+    // The Troll King's individual regard for the guest went up.
+    expect(sim.world.get("Troll_King.trusts.g1")).toEqual({ kind: "number", value: 40 });
+  });
+
+  it("a read-only prop interpolates the guest's live profile", () => {
+    const sim = fresh();
+    sim.createPerson("g1", "Ada");
+    sim.join("g1", "Mods");
+    sim.scan("Moderator_Prime", "g1"); // +50 score, verified stays false
+    const lines = sim
+      .scan("Profile_Mirror", "g1")
+      .filter((e) => e.type === "dialogue")
+      .map((e) => (e as { text: string }).text)
+      .join(" ");
+    expect(lines).toContain("Score 50.");
+    expect(lines).toContain("Heat 0.");
   });
 });
 

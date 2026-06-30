@@ -25,6 +25,7 @@ import { passOk, resolvePasscodes } from "./auth.ts";
 import { SessionStore } from "./session.ts";
 import { Store, type Mutation } from "./store.ts";
 import { ChatStore, composeGuestMessages, decisionChannelFor, visibleTo, type ChatMessage } from "./chat.ts";
+import { scenarioSource } from "../examples/load.ts";
 
 const PORT = Number(process.env.LOOM_PORT ?? 7000);
 const HOST = process.env.LOOM_HOST ?? "0.0.0.0";
@@ -38,8 +39,10 @@ const PASS = resolvePasscodes(process.env, store.loadCodes());
 store.saveCodes(PASS);
 
 const CONSOLE_HTML = readFileSync(new URL("./public/index.html", import.meta.url), "utf8");
-const DEFAULT_SCENARIO_URL = new URL("../examples/escape-the-internet.loom", import.meta.url);
-const DEFAULT_SCENARIO = readFileSync(DEFAULT_SCENARIO_URL, "utf8");
+// The default scenario is a multi-file project under `examples/`; the loader
+// concatenates `main.loom` + the rest into one source (identical to bundling
+// the files separately) so the journal-replay store keeps a single string.
+const DEFAULT_SCENARIO = scenarioSource("escape-the-internet");
 
 // The built participant app (`loom-play`). Defaults to the sibling
 // package's `dist/`; override with LOOM_APP_DIST (absolute path).

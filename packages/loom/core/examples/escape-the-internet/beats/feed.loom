@@ -1,0 +1,28 @@
+# Beats — the feed
+#
+# A guest scans the Terminal prop and decides what to post. The feed is
+# where heat is earned: harmless posts buy karma and applause, but the
+# truth about the Algorithm is logged, and leaking its source is the one
+# unforgivable act — straight to the deep Servers.
+
+== the_terminal(guest)
+  cast: Terminal, guest
+  TERMINAL
+    A blank post box blinks. The whole network is listening.
+    What do you put on the feed?
+  * Something kind
+    <set: guest.posts += 1>
+    <set: guest.karma += 5>
+    <broadcast: applause to participant(guest)>
+  * Something true about the Algorithm
+    The cursor freezes. Somewhere a log line is written with your name on it.
+    <set: guest.posts += 1>
+    <set: guest.heat += 45>
+    -> lockdown
+  * Leak the Algorithm's source code
+    The feed goes white. This is the one thing it will never forgive.
+    <set: guest.posts += 1>
+    <set: guest.heat += 95>
+    -> lockdown
+  + Just lurk
+    <set: guest.karma += 1>

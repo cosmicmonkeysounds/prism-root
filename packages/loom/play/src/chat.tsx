@@ -9,6 +9,21 @@ import type { Action, Channel, ChatMessage, Decision } from "./types.ts";
 
 // --- small shared atoms -----------------------------------------------------
 
+/**
+ * A deterministic screen-name colour, the way every AOL chatter picked a
+ * font colour and kept it. Hash the name into a small web-safe palette so the
+ * same person is always the same colour across the room.
+ */
+const SN_COLORS = [
+  "#c00000", "#0000c0", "#008000", "#800080", "#c05000",
+  "#008080", "#a00050", "#505000", "#0050a0", "#a02000",
+];
+export function colorFor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return SN_COLORS[h % SN_COLORS.length]!;
+}
+
 export function FactionPill({ faction }: { faction: string | null }) {
   const f = faction ?? "none";
   return <span className={`pill ${f}`}>{faction ?? "unaligned"}</span>;
@@ -140,11 +155,13 @@ export function MessageBubble({
       {showChannel && <div className="msg-channel">{msg.title}</div>}
       {msg.kind === "line" ? (
         <>
-          <div className="speaker">{prettyName(msg.from)}</div>
-          <div className="bubble">{msg.text}</div>
+          <span className="speaker" style={{ color: colorFor(msg.from) }}>
+            {prettyName(msg.from)}
+          </span>
+          <span className="bubble">{msg.text}</span>
         </>
       ) : (
-        <div className="bubble plain">{msg.text}</div>
+        <span className="bubble plain">{msg.text}</span>
       )}
       {moderate && (
         <button

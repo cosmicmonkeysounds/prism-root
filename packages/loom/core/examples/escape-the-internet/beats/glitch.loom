@@ -1,0 +1,23 @@
+# Beats — the Glitchers (the way out)
+#
+# A Glitch contact works the cells. To a captured guest it offers the
+# exploit — a live `<escape:>` that, the first time it lands, reveals the
+# resistance to the whole room. To anyone still free it's just a rumour.
+
+== glitch_offer(guest)
+  cast: Glitch, guest
+  GLITCH
+    <after: guest.captured>
+      # A list comprehension over the live population, counted live.
+      <let: trapped = count([p for p in Persons where p.captured])>
+      Psst. {trapped} of us boxed in here. I found a gap in the firewall.
+      You want out, or not?
+    <otherwise>
+      We're the Glitchers. When the walls close on you, look for the static.
+  <if: guest.captured>
+    # The whole cell hears the rumour ripple — a location-scoped broadcast.
+    <broadcast: roll_call to location(Internet)>
+    * Take the exploit — run for it
+      <escape: guest>
+    + Not yet. Lay low.
+      <set: guest.karma += 5>

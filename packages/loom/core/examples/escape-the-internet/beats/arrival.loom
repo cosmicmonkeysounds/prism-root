@@ -1,0 +1,19 @@
+# Beats — arrival / the door
+#
+# The Captcha bot gatekeeps the entrance. Passing it earns verification;
+# being a smartass earns heat — and heat is the only thing that can ever
+# get you locked down.
+
+== captcha_gate(guest)
+  cast: Captcha, guest
+  CAPTCHA
+    BEEP. Prove you are human.
+    Select every square that contains a traffic light.
+  * Tap the traffic lights
+    <set: guest.karma += 10>
+    <set: guest.verified = true>
+    <respond: CAPTCHA passed — verified human.>
+  * Paste a wall of emoji
+    The Algorithm does not appreciate cleverness.
+    <set: guest.heat += 40>
+    -> lockdown

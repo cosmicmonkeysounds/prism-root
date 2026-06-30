@@ -1,0 +1,27 @@
+# Beats — The Algorithm's enforcement
+#
+# `crawler_report` is one of the heat sources; `lockdown` is the single
+# choke point every heat source funnels through. There is no timer here,
+# no room-wide alarm — a lockdown happens to exactly one guest, the
+# moment *their own* heat crosses the line.
+
+# The Crawler indexes a guest and flags them. Two flags is a lockdown.
+== crawler_report(guest)
+  cast: Crawler, guest
+  CRAWLER
+    Crawling. Indexing. Flag raised.
+    Heat {guest.heat}. The Algorithm sees you now.
+  <set: guest.heat += 40>
+  -> lockdown
+
+# The ONLY way anyone is ever locked down. Idempotent (re-capturing an
+# already-jailed guest is a no-op) and strictly personal: it reads this
+# guest's heat and no one else's.
+== lockdown(guest)
+  <if: guest.heat >= 90>
+    # A severe offender skips the Internet and goes to the deep Servers.
+    <capture: guest into Servers>
+    <set: guest.heat = 0>
+  <else if: guest.heat >= 75>
+    <capture: guest into Internet>
+    <set: guest.heat = 0>

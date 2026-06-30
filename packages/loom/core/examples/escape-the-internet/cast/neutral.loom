@@ -1,0 +1,26 @@
+# Cast — unaligned
+#
+# Props and figures that belong to no faction: the Recycle Bin that wipes
+# your record, the Search Oracle that autocompletes your fate, the
+# Profile Mirror that shows you to yourself, and the Banned — a ghost
+# nobody could log out.
+
+# Prop: drag your sins in here. The way to survive an angry Algorithm.
+CHARACTER Recycle_Bin
+  on scan guest
+    -> clear_history
+
+# Prop: ask, and it autocompletes your fate (read-only lore + hints).
+CHARACTER Search_Oracle
+  on scan guest
+    -> ask_oracle
+
+# Prop: a mirror that resolves into your live profile.
+CHARACTER Profile_Mirror
+  on scan guest
+    -> check_profile
+
+# Named figure: a permabanned ghost behind the glass.
+CHARACTER The_Banned
+  on scan guest
+    -> banned_ghost

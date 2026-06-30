@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,8 +7,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { Sim } from "../src/runtime/sim/index.ts";
 import { guestView } from "../server/views.ts";
 import { Store, type Mutation } from "../server/store.ts";
+import { scenarioSource } from "../examples/load.ts";
 
-const SCENARIO = readFileSync(new URL("../examples/escape-the-internet.loom", import.meta.url), "utf8");
+const SCENARIO = scenarioSource("escape-the-internet");
 
 const dirs: string[] = [];
 function freshStore(): Store {

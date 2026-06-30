@@ -1,9 +1,13 @@
 # loom-play
 
 The **participant app** for live Loom events — the React client guests
-and performers use. It feels like **Discord / Telegram**: every
-conversation is its own **channel (thread)** in an inbox, and each running
-instance streams its participant's slice of the live `Sim`.
+and performers use. It's skinned like an **old-school AOL chat room**
+(teal Win95 desktop, navy title bars, a sunken white transcript of
+Times-New-Roman line messages with colored screen names, chunky 3D
+buttons, a "People Here" buddy list), but the structure underneath is
+still threaded: every conversation is its own **channel (thread)** in an
+inbox, and each running instance streams its participant's slice of the
+live `Sim`.
 
 It talks to the [`@loom/core`](../core) event server over Server-Sent
 Events (push) + `fetch` POST (actions). Built with Vite + React 18, the
@@ -106,7 +110,7 @@ src/
   performer.tsx # the performer / booth app
   ui.tsx        # the role chooser
   main.tsx      # entry
-  styles.css    # the dark chat theme
+  styles.css    # the AOL-chatroom skin (Win95 bevels, navy bars, serif lines)
 index.html      # Vite entry
 vite.config.ts  # react plugin + dev proxy to LOOM_SERVER (default :7000)
 ```

@@ -1,12 +1,9 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { Sim } from "../src/runtime/sim/index.ts";
 import { guestView, modView, primeView } from "../server/views.ts";
+import { scenarioSource } from "../examples/load.ts";
 
-const SCENARIO = readFileSync(
-  new URL("../examples/escape-the-internet.loom", import.meta.url),
-  "utf8",
-);
+const SCENARIO = scenarioSource("escape-the-internet");
 
 describe("server views", () => {
   it("projects a guest's self-view with a masked hidden faction", () => {

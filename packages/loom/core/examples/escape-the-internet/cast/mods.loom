@@ -1,0 +1,30 @@
+# Cast — the Mods (order)
+#
+# Moderators carry an individual trust relationship with every guest and
+# reward the loyal. They can't lock anyone down themselves — but drawing
+# a mod's ire raises your heat, and heat is what the Algorithm acts on.
+# Their installation props: the public Leaderboard and the Newscaster.
+
+CHARACTER Moderator_Prime
+  faction: Mods
+  trusts Guest: 50 of 100
+  on scan guest
+    -> mod_scan
+
+CHARACTER Mod_Karen
+  faction: Mods
+  trusts Guest: 40 of 100
+  on scan guest
+    -> mod_report
+
+# Prop: the public scoreboard.
+CHARACTER Leaderboard
+  faction: Mods
+  on scan guest
+    -> the_leaderboard
+
+# Named performer: the in-world news anchor.
+CHARACTER Newscaster
+  faction: Mods
+  on scan guest
+    -> breaking_news

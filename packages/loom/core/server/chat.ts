@@ -59,6 +59,22 @@ const CUES: Record<string, string> = {
   peer_ping: "📲 Someone scanned your pass.",
   lockdown_siren: "🚨 Lockdown — the Algorithm tightens its grip.",
   jailed: "🔒 The door of the Internet slams shut behind you.",
+  // Targeted enforcement — addressed to the one guest who earned it.
+  lockdown: "🔒 The Algorithm locked you down. You're offline.",
+  deep_lockdown: "🧊 Dragged into the deep Servers. Few come back.",
+  // The Glitchers' underground railroad.
+  agent_made: "🕶️ Your cover holds — for now.",
+  roll_call: "📢 Word ripples through the cell: there's a way out.",
+  // The feed reacting to a post.
+  applause: "👏 The feed loves you.",
+  spotlight: "🌟 You're trending.",
+  subscribed: "🔔 Subscribed. The notifications will never stop.",
+  // Heat management — the savvy guest covering their tracks.
+  cloaked: "🥷 You're cloaked. The Algorithm lost your scent.",
+  stayed_silent: "🤐 You gave them nothing. The cell respects that.",
+  // Room-wide, operator-triggered (not the Algorithm): a blackout, a reveal.
+  lights_out: "🔌 The lights cut out — someone hit the breaker.",
+  unmasked: "🎭 The masks come off — the Algorithm stands exposed.",
 };
 
 /** In-world copy for a broadcast cue (falls back to a generic megaphone). */

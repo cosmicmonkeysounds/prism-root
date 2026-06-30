@@ -1,0 +1,106 @@
+# Escape the Internet
+#
+# A Meow-Wolf-style live installation. The room is a network; every
+# party-goer is a packet with a scannable QR pass. Two public factions
+# fight over the vibe — the Mods (order) and the Chatters (chaos) — while
+# a hidden third faction, The Algorithm, watches everyone and quietly
+# logs the ones who step out of line. There is NO ambient lockdown in
+# this world: the Algorithm only ever moves on a *specific* guest who has
+# personally angered it (see `beats/arrival.loom` → `lockdown`). A second
+# hidden faction, the Glitchers, runs the underground railroad out.
+#
+# This is the spine of the project. The cast lives under `cast/`, the
+# scripted interactions under `beats/`, and the autonomous clock under
+# `atmosphere.loom`.
+
+entry: doors_open
+
+# ── Factions ────────────────────────────────────────────────────────
+# Two public sides the crowd chooses between, and two hidden ones: the
+# villain who captures people and the resistance who frees them.
+
+FACTION Mods
+  ethos: order
+  rival: Chatters
+
+FACTION Chatters
+  ethos: chaos
+  rival: Mods
+
+FACTION TheAlgorithm
+  ethos: control
+  hidden: true
+
+FACTION Glitchers
+  ethos: freedom
+  hidden: true
+
+# ── Locations ───────────────────────────────────────────────────────
+# Party is the free floor. The Internet is the tarp black-box prison;
+# the Servers are the deeper hole reserved for the worst offenders.
+
+LOCATION Party
+  label: The Party
+
+LOCATION Internet
+  label: The Internet
+  prison: true
+
+LOCATION Servers
+  label: The Servers
+  prison: true
+
+# ── Role: every party-goer is a Guest ───────────────────────────────
+# The per-person state schema plus the hooks that fire for each Guest
+# with `self` bound to that person. `heat` is how much they've angered
+# the Algorithm — it is the ONLY thing that triggers a lockdown, and it
+# only ever locks down the one guest who earned it.
+
+ROLE Guest
+  faction: any of FACTION
+  score: 0 to 1000 = 0
+  captured: bool = false
+  heat: 0 to 100 = 0
+  karma: 0 to 100 = 50
+  verified: bool = false
+  posts: 0 to 1000 = 0
+
+  on captured
+    <set: self.score -= 25>
+
+  on escape
+    <set: self.score += 100>
+    <broadcast: freedom to participant(self)>
+    # The first packet to slip the firewall drags the resistance into
+    # the open — the Glitchers stop being a rumour.
+    <reveal: Glitchers>
+
+  on enters Internet
+    <broadcast: jailed to participant(self)>
+
+  on scan other
+    # A guest scans another's pass — a peer ping (MagicBand model).
+    <broadcast: peer_ping to participant(other)>
+
+  on defect
+    # Switching sides in public draws the Algorithm's eye. Enough heat
+    # and it comes for you — and only you.
+    <set: self.heat += 20>
+    <if: self.heat >= 75>
+      <capture: self into Internet>
+      <set: self.heat = 0>
+
+  on betray
+    <broadcast: agent_made to participant(self)>
+
+# ── Entry beat ──────────────────────────────────────────────────────
+
+== doors_open
+  setting: Party
+  NARRATOR
+    The doors hiss open and the bass hits you like a wall of packets.
+    Welcome to the Internet. Tonight the room is the network and you are
+    a single packet moving through it.
+    Pick a side — the Mods keep the peace, the Chatters set it on fire —
+    and keep your pass scannable.
+    And whatever you post: do not make the Algorithm angry.

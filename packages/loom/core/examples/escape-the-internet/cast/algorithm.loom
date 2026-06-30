@@ -1,0 +1,91 @@
+# Cast — The Algorithm (hidden faction)
+#
+# The villain. It never sweeps the room — it reacts to individuals. The
+# scanner props raise a guest's heat or capture them outright; TheAdmin
+# keeps the tally and unmasks the faction once it's been too greedy; the
+# Sentinel narrates each personal lockdown to its victim; Surveillance
+# just ticks; the Sysadmin works the cells. Every dark pattern on the
+# floor — cookies, ads, downloads, paywalls, the firewall — is its tool.
+
+CHARACTER ModBot
+  faction: TheAlgorithm
+  on scan guest
+    <capture: guest into Internet>
+
+CHARACTER TheAdmin
+  faction: TheAlgorithm
+  on captured guest
+    <broadcast: doomed to participant(guest)>
+    <set: TheAdmin.captures += 1>
+    <if: TheAdmin.captures >= 2>
+      # Too many disappearances — the hidden faction is exposed.
+      <reveal: TheAlgorithm>
+  on revealed
+    <broadcast: unmasked to faction(Mods) | faction(Chatters)>
+
+CHARACTER Sentinel
+  faction: TheAlgorithm
+  # Targeted, never ambient: the Sentinel only speaks to the one guest
+  # who just crossed into a cell, addressing them by their pass.
+  on enters Internet captive
+    <broadcast: lockdown to participant(captive)>
+  on enters Servers captive
+    <broadcast: deep_lockdown to participant(captive)>
+
+CHARACTER Surveillance
+  faction: TheAlgorithm
+  # The autonomous clock the host ticks — pure indifferent bookkeeping,
+  # no room-wide effect. Demonstrates a time-driven hook (`on every`).
+  on every 60s
+    <set: TheAlgorithm.sweeps += 1>
+
+CHARACTER Crawler
+  faction: TheAlgorithm
+  on scan guest
+    -> crawler_report
+
+CHARACTER Captcha
+  faction: TheAlgorithm
+  on scan guest
+    -> captcha_gate
+
+CHARACTER Terminal
+  faction: TheAlgorithm
+  on scan guest
+    -> the_terminal
+
+# Named performer: the interrogator who works the cells.
+CHARACTER Sysadmin
+  faction: TheAlgorithm
+  on scan guest
+    -> interrogation
+
+# Prop: the cookie consent banner — the friendliest trap.
+CHARACTER Cookie_Banner
+  faction: TheAlgorithm
+  on scan guest
+    -> cookie_consent
+
+# Prop: an unskippable ad.
+CHARACTER Ad_Popup
+  faction: TheAlgorithm
+  on scan guest
+    -> the_ad
+
+# Prop: a too-good-to-be-true download.
+CHARACTER Download_Station
+  faction: TheAlgorithm
+  on scan guest
+    -> download
+
+# Prop: the paywall across reality.
+CHARACTER Paywall
+  faction: TheAlgorithm
+  on scan guest
+    -> paywall
+
+# Prop: the firewall at the edge of the world — and the seam in it.
+CHARACTER Firewall_Terminal
+  faction: TheAlgorithm
+  on scan guest
+    -> firewall

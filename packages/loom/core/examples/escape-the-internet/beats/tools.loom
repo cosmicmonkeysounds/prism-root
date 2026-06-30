@@ -1,0 +1,68 @@
+# Beats — utilities the savvy guest uses to stay alive
+#
+# The counter-play to the Algorithm's heat: wipe your record, tunnel
+# through a VPN, read your own profile, ask the Oracle whether you're in
+# danger. These give a guest agency over the one stat that can jail them.
+
+# The Recycle Bin: drag your sins in, become a ghost again.
+== clear_history(guest)
+  cast: Recycle_Bin, guest
+  RECYCLE_BIN
+    Drag your sins in here. The Algorithm has a short memory — if you're quick.
+  * Empty the bin — wipe your record
+    <set: guest.heat = 0>
+    <respond: History cleared. You're a ghost again.>
+  + Keep your data (you earned every byte)
+    <set: guest.karma += 2>
+
+# A VPN node that cools your heat and hides your scent.
+== vpn_connect(guest)
+  cast: VPN_Node, guest
+  VPN_NODE
+    A frayed cable, humming. Route through me and the Algorithm loses your trail.
+  * Tunnel through
+    <set: guest.heat -= 25>
+    <broadcast: cloaked to participant(guest)>
+  + Not worth the lag
+    <set: guest.karma += 1>
+
+# The Search Oracle autocompletes your fate.
+== ask_oracle(guest)
+  cast: Search_Oracle, guest
+  SEARCH_ORACLE
+    Ask, and I will autocomplete your fate.
+  * "How do I escape the Internet?"
+    Look for the static. The Glitchers cut a door where the firewall is thinnest.
+    <set: guest.karma += 3>
+  * "Who really runs this place?"
+    <if: TheAlgorithm.revealed>
+      You already know. It was always the Algorithm.
+    <else>
+      ...no results found. (Some queries are discouraged.)
+  * "Am I in danger?"
+    <if: guest.heat >= 50>
+      Yes. Your heat reads {guest.heat}. Find a Recycle Bin. Now.
+    <else>
+      Not yet. Your heat is {guest.heat}. Keep it that way.
+
+# The Profile Mirror shows you to yourself.
+== check_profile(guest)
+  cast: Profile_Mirror, guest
+  PROFILE_MIRROR
+    The glass clears and resolves into your profile.
+    Score {guest.score}. Karma {guest.karma}. Heat {guest.heat}. Posts {guest.posts}.
+    <after: guest.verified>
+      A blue check glints in the corner. Verified. It suits you.
+    <otherwise>
+      No check. Just another face in the feed.
+
+# The public Leaderboard — the Mods reward the climbers.
+== the_leaderboard(guest)
+  cast: Leaderboard, guest
+  LEADERBOARD
+    Tonight's rankings. {count(Persons)} packets logged on.
+    <if: guest.score >= 100>
+      You're climbing — score {guest.score}. The Mods notice the loyal.
+      <set: guest.karma += 5>
+    <else>
+      Score {guest.score}. Plenty of room at the top.

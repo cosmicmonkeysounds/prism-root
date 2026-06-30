@@ -30,7 +30,18 @@ server/
   store.ts       # durable event-sourced journal + persisted moderation
   public/        # the vanilla operator console served at /console
 examples/
-  escape-the-internet.loom   # the reference scenario
+  load.ts                    # multi-file project loader (main.loom first)
+  escape-the-internet/       # the reference scenario, authored across ~18 files
+    main.loom                #   world spine: factions, locations, ROLE Guest
+    cast/                    #   actors + scannable props, grouped by faction
+                             #     (mods / chatters / algorithm / glitchers /
+                             #      neutral) — named performers and installation
+                             #      props (the Captcha, the Cookie Banner, the
+                             #      Recycle Bin, the Firewall…) all CHARACTERs
+    beats/                   #   scripted interactions by zone: arrival, feed,
+                             #     social, traps, tools, prison, news, … each a
+                             #     scan → divert target
+    atmosphere.loom          #   ambient generators (the autonomous clock)
 test/            # vitest suites, ported 1:1 from the Rust #[cfg(test)]
 ```
 

@@ -1,0 +1,29 @@
+# Beats — the Chatters
+
+# A recruiter offers a live choice: the participant decides on their phone.
+== recruit(guest)
+  cast: Recruiter, guest
+  RECRUITER
+    The Chatters could use you. What do you say?
+  * Join the Chatters
+    <join: guest to Chatters>
+  * Stay loyal
+    <set: guest.score += 10>
+
+# Verified_Vera reacts differently to each faction (a `<match:>` on the
+# guest's allegiance), then puts everyone on the feed regardless.
+== verified_meet(guest)
+  cast: Verified_Vera, guest
+  VERIFIED_VERA
+    <match: guest.faction>
+      Chatters
+        One of mine! Let's get you some clout.
+        <set: guest.karma += 15>
+        <set: guest.verified = true>
+      Mods
+        A Mod, slumming it with the famous. Bold of you.
+        <set: guest.karma += 5>
+      TheAlgorithm
+        ...have we met? Your eyes flicker like a loading screen.
+    Either way — chin up, you're on the feed now.
+    <broadcast: spotlight to participant(guest)>

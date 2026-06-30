@@ -1,0 +1,23 @@
+# Cast — the Glitchers (hidden resistance)
+#
+# The underground railroad out of the Internet. A Glitch contact works
+# the cells; Hacker_Zero hands out the tools; a VPN node hides your
+# trail. The faction stays a rumour until the first guest actually
+# escapes (ROLE Guest `on escape` reveals it).
+
+CHARACTER Glitch
+  faction: Glitchers
+  on scan guest
+    -> glitch_offer
+
+# Named performer: the hacker who arms you instead of saving you.
+CHARACTER Hacker_Zero
+  faction: Glitchers
+  on scan guest
+    -> hacker_tool
+
+# Prop: a VPN node that cools your heat.
+CHARACTER VPN_Node
+  faction: Glitchers
+  on scan guest
+    -> vpn_connect

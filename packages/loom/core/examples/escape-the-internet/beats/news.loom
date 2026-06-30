@@ -1,0 +1,16 @@
+# Beats — the news desk
+#
+# The Newscaster reports the room back to itself: a live count of the
+# detained, and — once the Algorithm is exposed — the only headline that
+# ever mattered.
+
+== breaking_news(guest)
+  cast: Newscaster, guest
+  NEWSCASTER
+    Tonight's top story — {count(Internet.occupants)} packets currently detained in the Internet.
+    <if: TheAlgorithm.revealed>
+      And the shadow moderators have been UNMASKED as the Algorithm itself.
+      You heard it here. Back to you.
+    <else>
+      Officials continue to deny rumours of a hidden hand behind the bans.
+      More at eleven.

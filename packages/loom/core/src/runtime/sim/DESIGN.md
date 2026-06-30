@@ -80,9 +80,10 @@ back to the scanning device) · `<cast: p as Role>` · `<promote: p to Role>` ·
 
 `on scan guest` (scanner-owned, binds subject) · `on captured` / `on escape`
 (role-owned, `self` = the affected person) · `on captured guest`
-(character-owned reaction to *any* subject) · `on lockdown` (character-owned
-**global cue**, `self`-only, no subject) · `on exits LOCATION` · `on betray` ·
-`on <signal> [subject]` (generic).
+(character-owned reaction to *any* subject) · `on blackout` (character-owned
+**global cue**, `self`-only, no subject) · `on enters LOCATION captive` /
+`on exits LOCATION` · `on every 60s` (time-driven, fired by `tick`) ·
+`on betray` · `on <signal> [subject]` (generic).
 
 ## Hardening (verification-driven, 22 scenario tests, two adversarial rounds)
 

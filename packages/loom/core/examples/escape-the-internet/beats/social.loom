@@ -1,0 +1,60 @@
+# Beats — the social floor (Chatters props + the Troll King)
+#
+# Engagement is currency here. Most of it is harmless karma — but a
+# ratio or a pile-on draws the Algorithm's eye, so the loud ones route
+# through `lockdown` like everything else that raises heat.
+
+# The Troll King dares a newcomer into a fight.
+== troll_dare(guest)
+  cast: Troll_King, guest
+  TROLL_KING
+    Heh. Fresh packet. Bet you won't ratio the Mods.
+  * Light them up
+    <set: guest.heat += 25>
+    <set: guest.karma += 10>
+    <set: Troll_King.trusts.guest += 10>
+    <if: guest.faction == null>
+      <join: guest to Chatters>
+    -> lockdown
+  * Stay above it
+    <set: guest.karma += 5>
+    <set: Troll_King.trusts.guest -= 5>
+
+# Smash the giant Like button. Pure dopamine, mostly harmless.
+== smash_like(guest)
+  cast: Like_Button, guest
+  LIKE_BUTTON
+    A giant glowing thumb, warm to the touch. It wants to be pressed.
+  * SMASH that like
+    <set: guest.posts += 1>
+    <set: guest.karma += 5>
+    <broadcast: applause to participant(guest)>
+  + Smash it again, harder
+    <set: guest.posts += 1>
+    <set: guest.score += 5>
+
+# The comment section: someone is wrong on the internet.
+== comment_war(guest)
+  cast: Comment_Section, guest
+  COMMENT_SECTION
+    The replies are a war zone. Someone is extremely, gloriously wrong.
+  * Pile on
+    <set: guest.posts += 1>
+    <set: guest.heat += 20>
+    <if: guest.faction == Chatters>
+      The Chatters chant your name. Clout acquired.
+      <set: guest.karma += 10>
+    -> lockdown
+  * Touch grass
+    <set: guest.karma += 8>
+
+# Ring the bell. Never miss a moment of the noise.
+== subscribe(guest)
+  cast: Notification_Bell, guest
+  NOTIFICATION_BELL
+    Ring the bell. Never miss a single second of the chaos.
+  * Subscribe + all notifications
+    <set: guest.posts += 1>
+    <broadcast: subscribed to participant(guest)>
+  + Mute everything
+    <set: guest.karma += 3>

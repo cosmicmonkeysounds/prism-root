@@ -1,0 +1,49 @@
+# Cast — the Chatters (chaos)
+#
+# Recruiters, a verified celebrity, a DJ who answers the room-wide
+# blackout, a troll boss, and the social-media props that are the
+# Chatters' natural habitat: the Like button, the comment section, the
+# notification bell.
+
+CHARACTER Recruiter
+  faction: Chatters
+  on scan guest
+    -> recruit
+
+CHARACTER Verified_Vera
+  faction: Chatters
+  trusts Guest: 50 of 100
+  on scan guest
+    -> verified_meet
+
+CHARACTER DJ
+  faction: Chatters
+  # A global cue, not an algorithmic punishment: the operator kills the
+  # lights and the DJ rallies both public factions. `self`-only hook.
+  on blackout
+    <broadcast: lights_out to faction(Mods) | faction(Chatters)>
+
+# Named performer: the troll boss who dares you into a ratio.
+CHARACTER Troll_King
+  faction: Chatters
+  trusts Guest: 30 of 100
+  on scan guest
+    -> troll_dare
+
+# Prop: the giant Like button.
+CHARACTER Like_Button
+  faction: Chatters
+  on scan guest
+    -> smash_like
+
+# Prop: the comment section, always a war zone.
+CHARACTER Comment_Section
+  faction: Chatters
+  on scan guest
+    -> comment_war
+
+# Prop: subscribe + notifications.
+CHARACTER Notification_Bell
+  faction: Chatters
+  on scan guest
+    -> subscribe
