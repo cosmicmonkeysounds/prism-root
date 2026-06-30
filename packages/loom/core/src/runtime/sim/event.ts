@@ -27,6 +27,8 @@ export type SimEvent =
   | { type: "choicePrompted"; person: string | null; promptId: string; options: string[] }
   | { type: "respond"; to: string; text: string }
   | { type: "signal"; name: string; subject: string | null }
+  | { type: "ambient"; source: string; text: string }
+  | { type: "tick"; elapsedMs: number }
   | { type: "diagnostic"; message: string };
 
 /** Append-only event log with the queries the rule engine + app need. */

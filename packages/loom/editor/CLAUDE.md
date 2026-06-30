@@ -17,6 +17,13 @@ A local-first IDE with a visual canvas, running entirely in the browser.
 - `zustand` for state
 - `pnpm` for package management
 
+## Install
+This editor (`loom-app`) is part of the **loom pnpm workspace**
+(`packages/loom/pnpm-workspace.yaml`, alongside `@loom/core` and
+`loom-play`). One install covers all three: `cd packages/loom && pnpm
+install`. Run editor scripts with `pnpm --filter loom-app <script>` from
+the loom root, or `pnpm <script>` from this directory.
+
 ## Layout
 ```
 src/

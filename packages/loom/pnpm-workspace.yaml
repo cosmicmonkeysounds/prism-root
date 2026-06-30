@@ -1,0 +1,13 @@
+# Loom's JavaScript/TypeScript packages share one install + lockfile.
+# Run `pnpm install` from this directory (packages/loom) to set up the
+# engine port (core), the participant app (play), and the editor at once.
+#
+# This is an independent JS workspace: the surrounding prism-root Cargo
+# monorepo's pnpm workspace only covers prism-studio, so these loom
+# packages are not part of it. pnpm resolves the nearest
+# pnpm-workspace.yaml when walking up from any of them, so running an
+# install from `core/`, `play/`, or `editor/` also uses this workspace.
+packages:
+  - core
+  - play
+  - editor

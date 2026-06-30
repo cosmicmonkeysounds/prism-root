@@ -34,6 +34,7 @@ describe("Escape the Internet — model compile", () => {
       "Moderator_Prime",
       "Recruiter",
       "Sentinel",
+      "Surveillance",
       "TheAdmin",
     ]);
     expect(sim.model.defaultRole).toBe("Guest");
@@ -369,5 +370,76 @@ CHARACTER ModBot
     sim.createPerson("g1", "A");
     sim.scan("ModBot", "g1");
     expect(sim.scoreOf("g1")).toBe(-5);
+  });
+});
+
+describe("Escape the Internet — the clock (autonomous life)", () => {
+  function ambient(events: SimEvent[]): string[] {
+    return events.filter((e) => e.type === "ambient").map((e) => (e as { text: string }).text);
+  }
+
+  it("emits ambient generator barks only on the interval", () => {
+    const sim = fresh();
+    expect(ambient(sim.tick(19000))).toHaveLength(0); // under 20s
+    const evs = sim.tick(2000); // crosses 20s
+    expect(ambient(evs)).toHaveLength(1);
+    expect((evs.find((e) => e.type === "ambient") as { source: string }).source).toBe("FeedHum");
+  });
+
+  it("cycles bark text deterministically through the generator", () => {
+    const sim = fresh();
+    const texts: string[] = [];
+    for (let i = 0; i < 4; i++) texts.push(...ambient(sim.tick(20000)));
+    expect(texts).toHaveLength(4);
+    expect(new Set(texts).size).toBe(4); // four distinct barks, in order
+  });
+
+  it("exposes Time.* on the world clock", () => {
+    const sim = fresh();
+    sim.tick(65000);
+    expect(sim.world.get("Time.minute")).toEqual({ kind: "number", value: 1 });
+    expect(sim.elapsed()).toBe(65000);
+  });
+
+  it("ramps the Algorithm's threat and exposes the hidden faction at 90s", () => {
+    const sim = fresh();
+    sim.createPerson("g1", "A");
+    sim.join("g1", "Mods");
+    expect(sim.factionRevealed("TheAlgorithm")).toBe(false);
+    const evs = sim.tick(90000); // 30s/60s/90s → threat 1/2/3 → reveal
+    expect(sim.world.get("Surveillance.threat")).toEqual({ kind: "number", value: 3 });
+    expect(sim.factionRevealed("TheAlgorithm")).toBe(true);
+    const siren = evs.filter(
+      (e) => e.type === "broadcast" && (e as { cue: string }).cue === "lockdown_siren",
+    );
+    expect(siren.length).toBeGreaterThanOrEqual(1);
+    expect((siren[0] as { audience: string[] }).audience).toEqual(["g1"]);
+  });
+
+  it("does not fire timer/generator hooks via ordinary signals", () => {
+    const sim = fresh();
+    const before = sim.log.len();
+    sim.signal("every"); // must not trip the `on every 30s` timer
+    expect(sim.world.peek("Surveillance.threat")).toBeNull();
+    expect(sim.log.since(before).filter((e) => e.type === "ambient")).toHaveLength(0);
+  });
+});
+
+describe("Escape the Internet — relationship-driven dialogue", () => {
+  function lines(events: SimEvent[]): string {
+    return events
+      .filter((e) => e.type === "dialogue")
+      .map((e) => (e as { text: string }).text)
+      .join(" ");
+  }
+  it("gates a moderator's line on accumulated trust", () => {
+    const sim = fresh();
+    sim.createPerson("g1", "A");
+    sim.join("g1", "Mods");
+    // First scan: trust starts at 50 → the ordinary greeting, trust → 60.
+    expect(lines(sim.scan("Moderator_Prime", "g1"))).toContain("A fellow Mod");
+    expect(sim.world.get("Moderator_Prime.trusts.g1")).toEqual({ kind: "number", value: 60 });
+    // Second scan: trust 60 (> 55) → the trusted-face line.
+    expect(lines(sim.scan("Moderator_Prime", "g1"))).toContain("face I trust");
   });
 });

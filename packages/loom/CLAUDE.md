@@ -13,11 +13,33 @@ tools) without dragging the runtime + scheduler + Luau bridge along.
 | [`wasm`](./wasm)       | `wasm-bindgen` surface — parser (`parse` / `diagnose` / `emit_tmgrammar` + `apply_*` structural edits), the `LspWorkspace`, and the `LoomSession` local play engine, consumed by the React editor |
 | [`server`](./server)   | Multi-user backbone — `loom-relayd` axum server hosting per-workspace Loro CRDTs over `prism-core::network::relay`. See [`docs/dev/loom-multiuser.md`](../../docs/dev/loom-multiuser.md). |
 | [`editor`](./editor)   | React/Vite/CodeMirror web IDE — the user-facing front end |
+| [`core`](./core)       | Native **TypeScript** port of Loom (no WASM, no Prism): parser + a first-principles social-ecosystem `runtime/sim` + an SSE/REST **event server** (`pnpm serve`) that hosts a live `Sim` for LAN events. vitest-tested. |
+| [`play`](./play)       | The **participant React app** (Vite, name `loom-play`) guests + performers use at a live event — a branching game-dialogue client over the `core` server's SSE/REST. `pnpm dev` (:5174, proxies to the server on :7000) / `pnpm build` (served by the event server at `/`). |
 | [`examples`](./examples) | Reference `.loom` projects used by `loom-runtime` integration tests and as authoring tutorials |
 
 The canonical design lives in [`docs/dev/loom-v3.html`](../../docs/dev/loom-v3.html).
 Per-crate `lib.rs` docstrings carry the module roadmap and the spec
 section each module implements.
+
+## JS/TS workspace (core · play · editor)
+
+The three JavaScript packages share a **loom-local pnpm workspace**
+([`pnpm-workspace.yaml`](./pnpm-workspace.yaml)) — independent of the
+prism-root workspace (which only covers `prism-studio`). One install
+covers all three; run scripts with `pnpm --filter <name>`:
+
+```bash
+cd packages/loom && pnpm install            # core + play + editor
+pnpm --filter @loom/core test               # the TS engine suites
+pnpm --filter @loom/core serve              # the LAN event server (:7000)
+pnpm --filter loom-play dev                 # participant app, HMR (:5174)
+pnpm --filter loom-app  dev                 # the editor, HMR (:5173)
+```
+
+Each package has its own README: [`core`](./core/README.md) (engine +
+event server), [`play`](./play/README.md) (the participant app),
+[`editor`](./editor/README.md). The Rust crates are built via Cargo, not
+pnpm — they are not in this JS workspace.
 
 ## Status
 

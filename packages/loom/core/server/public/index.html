@@ -122,6 +122,7 @@
         for (const [name, fn] of Object.entries(handlers)) es.addEventListener(name, (e) => fn(JSON.parse(e.data)));
       }
       const pill = (f) => `<span class="pill ${f || "none"}">${f || "unaligned"}</span>`;
+      const codeFromUrl = () => { try { return new URLSearchParams(location.search).get("code") || ""; } catch { return ""; } };
 
       // ---------------- role chooser ----------------
       function chooser() {
@@ -152,16 +153,19 @@
         const err = $(`<div class="err"></div>`);
         const card = $(`
           <div class="card"><h2>Join the event</h2>
-            <p class="muted">Pick a name. You'll get a QR code that performers can scan.</p>
+            <p class="muted">Pick a name and enter the event code from the host. You'll get a QR code that performers can scan.</p>
             <input id="gname" placeholder="Your name" autocomplete="off" />
+            <input id="gcode" placeholder="Event code" autocomplete="off" autocapitalize="characters" spellcheck="false" />
             <button class="primary" id="gjoin">Enter the internet →</button>
           </div>`);
+        card.querySelector("#gcode").value = codeFromUrl();
         card.append(err);
         app.append(card, switchBtn(() => {}));
         card.querySelector("#gjoin").onclick = async () => {
           try {
             const name = card.querySelector("#gname").value.trim() || "Guest";
-            const r = await api("/api/guest/register", { name });
+            const passcode = card.querySelector("#gcode").value.trim();
+            const r = await api("/api/guest/register", { name, passcode });
             ls.set("guest", r);
             guestDash(r);
           } catch (e) { err.textContent = e.message; }
@@ -314,7 +318,11 @@
         if (saved && saved.token) return modDash(saved);
         app.innerHTML = "";
         const err = $(`<div class="err"></div>`);
-        const card = $(`<div class="card"><h2>Moderator sign-in</h2><input id="mpass" type="password" placeholder="Moderator passcode" /><button class="primary" id="mlogin">Sign in</button></div>`);
+        const card = $(`<div class="card"><h2>Moderator sign-in</h2>
+          <input id="mpass" type="password" placeholder="Moderator passcode" />
+          <button class="primary" id="mlogin">Sign in</button>
+          <p class="muted" style="margin-top:10px">Find the moderator passcode in the <b>server's terminal</b> (printed at startup), or in <code>&lt;state-dir&gt;/codes.json</code>. You only need it once — after signing in, the console shows every code.</p>
+        </div>`);
         card.append(err);
         app.append(card, switchBtn(() => {}));
         card.querySelector("#mlogin").onclick = async () => {
@@ -346,7 +354,24 @@
 
         const roster = $(`<div class="card"><h2>Roster</h2><div id="rost"></div></div>`);
         const world = $(`<div class="card"><h2>Factions & locations</h2><div id="wld"></div></div>`);
-        app.append(ctrl, tools, roster, world, switchBtn(() => ls.del("mod")));
+
+        // Always render *fresh* codes from the server — a cached login can
+        // be stale, and the server knows the LAN URL the join QR needs.
+        // Fetching also re-validates the token (kicks back to login if not).
+        const codesCard = $(`<div class="card"><h2>Passcodes</h2><div id="codes" class="muted">loading…</div></div>`);
+        app.append(ctrl, codesCard, tools, roster, world, switchBtn(() => ls.del("mod")));
+        api("/api/mod/codes", {}, T).then((c) => {
+          codesCard.querySelector("#codes").outerHTML = `<div>
+            <p class="muted">Read them out, or show the QR for guests to scan.</p>
+            <div class="grid">
+              <div class="stat"><div class="k">🎟️ Guest event code</div><div class="v" style="letter-spacing:2px">${c.eventPass}</div></div>
+              <div class="stat"><div class="k">🎭 Performer passcode</div><div class="v" style="letter-spacing:2px">${c.primePass}</div></div>
+            </div>
+            <div class="stat" style="margin-top:10px"><div class="k">🛡️ Moderator passcode <span class="muted">— for a co-moderator</span></div><div class="v" style="letter-spacing:2px">${c.modPass}</div></div>
+            <div class="qr"><img alt="Join QR" src="/api/qr?text=${encodeURIComponent(c.joinUrl + "/?code=" + c.eventPass)}" /></div>
+            <p class="muted" style="text-align:center">Guests scan to open <b>${c.joinUrl}</b> with the event code filled in.</p>
+          </div>`;
+        }).catch(() => { ls.del("mod"); modFlow(); });
 
         function alertErr(e) { const t = $(`<div class="err">${e.message}</div>`); ctrl.append(t); setTimeout(() => t.remove(), 3000); }
 

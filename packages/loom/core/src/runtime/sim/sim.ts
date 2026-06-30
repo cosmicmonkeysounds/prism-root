@@ -78,6 +78,11 @@ export class Sim {
   private revealed = new Set<string>();
   private pendingChoices = new Map<string, PendingChoice[]>();
   private currentBindings: Bindings = new Map();
+  private elapsedMs = 0;
+  private genState = new Map<string, number>();
+  private genCursor = new Map<string, number>();
+  private timerState = new Map<Hook, number>();
+  private timerFired = new Set<Hook>();
 
   constructor(model: SimModel) {
     this.model = model;
@@ -204,6 +209,58 @@ export class Sim {
     this.doEscape(person);
     this.drain();
     return this.log.since(from);
+  }
+
+  /**
+   * Advance the autonomous clock by `dtMs`: update `Time.*`, fire due
+   * ambient generators and time-driven hooks, then drain. Pure-reactive
+   * scenarios never need to call this; a timed one (escalating threat,
+   * ambient barks) wants a steady tick from the host (the server ticks
+   * once a second while the doors are open).
+   */
+  tick(dtMs: number): SimEvent[] {
+    const from = this.log.len();
+    this.elapsedMs += Math.max(0, dtMs);
+    this.world.set("Time.elapsed", vNumber(Math.floor(this.elapsedMs / 1000)));
+    this.world.set("Time.minute", vNumber(Math.floor(this.elapsedMs / 60000)));
+
+    // Ambient generators emit a bark per interval, cycled deterministically.
+    for (const g of this.model.gens) {
+      let last = this.genState.get(g.id) ?? 0;
+      let guard = 0;
+      while (this.elapsedMs >= last + g.intervalMs && guard++ < 1000) {
+        last += g.intervalMs;
+        const cursor = this.genCursor.get(g.id) ?? 0;
+        this.genCursor.set(g.id, cursor + 1);
+        this.record({ type: "ambient", source: g.id, text: g.barks[cursor % g.barks.length]! });
+      }
+      this.genState.set(g.id, last);
+    }
+
+    // Time-driven character hooks (self = the owning character).
+    for (const hook of this.model.timerHooks) {
+      const t = hook.timer!;
+      if (t.mode === "every") {
+        let last = this.timerState.get(hook) ?? 0;
+        let guard = 0;
+        while (this.elapsedMs >= last + t.ms && guard++ < 1000) {
+          last += t.ms;
+          this.exec([{ items: hook.body, index: 0, bindings: new Map([["self", hook.ownerId]]) }]);
+        }
+        this.timerState.set(hook, last);
+      } else if (!this.timerFired.has(hook) && this.elapsedMs >= t.ms) {
+        this.timerFired.add(hook);
+        this.exec([{ items: hook.body, index: 0, bindings: new Map([["self", hook.ownerId]]) }]);
+      }
+    }
+
+    this.drain();
+    return this.log.since(from);
+  }
+
+  /** Story-clock elapsed, in milliseconds. */
+  elapsed(): number {
+    return this.elapsedMs;
   }
 
   /**
@@ -347,6 +404,7 @@ export class Sim {
       const role = this.model.roles.get(person.role);
       if (role !== undefined) {
         for (const hook of role.hooks) {
+          if (hook.timer !== null) continue;
           if (hook.verb !== "scan" && hook.verb === t.verb && this.filterOk(hook, t)) {
             const bindings: Bindings = new Map([["self", t.subject]]);
             if (hook.param !== null) bindings.set(hook.param, t.subject);
@@ -359,6 +417,7 @@ export class Sim {
     // guest`); no param is a global cue (`on lockdown`), `self`-only.
     for (const char of this.model.characters.values()) {
       for (const hook of char.hooks) {
+        if (hook.timer !== null) continue;
         if (hook.verb !== t.verb || !this.filterOk(hook, t)) continue;
         if (hook.param !== null) {
           yield [hook, new Map([["self", char.id], [hook.param, t.subject]])];

@@ -9,12 +9,20 @@ import type {
   FactionBody,
   LocationBody,
   Property,
+  RawLine,
 } from "../../parser/index.ts";
+import { stripPrefix } from "../../parser/rust.ts";
 import type { Bundle } from "../bundle.ts";
 import { vBool, vNumber, vString, type Value } from "../expr.ts";
 import { lowerRawBody } from "./effects.ts";
 
 export type EntityKind = "person" | "character" | "faction" | "location" | "role";
+
+/** A time-driven trigger — `on every 30s` / `on after 2m`. */
+export interface TimerSpec {
+  mode: "every" | "after";
+  ms: number;
+}
 
 /** A reactive rule attached to a character or role. */
 export interface Hook {
@@ -26,10 +34,19 @@ export interface Hook {
   param: string | null;
   /** Entity filter, e.g. `Mods` in `on join Mods`. */
   filter: string | null;
+  /** A time trigger when this is `on every …` / `on after …`, else null. */
+  timer: TimerSpec | null;
   /** Structured effect body (shared executor with beats). */
   body: BodyItem[];
   /** Raw `on …` clause, kept for diagnostics. */
   event: string;
+}
+
+/** A compiled ambient generator — emits a bark on a fixed interval. */
+export interface GenSpec {
+  id: string;
+  intervalMs: number;
+  barks: string[];
 }
 
 export interface FactionDef {
@@ -74,6 +91,10 @@ export interface SimModel {
   defaultRole: string | null;
   /** `entry:` beat from a file header, if any. */
   entry: string | null;
+  /** Character-owned time-driven hooks, fired by `Sim.tick`. */
+  timerHooks: Hook[];
+  /** Ambient generators (top-level + character-bound), fired by `tick`. */
+  gens: GenSpec[];
 }
 
 /** Compile every loaded file in `bundle` into one `SimModel`. */
@@ -87,6 +108,8 @@ export function compileModel(bundle: Bundle): SimModel {
     entityKind: new Map(),
     defaultRole: null,
     entry: null,
+    timerHooks: [],
+    gens: [],
   };
 
   for (const entry of bundle.files) {
@@ -124,12 +147,28 @@ export function compileModel(bundle: Bundle): SimModel {
           if (decl.character) {
             model.characters.set(decl.name, charDef(decl.name, decl.character));
             model.entityKind.set(decl.name, "character");
+            // Character-bound generators (spec §10.5) become ambient emitters.
+            for (const gen of decl.character.generators) {
+              const spec = genSpec(`${decl.name}.${gen.name}`, gen.body);
+              if (spec !== null) model.gens.push(spec);
+            }
+          }
+          break;
+        case "generator":
+          if (decl.generator) {
+            const spec = genSpec(decl.name, decl.generator.body);
+            if (spec !== null) model.gens.push(spec);
           }
           break;
         default:
           break;
       }
     }
+  }
+
+  // Character-owned time hooks drive the autonomous clock.
+  for (const char of model.characters.values()) {
+    for (const hook of char.hooks) if (hook.timer !== null) model.timerHooks.push(hook);
   }
   return model;
 }
@@ -176,8 +215,61 @@ function hooksOf(ownerId: string, ownerKind: "character" | "role", body: Charact
     .filter((h) => !h.suppressed)
     .map((h) => {
       const { verb, param, filter } = parseTrigger(h.event);
-      return { ownerId, ownerKind, verb, param, filter, body: lowerRawBody(h.body), event: h.event };
+      return {
+        ownerId,
+        ownerKind,
+        verb,
+        param,
+        filter,
+        timer: parseTimer(h.event),
+        body: lowerRawBody(h.body),
+        event: h.event,
+      };
     });
+}
+
+/** Parse `every 30s` / `after 2m` into a timer spec, else null. */
+export function parseTimer(event: string): TimerSpec | null {
+  const words = event.trim().split(/\s+/u).filter((w) => w.length > 0);
+  const head = words[0];
+  if (head !== "every" && head !== "after" && head !== "at") return null;
+  const ms = parseDuration(words.slice(1).join(""));
+  if (ms === null) return null;
+  return { mode: head === "every" ? "every" : "after", ms };
+}
+
+/** Parse a duration token (`30s`, `200ms`, `2m`, bare = seconds) to ms. */
+export function parseDuration(s: string): number | null {
+  const m = /^(\d+(?:\.\d+)?)(ms|s|m)?$/u.exec(s.trim());
+  if (m === null) return null;
+  const n = Number(m[1]);
+  const unit = m[2] ?? "s";
+  return unit === "ms" ? n : unit === "m" ? n * 60000 : n * 1000;
+}
+
+/** Lower a generator body into an interval + bark list, or null. */
+function genSpec(id: string, body: RawLine[]): GenSpec | null {
+  let intervalMs: number | null = null;
+  const barks: string[] = [];
+  for (const line of body) {
+    const text = line.text.trim();
+    const every = stripPrefix(text, "every ");
+    if (every !== null) {
+      // `every 20s` or `wait random(20s, 60s)` → take the first duration.
+      const tok = every.trim().split(/[\s,()]+/u).find((t) => /^\d/u.test(t));
+      if (tok !== undefined) intervalMs = parseDuration(tok);
+      continue;
+    }
+    const barkFrom = stripPrefix(text, "yield bark from ");
+    if (barkFrom !== null) {
+      barks.push(...barkFrom.split("|").map((s) => s.trim()).filter((s) => s.length > 0));
+      continue;
+    }
+    const yieldText = stripPrefix(text, "yield ");
+    if (yieldText !== null) barks.push(yieldText.trim());
+  }
+  if (intervalMs === null || barks.length === 0) return null;
+  return { id, intervalMs, barks };
 }
 
 /** Parse an `on …` clause into a structured trigger. */

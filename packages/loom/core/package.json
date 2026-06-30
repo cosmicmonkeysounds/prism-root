@@ -3,13 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Native TypeScript port of the Loom engine (parser + runtime + lsp + doc). Replaces the wasm bundle the editor consumed.",
+  "description": "Native TypeScript port of the Loom engine (parser + ecosystem-sim runtime) plus the SSE/REST event server for live LAN events. No WASM, no Prism.",
   "exports": {
     ".": "./src/index.ts",
     "./parser": "./src/parser/index.ts",
     "./runtime": "./src/runtime/index.ts",
-    "./lsp": "./src/lsp/index.ts",
-    "./doc": "./src/doc/loom-doc.ts"
+    "./sim": "./src/runtime/sim/index.ts"
   },
   "scripts": {
     "test": "vitest run",
