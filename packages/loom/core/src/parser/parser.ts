@@ -9,7 +9,6 @@ import type {
   Conditional,
   ConditionalArm,
   DialogueBlock,
-  Directive,
   DirectiveBlock,
   Divert,
   DivertTarget,
@@ -28,7 +27,7 @@ import type {
 import { emptyDeclaration, declarationKindFromKeyword } from "./ast.ts";
 import { lower } from "./decl-body.ts";
 import { Code, errorDiagnostic, type Diagnostic } from "./diagnostics.ts";
-import { scan, scannedLineSpan, type LineKind, type ScannedLine } from "./lexer.ts";
+import { scan, scannedLineSpan, type ScannedLine } from "./lexer.ts";
 import { pos, span, ZERO_POSITION, type Position, type Span } from "./source.ts";
 import { splitOnce, stripPrefix, trimStartMatches } from "./rust.ts";
 

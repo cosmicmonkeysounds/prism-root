@@ -6,6 +6,26 @@ import type { Sim } from "../src/runtime/sim/index.ts";
 
 export type RuntimePhase = "idle" | "open" | "paused";
 
+/** An authored channel a participant can see, for the sidebar. */
+export interface ChannelSnapshot {
+  id: string;
+  kind: string; // open | private | faction | group | dm
+  title: string;
+  spaceId: string;
+  /** True when the viewer is an explicit member (drives leave/invite). */
+  member: boolean;
+  /** May the viewer post here (post policy)? Drives the composer. */
+  canPost: boolean;
+  /** Can messages here open threads? Drives the reply affordance. */
+  threadable: boolean;
+}
+
+/** A Discord-style sidebar section title. */
+export interface SpaceSnapshot {
+  id: string;
+  title: string;
+}
+
 /** What a single party-goer sees about themselves. */
 export interface GuestView {
   id: string;
@@ -20,6 +40,12 @@ export interface GuestView {
   pendingChoice: string[] | null;
   /** Channel the pending decision docks under (`"lobby"`, a DM, …). */
   decisionChannel: string | null;
+  /** Authored channels this guest can see (open + faction + member rooms). */
+  channels: ChannelSnapshot[];
+  /** Titles for the authored sidebar sections. */
+  spaces: SpaceSnapshot[];
+  /** Other participants (id + name) — the invite picker's source. */
+  roster: Array<{ id: string; name: string }>;
 }
 
 export function guestView(sim: Sim, id: string, decisionChannel: string | null = null): GuestView {
@@ -35,6 +61,9 @@ export function guestView(sim: Sim, id: string, decisionChannel: string | null =
     captured: sim.isCaptured(id),
     pendingChoice,
     decisionChannel: pendingChoice ? (decisionChannel ?? "lobby") : null,
+    channels: sim.visibleChannelsFor(id),
+    spaces: sim.spaceList(),
+    roster: sim.publicRoster(id),
   };
 }
 
@@ -135,10 +164,13 @@ export interface PrimeView {
   character: string;
   faction: string | null;
   guests: PrimeGuest[];
+  /** Every authored channel — performers run every room. */
+  channels: ChannelSnapshot[];
+  spaces: SpaceSnapshot[];
 }
 
 export function primeView(sim: Sim | null, character: string): PrimeView {
-  if (sim === null) return { character, faction: null, guests: [] };
+  if (sim === null) return { character, faction: null, guests: [], channels: [], spaces: [] };
   const c = sim.model.characters.get(character);
   const guests: PrimeGuest[] = [...sim.persons.values()].map((p) => ({
     id: p.id,
@@ -146,5 +178,11 @@ export function primeView(sim: Sim | null, character: string): PrimeView {
     faction: sim.publicFactionOf(p.id),
     captured: sim.isCaptured(p.id),
   }));
-  return { character, faction: c?.faction ?? null, guests };
+  return {
+    character,
+    faction: c?.faction ?? null,
+    guests,
+    channels: sim.allChannelsFor(character),
+    spaces: sim.spaceList(),
+  };
 }

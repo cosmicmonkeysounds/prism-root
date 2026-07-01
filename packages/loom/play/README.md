@@ -19,16 +19,50 @@ for free: full **history on re-login** (the server replays every thread
 since the event began), **moderation** (admins hide/show messages), and a
 single source of truth for narrative copy.
 
-## Channels
+## Channels, spaces & threads
 
-Every message lands in one of three channel kinds:
+Channels are grouped into **spaces** — the Discord-style sidebar sections.
+Story-driven channels live in the built-in `internet` space (the performer
+also gets `booth` + `guests` sections); **authored `SPACE`/`CHANNEL`
+declarations** (see [`core`](../core)) add their own spaces alongside. Each
+message lands in one channel kind:
 
 - **🌐 The Internet** (`lobby`) — ambient story barks, global broadcasts,
-  and your own personal beats (*"⛓️ You've been dragged into the
-  Internet."*).
-- **#faction** (`faction:<Id>`) — a faction-scoped broadcast, members
+  your own personal beats, and open-room chat.
+- **#faction** (`faction:<Id>`) — a faction-scoped broadcast / room, members
   only.
 - **DM** (`dm:<Character>`) — a character speaking directly to you.
+- **authored rooms** (`room:<name>`) — an `open` / `private` / `faction` /
+  `group` / `dm` channel declared in `.loom`, grouped under its `SPACE`.
+
+**Access control.** Visibility follows the channel kind: `open` rooms show
+for everyone, `faction` rooms for that faction's members, and
+`private`/`group`/`dm` rooms only for explicit members. The server snapshot
+(`GuestView.channels`) lists exactly the rooms you can see — empty rooms
+included. Membership changes through **invites** (`/api/*/channel/invite`,
+and guests invite each other from the roster picker) and **leave**
+(`/api/*/channel/leave`), both journaled so they replay; a join posts a
+member-scoped "📥 … joined the room" notice.
+
+**Channel-type rules.** Each authored channel carries `canPost` + `threadable`
+in its snapshot (resolved from the `core` channel-type registry). A read-only
+room (`post: none`, e.g. `#announcements`) hides the composer; a
+non-threadable room hides the reply affordance. Broadcasts mirror into rooms
+that subscribe (`routes: *`).
+
+**Typed chat (hybrid).** Participants type into a channel via a composer
+(`/api/guest/say` · `/api/prime/say`); the message is journaled as a sim
+`chat` event so it replays deterministically alongside the story. Audience is
+the channel's current members (open → everyone).
+
+**Threads (Slack-style).** A line message can be replied to: a reply carries
+the root's `seq` as `parentSeq`, the channel shows a *"N replies"*
+affordance, and opening it shows the thread panel (root + replies + a reply
+composer). Threading is single-level.
+
+**Sender runs (Slack/Discord).** Consecutive `line`s from one sender within
+five story-minutes coalesce under a single colored screen-name banner;
+continuation lines tuck under it.
 
 **Decisions dock in a thread.** A recruiter's `<choice>` appears as
 quick-reply buttons inside *that recruiter's* DM; world choices (pick a
@@ -96,21 +130,23 @@ run a single process — `@loom/core serve` — on one origin, no Vite.
 | `pnpm build`     | production build → `dist/`            |
 | `pnpm preview`   | preview the built app                 |
 | `pnpm typecheck` | `tsc --noEmit`                        |
+| `pnpm test`      | vitest (pure threads/grouping helpers)|
 
 ## Layout
 
 ```
 src/
-  types.ts      # mirror server/chat.ts (ChatMessage/Channel) + view snapshots
+  types.ts      # mirror server/chat.ts (ChatMessage incl. parentSeq / Channel incl. spaceId)
   client.ts     # api() POST + useChatStream (SSE → de-duped message map)
-  threads.ts    # group messages → channels; unread + active-thread nav
-  chat.tsx      # composable primitives: ChannelList/ChannelView/Message/…
-  session.ts    # useGuestSession / usePrimeSession (channels + decisions + actions)
+  threads.ts    # group→channels + spaces (groupBySpace) + sender runs (groupRuns) + thread selectors
+  chat.tsx      # primitives: SpaceList/ChannelView/MessageGroup/MessageThread/Composer/…
+  session.ts    # useGuestSession / usePrimeSession (channels + decisions + actions + say())
   guest.tsx     # the guest inbox app
   performer.tsx # the performer / booth app
   ui.tsx        # the role chooser
   main.tsx      # entry
   styles.css    # the AOL-chatroom skin (Win95 bevels, navy bars, serif lines)
+test/           # vitest: grouping (sender runs) · spaces · thread selectors
 index.html      # Vite entry
 vite.config.ts  # react plugin + dev proxy to LOOM_SERVER (default :7000)
 ```

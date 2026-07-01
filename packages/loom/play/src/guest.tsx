@@ -4,8 +4,9 @@
 //! the inbox header, and a profile sheet for out-of-band actions.
 
 import { useState } from "react";
-import { ChannelList, ChannelView, ConnDot, FactionPill } from "./chat.tsx";
+import { ActionRow, ChannelView, ConnDot, FactionPill, InviteSheet, MessageThread, SpaceList } from "./chat.tsx";
 import { useGuestSession, type GuestSession } from "./session.ts";
+import type { Action } from "./types.ts";
 
 /** The event code can ride in on a `?code=` link (e.g. a scanned QR). */
 function codeFromUrl(): string {
@@ -95,6 +96,7 @@ function ProfileSheet({ session, onClose, onLeave }: { session: GuestSession; on
 export function GuestApp({ onLeave }: { onLeave: () => void }) {
   const s = useGuestSession();
   const [profile, setProfile] = useState(false);
+  const [inviting, setInviting] = useState(false);
   if (!s.me) return <GuestRegister session={s} />;
 
   const st = s.status;
@@ -102,7 +104,43 @@ export function GuestApp({ onLeave }: { onLeave: () => void }) {
   const t = s.threads;
 
   if (t.active) {
-    return <ChannelView channel={t.active} onBack={t.back} />;
+    const active = t.active;
+    if (t.activeThreadRoot !== null) {
+      return (
+        <MessageThread
+          channel={active}
+          rootSeq={t.activeThreadRoot}
+          onClose={t.closeThread}
+          onSend={(text, parentSeq) => void s.say(active.id, text, parentSeq)}
+        />
+      );
+    }
+    // A membership-gated room the guest belongs to can invite + leave.
+    const gated = active.kind === "private" || active.kind === "group" || active.kind === "dm";
+    const roomActions: Action[] = [];
+    if (gated && active.member) {
+      roomActions.push({ label: "＋ Invite", onClick: () => setInviting(true), tone: "primary" });
+      roomActions.push({ label: "🚪 Leave", onClick: () => void s.leaveChannel(active.id), tone: "danger" });
+    }
+    return (
+      <>
+        <ChannelView
+          channel={active}
+          onBack={t.back}
+          onOpenThread={t.openThread}
+          onSend={(text) => void s.say(active.id, text)}
+          footer={roomActions.length > 0 ? <ActionRow actions={roomActions} /> : undefined}
+        />
+        {inviting && (
+          <InviteSheet
+            title={`Invite to ${active.title}`}
+            people={st?.roster ?? []}
+            onPick={(id) => void s.inviteToChannel(id, active.id)}
+            onClose={() => setInviting(false)}
+          />
+        )}
+      </>
+    );
   }
 
   const header = (
@@ -123,7 +161,7 @@ export function GuestApp({ onLeave }: { onLeave: () => void }) {
 
   return (
     <div className={captured ? "trapped-bg" : ""}>
-      <ChannelList channels={t.list} onOpen={t.open} header={header} empty="The internet is quiet… for now." />
+      <SpaceList spaces={t.spaces} onOpen={t.open} header={header} empty="The internet is quiet… for now." />
       {profile && <ProfileSheet session={s} onClose={() => setProfile(false)} onLeave={onLeave} />}
     </div>
   );

@@ -1,20 +1,25 @@
-// Author-time AST access for the Properties tray (IDE redesign v2,
-// Phase 2). The runtime `DetailFor` registry reads a live play head;
-// author modes (Writing / Editing) have no play session, so they read
-// the parsed AST of the active file instead — via the wasm `parse`
-// export.
+// Author-time AST access for the Properties tray + static story views.
+// Backed by the native TypeScript Loom parser (`@loom/core`) — no wasm,
+// fully synchronous.
 //
-// `serde_wasm_bindgen` serialises Rust structs as JS objects but maps
-// (the `IndexMap` contract / header properties, and externally-tagged
-// enum wrappers) as JS `Map`s. The `field` / `entries` accessors below
-// are deliberately robust to both shapes so we don't depend on that
-// representation detail.
+// The parser hands us real TypeScript objects: top-level items are
+// tagged unions (`{ kind: 'beat', value }`), and the header contract /
+// properties are JS `Map`s. The shape-agnostic `field` / `entries`
+// accessors below work over both Maps and plain objects so callers stay
+// representation-independent.
 
-import { useEffect, useState } from 'react'
+import { parse } from '@loom/core/parser'
+import {
+  applyBeatProperty,
+  applyInsertBeat,
+  applyMoveBeat,
+  applyRemoveBeat,
+  type LoomFile,
+} from '@loom/core/parser'
 
-export type LoomPos = { line: number; column: number; byte: number }
+export type LoomPos = { line: number; column: number; offset: number }
 export type LoomSpan = { start: LoomPos; end: LoomPos }
-export type LoomFileAst = { header: unknown; items: unknown[] }
+export type LoomFileAst = LoomFile
 export type LoomParseResult = { ast: LoomFileAst; diagnostics: unknown[] }
 export type ItemKind = 'beat' | 'declaration' | 'let'
 
@@ -34,30 +39,20 @@ export function entries(obj: unknown): [string, unknown][] {
   return []
 }
 
-function firstKey(obj: unknown): string | null {
-  if (typeof obj === 'string') return obj
-  const e = entries(obj)
-  return e.length ? e[0][0] : null
-}
-
-function has(obj: unknown, key: string): boolean {
-  if (obj instanceof Map) return (obj as Map<string, unknown>).has(key)
-  return !!obj && typeof obj === 'object' && key in (obj as object)
-}
-
 // ---------------------------------------------------------------------------
 // AST queries
 // ---------------------------------------------------------------------------
 
 export function itemKind(item: unknown): ItemKind | null {
-  if (has(item, 'Beat')) return 'beat'
-  if (has(item, 'Declaration')) return 'declaration'
-  if (has(item, 'LetBinding')) return 'let'
+  const k = field(item, 'kind')
+  if (k === 'beat') return 'beat'
+  if (k === 'declaration') return 'declaration'
+  if (k === 'letBinding') return 'let'
   return null
 }
 
 export function itemPayload(item: unknown): unknown {
-  return field(item, 'Beat') ?? field(item, 'Declaration') ?? field(item, 'LetBinding')
+  return field(item, 'value')
 }
 
 export function itemSpan(item: unknown): LoomSpan | null {
@@ -92,16 +87,15 @@ export function propText(pv: unknown): string {
 }
 
 export function declKindLabel(kind: unknown): string {
-  if (typeof kind === 'string') return kind
-  return firstKey(kind) ?? 'Declaration'
+  return typeof kind === 'string' ? kind : 'declaration'
 }
 
-/** Count beat body items by their variant tag (Dialogue / Choice / …). */
+/** Count beat body items by their variant tag (dialogue / choice / …). */
 export function bodyBreakdown(body: unknown): { tag: string; count: number }[] {
   const arr = Array.isArray(body) ? body : []
   const counts = new Map<string, number>()
   for (const bi of arr) {
-    const tag = firstKey(bi) ?? 'item'
+    const tag = String(field(bi, 'kind') ?? 'item')
     counts.set(tag, (counts.get(tag) ?? 0) + 1)
   }
   return [...counts.entries()].map(([tag, count]) => ({ tag, count }))
@@ -130,53 +124,21 @@ export function summarize(ast: LoomFileAst): FileSummaryData {
 }
 
 // ---------------------------------------------------------------------------
-// wasm parser loader + hook
+// Parser + structural-edit access — synchronous now (no wasm load).
+// The hook shape is retained so callers don't change.
 // ---------------------------------------------------------------------------
 
 type ParseFn = (source: string) => LoomParseResult
 
-type LoomMod = typeof import('@/loom-wasm/loom_wasm')
-
-let modPromise: Promise<LoomMod> | null = null
-
-async function loadMod(): Promise<LoomMod> {
-  if (!modPromise) {
-    modPromise = (async () => {
-      const m = await import('@/loom-wasm/loom_wasm')
-      await m.default()
-      return m
-    })().catch((err) => {
-      modPromise = null
-      throw err
-    })
-  }
-  return modPromise
+const PARSE_FN: ParseFn = (source) => {
+  const [ast, diagnostics] = parse(source)
+  return { ast, diagnostics }
 }
 
-/** Returns the wasm `parse` fn once loaded, or `null` while loading. */
+/** The Loom `parse` fn. Always available (engine is in-process TS). */
 export function useLoomParser(): ParseFn | null {
-  const [fn, setFn] = useState<ParseFn | null>(null)
-  useEffect(() => {
-    let alive = true
-    loadMod()
-      .then((m) => {
-        if (alive) setFn(() => (src: string) => m.parse(src) as LoomParseResult)
-      })
-      .catch(() => {
-        /* parser unavailable — tray falls back to a loading state */
-      })
-    return () => {
-      alive = false
-    }
-  }, [])
-  return fn
+  return PARSE_FN
 }
-
-// ---------------------------------------------------------------------------
-// Structural source edits (Phase 4) — rewrite `.loom` text in place via
-// the wasm `apply_*` functions backed by `loom-parser::edit`. Each is a
-// span-preserving splice: untouched lines stay byte-identical.
-// ---------------------------------------------------------------------------
 
 export type Anchor = 'before' | 'after' | 'start' | 'end'
 
@@ -191,27 +153,14 @@ export type LoomEditApi = {
   removeBeat: (source: string, beat: string) => string
 }
 
-/** Returns the structural-edit API once wasm loads, or `null`. */
+const EDIT_API: LoomEditApi = {
+  setBeatProperty: (s, b, k, v) => applyBeatProperty(s, b, k, v),
+  moveBeat: (s, b, a, n) => applyMoveBeat(s, b, a, n),
+  insertBeat: (s, nm, a, n) => applyInsertBeat(s, nm, a, n),
+  removeBeat: (s, b) => applyRemoveBeat(s, b),
+}
+
+/** The structural-edit API. Always available (engine is in-process TS). */
 export function useLoomEdit(): LoomEditApi | null {
-  const [api, setApi] = useState<LoomEditApi | null>(null)
-  useEffect(() => {
-    let alive = true
-    loadMod()
-      .then((m) => {
-        if (!alive) return
-        setApi({
-          setBeatProperty: (s, b, k, v) => m.apply_beat_property(s, b, k, v),
-          moveBeat: (s, b, a, n) => m.apply_move_beat(s, b, a, n),
-          insertBeat: (s, nm, a, n) => m.apply_insert_beat(s, nm, a, n),
-          removeBeat: (s, b) => m.apply_remove_beat(s, b),
-        })
-      })
-      .catch(() => {
-        /* edit API unavailable — tray fields stay read-only */
-      })
-    return () => {
-      alive = false
-    }
-  }, [])
-  return api
+  return EDIT_API
 }

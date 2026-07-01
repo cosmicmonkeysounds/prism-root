@@ -210,6 +210,47 @@ body {
 }
 .mod-toggle:active { box-shadow: var(--pressed); }
 
+/* ── sender runs + thread affordance (Slack/Discord grouping) ──────────── */
+.run { align-self: stretch; margin: 3px 0; }
+.run .msg.line { margin: 0; }
+/* a same-sender continuation: drop the name banner, indent under it */
+.msg.line.tuck { padding-left: 18px; }
+/* a subtle 💬 icon by default (declutters the mobile room); a beveled count
+   pill once a thread exists. */
+.replies {
+  display: inline-flex; align-items: center; margin-left: 6px; line-height: 1;
+  font: 700 11px var(--ui-font); color: var(--navy);
+  background: none; border: none; cursor: pointer; padding: 0 2px;
+  vertical-align: middle; opacity: 0.4;
+}
+.replies:hover, .replies:focus-visible { opacity: 1; }
+.replies.has {
+  opacity: 1; background: var(--face); box-shadow: var(--raised); padding: 0 5px;
+}
+.reply-ico { font-size: 12px; }
+.reply-n { margin-left: 3px; }
+.thread-divider {
+  font: 700 11px var(--ui-font); color: var(--muted-ink); text-transform: uppercase;
+  letter-spacing: 0.5px; text-align: center; margin: 8px 0 4px;
+  border-bottom: 1px solid var(--bevel-s);
+}
+
+/* ── composer (hybrid typed chat) ──────────────────────────────────────── */
+.composer { display: flex; gap: 6px; align-items: stretch; margin-top: 8px; }
+.composer-input {
+  flex: 1; min-width: 0; font: 15px var(--chat-font); color: var(--ink);
+  background: var(--white); box-shadow: var(--sunken); border: none; padding: 6px 8px;
+}
+.composer-send { width: auto; flex: 0 0 auto; margin-top: 0; padding: 7px 18px; }
+
+/* ── space sections (the Discord-style sidebar categories) ─────────────── */
+.space-section { margin-bottom: 4px; }
+.space-title {
+  font: 700 11px var(--ui-font); text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--muted-ink); background: var(--face); box-shadow: var(--raised);
+  padding: 2px 8px; margin: 2px 0;
+}
+
 /* ── footer: decision tray / composer / action row ──────────────────────── */
 footer {
   border-top: 1px solid var(--white);

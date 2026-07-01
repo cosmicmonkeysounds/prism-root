@@ -71,8 +71,11 @@ describe("chat composition — channel routing", () => {
       audience: ["g1", "g2"],
     };
     const msgs = composeGuestMessages(sim, [synthetic]);
-    const channels = msgs.map((m) => m.channel).sort();
-    expect(channels).toEqual(["faction:Chatters", "faction:Mods"]);
+    const channels = msgs.map((m) => m.channel);
+    // The faction broadcast mirrors into each faction channel (plus any
+    // routed authored feed like #announcements — scoped to the same audience).
+    expect(channels).toContain("faction:Mods");
+    expect(channels).toContain("faction:Chatters");
     const mods = msgs.find((m) => m.channel === "faction:Mods")!;
     expect(mods.channelKind).toBe("faction");
     expect(mods.title).toBe("#mods");
@@ -145,6 +148,85 @@ describe("ChatStore — history, visibility, moderation", () => {
   });
 });
 
+describe("typed chat — the journaled `say` command", () => {
+  it("every story-composed message is a thread root (parentSeq null)", () => {
+    const { store } = play();
+    expect(store.all().every((m) => m.parentSeq === null)).toBe(true);
+  });
+
+  it("routes a guest's typed lobby message to everyone as a line from their name", () => {
+    const sim = Sim.fromSources(SCENARIO);
+    sim.createPerson("g1", "Alice");
+    const msgs = composeGuestMessages(sim, sim.say("g1", "lobby", "hello internet"));
+    expect(msgs).toHaveLength(1);
+    const m = msgs[0]!;
+    expect(m.channel).toBe("lobby");
+    expect(m.kind).toBe("line");
+    expect(m.from).toBe("Alice"); // display name, not the id
+    expect(m.text).toBe("hello internet");
+    expect(m.audience).toBe("all");
+    expect(m.parentSeq).toBe(null);
+  });
+
+  it("scopes a faction message to that faction's members", () => {
+    const sim = Sim.fromSources(SCENARIO);
+    sim.createPerson("g1", "Alice");
+    sim.join("g1", "Mods");
+    sim.createPerson("g2", "Bob");
+    sim.join("g2", "Chatters");
+    const msgs = composeGuestMessages(sim, sim.say("g1", "faction:Mods", "mods only"));
+    expect(msgs[0]!.channel).toBe("faction:Mods");
+    expect(msgs[0]!.audience).toEqual(["g1"]);
+  });
+
+  it("derives a guest's DM audience as themselves", () => {
+    const sim = Sim.fromSources(SCENARIO);
+    sim.createPerson("g1", "Alice");
+    const msgs = composeGuestMessages(sim, sim.say("g1", "dm:RECRUITER", "are you there?"));
+    expect(msgs[0]!.channel).toBe("dm:RECRUITER");
+    expect(msgs[0]!.audience).toEqual(["g1"]);
+  });
+
+  it("carries an explicit audience (a performer replying into a guest thread)", () => {
+    const sim = Sim.fromSources(SCENARIO);
+    sim.createPerson("g1", "Alice");
+    const msgs = composeGuestMessages(sim, sim.say("Recruiter", "dm:Recruiter", "found you", null, ["g1"]));
+    expect(msgs[0]!.from).toBe("Recruiter"); // a character, not in persons → name passes through
+    expect(msgs[0]!.audience).toEqual(["g1"]);
+  });
+
+  it("links a reply to its root and counts it (Slack threads)", () => {
+    const sim = Sim.fromSources(SCENARIO);
+    const store = new ChatStore();
+    const step = (evs: SimEvent[]) => store.append(composeGuestMessages(sim, evs));
+    sim.createPerson("g1", "Alice");
+    const [root] = step(sim.say("g1", "lobby", "anyone here?"));
+    const [reply] = step(sim.say("g1", "lobby", "guess not", root!.seq));
+    expect(reply!.parentSeq).toBe(root!.seq);
+    expect(store.replies(root!.seq).map((m) => m.seq)).toEqual([reply!.seq]);
+    expect(store.replyCount(root!.seq)).toBe(1);
+    // The root itself is not a reply to anything.
+    expect(store.replyCount(reply!.seq)).toBe(0);
+  });
+
+  it("replays typed chat deterministically (same seqs + thread links)", () => {
+    const run = () => {
+      const sim = Sim.fromSources(SCENARIO);
+      const store = new ChatStore();
+      const step = (evs: SimEvent[]) => store.append(composeGuestMessages(sim, evs));
+      step(sim.createPerson("g1", "Alice"));
+      const [root] = step(sim.say("g1", "lobby", "hi"));
+      step(sim.say("g1", "lobby", "still hi", root!.seq));
+      return store;
+    };
+    const a = run();
+    const b = run();
+    expect(b.all().map((m) => [m.seq, m.from, m.text, m.parentSeq])).toEqual(
+      a.all().map((m) => [m.seq, m.from, m.text, m.parentSeq]),
+    );
+  });
+});
+
 describe("visibleTo", () => {
   const base: Omit<ChatMessage, "audience"> = {
     seq: 0,
@@ -155,6 +237,7 @@ describe("visibleTo", () => {
     kind: "narration",
     text: "hi",
     ts: 0,
+    parentSeq: null,
     hidden: false,
   };
   it('"all" reaches everyone', () => {

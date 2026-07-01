@@ -73,26 +73,53 @@ function requiredDecision(
   return null;
 }
 
-/** Group the guest's messages into threads, docking the pending decision. */
+/** Group the guest's messages into threads, docking the pending decision, and
+ *  merge in authored channels (SPACE/CHANNEL) the guest can see — including
+ *  empty rooms — from the server snapshot. */
 function buildGuestChannels(
   messages: Map<number, ChatMessage>,
   dock: { channel: string; decision: Decision } | null,
+  view: GuestView | null,
 ): Channel[] {
   const groups = groupByChannel(messages);
   if (!groups.has("lobby")) groups.set("lobby", []); // the lobby is always present
   if (dock && !groups.has(dock.channel)) groups.set(dock.channel, []);
+  const spaceTitles = new Map((view?.spaces ?? []).map((s) => [s.id, s.title]));
+  const snap = new Map((view?.channels ?? []).map((c) => [c.id, c]));
+  for (const id of snap.keys()) if (!groups.has(id)) groups.set(id, []); // empty authored rooms
   return [...groups.entries()].map(([id, msgs]) => {
-    // Derive title/kind from the id so contact names read nicely
-    // (`dm:RECRUITER` → "Recruiter") and stay stable for empty threads.
+    const lastTs = msgs.length ? msgs[msgs.length - 1]!.ts : 0;
+    const decision = dock && dock.channel === id ? dock.decision : null;
+    const s = snap.get(id);
+    if (s !== undefined) {
+      // An authored channel — title/kind/space are server-authoritative.
+      return {
+        id,
+        kind: s.kind as Channel["kind"],
+        title: s.title,
+        spaceId: s.spaceId,
+        spaceTitle: spaceTitles.get(s.spaceId),
+        member: s.member,
+        canPost: s.canPost,
+        threadable: s.threadable,
+        messages: msgs,
+        unread: 0,
+        decision,
+        lastTs,
+      };
+    }
+    // A derived channel — read title/kind from the id (`dm:RECRUITER` → "Recruiter").
     const head = channelHead(id);
     return {
       id,
       kind: head.kind,
       title: head.title,
+      spaceId: "internet",
+      order: head.kind === "lobby" ? 0 : head.kind === "faction" ? 1 : 2,
       messages: msgs,
       unread: 0,
-      decision: dock && dock.channel === id ? dock.decision : null,
-      lastTs: msgs.length ? msgs[msgs.length - 1]!.ts : 0,
+      decision,
+      lastTs,
     };
   });
 }
@@ -107,6 +134,12 @@ export interface GuestSession {
   defect: (to: string) => Promise<unknown>;
   choose: (index: number) => Promise<unknown>;
   escape: () => Promise<unknown>;
+  /** Hybrid chat: type into a channel (a reply carries the root's seq). */
+  say: (channel: string, text: string, parentSeq?: number) => Promise<unknown>;
+  /** Access control: pull another participant into a membership-gated channel. */
+  inviteToChannel: (person: string, channel: string) => Promise<unknown>;
+  /** Leave a membership-gated channel. */
+  leaveChannel: (channel: string) => Promise<unknown>;
   leave: () => void;
 }
 
@@ -120,6 +153,11 @@ export function useGuestSession(): GuestSession {
   const defect = useCallback((to: string) => api("/api/guest/defect", { id: me!.id, to }), [me]);
   const choose = useCallback((index: number) => api("/api/guest/choose", { id: me!.id, index }), [me]);
   const escape = useCallback(() => api("/api/guest/escape", { id: me!.id }), [me]);
+  const say = useCallback(
+    (channel: string, text: string, parentSeq?: number) =>
+      api("/api/guest/say", { id: me!.id, channel, text, parentSeq }),
+    [me],
+  );
   const register = useCallback(async (name: string, code: string) => {
     const r = await api<{ id: string; name: string }>("/api/guest/register", { name, passcode: code });
     const m = { id: r.id, name: r.name };
@@ -132,10 +170,19 @@ export function useGuestSession(): GuestSession {
     setStatus(null);
   }, []);
 
-  const dock = requiredDecision(status, { choose: (i) => void choose(i), join: (f) => void join(f), escape: () => void escape() });
-  const threads = useThreads(buildGuestChannels(messages, dock));
+  const inviteToChannel = useCallback(
+    (person: string, channel: string) => api("/api/guest/channel/invite", { id: me!.id, person, channel }),
+    [me],
+  );
+  const leaveChannel = useCallback(
+    (channel: string) => api("/api/guest/channel/leave", { id: me!.id, channel }),
+    [me],
+  );
 
-  return { me, status, connected, threads, register, join, defect, choose, escape, leave };
+  const dock = requiredDecision(status, { choose: (i) => void choose(i), join: (f) => void join(f), escape: () => void escape() });
+  const threads = useThreads(buildGuestChannels(messages, dock, status));
+
+  return { me, status, connected, threads, register, join, defect, choose, escape, say, inviteToChannel, leaveChannel, leave };
 }
 
 // --- performer (character) --------------------------------------------------
@@ -149,6 +196,8 @@ function buildPrimeChannels(messages: Map<number, ChatMessage>, view: PrimeView 
     kind: "scanner",
     title: "Scanner",
     subtitle: "scan a guest's pass",
+    spaceId: "booth", // the booth tools group apart from the room + guests
+    order: 0,
     messages: [],
     unread: 0,
     decision: null,
@@ -160,6 +209,8 @@ function buildPrimeChannels(messages: Map<number, ChatMessage>, view: PrimeView 
     kind: "lobby",
     title: "The Internet",
     subtitle: "everyone · broadcast feed",
+    spaceId: "internet",
+    order: 0,
     messages: feedMsgs,
     unread: 0,
     decision: null,
@@ -174,13 +225,34 @@ function buildPrimeChannels(messages: Map<number, ChatMessage>, view: PrimeView 
       kind: "guest" as const,
       title: g.name,
       subtitle: `${g.faction ?? "unaligned"}${g.captured ? " · 🔒 captured" : ""}`,
+      spaceId: "guests", // one section of per-guest conversations
+      order: 0,
       messages: msgs,
       unread: 0,
       decision: null,
       lastTs: msgs.length ? msgs[msgs.length - 1]!.ts : 0,
     };
   });
-  return [scanner, feed, ...guests];
+  // Authored channels (SPACE/CHANNEL) the performer runs — grouped by space.
+  const spaceTitles = new Map((view?.spaces ?? []).map((s) => [s.id, s.title]));
+  const rooms: Channel[] = (view?.channels ?? []).map((c) => {
+    const msgs = all.filter((m) => m.channel === c.id).sort((a, b) => a.seq - b.seq);
+    return {
+      id: c.id,
+      kind: c.kind as Channel["kind"],
+      title: c.title,
+      spaceId: c.spaceId,
+      spaceTitle: spaceTitles.get(c.spaceId),
+      member: c.member,
+      canPost: c.canPost,
+      threadable: c.threadable,
+      messages: msgs,
+      unread: 0,
+      decision: null,
+      lastTs: msgs.length ? msgs[msgs.length - 1]!.ts : 0,
+    };
+  });
+  return [scanner, feed, ...rooms, ...guests];
 }
 
 export interface PrimeSession {
@@ -191,6 +263,12 @@ export interface PrimeSession {
   threads: Threads;
   login: (character: string, passcode: string) => Promise<void>;
   scan: (target: string) => Promise<unknown>;
+  /** Hybrid chat: type into a channel as this character (reply via parentSeq). */
+  say: (channel: string, text: string, parentSeq?: number) => Promise<unknown>;
+  /** Access control: pull a guest into a membership-gated channel. */
+  inviteToChannel: (person: string, channel: string) => Promise<unknown>;
+  /** Leave a membership-gated channel. */
+  leaveChannel: (channel: string) => Promise<unknown>;
   becomeAdmin: (passcode: string) => Promise<void>;
   moderate: (id: string, action: string, name?: string) => Promise<unknown>;
   setHidden: (seq: number, hidden: boolean) => Promise<unknown>;
@@ -215,6 +293,19 @@ export function usePrimeSession(): PrimeSession {
     setAuth(a);
   }, []);
   const scan = useCallback((target: string) => api("/api/scan", { target }, auth!.token), [auth]);
+  const say = useCallback(
+    (channel: string, text: string, parentSeq?: number) =>
+      api("/api/prime/say", { channel, text, parentSeq }, auth!.token),
+    [auth],
+  );
+  const inviteToChannel = useCallback(
+    (person: string, channel: string) => api("/api/prime/channel/invite", { person, channel }, auth!.token),
+    [auth],
+  );
+  const leaveChannel = useCallback(
+    (channel: string) => api("/api/prime/channel/leave", { channel }, auth!.token),
+    [auth],
+  );
   const becomeAdmin = useCallback(
     async (passcode: string) => {
       const r = await api<{ token: string }>("/api/mod/login", { passcode }, auth!.token);
@@ -240,5 +331,5 @@ export function usePrimeSession(): PrimeSession {
   }, []);
 
   const threads = useThreads(buildPrimeChannels(messages, view));
-  return { auth, view, responses, connected, threads, login, scan, becomeAdmin, moderate, setHidden, leave };
+  return { auth, view, responses, connected, threads, login, scan, say, inviteToChannel, leaveChannel, becomeAdmin, moderate, setHidden, leave };
 }

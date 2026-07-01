@@ -8,11 +8,10 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:e2e": "playwright test",
-    "wasm:build": "cd ../wasm && wasm-pack build --target web --out-dir ../editor/src/loom-wasm --release",
-    "wasm:build:dev": "cd ../wasm && wasm-pack build --target web --out-dir ../editor/src/loom-wasm --dev"
+    "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@loom/core": "workspace:*",
     "@codemirror/autocomplete": "^6.20.2",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-cpp": "^6.0.3",

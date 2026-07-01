@@ -24,6 +24,9 @@
 
     /* Paths */
     "paths": {
+      "@loom/core/parser": ["../core/src/parser/index.ts"],
+      "@loom/core/lsp": ["../core/src/lsp/index.ts"],
+      "@loom/core": ["../core/src/index.ts"],
       "@/*": ["./src/*"]
     }
   },

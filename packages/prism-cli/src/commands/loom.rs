@@ -143,10 +143,6 @@ pub struct LoomDevArgs {
     /// Run only the relay (skip Vite).
     #[arg(long)]
     pub relay_only: bool,
-    /// Skip the wasm-bundle preflight rebuild. The editor falls back
-    /// to whatever is committed in `editor/src/loom-wasm`.
-    #[arg(long)]
-    pub no_wasm: bool,
     /// Use the release-profile relay binary (slow compile, fast
     /// runtime). Defaults to debug.
     #[arg(long)]
@@ -324,16 +320,8 @@ fn run_dev(args: &LoomDevArgs, workspace: &Workspace, dry_run: bool) -> Result<u
     let mut preflight: Vec<CommandBuilder> = Vec::new();
     let mut supervised: Vec<CommandBuilder> = Vec::new();
 
-    // Preflight: wasm bundle so the editor's LSP / lint flows light
-    // up against the latest parser+runtime+lsp on a cold checkout.
-    if !args.no_wasm && !args.relay_only {
-        preflight.push(
-            CommandBuilder::pnpm()
-                .arg("wasm:build:dev")
-                .cwd(editor_dir.clone())
-                .label("loom-wasm-build"),
-        );
-    }
+    // The editor consumes the Loom engine as TypeScript (`@loom/core`)
+    // now — no wasm bundle to prebuild.
 
     // Preflight: build the relay binary so the supervisor execs an
     // already-warm binary (no cold cargo compile inside the noisy
@@ -392,7 +380,7 @@ fn run_dev(args: &LoomDevArgs, workspace: &Workspace, dry_run: bool) -> Result<u
     }
 
     // Preflights run sequentially through the shared `execute_plan`
-    // so a wasm-build failure aborts before the supervisor starts.
+    // so a relay-build failure aborts before the supervisor starts.
     let code = super::execute_plan(&preflight, dry_run)?;
     if code != 0 {
         return Ok(code);

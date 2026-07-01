@@ -7,15 +7,11 @@
 //! `hover_at`, `definition_at`, `document_symbols`,
 //! `diagnostics_for`.
 //!
-//! Two front ends consume that surface:
-//!
-//! - **Native** (`loom-lsp` binary, default `stdio` feature on) —
-//!   [`run_stdio`] pumps JSON-RPC over stdin/stdout for Zed / VSCode.
-//! - **Web** (`loom-wasm`, this crate compiled with
-//!   `default-features = false`) — `loom-wasm` exposes thin
-//!   wasm-bindgen wrappers around the same `Workspace` so the
-//!   browser editor's CodeMirror integration gets hover / completion
-//!   / definition / outline without any stdio plumbing.
+//! The native `loom-lsp` binary (default `stdio` feature on) consumes
+//! that surface: [`run_stdio`] pumps JSON-RPC over stdin/stdout for
+//! Zed / VSCode. (The web editor no longer goes through this crate — it
+//! consumes the TypeScript port `@loom/core/lsp` directly; the former
+//! `loom-wasm` bridge was deleted.)
 
 pub mod completion;
 pub mod definition;

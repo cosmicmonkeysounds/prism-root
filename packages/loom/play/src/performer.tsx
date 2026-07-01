@@ -5,7 +5,7 @@
 //! scan readouts.
 
 import { useEffect, useRef, useState } from "react";
-import { ActionRow, ChannelList, ChannelView, ConnDot, FactionPill } from "./chat.tsx";
+import { ActionRow, ChannelView, ConnDot, FactionPill, InviteSheet, MessageThread, SpaceList } from "./chat.tsx";
 import { usePrimeSession, type PrimeSession } from "./session.ts";
 import type { Action, Channel } from "./types.ts";
 
@@ -192,8 +192,38 @@ export function PerformerApp({ onLeave }: { onLeave: () => void }) {
   const t = s.threads;
 
   if (t.active) {
-    if (t.active.id === "__scanner") return <ScannerScreen session={s} onBack={t.back} />;
-    return <GuestThread session={s} channel={t.active} admin={admin} onBack={t.back} />;
+    const active = t.active;
+    if (active.id === "__scanner") return <ScannerScreen session={s} onBack={t.back} />;
+    const mod = admin ? { setHidden: (seq: number, hidden: boolean) => void s.setHidden(seq, hidden) } : undefined;
+    // The broadcast feed posts to the room (lobby); guest threads keep their id
+    // (the server maps `guest:<id>` to this character's DM with that guest).
+    const postChannel = active.id === "__feed" ? "lobby" : active.id;
+    if (t.activeThreadRoot !== null) {
+      return (
+        <MessageThread
+          channel={active}
+          rootSeq={t.activeThreadRoot}
+          onClose={t.closeThread}
+          moderate={mod}
+          onSend={(text, parentSeq) => void s.say(postChannel, text, parentSeq)}
+        />
+      );
+    }
+    if (active.id === "__feed") {
+      return (
+        <ChannelView
+          channel={active}
+          onBack={t.back}
+          moderate={mod}
+          onOpenThread={t.openThread}
+          onSend={(text) => void s.say("lobby", text)}
+        />
+      );
+    }
+    if (active.id.startsWith("room:")) {
+      return <RoomThread session={s} channel={active} admin={admin} onBack={t.back} onOpenThread={t.openThread} />;
+    }
+    return <GuestThread session={s} channel={active} admin={admin} onBack={t.back} onOpenThread={t.openThread} />;
   }
 
   const header = (
@@ -213,8 +243,49 @@ export function PerformerApp({ onLeave }: { onLeave: () => void }) {
 
   return (
     <>
-      <ChannelList channels={t.list} onOpen={t.open} header={header} empty="No guests yet." />
+      <SpaceList spaces={t.spaces} onOpen={t.open} header={header} empty="No guests yet." />
       {sheet && <PerformerSheet session={s} onClose={() => setSheet(false)} onLeave={onLeave} />}
+    </>
+  );
+}
+
+/** An authored channel (SPACE/CHANNEL): post + a guest invite picker + leave. */
+function RoomThread({
+  session,
+  channel,
+  admin,
+  onBack,
+  onOpenThread,
+}: {
+  session: PrimeSession;
+  channel: Channel;
+  admin: boolean;
+  onBack: () => void;
+  onOpenThread?: (rootSeq: number) => void;
+}) {
+  const [picking, setPicking] = useState(false);
+  const gated = channel.kind === "private" || channel.kind === "group" || channel.kind === "dm";
+  const actions: Action[] = [];
+  if (gated) actions.push({ label: "＋ Invite a guest", onClick: () => setPicking(true), tone: "primary" });
+  if (gated && channel.member) actions.push({ label: "🚪 Leave", onClick: () => void session.leaveChannel(channel.id) });
+  return (
+    <>
+      <ChannelView
+        channel={channel}
+        onBack={onBack}
+        onOpenThread={onOpenThread}
+        moderate={admin ? { setHidden: (seq, hidden) => void session.setHidden(seq, hidden) } : undefined}
+        onSend={(text) => void session.say(channel.id, text)}
+        footer={actions.length > 0 ? <ActionRow actions={actions} /> : undefined}
+      />
+      {picking && (
+        <InviteSheet
+          title={`Invite to ${channel.title}`}
+          people={(session.view?.guests ?? []).map((g) => ({ id: g.id, name: g.name }))}
+          onPick={(id) => void session.inviteToChannel(id, channel.id)}
+          onClose={() => setPicking(false)}
+        />
+      )}
     </>
   );
 }
@@ -225,11 +296,13 @@ function GuestThread({
   channel,
   admin,
   onBack,
+  onOpenThread,
 }: {
   session: PrimeSession;
   channel: Channel;
   admin: boolean;
   onBack: () => void;
+  onOpenThread?: (rootSeq: number) => void;
 }) {
   const gid = channel.id.slice("guest:".length);
   const guest = session.view?.guests.find((g) => g.id === gid);
@@ -248,6 +321,8 @@ function GuestThread({
       showChannel
       moderate={admin ? { setHidden: (seq, hidden) => void session.setHidden(seq, hidden) } : undefined}
       footer={<ActionRow actions={actions} />}
+      onOpenThread={onOpenThread}
+      onSend={(text) => void session.say(channel.id, text)}
     />
   );
 }

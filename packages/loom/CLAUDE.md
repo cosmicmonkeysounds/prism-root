@@ -10,11 +10,10 @@ tools) without dragging the runtime + scheduler + Luau bridge along.
 | [`runtime`](./runtime) | Bundle, resolver, playhead, ledger, reactive graph, scheduler, directive registry, multi-head play `session`, Luau bridge |
 | [`lsp`](./lsp)         | Stdio JSON-RPC server backed by `loom-parser` + a workspace-wide name index |
 | [`syntax`](./syntax)   | TextMate grammar generator (driven by `loom-parser::keywords`) + Zed / VSCode extension shells |
-| [`wasm`](./wasm)       | `wasm-bindgen` surface — parser (`parse` / `diagnose` / `emit_tmgrammar` + `apply_*` structural edits), the `LspWorkspace`, and the `LoomSession` local play engine, consumed by the React editor |
 | [`server`](./server)   | Multi-user backbone — `loom-relayd` axum server hosting per-workspace Loro CRDTs over `prism-core::network::relay`. See [`docs/dev/loom-multiuser.md`](../../docs/dev/loom-multiuser.md). |
 | [`editor`](./editor)   | React/Vite/CodeMirror web IDE — the user-facing front end |
-| [`core`](./core)       | Native **TypeScript** port of Loom (no WASM, no Prism): parser + a first-principles social-ecosystem `runtime/sim` + a parser-only **`lsp`** language surface (`@loom/core/lsp` — `Workspace` with completion / hover / definition / documentSymbols / references / diagnostics, the in-process replacement for the wasm `LspWorkspace`) + an SSE/REST **event server** (`pnpm serve`) that hosts a live `Sim` for LAN events, composing its `SimEvent` stream into server-authoritative, channel-routed chat (`server/chat.ts`) with history + moderation. vitest-tested. |
-| [`play`](./play)       | The **participant React app** (Vite, name `loom-play`) guests + performers use at a live event — a **Discord/Telegram-style threaded-chat** client (lobby + faction + DM channels, decisions docked per-thread, re-login history) over the `core` server's SSE/REST. `pnpm dev` (:5174, proxies to the server on :7000) / `pnpm build` (served by the event server at `/`). |
+| [`core`](./core)       | Native **TypeScript** port of Loom (no WASM, no Prism): parser (incl. authored **`SPACE`/`CHANNEL`** chatroom declarations) + a first-principles social-ecosystem `runtime/sim` + a parser-only **`lsp`** language surface (`@loom/core/lsp` — `Workspace` with completion / hover / definition / documentSymbols / references / diagnostics, the in-process replacement for the wasm `LspWorkspace`) + an SSE/REST **event server** (`pnpm serve`) that hosts a live `Sim` for LAN events, composing its `SimEvent` stream into server-authoritative, channel-routed chat (`server/chat.ts`) with spaces + Slack-style threads (`parentSeq`), **access control** (open / private-invite / faction / group / dm channel membership, journaled `inviteToChannel`/`leaveChannel`, guest↔guest invites) + a **pluggable channel-type registry** (`runtime/sim/channel-types.ts` — per-type post policy / threadability / broadcast routing, e.g. a read-only `announcement` feed), history + moderation, and a journaled `say` command so participant-typed chat replays deterministically. vitest-tested. |
+| [`play`](./play)       | The **participant React app** (Vite, name `loom-play`) guests + performers use at a live event — an **AOL-chatroom-skinned** client with Discord-style **spaces** (sidebar sections, incl. authored `SPACE`s), Slack-style **message threads** + consecutive-sender banner grouping, **hybrid typed chat** (a composer wired to `/api/*/say`), and **access-controlled rooms** (open/private/faction/group/dm with invite + leave) layered over the story-injected lobby + faction + DM channels (decisions docked per-thread, re-login history) on the `core` server's SSE/REST. `pnpm dev` (:5174, proxies to the server on :7000) / `pnpm build` (served by the event server at `/`). |
 | [`examples`](./examples) | Reference `.loom` projects used by `loom-runtime` integration tests and as authoring tutorials |
 
 The canonical design lives in [`docs/dev/loom-v3.html`](../../docs/dev/loom-v3.html).
@@ -288,14 +287,16 @@ prism loom dev
 # → Relay (API+WS): http://127.0.0.1:7878
 ```
 
-The CLI prebuilds the wasm bundle + relay binary, then runs Vite
-(`pnpm dev`) + `loom-relayd --cors permissive` under the prism
-supervisor (colored prefixed logs, Ctrl+C fan-out). The editor reads
-`VITE_LOOM_RELAY` so the API + WS URLs always hit the right port even
-with `--ui-port` / `--relay-port` overrides.
+The CLI prebuilds the relay binary, then runs Vite (`pnpm dev`) +
+`loom-relayd --cors permissive` under the prism supervisor (colored
+prefixed logs, Ctrl+C fan-out). The editor reads `VITE_LOOM_RELAY` so
+the API + WS URLs always hit the right port even with `--ui-port` /
+`--relay-port` overrides. There is **no wasm preflight** — the editor
+consumes the Loom engine as TypeScript (`@loom/core`), so parser / lsp
+changes are picked up live by Vite with no rebuild step.
 
 Useful flags: `--host 0.0.0.0` (LAN), `--ui-only` / `--relay-only`,
-`--no-wasm` (skip the wasm preflight), `--ship` (release relay).
+`--ship` (release relay).
 
 Manual two-process equivalent, if you want to drive each half
 yourself:
@@ -306,32 +307,21 @@ cargo run -p loom-server --bin loom-relayd -- --cors permissive
                               # API + WS at :7878
 ```
 
-If you change `parser` / `runtime` / `lsp` / `wasm` without going
-through `prism loom dev`, rebuild the editor's wasm bundle so the
-LSP / lint surfaces pick up the change:
+### Editor — authoring-only (wasm removed 2026-06-30)
 
-```
-pnpm --filter loom-app wasm:build:dev   # fast, larger output
-pnpm --filter loom-app wasm:build       # release, slower
-```
+The React editor under `packages/loom/editor` is an **authoring tool**:
+file editing, syntax highlighting, lint, LSP (Outline / References /
+completion / hover / definition / symbols), structural beat edits, and
+the static entity Graph + beat-flow views — all driven by the
+**TypeScript** `@loom/core` engine (parser + `lsp`), **no wasm**. The
+modal **Studio** shell is two author modes — **Writing** / **Editing**
+on a bottom Mode Bar (`⌘1` / `⌘2`), each a fixed `allotment` layout
+(left rail · center stage · Properties tray · optional beat-flow dock).
 
-### Full IDE walkthrough
-
-The React editor under `packages/loom/editor` now hosts every
-Run/Debug surface the simulator used to (Transcript / Ledger /
-Timeline / World / Inspector / Detail / Cast / Booth / Graph /
-Outline / References) plus workspace presets, the focus + projection
-bus, multi-head branching play, and booth live-patch over the relay.
-
-**Shell (v2, phases 1–4 landed):** those surfaces now live inside a
-modal **Studio** shell — five modes (Writing / Editing / Simulating /
-Performing / Production) on a bottom Mode Bar (`⌘1..⌘5`), each a fixed
-`allotment` layout — replacing the dockview activity-bar + workspace
-presets. A tabbed, cursor-following Properties tray; a clips-on-tracks
-Run-facet Timeline; and an Editing facet where editing tray fields or
-dragging beat chips rewrites `.loom` source through the parser's
-`edit` ops. See [`docs/dev/loom-ide-redesign.md` Part II](../../docs/dev/loom-ide-redesign.md).
-
-See [`docs/dev/loom-ide-redesign.md` §0](../../docs/dev/loom-ide-redesign.md#0-running-the-ide)
-for the launch flows, the step-by-step "drive the full simulator
-inside the IDE" walkthrough, and the keybinding reference.
+The former in-editor runtime — multi-head branching play, the
+Transcript / Ledger / Timeline / World / Cast / Booth surfaces, and
+relay-backed cloud collaboration (Loro CRDT) — was removed with the
+`wasm` crate. **Runtime now lives in the sibling packages**: the `core`
+event server + the `play` participant app. See
+[`docs/dev/loom-ide-redesign.md` Part II](../../docs/dev/loom-ide-redesign.md)
+for the shell design.

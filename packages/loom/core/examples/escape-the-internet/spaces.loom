@@ -1,0 +1,42 @@
+# Authored chatrooms — Discord-style SPACE + CHANNEL declarations.
+#
+# These ride alongside the story-driven channels (the lobby, faction
+# broadcasts, character DMs). Open rooms are visible to everyone; faction
+# rooms to that faction's members; private rooms are invite-only.
+
+SPACE Forums
+  label: The Forums
+
+  # A read-only feed: nobody types here, but every broadcast is mirrored in
+  # (the `announcement` channel-type = post: none + routes: *).
+  CHANNEL announcements
+    kind: open
+    type: announcement
+    label: # announcements
+
+  CHANNEL general
+    kind: open
+    label: # general
+
+  CHANNEL introductions
+    kind: open
+    label: # introductions
+
+  CHANNEL backroom
+    kind: private
+    label: # the-backroom
+    invite: members
+
+# Faction-scoped lounges, grouped under the same space.
+
+CHANNEL mod_lounge
+  space: Forums
+  kind: faction
+  faction: Mods
+  label: # mod-lounge
+
+CHANNEL chatter_den
+  space: Forums
+  kind: faction
+  faction: Chatters
+  label: # chatter-den

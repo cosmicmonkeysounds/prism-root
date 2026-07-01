@@ -439,6 +439,36 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       fanout(commit("escape", str(body, "id")));
       return void sendJson(res, 200, { ok: true });
     }
+    case "/api/guest/say": {
+      // Hybrid chat: a guest types into a channel they can see. No access
+      // enforcement in this slice — the channel-type registry owns that later.
+      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
+      const id = str(body, "id");
+      if (!state.sim!.persons.has(id)) return void sendJson(res, 404, { error: "unknown guest" });
+      const channel = str(body, "channel") || "lobby";
+      const text = str(body, "text").trim();
+      if (text === "") return void sendJson(res, 400, { error: "empty message" });
+      if (!state.sim!.canPost(id, channel)) return void sendJson(res, 403, { error: "you can't post here" });
+      // Non-threadable channels drop replies to a flat line.
+      const parentSeq = state.sim!.threadableOf(channel) && body["parentSeq"] != null ? Number(body["parentSeq"]) : null;
+      fanout(commit("say", id, channel, text, parentSeq));
+      return void sendJson(res, 200, { ok: true });
+    }
+    case "/api/guest/channel/invite": {
+      // Invite another participant into a membership-gated authored channel.
+      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
+      const id = str(body, "id");
+      if (!state.sim!.persons.has(id)) return void sendJson(res, 404, { error: "unknown guest" });
+      fanout(commit("inviteToChannel", id, str(body, "person"), str(body, "channel")));
+      return void sendJson(res, 200, { ok: true });
+    }
+    case "/api/guest/channel/leave": {
+      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
+      const id = str(body, "id");
+      if (!state.sim!.persons.has(id)) return void sendJson(res, 404, { error: "unknown guest" });
+      fanout(commit("leaveChannel", id, str(body, "channel")));
+      return void sendJson(res, 200, { ok: true });
+    }
 
     // --- performer (prime) login: grants the `character` capability ---
     case "/api/prime/login": {
@@ -500,6 +530,44 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
           ? rosterRow(state.sim!, target)
           : { id: target, name: state.sim!.persons.get(target)?.name ?? target, captured: state.sim!.isCaptured(target) },
       });
+    }
+
+    // --- performer types into a channel (hybrid chat) -------------------
+    case "/api/prime/say": {
+      const token = tokenOf(req, body);
+      const character = sessions.characterOf(token);
+      if (!character) return void sendJson(res, 403, { error: "no character — sign in" });
+      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
+      const text = str(body, "text").trim();
+      if (text === "") return void sendJson(res, 400, { error: "empty message" });
+      let channel = str(body, "channel") || "lobby";
+      let audience: "all" | string[] | undefined;
+      if (channel.startsWith("guest:")) {
+        // A reply inside a guest's thread → the character's DM with that guest.
+        const gid = channel.slice("guest:".length);
+        if (!state.sim!.persons.has(gid)) return void sendJson(res, 404, { error: "unknown guest" });
+        channel = `dm:${character}`;
+        audience = [gid];
+      }
+      // Performers run every room (post policy is not enforced on them), but a
+      // non-threadable channel still flattens replies.
+      const parentSeq = state.sim!.threadableOf(channel) && body["parentSeq"] != null ? Number(body["parentSeq"]) : null;
+      fanout(commit("say", character, channel, text, parentSeq, audience));
+      return void sendJson(res, 200, { ok: true });
+    }
+    case "/api/prime/channel/invite": {
+      const character = sessions.characterOf(tokenOf(req, body));
+      if (!character) return void sendJson(res, 403, { error: "no character — sign in" });
+      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
+      fanout(commit("inviteToChannel", character, str(body, "person"), str(body, "channel")));
+      return void sendJson(res, 200, { ok: true });
+    }
+    case "/api/prime/channel/leave": {
+      const character = sessions.characterOf(tokenOf(req, body));
+      if (!character) return void sendJson(res, 403, { error: "no character — sign in" });
+      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
+      fanout(commit("leaveChannel", character, str(body, "channel")));
+      return void sendJson(res, 200, { ok: true });
     }
 
     // --- moderator login: grants the `admin` capability -----------------

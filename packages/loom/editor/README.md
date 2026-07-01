@@ -46,8 +46,10 @@ pnpm --filter loom-app build      # → dist/ (served by loom-relayd in prod)
 
 ## The engine under the editor
 
-Today the editor's parse / lint / play surfaces run the Rust engine
-compiled to wasm (`packages/loom/wasm`, rebuilt with `pnpm wasm:build`).
-The native TypeScript port [`@loom/core`](../core) — a complete parser
-plus a first-principles ecosystem runtime — is being built to replace that
-wasm bundle (no WASM, no Prism). See the core README for status.
+The editor's parse / lint / LSP / structural-edit surfaces run the
+native TypeScript engine [`@loom/core`](../core) directly — **no wasm**.
+`@loom/core/parser` backs highlighting, linting, the typed-AST
+Properties tray, the static story graph, and the span-preserving beat
+edits; `@loom/core/lsp` backs the Outline + References panels. The
+former Rust→wasm bundle was removed. Runtime (play / collaboration)
+lives in the sibling `core` server + `play` app, not the editor.

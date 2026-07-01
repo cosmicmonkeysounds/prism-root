@@ -30,6 +30,22 @@
 # affect the artifact fingerprint and so cannot cause recompile thrash.
 # ─────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────
+# WebAssembly stack size. LLD defaults the wasm shadow stack to 1 MiB.
+# The Loom play engine (recursive playhead lowering + reactive `let`
+# evaluation + scheduler) and the prism-shell UI tree both recurse
+# deep enough that an *unoptimised* (`--dev` / debug) wasm build — whose
+# stack frames are far larger than release — overflows that 1 MiB and
+# traps with "memory access out of bounds" mid-play. Release frames fit,
+# so this never bit production, only the `wasm:build:dev` fast-iteration
+# bundle. Reserve 16 MiB so both profiles have ample headroom. Committed
+# here (not CLI-injected) so every wasm build — wasm-pack, raw cargo —
+# sees the identical flag; rust-analyzer never targets wasm32, so this
+# causes no native-target fingerprint thrash.
+# ─────────────────────────────────────────────────────────────────────
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=16777216"]
+
 [alias]
 # Quality-of-life shortcuts for the Rust half of the monorepo.
 #

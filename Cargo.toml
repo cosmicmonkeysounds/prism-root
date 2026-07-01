@@ -10,20 +10,19 @@ members = [
     "packages/prism-relay",
     "packages/prism-dock",
     "packages/prism-luau-derive",
-    # Loom v3 — the narrative scripting language. Four sibling crates
-    # under one folder (see `docs/dev/loom-v3.html`):
+    # Loom v3 — the narrative scripting language. Sibling crates under
+    # one folder (see `docs/dev/loom-v3.html`):
     #   - parser   — lexer + AST + diagnostics for the `.loom` format
     #   - runtime  — bundle, resolver, playhead, ledger, reactive graph,
     #                scheduler, directive registry, Luau bridge
     #   - lsp      — stdio JSON-RPC server (workspace-wide name index)
     #   - syntax   — TextMate grammar + Zed / VSCode extension shells
-    #   - wasm     — wasm-bindgen surface for the web editor's
-    #                CodeMirror live-parse / live-lint extensions
+    # The web editor consumes the engine as TypeScript (`@loom/core`),
+    # so the former `wasm` crate was deleted in the wasm-removal cutover.
     "packages/loom/parser",
     "packages/loom/runtime",
     "packages/loom/lsp",
     "packages/loom/syntax",
-    "packages/loom/wasm",
     # Multi-user backbone for the Loom web editor — axum server hosting
     # per-workspace Loro CRDTs. See `docs/dev/loom-multiuser.md`.
     "packages/loom/server",

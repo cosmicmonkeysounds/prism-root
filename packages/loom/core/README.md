@@ -153,6 +153,59 @@ into channel-routed messages — the single source of truth the
   `decisionChannel` is the speaker's DM for a narrative `<choice>`, else the
   lobby. The client badges + pins that thread until it's answered.
 
+### Authored chatrooms — `SPACE` / `CHANNEL`
+
+Beyond the story-driven channels above, authors declare standing chatrooms
+in `.loom`, grouped into Discord-style **spaces**:
+
+```loom
+SPACE Forums
+  label: The Forums
+
+  CHANNEL general                # open: everyone can see + post
+    kind: open
+    label: # general
+
+  CHANNEL backroom               # private: invite-only
+    kind: private
+    invite: members
+
+CHANNEL mod_lounge               # faction: only that faction's members
+  space: Forums
+  kind: faction
+  faction: Mods
+```
+
+Channel `kind` drives **access**: `open` (everyone) · `private` /
+`group` / `dm` (explicit members) · `faction` (a faction's members). Each
+authored channel is `room:<name>`; visibility is computed per participant
+(`GuestView.channels` lists exactly what they can see, empty rooms included).
+Membership moves through journaled commands — `inviteToChannel` /
+`leaveChannel` (`POST /api/{guest,prime}/channel/{invite,leave}`, and guests
+invite each other from the roster) — so it replays deterministically and a
+join posts a member-scoped notice.
+
+**Channel-type registry (behaviour).** Beyond visibility, each channel
+resolves a `ChannelRules` bundle from a **pluggable type registry**
+(`runtime/sim/channel-types.ts`) — the single place a new room behaviour is
+added (`registerChannelType`). Rules cover **who may post**
+(`post: everyone | members | faction | none | role X`), **threadability**
+(`threads: on|off`), and **broadcast routing** (`routes: *` or a cue list).
+Authors pick a preset with `type:` or override any rule inline:
+
+```loom
+CHANNEL announcements       # the built-in read-only feed
+  kind: open
+  type: announcement        # = post: none + threads: off + routes: *
+```
+
+The server enforces it: `POST /api/guest/say` returns 403 when `canPost` is
+false, non-threadable channels flatten replies, and a `broadcast` mirrors into
+every channel whose `routes` match (scoped to the intersection of the
+broadcast's and the channel's audience, so a faction broadcast can't leak into
+a public feed). `slow:` / `ephemeral:` are parsed into the rules bundle as
+declared-but-not-yet-enforced extension points.
+
 ### Persistence (surviving restarts & drops)
 
 The sim is fully deterministic, so the server **event-sources** every

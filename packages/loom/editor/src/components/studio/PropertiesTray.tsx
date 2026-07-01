@@ -18,9 +18,6 @@ import clsx from 'clsx'
 import type { Mode } from '@/store/mode'
 import { useWorkspace } from '@/store/workspace'
 import { useFocus, type FocusRef } from '@/store/focus'
-import { useSession } from '@/store/session'
-import { InspectorPanel } from '@/components/runner/Inspector'
-import { BoothPanel } from '@/components/runner/Booth'
 import { ReferencesPanel } from '@/components/runner/References'
 import {
   bodyBreakdown,
@@ -41,30 +38,13 @@ import {
 
 type Tab = { id: string; label: string; node: ReactNode }
 
-function tabsFor(mode: Mode): Tab[] {
-  switch (mode) {
-    case 'writing':
-    case 'editing':
-      return [
-        { id: 'props', label: 'Properties', node: <AuthorProperties /> },
-        { id: 'refs', label: 'References', node: <ReferencesPanel /> },
-      ]
-    case 'simulating':
-      return [
-        { id: 'props', label: 'Inspector', node: <InspectorPanel /> },
-        { id: 'refs', label: 'References', node: <ReferencesPanel /> },
-      ]
-    case 'performing':
-      return [
-        { id: 'booth', label: 'Booth', node: <BoothPanel /> },
-        { id: 'props', label: 'Inspector', node: <InspectorPanel /> },
-      ]
-    case 'production':
-      return [
-        { id: 'deploy', label: 'Deploy', node: <DeployProps /> },
-        { id: 'props', label: 'Inspector', node: <InspectorPanel /> },
-      ]
-  }
+function tabsFor(_mode: Mode): Tab[] {
+  // Both author modes share the same tray: cursor-following properties
+  // + the workspace References panel.
+  return [
+    { id: 'props', label: 'Properties', node: <AuthorProperties /> },
+    { id: 'refs', label: 'References', node: <ReferencesPanel /> },
+  ]
 }
 
 export function PropertiesTray({ mode }: { mode: Mode }) {
@@ -267,27 +247,6 @@ function FileInfo({ path, contents }: { path: string; contents: string }) {
       <Header kind="File" title={base(path)} subtitle={path} />
       <Row label="lines" value={String(contents ? contents.split('\n').length : 0)} />
       <Row label="chars" value={String(contents.length)} />
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Production · Deploy
-// ---------------------------------------------------------------------------
-
-function DeployProps() {
-  const relay = useSession((s) => s.relayUrl)
-  return (
-    <div className="h-full overflow-auto bg-zinc-950 font-mono">
-      <Header kind="Production" title="Deploy" />
-      <Row label="relay" value={relay} />
-      <Section title="Commands">
-        <Row label="build" value="prism loom build" />
-        <Row label="serve" value="prism loom serve" />
-      </Section>
-      <p className="px-3 py-2 text-zinc-600 text-xs italic">
-        Phase 1/2 stub — deploy controls land in a later phase.
-      </p>
     </div>
   )
 }

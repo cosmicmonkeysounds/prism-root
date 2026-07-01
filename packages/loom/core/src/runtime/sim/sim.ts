@@ -25,7 +25,8 @@ import {
   type Value,
 } from "../expr.ts";
 import { SimLog, type SimEvent } from "./event.ts";
-import { compileModel, type Hook, type SimModel } from "./model.ts";
+import { compileModel, type ChannelDef, type Hook, type SimModel } from "./model.ts";
+import { routesCue } from "./channel-types.ts";
 import { parseSet, splitDirective, splitKeyword } from "./effects.ts";
 import { Bundle, type LoomFileEntry } from "../bundle.ts";
 import { parse } from "../../parser/index.ts";
@@ -79,6 +80,8 @@ export class Sim {
 
   private membership = new Map<string, Set<string>>();
   private occupants = new Map<string, Set<string>>();
+  /** Runtime members of authored private/group/dm channels (by channel id). */
+  private channelMembers = new Map<string, Set<string>>();
   private pending: Trigger[] = [];
   private beatVisits = new Map<string, number>();
   private revealed = new Set<string>();
@@ -116,6 +119,12 @@ export class Sim {
       if (char.faction !== null) this.world.set(`${char.id}.faction`, vString(char.faction));
     }
     this.world.setCollection("Persons", vList([]));
+    // Seed declared members of membership-gated channels (private/group/dm).
+    for (const ch of model.channels.values()) {
+      if (ch.kind === "private" || ch.kind === "group" || ch.kind === "dm") {
+        this.channelMembers.set(ch.id, new Set(ch.members));
+      }
+    }
   }
 
   /** Build a `Sim` from `.loom` sources (one entry per file). */
@@ -316,6 +325,197 @@ export class Sim {
     }
     this.drain();
     return this.log.since(from);
+  }
+
+  /**
+   * A participant types a message into a channel (hybrid chat). Journaled as
+   * a `chat` event so it replays deterministically alongside the story.
+   * `from` is the sender's id (a guest) or character name (a performer); the
+   * event stores the display name. `audience` may be given explicitly (the
+   * server resolves a performer's per-guest thread); otherwise it's derived
+   * from the channel at send time. No access enforcement in this slice — the
+   * channel-type registry will own who-may-post later.
+   */
+  say(
+    from: string,
+    channel: string,
+    text: string,
+    parentSeq: number | null = null,
+    audience?: "all" | string[],
+  ): SimEvent[] {
+    const start = this.log.len();
+    const aud = audience ?? this.chatAudience(channel, from);
+    this.record({ type: "chat", from: this.chatDisplayName(from), channel, text, audience: aud, parentSeq });
+    this.drain();
+    return this.log.since(start);
+  }
+
+  /** A chat sender's display name: a guest's registered name, else the id. */
+  private chatDisplayName(from: string): string {
+    return this.persons.get(from)?.name ?? from;
+  }
+
+  /** Default recipients for a typed message, by channel kind, at send time. */
+  private chatAudience(channel: string, sender: string): "all" | string[] {
+    const def = this.model.channels.get(channel);
+    if (def !== undefined) {
+      if (def.kind === "open") return "all";
+      if (def.kind === "faction") return def.faction ? this.factionMembers(def.faction) : "all";
+      return [...(this.channelMembers.get(channel) ?? [])]; // private / group / dm
+    }
+    if (channel.startsWith("faction:")) return this.factionMembers(channel.slice("faction:".length));
+    // A guest's DM with a character: only that guest sees it on the guest side;
+    // the performer sees it via the guest thread (audience includes the id).
+    if (channel.startsWith("dm:")) return this.persons.has(sender) ? [sender] : "all";
+    return "all"; // lobby + open rooms
+  }
+
+  // -------------------------------------------------------------------
+  // Authored channels (SPACE / CHANNEL) — membership + access
+  // -------------------------------------------------------------------
+
+  /** Channel head for routing a message — authored channels first, else derived. */
+  channelHead(id: string): { channel: string; channelKind: string; title: string; spaceId: string } {
+    const def = this.model.channels.get(id);
+    if (def !== undefined) {
+      return { channel: id, channelKind: def.kind, title: def.title, spaceId: def.spaceId };
+    }
+    if (id.startsWith("faction:")) {
+      const f = id.slice("faction:".length);
+      return { channel: id, channelKind: "faction", title: `#${f.toLowerCase()}`, spaceId: "internet" };
+    }
+    if (id.startsWith("dm:")) {
+      return { channel: id, channelKind: "dm", title: id.slice("dm:".length), spaceId: "internet" };
+    }
+    return { channel: id, channelKind: "lobby", title: "The Internet", spaceId: "internet" };
+  }
+
+  /** Is `person` a member of an authored membership-gated channel? */
+  isChannelMember(person: string, id: string): boolean {
+    return this.channelMembers.get(id)?.has(person) ?? false;
+  }
+
+  /** Can `person` see an authored channel? open → all; faction → its members;
+   *  private/group/dm → explicit members. Unknown channels are not visible. */
+  canSeeChannel(person: string, id: string): boolean {
+    const def = this.model.channels.get(id);
+    if (def === undefined) return false;
+    if (def.kind === "open") return true;
+    if (def.kind === "faction") return def.faction !== null && this.factionMembers(def.faction).includes(person);
+    return this.isChannelMember(person, id);
+  }
+
+  /** Channel-behaviour queries driven by the resolved rules bundle. */
+  threadableOf(id: string): boolean {
+    const def = this.model.channels.get(id);
+    return def === undefined ? true : def.rules.threadable; // derived channels thread
+  }
+
+  /** May `person` post into a channel? Derived channels stay open; authored
+   *  channels honour their post policy (everyone / members / faction / none /
+   *  role). Visibility is a precondition. */
+  canPost(person: string, id: string): boolean {
+    const def = this.model.channels.get(id);
+    if (def === undefined) return true; // lobby / faction: / dm: are open to post
+    if (!this.canSeeChannel(person, id)) return false;
+    const p = def.rules.post;
+    switch (p.kind) {
+      case "everyone":
+        return true;
+      case "members":
+        return this.isChannelMember(person, id);
+      case "faction":
+        return def.faction !== null && this.factionMembers(def.faction).includes(person);
+      case "none":
+        return false;
+      case "role":
+        return this.persons.get(person)?.role === p.role;
+    }
+  }
+
+  /** Authored channels a broadcast `cue` mirrors into (routing rule). */
+  routedChannelsFor(cue: string): Array<{ channel: string; channelKind: string; title: string; audience: "all" | string[] }> {
+    const out: Array<{ channel: string; channelKind: string; title: string; audience: "all" | string[] }> = [];
+    for (const def of this.model.channels.values()) {
+      if (routesCue(def.rules, cue)) {
+        out.push({ channel: def.id, channelKind: def.kind, title: def.title, audience: this.channelAudience(def.id) });
+      }
+    }
+    return out;
+  }
+
+  /** A per-viewer channel snapshot (visibility + membership + can-post + threads). */
+  private snapshot(person: string, def: ChannelDef, canPost: boolean) {
+    return {
+      id: def.id,
+      kind: def.kind,
+      title: def.title,
+      spaceId: def.spaceId,
+      member: this.isChannelMember(person, def.id),
+      canPost,
+      threadable: def.rules.threadable,
+    };
+  }
+
+  /** The authored channels a person can see, as flat snapshots for the view. */
+  visibleChannelsFor(person: string): Array<ReturnType<Sim["snapshot"]>> {
+    const out: Array<ReturnType<Sim["snapshot"]>> = [];
+    for (const def of this.model.channels.values()) {
+      if (!this.canSeeChannel(person, def.id)) continue;
+      out.push(this.snapshot(person, def, this.canPost(person, def.id)));
+    }
+    return out;
+  }
+
+  /** Every authored channel (operator/performer view — they run every room, so
+   *  they may post everywhere regardless of post policy). */
+  allChannelsFor(person: string): Array<ReturnType<Sim["snapshot"]>> {
+    return [...this.model.channels.values()].map((def) => this.snapshot(person, def, true));
+  }
+
+  /** The authored spaces (for the client to title sidebar sections). */
+  spaceList(): Array<{ id: string; title: string }> {
+    return [...this.model.spaces.values()].map((s) => ({ id: s.id, title: s.title }));
+  }
+
+  /** Public roster (id + name) of everyone but `exclude` — for invite pickers. */
+  publicRoster(exclude?: string): Array<{ id: string; name: string }> {
+    return [...this.persons.values()].filter((p) => p.id !== exclude).map((p) => ({ id: p.id, name: p.name }));
+  }
+
+  /** Current recipients of a channel — for routing system notices. */
+  channelAudience(id: string): "all" | string[] {
+    return this.chatAudience(id, "");
+  }
+
+  /** Add a participant to a membership-gated channel (invite-based access). */
+  inviteToChannel(by: string, person: string, channel: string): SimEvent[] {
+    const start = this.log.len();
+    const def = this.model.channels.get(channel);
+    if (def !== undefined && def.kind !== "open" && def.kind !== "faction") {
+      let set = this.channelMembers.get(channel);
+      if (set === undefined) {
+        set = new Set();
+        this.channelMembers.set(channel, set);
+      }
+      if (!set.has(person)) {
+        set.add(person);
+        this.record({ type: "channelInvited", channel, person, by });
+      }
+    }
+    this.drain();
+    return this.log.since(start);
+  }
+
+  /** Remove a participant from a membership-gated channel. */
+  leaveChannel(person: string, channel: string): SimEvent[] {
+    const start = this.log.len();
+    const set = this.channelMembers.get(channel);
+    if (set !== undefined && set.delete(person)) {
+      this.record({ type: "channelLeft", channel, person });
+    }
+    this.drain();
+    return this.log.since(start);
   }
 
   /** The oldest outstanding choice's options for a person, if any. */

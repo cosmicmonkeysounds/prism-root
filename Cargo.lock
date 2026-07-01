@@ -3289,26 +3289,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "loom-wasm"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "getrandom 0.2.17",
- "js-sys",
- "loom-lsp",
- "loom-parser",
- "loom-runtime",
- "loom-syntax",
- "loro",
- "lsp-types",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "uuid",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "loro"
 version = "1.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5560,17 +5540,6 @@ checksum = "f3a1a3341211875ef120e117ea7fd5228530ae7e7036a779fdc9117be6b3282c"
 dependencies = [
  "ordered-float",
  "serde",
-]
-
-[[package]]
-name = "serde-wasm-bindgen"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
-dependencies = [
- "js-sys",
- "serde",
- "wasm-bindgen",
 ]
 
 [[package]]

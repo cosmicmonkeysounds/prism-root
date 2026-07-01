@@ -6,29 +6,24 @@
 
 import { create } from 'zustand'
 
-export type Mode =
-  | 'writing'
-  | 'editing'
-  | 'simulating'
-  | 'performing'
-  | 'production'
+// Play / perform / produce (Simulating / Performing / Production) were
+// removed when the editor became authoring-only; runtime lives in the
+// `core` server + `play` app. Two author modes remain.
+export type Mode = 'writing' | 'editing'
 
 export type ModeDescriptor = {
   id: Mode
   label: string
-  /** Keybinding hint shown on the Mode Bar (⌘1..⌘5). */
+  /** Keybinding hint shown on the Mode Bar (⌘1..⌘2). */
   hint: string
   /** Whether the bottom Timeline dock is present in this mode. */
   hasTimeline: boolean
 }
 
-/** Ordered left→right as they appear on the Mode Bar; index ↔ ⌘1..⌘5. */
+/** Ordered left→right as they appear on the Mode Bar; index ↔ ⌘1..⌘2. */
 export const MODES: ModeDescriptor[] = [
   { id: 'writing', label: 'Writing', hint: '⌘1', hasTimeline: false },
   { id: 'editing', label: 'Editing', hint: '⌘2', hasTimeline: true },
-  { id: 'simulating', label: 'Simulating', hint: '⌘3', hasTimeline: true },
-  { id: 'performing', label: 'Performing', hint: '⌘4', hasTimeline: true },
-  { id: 'production', label: 'Production', hint: '⌘5', hasTimeline: false },
 ]
 
 export type ModeUi = {
@@ -46,9 +41,6 @@ function defaultUi(): Record<Mode, ModeUi> {
   return {
     writing: { cols: [260, 960, 320], rows: [620, 200], trayOpen: true, railOpen: true },
     editing: { cols: [240, 780, 360], rows: [400, 320], trayOpen: true, railOpen: true },
-    simulating: { cols: [260, 760, 320], rows: [430, 250], trayOpen: true, railOpen: true },
-    performing: { cols: [240, 780, 360], rows: [460, 230], trayOpen: true, railOpen: true },
-    production: { cols: [320, 860, 300], rows: [620, 200], trayOpen: true, railOpen: true },
   }
 }
 

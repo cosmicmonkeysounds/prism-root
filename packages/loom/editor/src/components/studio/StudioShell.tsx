@@ -29,7 +29,7 @@ export function StudioShell() {
       const mod = e.metaKey || e.ctrlKey
       if (!mod || e.altKey || e.shiftKey) return
       const idx = ['1', '2', '3', '4', '5'].indexOf(e.key)
-      if (idx < 0) return
+      if (idx < 0 || idx >= MODES.length) return
       e.preventDefault()
       setMode(MODES[idx].id)
     }

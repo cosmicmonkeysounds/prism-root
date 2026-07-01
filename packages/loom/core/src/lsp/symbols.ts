@@ -20,6 +20,8 @@ const DECLARATION_SYMBOL_KIND: Record<DeclarationKind, SymbolKind> = {
   cohort: SymbolKind.Array,
   person: SymbolKind.Object,
   roster: SymbolKind.Package,
+  space: SymbolKind.Namespace,
+  channel: SymbolKind.Interface,
 };
 
 export function documentSymbols(ws: Workspace, uri: string): DocumentSymbolResponse | null {

@@ -8,7 +8,7 @@ import { StreamLanguage, LanguageSupport, type StreamParser } from '@codemirror/
  * patterns here are written so highlights are visually consistent with
  * the Zed / VSCode extensions.
  *
- * Diagnostics come from the real Rust parser via `loom-wasm`; see
+ * Diagnostics come from the native TypeScript parser (`@loom/core`); see
  * `./loom-lint.ts`.
  */
 

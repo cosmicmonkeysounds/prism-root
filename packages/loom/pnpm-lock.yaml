@@ -107,6 +107,9 @@ importers:
       '@dnd-kit/sortable':
         specifier: ^10.0.0
         version: 10.0.0(@dnd-kit/core@6.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
+      '@loom/core':
+        specifier: workspace:*
+        version: link:../core
       '@replit/codemirror-indentation-markers':
         specifier: ^6.5.3
         version: 6.5.3(@codemirror/language@6.12.4)(@codemirror/state@6.7.0)(@codemirror/view@6.43.4)
@@ -202,6 +205,9 @@ importers:
       vite:
         specifier: ^5.4.20
         version: 5.4.21(@types/node@24.13.2)(lightningcss@1.32.0)
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@24.13.2)(lightningcss@1.32.0)
 
 packages:
 

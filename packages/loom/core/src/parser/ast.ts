@@ -59,6 +59,8 @@ export interface Declaration {
   faction: FactionBody | null;
   person: PersonBody | null;
   roster: RosterBody | null;
+  space: SpaceBody | null;
+  channel: ChannelBody | null;
   span: Span;
 }
 
@@ -86,6 +88,8 @@ export function emptyDeclaration(
     faction: null,
     person: null,
     roster: null,
+    space: null,
+    channel: null,
     span,
   };
 }
@@ -103,7 +107,9 @@ export type DeclarationKind =
   | "scene"
   | "cohort"
   | "person"
-  | "roster";
+  | "roster"
+  | "space"
+  | "channel";
 
 const DECLARATION_KEYWORDS: ReadonlyArray<[string, DeclarationKind]> = [
   ["CHARACTER", "character"],
@@ -119,6 +125,8 @@ const DECLARATION_KEYWORDS: ReadonlyArray<[string, DeclarationKind]> = [
   ["COHORT", "cohort"],
   ["PERSON", "person"],
   ["ROSTER", "roster"],
+  ["SPACE", "space"],
+  ["CHANNEL", "channel"],
 ];
 
 const KEYWORD_TO_KIND = new Map<string, DeclarationKind>(DECLARATION_KEYWORDS);
@@ -325,6 +333,75 @@ export interface LocationBody {
 
 export function emptyLocationBody(): LocationBody {
   return { label: null, ambient: null, contains: [], capacity: null, properties: new Map() };
+}
+
+// ---------------------------------------------------------------------
+// SPACE / CHANNEL — authored chatrooms (Discord spaces + Slack threads)
+// ---------------------------------------------------------------------
+
+/** A channel's access/behaviour kind. `open` = anyone; `private` = invite
+ *  only; `faction` = scoped to a faction's members; `group` / `dm` = a fixed
+ *  declared member set. */
+export type ChannelKindWord = "open" | "private" | "faction" | "group" | "dm";
+
+export interface ChannelBody {
+  /** The channel's id (the `CHANNEL <name>` opener). */
+  name: string;
+  label: string | null;
+  /** open | private | faction | group | dm — defaults to `open`. */
+  kind: ChannelKindWord;
+  /** Owning space id (set from the enclosing SPACE or a `space:` property). */
+  space: string | null;
+  /** For `kind: faction` — the faction whose members this channel serves. */
+  faction: string | null;
+  /** Declared initial members (ids / character names) for group/private/dm. */
+  members: string[];
+  /** Who may invite into a private channel (`members` | `anyone` | a role). */
+  invite: string | null;
+  // --- channel-type rules (resolved by the registry at compile time) ------
+  /** A registered channel-type preset name (`announcement`, …). */
+  type: string | null;
+  /** Post policy override (`everyone` | `members` | `faction` | `none` | `role X`). */
+  post: string | null;
+  /** Threading override (`on` | `off`). */
+  threads: string | null;
+  /** Broadcast cues mirrored here (`*` or a comma list). */
+  routes: string | null;
+  slow: string | null;
+  ephemeral: string | null;
+  properties: Map<string, PropertyValue>;
+  span: Span;
+}
+
+export function emptyChannelBody(name: string, span: Span): ChannelBody {
+  return {
+    name,
+    label: null,
+    kind: "open",
+    space: null,
+    faction: null,
+    members: [],
+    invite: null,
+    type: null,
+    post: null,
+    threads: null,
+    routes: null,
+    slow: null,
+    ephemeral: null,
+    properties: new Map(),
+    span,
+  };
+}
+
+export interface SpaceBody {
+  label: string | null;
+  /** Channels declared nested inside this SPACE, in source order. */
+  channels: ChannelBody[];
+  properties: Map<string, PropertyValue>;
+}
+
+export function emptySpaceBody(): SpaceBody {
+  return { label: null, channels: [], properties: new Map() };
 }
 
 // ---------------------------------------------------------------------

@@ -5,16 +5,20 @@
 import type {
   Beat,
   BodyItem,
+  ChannelBody,
+  ChannelKindWord,
   CharacterBody,
   FactionBody,
   LocationBody,
   Property,
   RawLine,
+  SpaceBody,
 } from "../../parser/index.ts";
 import { stripPrefix } from "../../parser/rust.ts";
 import type { Bundle } from "../bundle.ts";
 import { vBool, vNumber, vString, type Value } from "../expr.ts";
 import { lowerRawBody } from "./effects.ts";
+import { resolveRules, type ChannelRules } from "./channel-types.ts";
 
 export type EntityKind = "person" | "character" | "faction" | "location" | "role";
 
@@ -79,11 +83,47 @@ export interface CharDef {
   disposition: CharacterBody["disposition"];
 }
 
+/** The default space authored channels fall into when none is named. */
+export const DEFAULT_SPACE_ID = "internet";
+
+export interface SpaceDef {
+  id: string;
+  title: string;
+  /** Channel ids in source order. */
+  channelIds: string[];
+}
+
+/** An authored chatroom (spec: SPACE/CHANNEL). `id` is `room:<name>`. */
+export interface ChannelDef {
+  id: string;
+  spaceId: string;
+  kind: ChannelKindWord;
+  title: string;
+  /** For `kind: faction`, the faction whose members this channel serves. */
+  faction: string | null;
+  /** Declared seed members (character/role names or guest ids). */
+  members: string[];
+  /** Who may invite into a private channel (`members` | `anyone` | role). */
+  invite: string | null;
+  /** Behaviour bundle resolved from the channel-type registry (post policy,
+   *  threadability, broadcast routing, …). */
+  rules: ChannelRules;
+}
+
+/** The channel-id namespace for an authored channel name. */
+export function channelId(name: string): string {
+  return `room:${name.trim()}`;
+}
+
 export interface SimModel {
   factions: Map<string, FactionDef>;
   locations: Map<string, LocationDef>;
   roles: Map<string, RoleDef>;
   characters: Map<string, CharDef>;
+  /** Authored spaces (Discord-style sidebar containers). */
+  spaces: Map<string, SpaceDef>;
+  /** Authored channels, keyed by `room:<name>`. */
+  channels: Map<string, ChannelDef>;
   beats: Map<string, Beat>;
   /** id → kind, for seeding self-identity values + dispatch. */
   entityKind: Map<string, EntityKind>;
@@ -104,6 +144,8 @@ export function compileModel(bundle: Bundle): SimModel {
     locations: new Map(),
     roles: new Map(),
     characters: new Map(),
+    spaces: new Map(),
+    channels: new Map(),
     beats: new Map(),
     entityKind: new Map(),
     defaultRole: null,
@@ -160,6 +202,12 @@ export function compileModel(bundle: Bundle): SimModel {
             if (spec !== null) model.gens.push(spec);
           }
           break;
+        case "space":
+          if (decl.space) registerSpace(model, decl.name, decl.space);
+          break;
+        case "channel":
+          if (decl.channel) registerChannel(model, decl.channel, decl.channel.space);
+          break;
         default:
           break;
       }
@@ -170,7 +218,58 @@ export function compileModel(bundle: Bundle): SimModel {
   for (const char of model.characters.values()) {
     for (const hook of char.hooks) if (hook.timer !== null) model.timerHooks.push(hook);
   }
+  // Every channel's space must exist; synthesise one for `space:`-referenced
+  // or default-space channels, and keep `channelIds` consistent + ordered.
+  for (const ch of model.channels.values()) {
+    const space = ensureSpace(model, ch.spaceId);
+    if (!space.channelIds.includes(ch.id)) space.channelIds.push(ch.id);
+  }
   return model;
+}
+
+function channelDef(body: ChannelBody, spaceId: string): ChannelDef {
+  return {
+    id: channelId(body.name),
+    spaceId,
+    kind: body.kind,
+    title: body.label ?? `#${body.name}`,
+    faction: body.faction,
+    members: [...body.members],
+    invite: body.invite,
+    rules: resolveRules(body.kind, body.type, {
+      post: body.post,
+      threads: body.threads,
+      routes: body.routes,
+      slow: body.slow,
+      ephemeral: body.ephemeral,
+    }),
+  };
+}
+
+function registerChannel(model: SimModel, body: ChannelBody, spaceId: string | null): void {
+  const def = channelDef(body, spaceId ?? DEFAULT_SPACE_ID);
+  model.channels.set(def.id, def);
+}
+
+function registerSpace(model: SimModel, name: string, body: SpaceBody): void {
+  const space: SpaceDef = ensureSpace(model, name, body.label ?? name);
+  for (const ch of body.channels) {
+    const def = channelDef(ch, name);
+    model.channels.set(def.id, def);
+    if (!space.channelIds.includes(def.id)) space.channelIds.push(def.id);
+  }
+}
+
+/** Get-or-create a space (a `space:`-referenced or default space is implicit). */
+function ensureSpace(model: SimModel, id: string, title?: string): SpaceDef {
+  let space = model.spaces.get(id);
+  if (space === undefined) {
+    space = { id, title: title ?? id, channelIds: [] };
+    model.spaces.set(id, space);
+  } else if (title !== undefined) {
+    space.title = title; // a later explicit SPACE wins over an implicit one
+  }
+  return space;
 }
 
 function factionDef(id: string, body: FactionBody): FactionDef {

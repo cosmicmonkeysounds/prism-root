@@ -12,14 +12,18 @@ import {
   emptyGeneratorBody,
   emptyGeneratorDecl,
   emptyGoalDecl,
+  emptyChannelBody,
   emptyLocationBody,
   emptyPersonBody,
   emptyPoolDecl,
+  emptySpaceBody,
   emptyRosterBody,
   emptySceneBody,
   emptyStatsBody,
   emptyTreeNodeDecl,
   type AttributeDecl,
+  type ChannelBody,
+  type ChannelKindWord,
   type CharacterBody,
   type CohortBody,
   type ConstructorCall,
@@ -47,6 +51,7 @@ import {
   type SceneBody,
   type SceneState,
   type SlotType,
+  type SpaceBody,
   type StatsBody,
   type TreeBody,
 } from "./ast.ts";
@@ -117,7 +122,96 @@ export function lower(decl: Declaration, diagnostics: Diagnostic[]): void {
     case "roster":
       decl.roster = lowerRoster(decl.body);
       break;
+    case "space":
+      decl.space = lowerSpace(decl.body);
+      break;
+    case "channel":
+      decl.channel = lowerChannel(decl.name, decl.body, decl.span);
+      break;
   }
+}
+
+// ---------------------------------------------------------------------
+// SPACE / CHANNEL (authored chatrooms)
+// ---------------------------------------------------------------------
+
+const CHANNEL_KINDS: ReadonlyArray<ChannelKindWord> = ["open", "private", "faction", "group", "dm"];
+
+function asChannelKind(value: string): ChannelKindWord {
+  const v = value.trim().toLowerCase();
+  return (CHANNEL_KINDS as readonly string[]).includes(v) ? (v as ChannelKindWord) : "open";
+}
+
+function splitList(value: string): string[] {
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/** Apply a `key: value` line to a channel body. Shared by nested + standalone. */
+function applyChannelProp(out: ChannelBody, key: string, value: string, sp: Span): void {
+  if (key === "label") out.label = value;
+  else if (key === "kind") out.kind = asChannelKind(value);
+  else if (key === "space") out.space = value;
+  else if (key === "faction") out.faction = value;
+  else if (key === "members") out.members = splitList(value);
+  else if (key === "invite") out.invite = value;
+  else if (key === "type") out.type = value;
+  else if (key === "post") out.post = value;
+  else if (key === "threads") out.threads = value;
+  else if (key === "routes") out.routes = value;
+  else if (key === "slow") out.slow = value;
+  else if (key === "ephemeral") out.ephemeral = value;
+  out.properties.set(key, { value, span: sp });
+}
+
+/** Lower a standalone `CHANNEL <name>` body (flat `key: value` lines). */
+function lowerChannel(name: string, body: RawLine[], sp: Span): ChannelBody {
+  const out = emptyChannelBody(name.trim(), sp);
+  for (const line of body) {
+    const kv = splitProperty(line.text.trim());
+    if (kv !== null) applyChannelProp(out, kv[0], kv[1], line.span);
+  }
+  return out;
+}
+
+/**
+ * Lower a `SPACE` body: its own `label:` / properties, plus nested
+ * `CHANNEL <name>` sub-blocks (their indented lines become each channel's
+ * body). Mirrors the SCENE-state collection pattern.
+ */
+function lowerSpace(body: RawLine[]): SpaceBody {
+  const out = emptySpaceBody();
+  const baseIndent = body.length > 0 ? body[0]!.indent : 0;
+  let i = 0;
+  while (i < body.length) {
+    const line = body[i]!;
+    if (line.indent > baseIndent) {
+      i += 1;
+      continue;
+    }
+    const text = line.text.trim();
+    const opener = stripPrefix(text, "CHANNEL ");
+    if (opener !== null) {
+      const chName = opener.trim();
+      const sub: RawLine[] = [];
+      i += 1;
+      while (i < body.length && body[i]!.indent > line.indent) {
+        sub.push(body[i]!);
+        i += 1;
+      }
+      out.channels.push(lowerChannel(chName, sub, line.span));
+      continue;
+    }
+    const kv = splitProperty(text);
+    if (kv !== null) {
+      if (kv[0] === "label") out.label = kv[1];
+      out.properties.set(kv[0], { value: kv[1], span: line.span });
+    }
+    i += 1;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------

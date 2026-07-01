@@ -3,7 +3,7 @@ name = "loom-lsp"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
-description = "Language Server Protocol implementation for Loom v3. Backed by loom-parser + a workspace-wide name index. Ships a stdio JSON-RPC binary natively; library-only when consumed by loom-wasm (no lsp-server dep)."
+description = "Language Server Protocol implementation for Loom v3. Backed by loom-parser + a workspace-wide name index. Ships a stdio JSON-RPC binary for Zed / VSCode (the web editor uses the TypeScript port @loom/core/lsp instead)."
 
 [lib]
 name = "loom_lsp"

@@ -126,27 +126,5 @@ function ModeGlyph({ id }: { id: Mode }) {
           <rect x="3" y="13" width="11" height="4" rx="1" />
         </svg>
       )
-    case 'simulating':
-      return (
-        <svg {...common} aria-hidden>
-          <polygon points="6 4 20 12 6 20 6 4" />
-        </svg>
-      )
-    case 'performing':
-      return (
-        <svg {...common} aria-hidden>
-          <circle cx="12" cy="12" r="8" />
-          <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
-        </svg>
-      )
-    case 'production':
-      return (
-        <svg {...common} aria-hidden>
-          <path d="M12 3v12" />
-          <path d="m7 10 5 5 5-5" />
-          <path d="M5 21h14" />
-        </svg>
-      )
   }
-  return null
 }

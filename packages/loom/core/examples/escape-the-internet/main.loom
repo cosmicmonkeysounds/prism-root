@@ -1,13 +1,9 @@
 # Escape the Internet
 #
-# A Meow-Wolf-style live installation. The room is a network; every
-# party-goer is a packet with a scannable QR pass. Two public factions
-# fight over the vibe — the Mods (order) and the Chatters (chaos) — while
-# a hidden third faction, The Algorithm, watches everyone and quietly
-# logs the ones who step out of line. There is NO ambient lockdown in
-# this world: the Algorithm only ever moves on a *specific* guest who has
-# personally angered it (see `beats/arrival.loom` → `lockdown`). A second
-# hidden faction, the Glitchers, runs the underground railroad out.
+# The room is a network; every party-goer is a packet with a scannable QR pass.
+# Two public factions fight over the vibe — the Mods (order) and the Chatters (chaos) — while
+# a hidden third faction, The Algorithm, watches everyone and quietly logs the ones who step out of line.
+# A second hidden faction, the Glitchers, runs the underground railroad out.
 #
 # This is the spine of the project. The cast lives under `cast/`, the
 # scripted interactions under `beats/`, and the autonomous clock under

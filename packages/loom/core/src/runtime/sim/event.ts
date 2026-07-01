@@ -21,6 +21,14 @@ export type SimEvent =
   | { type: "relationshipChanged"; subject: string; relation: string; object: string; value: number }
   | { type: "broadcast"; cue: string; audience: string[]; scope: string }
   | { type: "dialogue"; speaker: string; text: string; audience: string[] }
+  // A participant typed a message into a channel. `from` is the display name,
+  // `audience` is resolved at send time ("all" or guest ids), `parentSeq` links
+  // a reply to its root message (null for a top-level message).
+  | { type: "chat"; from: string; channel: string; text: string; audience: "all" | string[]; parentSeq: number | null }
+  // A participant was invited into (or left) an authored channel — membership
+  // changes for private/group/dm rooms drive who can see + post.
+  | { type: "channelInvited"; channel: string; person: string; by: string }
+  | { type: "channelLeft"; channel: string; person: string }
   | { type: "action"; text: string }
   | { type: "directive"; verb: string; args: string }
   | { type: "beatEntered"; beat: string }

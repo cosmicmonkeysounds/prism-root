@@ -20,7 +20,10 @@
 
 import type { Sim, SimEvent } from "../src/runtime/sim/index.ts";
 
-export type ChannelKind = "lobby" | "faction" | "dm";
+// `lobby` / `faction` / `dm` are what slice 1 emits; `group` / `open` /
+// `private` are the targets the UI + (future) channel-type registry render
+// against once channels become authored rather than derived.
+export type ChannelKind = "lobby" | "faction" | "dm" | "group" | "open" | "private";
 
 /** Who receives a message: `"all"` guests, or a fixed set of guest ids. */
 export type Audience = "all" | string[];
@@ -43,6 +46,13 @@ export interface ChatMessage {
   /** Story-clock time (ms) — deterministic, unlike wall clock. */
   ts: number;
   audience: Audience;
+  /**
+   * Slack-style threading: the `seq` of the root message this is a reply to,
+   * or `null` when this message is itself a root. Single-level — a reply
+   * always points at the root, never at another reply. `seq` is stable across
+   * deterministic replay, so a `parentSeq` link survives a restart unchanged.
+   */
+  parentSeq: number | null;
   /** Hidden by a moderator. Withheld from guests, greyed for admins. */
   hidden: boolean;
 }
@@ -95,6 +105,63 @@ function dmChannel(speaker: string): ChannelHead {
   return { channel: `dm:${speaker}`, channelKind: "dm", title: speaker };
 }
 
+// --- spaces + channel descriptors -------------------------------------------
+//
+// A `Space` is the Discord-style container that groups channels in the
+// sidebar. In slice 1 every derived channel lives in one default space; the
+// authoring pass adds more. `spaceId` is a property of the *channel*, never of
+// each message, so the wire payload per line stays lean.
+
+export interface Space {
+  id: string;
+  title: string;
+  /** Ordered channel ids (derived in slice 1). */
+  channelIds: string[];
+}
+
+export const DEFAULT_SPACE: Space = { id: "internet", title: "The Internet", channelIds: [] };
+
+/** A channel's owning space. Slice 1: everything derived lives in `internet`. */
+export function spaceOf(_channelId: string): string {
+  return DEFAULT_SPACE.id;
+}
+
+export interface ChannelDescriptor {
+  channel: string;
+  channelKind: ChannelKind;
+  title: string;
+  spaceId: string;
+  /** Stable sidebar sort key: lobby 0, faction 1, dm/other 2. */
+  order: number;
+  members: Audience;
+}
+
+function headOf(id: string): ChannelHead {
+  if (id === LOBBY.channel) return LOBBY;
+  if (id.startsWith("faction:")) return factionChannel(id.slice("faction:".length));
+  if (id.startsWith("dm:")) return dmChannel(id.slice("dm:".length));
+  return { channel: id, channelKind: "dm", title: id };
+}
+
+function orderOf(kind: ChannelKind): number {
+  return kind === "lobby" ? 0 : kind === "faction" ? 1 : 2;
+}
+
+/**
+ * Stable descriptor for a (derived) channel id — the server twin of the
+ * client's `channelHead` (`play/src/threads.ts`); they must agree on
+ * kind/title so a message's channel reads the same on both ends.
+ */
+export function describeChannel(id: string): ChannelDescriptor {
+  const head = headOf(id);
+  return {
+    ...head,
+    spaceId: spaceOf(id),
+    order: orderOf(head.channelKind),
+    members: head.channelKind === "lobby" ? "all" : [],
+  };
+}
+
 /** Faction names referenced by a broadcast scope like `faction(Mods) | …`. */
 function factionsInScope(scope: string): string[] {
   return [...scope.matchAll(/faction\(([^)]+)\)/g)].map((m) => m[1]!.trim());
@@ -117,29 +184,82 @@ export function composeGuestMessages(sim: Sim, events: readonly SimEvent[]): Dra
   const out: DraftMessage[] = [];
   const ts = sim.elapsed();
   const sys = (text: string, audience: Audience): DraftMessage =>
-    ({ ...LOBBY, from: "", kind: "system", text, ts, audience });
+    ({ ...LOBBY, from: "", kind: "system", text, ts, audience, parentSeq: null });
 
   for (const e of events) {
     switch (e.type) {
       case "dialogue":
         // A character addressing you → that character's DM thread.
-        out.push({ ...dmChannel(e.speaker), from: e.speaker, kind: "line", text: e.text, ts, audience: [...e.audience] });
+        out.push({ ...dmChannel(e.speaker), from: e.speaker, kind: "line", text: e.text, ts, audience: [...e.audience], parentSeq: null });
         break;
+      case "chat": {
+        // A participant typed into a channel. The sim baked the audience +
+        // display name; route by the channel id (a reply carries parentSeq).
+        // `sim.channelHead` resolves authored channels (SPACE/CHANNEL) too.
+        const head = sim.channelHead(e.channel);
+        out.push({
+          channel: head.channel,
+          channelKind: head.channelKind as ChannelKind,
+          title: head.title,
+          from: e.from,
+          kind: "line",
+          text: e.text,
+          ts,
+          audience: e.audience === "all" ? "all" : [...e.audience],
+          parentSeq: e.parentSeq,
+        });
+        break;
+      }
+      case "channelInvited":
+      case "channelLeft": {
+        const head = sim.channelHead(e.channel);
+        const who = sim.persons.get(e.person)?.name ?? e.person;
+        const text = e.type === "channelInvited" ? `📥 ${who} joined the room.` : `📤 ${who} left the room.`;
+        out.push({
+          channel: head.channel,
+          channelKind: head.channelKind as ChannelKind,
+          title: head.title,
+          from: "",
+          kind: "system",
+          text,
+          ts,
+          audience: sim.channelAudience(e.channel),
+          parentSeq: null,
+        });
+        break;
+      }
       case "broadcast": {
         const text = cueText(e.cue);
         const factions = factionsInScope(e.scope);
+        const base: Audience = globalScope(e.scope) ? "all" : [...e.audience];
         if (factions.length > 0) {
           // Mirror into each targeted faction channel (members only).
           for (const f of factions) {
-            out.push({ ...factionChannel(f), from: "", kind: "signal", text, ts, audience: sim.factionMembers(f) });
+            out.push({ ...factionChannel(f), from: "", kind: "signal", text, ts, audience: sim.factionMembers(f), parentSeq: null });
           }
         } else {
-          out.push({ ...LOBBY, from: "", kind: "signal", text, ts, audience: globalScope(e.scope) ? "all" : [...e.audience] });
+          out.push({ ...LOBBY, from: "", kind: "signal", text, ts, audience: base, parentSeq: null });
+        }
+        // Channel-type routing: any authored channel subscribed to this cue
+        // (`routes: *` / `routes: <cue>`) also receives it — e.g. #announcements —
+        // scoped to those who can see both the broadcast and the channel.
+        for (const r of sim.routedChannelsFor(e.cue)) {
+          out.push({
+            channel: r.channel,
+            channelKind: r.channelKind as ChannelKind,
+            title: r.title,
+            from: "",
+            kind: "signal",
+            text,
+            ts,
+            audience: intersectAudience(base, r.audience),
+            parentSeq: null,
+          });
         }
         break;
       }
       case "ambient":
-        out.push({ ...LOBBY, from: "", kind: "narration", text: e.text, ts, audience: "all" });
+        out.push({ ...LOBBY, from: "", kind: "narration", text: e.text, ts, audience: "all", parentSeq: null });
         break;
       case "captured":
         out.push(sys("⛓️ You've been dragged into the Internet.", [e.person]));
@@ -184,6 +304,16 @@ export function decisionChannelFor(events: readonly SimEvent[], person: string):
 /** Is a message visible to a given guest (audience match)? */
 export function visibleTo(m: ChatMessage, guestId: string): boolean {
   return m.audience === "all" || m.audience.includes(guestId);
+}
+
+/** Intersect two audiences — a routed mirror reaches only those entitled to
+ *  both the broadcast and the channel (so a faction broadcast can't leak into
+ *  a public feed). */
+function intersectAudience(a: Audience, b: Audience): Audience {
+  if (a === "all") return b;
+  if (b === "all") return a;
+  const setB = new Set(b);
+  return a.filter((x) => setB.has(x));
 }
 
 // --- store ------------------------------------------------------------------
@@ -256,5 +386,16 @@ export class ChatStore {
    */
   historyFor(guestId: string, admin: boolean): ChatMessage[] {
     return this.msgs.filter((m) => visibleTo(m, guestId) && (admin || !m.hidden));
+  }
+
+  /** Replies hanging under a root message, seq-ordered. Derived (not stored). */
+  replies(rootSeq: number): ChatMessage[] {
+    return this.msgs.filter((m) => m.parentSeq === rootSeq);
+  }
+  /** How many replies a root message has. */
+  replyCount(rootSeq: number): number {
+    let n = 0;
+    for (const m of this.msgs) if (m.parentSeq === rootSeq) n += 1;
+    return n;
   }
 }

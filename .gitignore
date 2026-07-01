@@ -28,6 +28,9 @@ Thumbs.db
 # Rust
 target/
 
+# Loom event-server restart-recovery state (passcodes, journal, sessions)
+.loom-state/
+
 # WebAssembly toolchain + outputs for prism-daemon
 packages/prism-daemon/.emsdk/
 packages/prism-daemon/dist-wasm/

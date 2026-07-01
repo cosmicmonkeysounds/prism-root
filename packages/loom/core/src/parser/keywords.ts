@@ -26,6 +26,8 @@ export const DECLARATIONS: readonly string[] = [
   "COHORT",
   "PERSON",
   "ROSTER",
+  "SPACE",
+  "CHANNEL",
 ];
 
 /** Directive verbs whose shape is part of the grammar (spec §14.2). */
