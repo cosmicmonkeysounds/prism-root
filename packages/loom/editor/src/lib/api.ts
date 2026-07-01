@@ -119,6 +119,8 @@ export const eventsApi = {
 // which now also accept the owning author's cookie — run + admin are one
 // capability.
 
+export type StatField = 'score' | 'faction' | 'location' | 'captured'
+
 export const modApi = {
   async act(eventId: string, id: string, action: 'capture' | 'release' | 'signal', name?: string): Promise<void> {
     await req('POST', `/e/${eventId}/api/mod/act`, { id, action, name })
@@ -128,5 +130,29 @@ export const modApi = {
   },
   async broadcast(eventId: string, scope: string, cue: string): Promise<void> {
     await req('POST', `/e/${eventId}/api/mod/broadcast`, { scope, cue })
+  },
+  /** Post a message into any room, as the Operator or in a character's voice. */
+  async say(eventId: string, channel: string, text: string, as?: string, parentSeq?: number | null): Promise<void> {
+    await req('POST', `/e/${eventId}/api/mod/say`, { channel, text, as, parentSeq })
+  },
+  /** Live-edit one guest stat (score / faction / location / captured). */
+  async setStat(eventId: string, id: string, field: StatField, value: string | number | boolean): Promise<void> {
+    await req('POST', `/e/${eventId}/api/mod/set`, { id, field, value })
+  },
+  /** Fire a named story beat (optionally targeting one guest). */
+  async fireBeat(eventId: string, name: string, subject?: string): Promise<void> {
+    await req('POST', `/e/${eventId}/api/mod/beat`, { name, subject })
+  },
+  /** Fire a generic `on <name>` signal, globally or on one subject. */
+  async fireSignal(eventId: string, name: string, subject?: string): Promise<void> {
+    await req('POST', `/e/${eventId}/api/mod/signal`, { name, subject })
+  },
+  /** Scan a guest as a character — fires that character's scan reaction. */
+  async scanAs(eventId: string, as: string, target: string): Promise<void> {
+    await req('POST', `/e/${eventId}/api/mod/scan`, { as, target })
+  },
+  /** Reset the event: clear the journal + replay from the loaded scenario. */
+  async reset(eventId: string): Promise<void> {
+    await req('POST', `/e/${eventId}/api/mod/reset`, {})
   },
 }

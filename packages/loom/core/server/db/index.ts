@@ -20,7 +20,7 @@ let _pool: Pool | null = null;
 /** The shared connection pool (also handed to BetterAuth). Lazily created. */
 export function pool(): Pool {
   if (_pool === null) {
-    _pool = new Pool({ connectionString: DATABASE_URL, max: 10 });
+    _pool = new Pool({ connectionString: DATABASE_URL, max: 10, connectionTimeoutMillis: 3000 });
   }
   return _pool;
 }

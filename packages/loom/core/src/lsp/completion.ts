@@ -7,8 +7,8 @@
 
 import { type CompletionItem, CompletionItemKind, type Position } from "./types.ts";
 import { allChars, isAsciiAlphanumeric } from "../parser/rust.ts";
-import { lineAt } from "./util.ts";
-import type { Workspace } from "./workspace.ts";
+import { lineAt, lines } from "./util.ts";
+import type { OpenDoc, Workspace } from "./workspace.ts";
 
 /**
  * Canonical directive verbs (spec §14). Hard-coded here, mirroring the
@@ -51,12 +51,34 @@ export function completionAt(ws: Workspace, uri: string, pos: Position): Complet
   const col = pos.character;
   const prefix = col <= line.length ? line.slice(0, col) : line;
 
+  // Owner-qualified divert `-> self.` / `-> Owner.` — complete the owner's
+  // owned + inherited beats. Checked before `isDivertPosition` (which bails on
+  // the `.`) so a dotted divert tail routes here.
+  const owner = ownerDivertPrefix(prefix);
+  if (owner !== null) {
+    const resolved = owner === "self" || owner === "SELF" || owner === "ME"
+      ? enclosingOwner(doc, pos.line)
+      : owner;
+    const names = resolved !== null ? ws.ownerBeatNames(resolved) : [];
+    return names.map((name) => simpleItem(name, CompletionItemKind.Function));
+  }
+
   if (isDivertPosition(prefix)) {
     return [...ws.beats.keys()].map((name) => simpleItem(name, CompletionItemKind.Function));
   }
 
   if (isDirectivePosition(prefix)) {
     return DIRECTIVES.map((d) => simpleItem(d, CompletionItemKind.Keyword));
+  }
+
+  // Inside `is Trait(…)` — the args route the trait to beats, so complete
+  // every global beat plus the enclosing character's owned + inherited beats.
+  // Checked before `isIsPosition`, which would otherwise swallow the `(`.
+  if (isTraitArgPosition(prefix)) {
+    const candidates = new Set<string>(ws.beats.keys());
+    const enclosing = enclosingOwner(doc, pos.line);
+    if (enclosing !== null) for (const b of ws.ownerBeatNames(enclosing)) candidates.add(b);
+    return [...candidates].map((name) => simpleItem(name, CompletionItemKind.Function));
   }
 
   if (isIsPosition(prefix)) {
@@ -66,10 +88,34 @@ export function completionAt(ws: Workspace, uri: string, pos: Position): Complet
     for (const n of ws.traits.keys()) {
       out.push(simpleItem(n, CompletionItemKind.Interface));
     }
+    // `SELF` / `ME` are reserved speaker tokens valid wherever a character
+    // name is (spec redesign §9); offer them alongside the declared names.
+    out.push(simpleItem("SELF", CompletionItemKind.Class));
+    out.push(simpleItem("ME", CompletionItemKind.Class));
     return out;
   }
 
   return [];
+}
+
+/**
+ * Nearest enclosing top-level declaration name (CHARACTER / ROLE / TRAIT),
+ * found by scanning upward from `line` for a column-0 opener. Returns `null`
+ * when the cursor sits outside any declaration.
+ */
+function enclosingOwner(doc: OpenDoc, line: number): string | null {
+  const ls = lines(doc.text);
+  const from = Math.min(line, ls.length - 1);
+  for (let i = from; i >= 0; i--) {
+    const text = ls[i] ?? "";
+    if (text.length === 0 || /^\s/.test(text)) continue; // blank / indented — keep scanning up
+    // The first column-0 line above the cursor decides: an opener means we are
+    // inside its body; anything else (a top-level `==` beat, header, …) means
+    // the cursor is outside every declaration.
+    const m = /^(?:CHARACTER|ROLE|TRAIT)\s+([A-Za-z_][\w]*)/u.exec(text);
+    return m ? m[1]! : null;
+  }
+  return null;
 }
 
 function simpleItem(label: string, kind: CompletionItemKind): CompletionItem {
@@ -116,4 +162,37 @@ export function isIsPosition(prefix: string): boolean {
     return allChars(tail, (c) => c !== "<" && c !== ">");
   }
   return false;
+}
+
+/**
+ * True when the cursor sits inside the argument parens of a trait
+ * application — `is Scanner(` with no closing `)` yet. The token before the
+ * open paren must be an `is <Trait>` head, so a bare function-ish `foo(` in
+ * prose doesn't trigger.
+ */
+export function isTraitArgPosition(prefix: string): boolean {
+  const open = prefix.lastIndexOf("(");
+  if (open < 0) return false;
+  if (prefix.slice(open).includes(")")) return false;
+  const head = prefix.slice(0, open);
+  // The line must be a declaration opener carrying an `is` clause (`CHARACTER
+  // Name is … Trait(`) — not a prose/dialogue line that merely contains
+  // `is Word(`. The token just before `(` must be the applied trait name.
+  return (
+    /^(?:CHARACTER|ROLE|TRAIT)\s+[A-Za-z_]\w*\s+is\b/u.test(head) &&
+    /[A-Za-z_][\w]*\s*$/u.test(head)
+  );
+}
+
+/**
+ * If the prefix is an owner-qualified divert tail `-> <owner>.<partial>`,
+ * return the owner token (`self` / `SELF` / `ME` or a character/trait name);
+ * otherwise `null`. The partial beat name after the dot may be empty.
+ */
+export function ownerDivertPrefix(prefix: string): string | null {
+  const arrow = prefix.lastIndexOf("->");
+  if (arrow < 0) return null;
+  const tail = prefix.slice(arrow + 2).replace(/^\s+/, "");
+  const m = /^([A-Za-z_][\w]*)\.(\w*)$/u.exec(tail);
+  return m ? m[1]! : null;
 }

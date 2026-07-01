@@ -16,9 +16,18 @@ export {
   type Occurrence,
   type Todo,
   type CharacterInfo,
+  type TraitInfo,
   type BeatInfo,
 } from "./workspace.ts";
-export { DIRECTIVES, completionAt, isDivertPosition, isDirectivePosition, isIsPosition } from "./completion.ts";
+export {
+  DIRECTIVES,
+  completionAt,
+  isDivertPosition,
+  isDirectivePosition,
+  isIsPosition,
+  isTraitArgPosition,
+  ownerDivertPrefix,
+} from "./completion.ts";
 export { hoverAt } from "./hover.ts";
 export { definitionAt } from "./definition.ts";
 export { documentSymbols } from "./symbols.ts";

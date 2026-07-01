@@ -11,9 +11,9 @@ tools) without dragging the runtime + scheduler + Luau bridge along.
 | [`lsp`](./lsp)         | Stdio JSON-RPC server backed by `loom-parser` + a workspace-wide name index |
 | [`syntax`](./syntax)   | TextMate grammar generator (driven by `loom-parser::keywords`) + Zed / VSCode extension shells |
 | [`server`](./server)   | Multi-user backbone — `loom-relayd` axum server hosting per-workspace Loro CRDTs over `prism-core::network::relay`. See [`docs/dev/loom-multiuser.md`](../../docs/dev/loom-multiuser.md). |
-| [`editor`](./editor)   | React/Vite/CodeMirror web IDE — the user-facing front end |
-| [`core`](./core)       | Native **TypeScript** port of Loom (no WASM, no Prism): parser (incl. authored **`SPACE`/`CHANNEL`** chatroom declarations) + a first-principles social-ecosystem `runtime/sim` + a parser-only **`lsp`** language surface (`@loom/core/lsp` — `Workspace` with completion / hover / definition / documentSymbols / references / diagnostics, the in-process replacement for the wasm `LspWorkspace`) + an SSE/REST **event server** (`pnpm serve`) that hosts a live `Sim` for LAN events, composing its `SimEvent` stream into server-authoritative, channel-routed chat (`server/chat.ts`) with spaces + Slack-style threads (`parentSeq`), **access control** (open / private-invite / faction / group / dm channel membership, journaled `inviteToChannel`/`leaveChannel`, guest↔guest invites) + a **pluggable channel-type registry** (`runtime/sim/channel-types.ts` — per-type post policy / threadability / broadcast routing / slow-mode / ephemeral, e.g. a read-only `announcement` feed), a scoped invite roster (`rosterFor`), history + moderation, and a journaled `say` command so participant-typed chat replays deterministically. vitest-tested. |
-| [`play`](./play)       | The **participant React app** (Vite, name `loom-play`) guests + performers use at a live event — an **AOL-chatroom-skinned** client with Discord-style **spaces** (sidebar sections, incl. authored `SPACE`s), Slack-style **message threads** + consecutive-sender banner grouping, **hybrid typed chat** (a composer wired to `/api/*/say`), and **access-controlled rooms** (open/private/faction/group/dm with invite + leave) layered over the story-injected lobby + faction + DM channels (decisions docked per-thread, re-login history) on the `core` server's SSE/REST. `pnpm dev` (:5174, proxies to the server on :7000) / `pnpm build` (served by the event server at `/`). |
+| [`editor`](./editor)   | React/Vite/CodeMirror web IDE — the author front end: a BetterAuth sign-in gate → projects launchpad → Studio shell; **server-backed projects** (or a local folder), plus a **Run** mode (`⌘3`) to launch + moderate live events. |
+| [`core`](./core)       | Native **TypeScript** port of Loom (no WASM, no Prism): parser (incl. authored **`SPACE`/`CHANNEL`** chatroom declarations) + a first-principles social-ecosystem `runtime/sim` + a parser-only **`lsp`** language surface (`@loom/core/lsp` — `Workspace` with completion / hover / definition / documentSymbols / references / diagnostics, the in-process replacement for the wasm `LspWorkspace`) + an SSE/REST **event server** (`pnpm serve`) that hosts a live `Sim` for LAN events, composing its `SimEvent` stream into server-authoritative, channel-routed chat (`server/chat.ts`) with spaces + Slack-style threads (`parentSeq`), **access control** (open / private-invite / faction / group / dm channel membership, journaled `inviteToChannel`/`leaveChannel`, guest↔guest invites) + a **pluggable channel-type registry** (`runtime/sim/channel-types.ts` — per-type post policy / threadability / broadcast routing / slow-mode / ephemeral, e.g. a read-only `announcement` feed), a scoped invite roster (`rosterFor`), history + moderation, and a journaled `say` command so participant-typed chat replays deterministically. Now a **multi-tenant SaaS backend**: BetterAuth author accounts + Postgres (`server/db/`, `server/auth-server.ts`), projects + files CRUD (`server/projects.ts`), event launch/lifecycle (`server/events-api.ts`, one live event per project), and a per-event `EventRuntime` + `EventRegistry` routed under `/e/:eventId` with a `resolve-code` bootstrap — the old single-event root paths still serve a default event. vitest-tested. |
+| [`play`](./play)       | The **participant React app** (Vite, name `loom-play`) guests + performers use at a live event — an **AOL-chatroom-skinned** client with Discord-style **spaces** (sidebar sections, incl. authored `SPACE`s), Slack-style **message threads** + consecutive-sender banner grouping, **hybrid typed chat** (a composer wired to `/api/*/say`), and **access-controlled rooms** (open/private/faction/group/dm with invite + leave) layered over the story-injected lobby + faction + DM channels (decisions docked per-thread, re-login history) on the `core` server's SSE/REST. Multi-event aware: a short code resolves via `/api/resolve-code` to its event, then every call is scoped to `/e/:eventId`. `pnpm dev` (:5174, proxies to the server on :7000) / `pnpm build` (served by the event server at `/`). |
 | [`examples`](./examples) | Reference `.loom` projects used by `loom-runtime` integration tests and as authoring tutorials |
 
 The canonical design lives in [`docs/dev/loom-v3.html`](../../docs/dev/loom-v3.html).
@@ -39,6 +39,30 @@ Each package has its own README: [`core`](./core/README.md) (engine +
 event server), [`play`](./play/README.md) (the participant app),
 [`editor`](./editor/README.md). The Rust crates are built via Cargo, not
 pnpm — they are not in this JS workspace.
+
+## SaaS control plane (TS stack)
+
+The TS `core` server is multi-tenant. Authors sign up (BetterAuth,
+email/password) and own **projects** (server-stored `.loom` files); each
+project launches its own **event** (live, or a private server-hosted
+**preview**), and party-goers still join by short passcode with no account.
+
+- **Control plane** (needs Postgres via `DATABASE_URL`): `/api/auth/*`
+  (BetterAuth), `/api/projects/*` (+ `…/:id/event` launch/pause/resume/end),
+  ownership-scoped. `pnpm --filter @loom/core migrate` builds the tables. If
+  the DB is unreachable the control plane stays disabled and the event plane
+  still runs, so a LAN-only deployment needs no database.
+- **Event plane**: one `EventRuntime` per live event under `/e/:eventId` (the
+  extracted single-event server), an `EventRegistry` that rehydrates every
+  non-ended event on boot, and `POST /api/resolve-code {code}` so a
+  guest/performer/mod bootstraps from just their code. Per-event journals stay
+  on disk under `LOOM_STATE_DIR/<eventId>`.
+- **Run == admin**: an event's `/e/:eventId/api/mod/*` routes accept either a
+  mod token or the owning author's BetterAuth session, so the author moderates
+  from the editor's Run mode (or `/e/:eventId/console`) with no code to type.
+
+The Rust `server` crate (see below) is the older, separate multi-workspace
+backbone; the SaaS lives entirely in the TS stack.
 
 ## Status
 
@@ -310,10 +334,21 @@ lines and no cross-corruption. A hole with no matching `fill` raises
 The `slot:` placeholder keeps its colon (a bare `slot …` line stays prose);
 `fill` is a class-body opener like `beat`/`generator`.
 
-Deferred: beat-level `super` (override-then-extend), `UnresolvedTraitArg`, and LSP.
-**The Rust mirror (parser + runtime crates) is not yet updated for ANY of Slices
-1/2/A/3/B/C — that is the largest remaining gap; the TS and Rust engines will
-drift until it is ported.**
+The remaining gaps landed 2026-07-01: **beat-level `super`** (a re-declared
+owned beat splices its parent template at a `super` line); **`UnresolvedTraitArg`**
+(a trait arg used only as a `-> self.<param>` divert that names no beat is flagged
+at compile time — the divert-only analysis is transitive through forwarded/combined
+traits); the **`SELF`→`cast[0]` fallback** (a `SELF` block with no `self` bound
+speaks as the beat's first `cast:` member); and the **LSP batch** — trait hover
+(params + shipped beats), completion inside `is Trait(…)` and after `-> self.` /
+`-> Owner.`, `SELF`/`ME` reservation, and surfacing every project diagnostic
+(`unresolvedTraitArg`, `unfilledDerivedSlot`, `derivedBeatConflict`,
+`requiredParamUnfilled`, …) in the editor via `Workspace.diagnosticsFor`.
+
+Everything in the TS engine is done and green (278 vitest tests). The only
+remaining work is the **Rust mirror** (parser + runtime crates), which is not yet
+updated for ANY of Slices 1/2/A/3/B/C or these gaps — the TS and Rust engines will
+drift until it is ported. (Explicitly deprioritized by the user for now.)
 
 Still to come: a pure-Rust Lua VM (piccolo) so Lua-defined directives
 and `.luau` extensions execute client-side instead of degrading; the
@@ -388,21 +423,31 @@ cargo run -p loom-server --bin loom-relayd -- --cors permissive
                               # API + WS at :7878
 ```
 
-### Editor — authoring-only (wasm removed 2026-06-30)
+### Editor — the SaaS author app (wasm removed 2026-06-30)
 
-The React editor under `packages/loom/editor` is an **authoring tool**:
+The React editor under `packages/loom/editor` is the author front end:
 file editing, syntax highlighting, lint, LSP (Outline / References /
 completion / hover / definition / symbols), structural beat edits, and
 the static entity Graph + beat-flow views — all driven by the
-**TypeScript** `@loom/core` engine (parser + `lsp`), **no wasm**. The
-modal **Studio** shell is two author modes — **Writing** / **Editing**
-on a bottom Mode Bar (`⌘1` / `⌘2`), each a fixed `allotment` layout
-(left rail · center stage · Properties tray · optional beat-flow dock).
+**TypeScript** `@loom/core` engine (parser + `lsp`), **no wasm**.
+
+`App.tsx` gates on the author account: a **BetterAuth sign-in gate** →
+a **Projects launchpad** (create/open server projects) → the modal
+**Studio** shell. Storage is backend-aware (`store/workspace.ts`): a
+server project's `.loom` files load/save over the control-plane API,
+while a **local folder** (File System Access) still works with no
+account. The Mode Bar has **three** modes — **Writing** (`⌘1`),
+**Editing** (`⌘2`), and **Run** (`⌘3`). Run (`components/operate/` +
+`store/operate.ts`) launches an event, shares the join code + QR, and
+moderates the live roster / feed — the "run panel" and "admin tools"
+are one shared surface, authorized by the author's session (see
+**Run == admin** above). The participant chat itself stays in `play`;
+the editor controls + moderates, it does not render the guest view.
 
 The former in-editor runtime — multi-head branching play, the
 Transcript / Ledger / Timeline / World / Cast / Booth surfaces, and
 relay-backed cloud collaboration (Loro CRDT) — was removed with the
-`wasm` crate. **Runtime now lives in the sibling packages**: the `core`
-event server + the `play` participant app. See
+`wasm` crate. **The live runtime lives in the sibling packages**: the
+`core` event server + the `play` participant app. See
 [`docs/dev/loom-ide-redesign.md` Part II](../../docs/dev/loom-ide-redesign.md)
 for the shell design.

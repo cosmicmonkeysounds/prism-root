@@ -238,6 +238,12 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const subPath = slash === -1 ? "/" : rest.slice(slash);
     const runtime = registry.get(eventId);
     if (runtime === undefined) return void sendJson(res, 404, { error: "unknown event" });
+    // Per-event operator console (the same HTML, scoped to this event by path).
+    if (method === "GET" && subPath === "/console") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(CONSOLE_HTML);
+      return;
+    }
     // The owning author moderates via their session — no mod code needed.
     let moderator = false;
     if (controlPlane && subPath.startsWith("/api/mod/")) {

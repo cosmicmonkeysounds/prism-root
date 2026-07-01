@@ -366,7 +366,17 @@ export class EventRuntime {
       const client: Client = { role, id, res };
       this.clients.add(client);
       sseSend(res, "snapshot", this.snapshotFor(client));
-      sseSend(res, "history", role === "guest" ? this.chat.historyFor(id, false) : this.chat.all().filter((m) => !m.hidden));
+      // A moderator sees the full feed *including* hidden messages (greyed in
+      // the UI) so they can un-hide; performers see the public feed only.
+      sseSend(
+        res,
+        "history",
+        role === "guest"
+          ? this.chat.historyFor(id, false)
+          : role === "mod"
+            ? [...this.chat.all()]
+            : this.chat.all().filter((m) => !m.hidden),
+      );
       const ping = setInterval(() => res.write(":ping\n\n"), 25000);
       req.on("close", () => {
         clearInterval(ping);
@@ -813,6 +823,124 @@ export class EventRuntime {
           }
         }
         sendJson(res, 200, { ok: true, seq, hidden: m.hidden });
+        return true;
+      }
+      case "/api/mod/say": {
+        // The operator types into *any* room — as themselves ("Operator") or
+        // in a character's voice (`as`). Unlike a guest `say`, this bypasses
+        // the post policy (an operator can post into a read-only feed).
+        if (this.sim === null) {
+          sendJson(res, 409, { error: "no scenario loaded" });
+          return true;
+        }
+        const text = str(body, "text").trim();
+        if (text === "") {
+          sendJson(res, 400, { error: "empty message" });
+          return true;
+        }
+        const as = str(body, "as");
+        const speaker = as !== "" ? as : "Operator";
+        let channel = str(body, "channel") || "lobby";
+        let audience: "all" | string[] | undefined;
+        // Address one guest's DM thread: `channel: "guest:<id>"`.
+        if (channel.startsWith("guest:")) {
+          const gid = channel.slice("guest:".length);
+          if (!this.sim.persons.has(gid)) {
+            sendJson(res, 404, { error: "unknown guest" });
+            return true;
+          }
+          channel = `dm:${speaker}`;
+          audience = [gid];
+        }
+        const parentSeq = this.sim.threadableOf(channel) && body["parentSeq"] != null ? Number(body["parentSeq"]) : null;
+        this.fanout(this.commit("say", speaker, channel, text, parentSeq, audience));
+        sendJson(res, 200, { ok: true });
+        return true;
+      }
+      case "/api/mod/set": {
+        // Live-edit a guest's stats from the run panel's inspector.
+        if (this.sim === null) {
+          sendJson(res, 409, { error: "no scenario loaded" });
+          return true;
+        }
+        const id = str(body, "id");
+        if (!this.sim.persons.has(id)) {
+          sendJson(res, 404, { error: "unknown guest" });
+          return true;
+        }
+        const field = str(body, "field");
+        const value = body["value"];
+        switch (field) {
+          case "score":
+            this.fanout(this.commit("setScore", id, Number(value ?? 0)));
+            break;
+          case "faction": {
+            const to = str(body, "value");
+            if (to === "") {
+              sendJson(res, 400, { error: "faction required" });
+              return true;
+            }
+            this.fanout(this.commit("defect", id, to));
+            break;
+          }
+          case "location": {
+            const to = str(body, "value");
+            if (to === "") {
+              sendJson(res, 400, { error: "location required" });
+              return true;
+            }
+            this.fanout(this.commit("arrive", id, to));
+            break;
+          }
+          case "captured": {
+            const on = value === true || value === "true";
+            // `capture` is idempotent; `escape` only fires on a real transition.
+            this.fanout(this.commit(on ? "capture" : "escape", id));
+            break;
+          }
+          default:
+            sendJson(res, 400, { error: "unknown field" });
+            return true;
+        }
+        sendJson(res, 200, { ok: true, guest: rosterRow(this.sim, id) });
+        return true;
+      }
+      case "/api/mod/beat": {
+        // Fire a named story beat directly (booth live-patch).
+        if (this.sim === null) {
+          sendJson(res, 409, { error: "no scenario loaded" });
+          return true;
+        }
+        const name = str(body, "name");
+        if (name === "" || !this.sim.model.beats.has(name)) {
+          sendJson(res, 404, { error: "unknown beat" });
+          return true;
+        }
+        const subject = str(body, "subject");
+        this.fanout(this.commit("fireBeat", name, subject === "" ? undefined : subject));
+        sendJson(res, 200, { ok: true });
+        return true;
+      }
+      case "/api/mod/scan": {
+        // Scan a guest *as* a character — fires that character's scan hooks
+        // against them (the beat-firing the operator console does via /api/scan,
+        // reachable here through the owning author's session).
+        if (this.sim === null) {
+          sendJson(res, 409, { error: "no scenario loaded" });
+          return true;
+        }
+        const as = str(body, "as");
+        const target = str(body, "target");
+        if (!this.sim.model.characters.has(as)) {
+          sendJson(res, 404, { error: "unknown character" });
+          return true;
+        }
+        if (!this.sim.persons.has(target)) {
+          sendJson(res, 404, { error: "unknown guest" });
+          return true;
+        }
+        this.fanout(this.commit("scan", as, target));
+        sendJson(res, 200, { ok: true, guest: rosterRow(this.sim, target) });
         return true;
       }
       default:

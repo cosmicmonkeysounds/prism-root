@@ -16,9 +16,12 @@ import type {
   Declaration,
   LoomFile,
 } from "../parser/ast.ts";
-import { type Diagnostic as ParserDiagnostic, parse } from "../parser/index.ts";
+import { type Diagnostic as ParserDiagnostic, parse, parseMixinRef } from "../parser/index.ts";
+import { Bundle, type LoomFileEntry } from "../runtime/bundle.ts";
+import { compileModel } from "../runtime/sim/model.ts";
 import type {
   CompletionItem,
+  Diagnostic as LspDiagnostic,
   DocumentSymbolResponse,
   GotoDefinitionResponse,
   Hover,
@@ -27,6 +30,7 @@ import type {
   PublishDiagnosticsParams,
   Range,
 } from "./types.ts";
+import { DiagnosticSeverity } from "./types.ts";
 import { stripPrefix, trimEndMatches, trimStartMatches } from "../parser/rust.ts";
 import { findTokenSpans, lines, nameRangeInText, spanToRange, toLspDiagnostic } from "./util.ts";
 import { completionAt } from "./completion.ts";
@@ -63,6 +67,22 @@ export interface CharacterInfo {
   mixins: string[];
   /** Raw indented body lines, one per source line. */
   body: string[];
+  /** Names of the class-owned `beat name(…)` blocks this character declares. */
+  ownedBeats: string[];
+}
+
+/**
+ * Per-trait index entry. Richer than a bare `Occurrence`: carries the
+ * trait's parameter list (`TRAIT Scanner(beat)` → `["beat"]`) and the
+ * names of the beats it ships (`beat greet(…)` blocks), so hover and
+ * completion can surface a trait's shape without re-parsing.
+ */
+export interface TraitInfo {
+  uri: string;
+  range: Range;
+  params: string[];
+  /** Shipped-beat names authored inside the trait body. */
+  beats: string[];
 }
 
 /** Per-beat snapshot used by hover + definition. */
@@ -78,10 +98,12 @@ export interface BeatInfo {
 export class Workspace {
   docs = new Map<string, OpenDoc>();
   characters = new Map<string, CharacterInfo>();
-  traits = new Map<string, Occurrence>();
+  traits = new Map<string, TraitInfo>();
   beats = new Map<string, BeatInfo[]>();
   anchors = new Map<string, Occurrence[]>();
   todos: Todo[] = [];
+  /** Cross-file project diagnostics keyed by owning document URI. */
+  projectDiagnostics = new Map<string, LspDiagnostic[]>();
 
   /** Insert or replace a document, reparse, rebuild the index. */
   open(uri: string, text: string): void {
@@ -109,7 +131,9 @@ export class Workspace {
   diagnosticsFor(uri: string): PublishDiagnosticsParams | null {
     const doc = this.docs.get(uri);
     if (!doc) return null;
-    return { uri, diagnostics: doc.diagnostics.map(toLspDiagnostic) };
+    const parser = doc.diagnostics.map(toLspDiagnostic);
+    const project = this.projectDiagnostics.get(uri) ?? [];
+    return { uri, diagnostics: [...parser, ...project] };
   }
 
   private rebuildIndex(): void {
@@ -121,6 +145,121 @@ export class Workspace {
     for (const [uri, doc] of this.docs) {
       this.indexFile(uri, doc.file, doc.text);
     }
+    this.rebuildProjectDiagnostics();
+  }
+
+  /**
+   * Compile every open document into a throwaway [`Bundle`] and lift its
+   * cross-file `projectDiagnostics` into per-URI LSP diagnostics. The
+   * compile is wrapped in a try/catch so a malformed in-progress edit
+   * never takes the index down — a compile failure just leaves the
+   * project-diagnostic layer empty until the next keystroke fixes it.
+   */
+  private rebuildProjectDiagnostics(): void {
+    this.projectDiagnostics.clear();
+    if (this.docs.size === 0) return;
+    const firstUri = this.docs.keys().next().value as string;
+    const bundle = new Bundle();
+    for (const [uri, doc] of this.docs) {
+      const entry: LoomFileEntry = {
+        path: uriToPath(uri),
+        stem: stemOf(uri),
+        qualifier: "",
+        source: doc.text,
+        file: doc.file,
+        diagnostics: doc.diagnostics,
+      };
+      bundle.files.push(entry);
+    }
+    try {
+      compileModel(bundle);
+    } catch {
+      // Defensive: a partial edit can trip a compile invariant. Never let
+      // that break parser diagnostics / completion / hover.
+      return;
+    }
+    for (const d of bundle.projectDiagnostics) {
+      const [uri, diagnostic] = this.mapProjectDiagnostic(d, firstUri);
+      const list = this.projectDiagnostics.get(uri);
+      if (list) list.push(diagnostic);
+      else this.projectDiagnostics.set(uri, [diagnostic]);
+    }
+  }
+
+  /**
+   * Map one cross-file [`ProjectDiagnostic`] to a `[uri, Diagnostic]`
+   * pair. Character-owned diagnostics land on the declaring character's
+   * document + range; project-wide ones (no character) attach to the
+   * first document at the file head.
+   */
+  private mapProjectDiagnostic(
+    d: Bundle["projectDiagnostics"][number],
+    firstUri: string,
+  ): [string, LspDiagnostic] {
+    const head: Range = {
+      start: { line: 0, character: 0 },
+      end: { line: 0, character: 0 },
+    };
+    // Everything but the whole-project trio carries a `character`; resolve
+    // it to the character's declaration site.
+    const owned = "character" in d ? this.characters.get(d.character) : undefined;
+    const uri = owned?.uri ?? firstUri;
+    const range = owned?.range ?? head;
+    let severity: DiagnosticSeverity = DiagnosticSeverity.Error;
+    let message: string;
+    switch (d.kind) {
+      case "missingMainFile":
+        message = "project has no `main.loom` entry file";
+        break;
+      case "entryBeatUnresolved":
+        message = `entry beat \`${d.name}\` is not defined`;
+        break;
+      case "noEntryBeat":
+        message = "project defines no entry beat";
+        break;
+      case "ambiguousSlot":
+        message = `\`${d.character}\` inherits slot \`${d.prop}\` ambiguously from two traits`;
+        break;
+      case "requiredSlotUnfilled":
+        message = `\`${d.character}\` leaves required slot \`${d.slot}\` unfilled`;
+        break;
+      case "requiredParamUnfilled":
+        message = `trait \`${d.trait}\` requires an argument for \`${d.param}\``;
+        break;
+      case "unresolvedTraitArg":
+        message = `\`${d.arg}\` (for \`${d.trait}.${d.param}\`) names no beat`;
+        break;
+      case "derivedBeatConflict":
+        message = `two traits both ship a beat named \`${d.beat}\``;
+        break;
+      case "unfilledDerivedSlot":
+        message = `derived beat \`${d.beat}\` has an unfilled slot \`${d.slot}\``;
+        severity = DiagnosticSeverity.Warning;
+        break;
+    }
+    return [uri, { range, severity, source: "loom", message }];
+  }
+
+  /**
+   * The beat names an owner (CHARACTER / ROLE / TRAIT) makes reachable by
+   * a qualified divert `-> owner.<beat>`: its own `beat` blocks plus the
+   * beats shipped by every trait in its `is` chain (one level, via the
+   * trait index). Used by completion inside `is Trait(…)` and after
+   * `-> self.` / `-> Owner.`.
+   */
+  ownerBeatNames(name: string): string[] {
+    const out = new Set<string>();
+    const char = this.characters.get(name);
+    if (char) {
+      for (const b of char.ownedBeats) out.add(b);
+      for (const mixin of char.mixins) {
+        const trait = this.traits.get(parseMixinRef(mixin).name);
+        if (trait) for (const b of trait.beats) out.add(b);
+      }
+    }
+    const trait = this.traits.get(name);
+    if (trait) for (const b of trait.beats) out.add(b);
+    return [...out];
   }
 
   private indexFile(uri: string, file: LoomFile, text: string): void {
@@ -164,9 +303,15 @@ export class Workspace {
         range,
         mixins: [...decl.mixin],
         body: decl.body.map((l) => l.text),
+        ownedBeats: decl.character?.beats.map((b) => b.name) ?? [],
       });
     } else if (decl.kind === "trait") {
-      this.traits.set(decl.name, { uri, range });
+      this.traits.set(decl.name, {
+        uri,
+        range,
+        params: decl.character ? [...decl.character.params] : [],
+        beats: decl.character?.beats.map((b) => b.name) ?? [],
+      });
     }
   }
 
@@ -299,4 +444,17 @@ function trimChars(s: string, chars: string): string {
   while (start < end && chars.includes(s[start]!)) start += 1;
   while (end > start && chars.includes(s[end - 1]!)) end -= 1;
   return s.slice(start, end);
+}
+
+/** Strip a `scheme://` prefix off a document URI to get a path-ish string. */
+function uriToPath(uri: string): string {
+  const schemeEnd = uri.indexOf("://");
+  return schemeEnd >= 0 ? uri.slice(schemeEnd + 3) : uri;
+}
+
+/** File stem for a URI — basename without the `.loom` suffix. */
+function stemOf(uri: string): string {
+  const path = uriToPath(uri);
+  const base = path.split("/").pop() ?? path;
+  return base.replace(/\.loom$/, "");
 }

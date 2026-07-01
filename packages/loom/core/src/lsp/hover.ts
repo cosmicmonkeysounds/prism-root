@@ -43,6 +43,15 @@ export function hoverAt(ws: Workspace, uri: string, pos: Position): Hover | null
     }
   }
 
+  // TRAIT reference: a declared trait name (mixed-case, so it never collides
+  // with the ALL-CAPS CHARACTER branch below).
+  const trait = ws.traits.get(token);
+  if (trait) {
+    let body = `**TRAIT** \`${token}(${trait.params.join(", ")})\``;
+    if (trait.beats.length > 0) body += `\n\nships: ${trait.beats.join(", ")}`;
+    return markdown(body, range);
+  }
+
   // CHARACTER reference: ALL-CAPS token that matches a declared name.
   if (allChars(token, (c) => isAsciiUppercase(c) || c === "_")) {
     const info = ws.characters.get(token);

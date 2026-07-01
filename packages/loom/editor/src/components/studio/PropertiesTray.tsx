@@ -19,6 +19,7 @@ import type { Mode } from '@/store/mode'
 import { useWorkspace } from '@/store/workspace'
 import { useFocus, type FocusRef } from '@/store/focus'
 import { ReferencesPanel } from '@/components/runner/References'
+import { OperateInspector } from '@/components/operate/OperateInspector'
 import {
   bodyBreakdown,
   declKindLabel,
@@ -48,6 +49,8 @@ function tabsFor(_mode: Mode): Tab[] {
 }
 
 export function PropertiesTray({ mode }: { mode: Mode }) {
+  // Run mode's tray is the live participant Inspector, not the author props.
+  if (mode === 'operate') return <OperateInspector />
   const tabs = tabsFor(mode)
   const [active, setActive] = useState(tabs[0].id)
   const current = tabs.find((t) => t.id === active) ?? tabs[0]

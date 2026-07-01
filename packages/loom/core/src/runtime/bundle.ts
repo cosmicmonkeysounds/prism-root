@@ -80,6 +80,7 @@ export type ProjectDiagnostic =
   | { kind: "ambiguousSlot"; character: string; prop: string }
   | { kind: "requiredSlotUnfilled"; character: string; slot: string }
   | { kind: "requiredParamUnfilled"; character: string; trait: string; param: string }
+  | { kind: "unresolvedTraitArg"; character: string; trait: string; param: string; arg: string }
   | { kind: "derivedBeatConflict"; character: string; beat: string }
   | { kind: "unfilledDerivedSlot"; character: string; beat: string; slot: string };
 
@@ -224,10 +225,17 @@ export class Bundle {
     }
 
     // Pass 2: CHARACTER + TRAIT. Collect raw declarations, merge `is`.
+    // Also gather every top-level beat name so a trait arg used only as a
+    // divert target can be checked against the real beats (unresolvedTraitArg).
     const rawDecls = new Map<string, RawDecl>();
     const declOrder: string[] = [];
+    const globalBeats = new Set<string>();
     for (const entry of this.files) {
       for (const item of entry.file.items) {
+        if (item.kind === "beat") {
+          globalBeats.add(item.value.name);
+          continue;
+        }
         if (item.kind !== "declaration") continue;
         const decl = item.value;
         if (decl.kind === "character" || decl.kind === "role" || decl.kind === "trait") {
@@ -242,7 +250,7 @@ export class Bundle {
     }
     const merged = new Map<string, CharacterBody>();
     for (const name of declOrder) {
-      const mergedBody = mergeCharacter(name, rawDecls, merged, this.projectDiagnostics, new Set());
+      const mergedBody = mergeCharacter(name, rawDecls, merged, this.projectDiagnostics, new Set(), globalBeats);
       merged.set(name, mergedBody);
     }
     for (const name of declOrder) {
@@ -305,6 +313,7 @@ export function mergeCharacter(
   mergedCache: Map<string, CharacterBody>,
   diagnostics: ProjectDiagnostic[],
   visiting: Set<string>,
+  globalBeats: Set<string> = new Set(),
 ): CharacterBody {
   if (visiting.has(name)) {
     return cloneCharacterBody(mergedCache.get(name) ?? raw.get(name)?.body ?? emptyCharacterBody());
@@ -332,11 +341,14 @@ export function mergeCharacter(
   // reference, so identity distinguishes a real name collision (two distinct
   // authored beats) from the same beat reaching a deriver twice.
   const beatSources = new Map<string, OwnedBeat>();
+  // Every parent beat by name (even ones the child overrides), so a child's
+  // `super` in a re-declared beat can splice the parent template back in.
+  const parentBeatsByName = new Map<string, OwnedBeat>();
   for (const entry of ownDecl.inherits) {
     // An `is`-clause entry may carry arguments: `is Scanner(crawler_report)`.
     const ref = parseMixinRef(entry);
     const parentName = ref.name;
-    let parentBody = mergeCharacter(parentName, raw, mergedCache, diagnostics, visiting);
+    let parentBody = mergeCharacter(parentName, raw, mergedCache, diagnostics, visiting, globalBeats);
     const parentDecl = raw.get(parentName);
     if (parentDecl !== undefined && parentDecl.body.params.length > 0) {
       // Bind the trait's params to this application's args and rewrite every
@@ -348,6 +360,8 @@ export function mergeCharacter(
         ref,
         own.params,
         ownedBeatNames,
+        divertOnlyParams(parentName, raw),
+        globalBeats,
         diagnostics,
         name,
         parentName,
@@ -405,6 +419,7 @@ export function mergeCharacter(
     // namespaced to the deriver at compile (model.ts). Child wins (below); two
     // *distinct* parents shipping the same beat name is a conflict.
     for (const bt of parentBody.beats) {
+      if (!parentBeatsByName.has(bt.name)) parentBeatsByName.set(bt.name, bt); // for `super`
       if (own.beats.some((e) => e.name === bt.name)) continue; // child overrides
       const prior = beatSources.get(bt.name);
       if (prior !== undefined) {
@@ -436,7 +451,21 @@ export function mergeCharacter(
   for (const g of own.goals) mergedBody.goals.push(g);
   for (const g of own.generators) mergedBody.generators.push(g);
   for (const r of own.reacts) mergedBody.reacts.push(r);
-  for (const bt of own.beats) mergedBody.beats.push(bt);
+  for (const bt of own.beats) {
+    // Override-then-extend: a `super` line in a re-declared beat splices the
+    // parent template's body inline (spec §11.4), mirroring hook `super`.
+    const parentBeat = parentBeatsByName.get(bt.name);
+    if (parentBeat !== undefined && bt.body.some((l) => l.text.trim() === "super")) {
+      const composed: OwnedBeat = { name: bt.name, params: bt.params, body: [], span: bt.span };
+      for (const line of bt.body) {
+        if (line.text.trim() === "super") for (const p of parentBeat.body) composed.body.push(p);
+        else composed.body.push(line);
+      }
+      mergedBody.beats.push(composed);
+    } else {
+      mergedBody.beats.push(bt);
+    }
+  }
   for (const [k, v] of own.fills) mergedBody.fills.set(k, v);
 
   // Hook composition with `super` + `: none` (spec §9.4 + §9.5).
@@ -552,6 +581,84 @@ function deepCloneCharacterBody(b: CharacterBody): CharacterBody {
   return c;
 }
 
+/** Bind an application's args to a parent's params — named by name, positional
+ *  in order (skipping named-filled slots). Mirrors `substituteParams`. */
+function bindArgs(ref: MixinRef, parentParams: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  let cur = 0;
+  for (const p of parentParams) {
+    let arg = ref.named.get(p);
+    if (arg === undefined) {
+      arg = ref.positional[cur];
+      if (arg !== undefined) cur += 1;
+    }
+    if (arg !== undefined) out.set(p, arg);
+  }
+  return out;
+}
+
+/**
+ * The subset of a trait's params used ONLY as a divert target
+ * (`-> self.<param>`) — locally, or by forwarding into a parent trait param
+ * that is itself divert-only. An arg bound to such a param must name a beat, so
+ * a non-beat arg is diagnosable (`unresolvedTraitArg`). Params used as an event
+ * (`on self.<param>`) or a plain value are excluded — those take any identifier.
+ */
+function divertOnlyParams(
+  name: string,
+  raw: Map<string, RawDecl>,
+  cache: Map<string, Set<string>> = new Map(),
+  visiting: Set<string> = new Set(),
+): Set<string> {
+  const done = cache.get(name);
+  if (done !== undefined) return done;
+  if (visiting.has(name)) return new Set();
+  visiting.add(name);
+  const decl = raw.get(name);
+  const out = new Set<string>();
+  if (decl !== undefined) {
+    for (const p of decl.body.params) {
+      const tok = new RegExp(`(?<![\\w.])self\\.${p}(?![\\w])`, "u");
+      let total = 0;
+      let nonDivert = 0;
+      const check = (text: string, isDivert: boolean): void => {
+        if (tok.test(text)) {
+          total += 1;
+          if (!isDivert) nonDivert += 1;
+        }
+      };
+      const b = decl.body;
+      for (const h of b.hooks) {
+        check(h.event, false); // `on self.<param>` — an event, not a divert
+        for (const l of h.body) check(l.text, l.text.trim().startsWith("->"));
+      }
+      for (const bt of b.beats) for (const l of bt.body) check(l.text, l.text.trim().startsWith("->"));
+      for (const m of b.methods) {
+        if (m.inlineExpr !== null) check(m.inlineExpr, false);
+        for (const l of m.body) check(l.text, l.text.trim().startsWith("->"));
+      }
+      for (const [, v] of b.properties) check(v.value, false);
+      // Forwarded: `p` passed as an arg to a parent trait's param.
+      for (const entry of decl.inherits) {
+        const ref = parseMixinRef(entry);
+        const parent = raw.get(ref.name);
+        if (parent === undefined) continue;
+        const parentDivertOnly = divertOnlyParams(ref.name, raw, cache, visiting);
+        for (const [pp, arg] of bindArgs(ref, parent.body.params)) {
+          if (arg === p) {
+            total += 1;
+            if (!parentDivertOnly.has(pp)) nonDivert += 1;
+          }
+        }
+      }
+      if (total > 0 && nonDivert === 0) out.add(p);
+    }
+  }
+  visiting.delete(name);
+  cache.set(name, out);
+  return out;
+}
+
 /**
  * Bind a parameterized trait's params to an application's args and rewrite
  * every `self.<param>` token in the (deep-cloned) parent body (spec §2.3).
@@ -566,6 +673,8 @@ function substituteParams(
   ref: MixinRef,
   applierParams: string[],
   ownedBeatNames: Set<string>,
+  divertOnly: Set<string>,
+  globalBeats: Set<string>,
   diagnostics: ProjectDiagnostic[],
   applierName: string,
   traitName: string,
@@ -591,6 +700,12 @@ function substituteParams(
     // to an owned beat, stays `self.<arg>` so a later layer can bind it;
     // otherwise it is concrete.
     const forward = applierParams.includes(arg) || ownedBeatNames.has(arg);
+    if (!forward && divertOnly.has(param) && !globalBeats.has(arg)) {
+      // The param is used only as `-> self.<param>`, so the arg must name a
+      // beat — but it matches no global beat, no owned beat, and no forwarding
+      // param. Almost certainly a typo or a literal placeholder word.
+      diagnostics.push({ kind: "unresolvedTraitArg", character: applierName, trait: traitName, param, arg });
+    }
     bindings.set(param, forward ? `self.${arg}` : arg);
   }
   if (bindings.size === 0) return parentBody;

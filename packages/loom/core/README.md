@@ -250,6 +250,37 @@ pnpm --filter @loom/core serve
 # → guests open http://<lan-ip>:7000 on their phones
 ```
 
+## SaaS control plane (accounts · projects · events)
+
+The server is **multi-tenant**. Beyond the single LAN event above, authors
+can sign up, keep many **projects** (server-stored `.loom` files), and launch
+each project's own **event** — while party-goers still join by short passcode
+with no account.
+
+Two planes:
+
+- **Control plane** — needs Postgres (`DATABASE_URL`, default
+  `postgres://127.0.0.1:5432/loom_dev`). `pnpm migrate` creates the tables
+  (BetterAuth `user/session/account/verification` + `project/project_file/event`).
+  Routes: `/api/auth/*` (BetterAuth email/password), `/api/projects/*` CRUD,
+  `POST /api/projects/:id/event` (launch `live`/`preview`) + `…/pause|resume|end`.
+  All ownership-scoped to the signed-in author. If the DB is unreachable the
+  control plane disables itself and the LAN event plane still runs.
+- **Event plane** — one `EventRuntime` per live event under `/e/:eventId`, kept
+  in an `EventRegistry` that rehydrates every non-ended event on boot.
+  `POST /api/resolve-code {code}` maps a guest/performer/mod code to its
+  `{eventId, role}`. Each event has its own on-disk journal under
+  `LOOM_STATE_DIR/<eventId>` and its own `/e/:eventId/console`.
+
+The owning author's BetterAuth session is accepted on `/e/:eventId/api/mod/*`,
+so authors moderate without a mod code (the operator console + a co-moderator's
+mod code still work too).
+
+```bash
+DATABASE_URL=postgres://127.0.0.1:5432/loom_dev pnpm migrate   # once
+DATABASE_URL=postgres://127.0.0.1:5432/loom_dev BETTER_AUTH_SECRET=change-me pnpm serve
+```
+
 ## Status
 
 The parser is a complete, test-verified 1:1 port of the Rust parser. The

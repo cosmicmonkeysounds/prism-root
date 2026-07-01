@@ -42,8 +42,8 @@ function defaultUi(): Record<Mode, ModeUi> {
   return {
     writing: { cols: [260, 960, 320], rows: [620, 200], trayOpen: true, railOpen: true },
     editing: { cols: [240, 780, 360], rows: [400, 320], trayOpen: true, railOpen: true },
-    // Run mode: a wide control rail + the live admin stage, no properties tray.
-    operate: { cols: [320, 900, 320], rows: [620, 200], trayOpen: false, railOpen: true },
+    // Run mode: event control + rooms rail · live admin stage · inspector tray.
+    operate: { cols: [300, 820, 340], rows: [620, 200], trayOpen: true, railOpen: true },
   }
 }
 

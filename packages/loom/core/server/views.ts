@@ -111,6 +111,20 @@ export interface LocationSummary {
   occupants: string[];
 }
 
+/** An operator-visible room: every authored + derived channel, unscoped. */
+export interface ChannelSummary {
+  id: string;
+  kind: string;
+  title: string;
+  spaceId: string;
+}
+
+/** A member of the cast (an authored CHARACTER an operator can speak/fire as). */
+export interface CastSummary {
+  id: string;
+  faction: string | null;
+}
+
 /** The operator's full god-view of the world. */
 export interface ModView {
   phase: RuntimePhase;
@@ -118,13 +132,52 @@ export interface ModView {
   roster: RosterRow[];
   factions: FactionSummary[];
   locations: LocationSummary[];
+  /** Character ids (kept for the back-compat operator console). */
   characters: string[];
+  /** The cast with their factions — the run panel's "speak/fire as" picker. */
+  cast: CastSummary[];
+  /** Every room the operator can peer into / post to (lobby + factions + authored). */
+  channels: ChannelSummary[];
+  /** Authored sidebar sections, for grouping the rooms list. */
+  spaces: SpaceSnapshot[];
+  /** Every named beat, for the "fire beat" picker. */
+  beats: string[];
   ledgerLen: number;
+}
+
+/**
+ * Every channel an operator can moderate, unscoped by visibility: the lobby,
+ * one derived broadcast channel per faction, and every authored SPACE/CHANNEL.
+ * Derived per-character DM threads aren't enumerated (they appear in the feed
+ * as messages land); the operator addresses a guest DM via a `guest:<id>` say.
+ */
+function operatorChannels(sim: Sim): ChannelSummary[] {
+  const out: ChannelSummary[] = [{ id: "lobby", kind: "lobby", title: "The Internet", spaceId: "internet" }];
+  for (const f of sim.model.factions.values()) {
+    out.push({ id: `faction:${f.id}`, kind: "faction", title: `#${f.id.toLowerCase()}`, spaceId: "internet" });
+  }
+  for (const id of sim.model.channels.keys()) {
+    const h = sim.channelHead(id);
+    out.push({ id: h.channel, kind: h.channelKind, title: h.title, spaceId: h.spaceId });
+  }
+  return out;
 }
 
 export function modView(sim: Sim | null, phase: RuntimePhase, scenario: string | null): ModView {
   if (sim === null) {
-    return { phase, scenario, roster: [], factions: [], locations: [], characters: [], ledgerLen: 0 };
+    return {
+      phase,
+      scenario,
+      roster: [],
+      factions: [],
+      locations: [],
+      characters: [],
+      cast: [],
+      channels: [],
+      spaces: [],
+      beats: [],
+      ledgerLen: 0,
+    };
   }
   const roster: RosterRow[] = [...sim.persons.keys()].map((id) => rosterRow(sim, id)!);
   const factions: FactionSummary[] = [...sim.model.factions.values()].map((f) => ({
@@ -148,6 +201,10 @@ export function modView(sim: Sim | null, phase: RuntimePhase, scenario: string |
     factions,
     locations,
     characters: [...sim.model.characters.keys()],
+    cast: [...sim.model.characters.values()].map((c) => ({ id: c.id, faction: c.faction ?? null })),
+    channels: operatorChannels(sim),
+    spaces: sim.spaceList(),
+    beats: [...sim.model.beats.keys()],
     ledgerLen: sim.log.len(),
   };
 }

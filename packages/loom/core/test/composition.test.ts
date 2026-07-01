@@ -847,3 +847,131 @@ CHARACTER Hero is Left, Right
     expect(b.mergedCharacters.get("Hero")!.beats.some((bt) => bt.name === "greet")).toBe(true);
   });
 });
+
+// ── Remaining gaps: beat `super`, UnresolvedTraitArg, SELF fallback ───
+describe("Gap A — beat-level super", () => {
+  it("splices the parent template where a re-declared beat says `super`", () => {
+    const sim = Sim.fromSources(`entry: start
+
+FACTION F
+  ethos: order
+
+LOCATION Party
+  label: The Party
+
+ROLE Guest
+  faction: any of FACTION
+
+TRAIT Base
+  beat greet(guest)
+    SELF
+      Base line.
+
+CHARACTER Child is Base
+  faction: F
+  on scan guest
+    -> self.greet
+  beat greet(guest)
+    SELF
+      Child prefix.
+    super
+
+== start
+  setting: Party
+  NARRATOR
+    Go.
+`);
+    sim.createPerson("g1", "A");
+    const texts = dialogue(sim.scan("Child", "g1")).map((l) => l.text);
+    // The override's own line, then the parent template spliced in by `super`.
+    expect(texts).toContain("Child prefix.");
+    expect(texts).toContain("Base line.");
+  });
+});
+
+describe("Gap B — UnresolvedTraitArg", () => {
+  it("flags a divert-only arg that names no beat", () => {
+    const b = bundleFrom(`TRAIT Scanner(beat)
+  on scan guest
+    -> self.beat
+
+CHARACTER Crawler is Scanner(nope)
+
+== real
+  NARRATOR
+    hi
+`);
+    expect(
+      b.projectDiagnostics.some(
+        (d) =>
+          d.kind === "unresolvedTraitArg" && d.character === "Crawler" && d.arg === "nope",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag when the arg IS a real beat", () => {
+    const b = bundleFrom(`TRAIT Scanner(beat)
+  on scan guest
+    -> self.beat
+
+CHARACTER Crawler is Scanner(real)
+
+== real
+  NARRATOR
+    hi
+`);
+    expect(b.projectDiagnostics.some((d) => d.kind === "unresolvedTraitArg")).toBe(false);
+  });
+
+  it("flags a bad arg forwarded through a combined trait (transitive)", () => {
+    const b = bundleFrom(`TRAIT Scanner(beat)
+  on scan guest
+    -> self.beat
+
+TRAIT AlgoScanner(beat) is Scanner(beat)
+
+CHARACTER Crawler is AlgoScanner(nope)
+
+== real
+  NARRATOR
+    hi
+`);
+    expect(
+      b.projectDiagnostics.some((d) => d.kind === "unresolvedTraitArg" && d.arg === "nope"),
+    ).toBe(true);
+  });
+
+  it("does not flag a non-divert (event) param arg", () => {
+    const b = bundleFrom(`TRAIT Pinged(event)
+  on self.event
+    <broadcast: x to participant(self)>
+
+CHARACTER Mole is Pinged(betray)
+`);
+    expect(b.projectDiagnostics.some((d) => d.kind === "unresolvedTraitArg")).toBe(false);
+  });
+});
+
+describe("Gap C — SELF fallback to cast[0]", () => {
+  it("resolves SELF to the beat's first cast member when no self is bound", () => {
+    const sim = Sim.fromSources(`FACTION F
+  ethos: order
+
+ROLE Guest
+  faction: any of FACTION
+
+== greet(guest)
+  cast: Herald, guest
+  SELF
+    Hear ye.
+`);
+    const from = sim.log.len();
+    sim.playBeat("greet", new Map()); // no router → no `self`
+    const line = sim.log.since(from).find((e) => e.type === "dialogue") as {
+      speaker: string;
+      text: string;
+    };
+    expect(line.speaker).toBe("HERALD");
+    expect(line.text).toBe("Hear ye.");
+  });
+});

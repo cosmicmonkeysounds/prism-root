@@ -13,6 +13,14 @@ It talks to the [`@loom/core`](../core) event server over Server-Sent
 Events (push) + `fetch` POST (actions). Built with Vite + React 18, the
 same way the [`editor`](../editor) is.
 
+The server is multi-tenant, so joining is a two-step bootstrap: the code a
+guest/performer types is first resolved with `POST /api/resolve-code {code}`
+to its `{ eventId, role }`, then every SSE/REST call is scoped to
+`/e/:eventId/…` (the `eventId` is stored alongside the session in
+`localStorage`). Sessions from before this change fall back to a `default`
+event. See `src/session.ts` / `src/client.ts`. Nothing about the guest
+experience changed — it's still just name + event code.
+
 Messages are **composed server-side** (see `core/server/chat.ts`) and
 routed to channels, so the client just renders. That gives three things
 for free: full **history on re-login** (the server replays every thread

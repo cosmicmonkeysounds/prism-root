@@ -58,6 +58,12 @@ interface Frame {
    * spoken line instead of narration — that's all "dialogue" means here.
    */
   speaker?: string;
+  /**
+   * The current beat's first `cast:` member — the `SELF`/`ME` fallback when no
+   * `self` is bound (a beat played with no router). Set on beat entry,
+   * inherited by control-flow children.
+   */
+  cast?: string;
 }
 
 /**
@@ -70,6 +76,14 @@ interface PendingChoice {
   options: Array<{ text: string; body: BodyItem[] }>;
   bindings: Bindings;
   continuation: Frame[];
+}
+
+/** A beat's first `cast:` member (the SELF fallback), or undefined. */
+function firstCastMember(beat: Beat): string | undefined {
+  const cast = beat.contract.get("cast")?.value;
+  if (cast === undefined) return undefined;
+  const first = cast.split(",")[0]?.trim();
+  return first !== undefined && first.length > 0 ? first : undefined;
 }
 
 export class Sim {
@@ -239,6 +253,38 @@ export class Sim {
   capture(person: string): SimEvent[] {
     const from = this.log.len();
     this.runCapture(person, new Map());
+    this.drain();
+    return this.log.since(from);
+  }
+
+  /**
+   * An operator sets a person's score directly — live tuning / moderation
+   * from the run panel, the scanner-less twin of a `<set: g.score = N>`
+   * directive. Journalled like every other mutation, so it replays exactly.
+   */
+  setScore(person: string, value: number): SimEvent[] {
+    const from = this.log.len();
+    const n = Number.isFinite(value) ? value : 0;
+    this.world.set(`${person}.score`, vNumber(n));
+    this.record({ type: "worldSet", path: `${person}.score`, value: String(n) });
+    this.drain();
+    return this.log.since(from);
+  }
+
+  /**
+   * An operator fires a scripted beat directly (spec §13.4 booth live-patch):
+   * inject a named story beat mid-event without waiting for a hook to divert
+   * into it. An owner-qualified key (`Owner.beat`) rebinds `self` so the beat's
+   * `SELF` speaker + `self.x` reads resolve as the owner; a `subject` guest,
+   * when given, is bound as `guest` so a per-guest beat targets one person.
+   */
+  fireBeat(name: string, subject?: string): SimEvent[] {
+    const from = this.log.len();
+    const bindings: Bindings = new Map();
+    const dot = name.indexOf(".");
+    if (dot > 0) bindings.set("self", name.slice(0, dot));
+    if (subject !== undefined && subject.length > 0) bindings.set("guest", subject);
+    this.playBeat(name, bindings);
     this.drain();
     return this.log.since(from);
   }
@@ -724,6 +770,7 @@ export class Sim {
       // `<if>`/`<match>`/`<each visit>` arm inside a dialogue block stays
       // attributed to that speaker. A divert (below) deliberately does not.
       const sp = frame.speaker;
+      const cs = frame.cast; // inherited SELF-fallback for control-flow children
       switch (item.kind) {
         case "action":
           if (sp !== undefined) {
@@ -757,7 +804,8 @@ export class Sim {
             items: item.value.body,
             index: 0,
             bindings: b,
-            speaker: this.resolveSelfSpeaker(item.value.speaker, b),
+            speaker: this.resolveSelfSpeaker(item.value.speaker, b, cs),
+            cast: cs,
           });
           break;
         case "directive":
@@ -765,12 +813,12 @@ export class Sim {
           break;
         case "directiveBlock":
           this.runDirective(item.value.directive.raw, b);
-          stack.push({ items: item.value.body, index: 0, bindings: b, speaker: sp });
+          stack.push({ items: item.value.body, index: 0, bindings: b, speaker: sp, cast: cs });
           break;
         case "conditional":
           for (const arm of item.value.arms) {
             if (arm.condition === null || this.evalCond(arm.condition, b)) {
-              stack.push({ items: arm.body, index: 0, bindings: b, speaker: sp });
+              stack.push({ items: arm.body, index: 0, bindings: b, speaker: sp, cast: cs });
               break;
             }
           }
@@ -781,20 +829,21 @@ export class Sim {
             index: 0,
             bindings: b,
             speaker: sp,
+            cast: cs,
           });
           break;
         case "match": {
           const scrutinee = display(this.evalValue(item.value.scrutinee, b));
           for (const arm of item.value.arms) {
             if (arm.pattern === scrutinee) {
-              stack.push({ items: arm.body, index: 0, bindings: b, speaker: sp });
+              stack.push({ items: arm.body, index: 0, bindings: b, speaker: sp, cast: cs });
               break;
             }
           }
           break;
         }
         case "eachVisit":
-          stack.push({ items: item.value.first, index: 0, bindings: b, speaker: sp });
+          stack.push({ items: item.value.first, index: 0, bindings: b, speaker: sp, cast: cs });
           break;
         case "inlineLet":
           this.world.set(item.value.name, this.evalValue(item.value.expression, b));
@@ -812,7 +861,7 @@ export class Sim {
               const key = this.visitKey(name, b);
               this.beatVisits.set(key, (this.beatVisits.get(key) ?? 0) + 1);
               this.record({ type: "beatEntered", beat: name });
-              stack.push({ items: beat.body, index: 0, bindings: bound });
+              stack.push({ items: beat.body, index: 0, bindings: bound, cast: firstCastMember(beat) });
             }
           }
           break; // end / return / tunnel: terminate this branch
@@ -835,6 +884,7 @@ export class Sim {
             index: f.index,
             bindings: f.bindings,
             speaker: f.speaker,
+            cast: f.cast,
           }));
           const queue = this.pendingChoices.get(person) ?? [];
           queue.push({ options, bindings: b, continuation });
@@ -858,7 +908,7 @@ export class Sim {
     const key = this.visitKey(name, bindings);
     this.beatVisits.set(key, (this.beatVisits.get(key) ?? 0) + 1);
     this.record({ type: "beatEntered", beat: name });
-    this.exec([{ items: beat.body, index: 0, bindings }]);
+    this.exec([{ items: beat.body, index: 0, bindings, cast: firstCastMember(beat) }]);
   }
 
   /** Per-person visit key so `visits(beat)` is scoped to the participant. */
@@ -876,11 +926,14 @@ export class Sim {
    * With no `self` bound (a top-of-file beat with no router) the literal
    * token is kept — a later slice lints that and falls back to `cast[0]`.
    */
-  private resolveSelfSpeaker(speaker: string, bindings: Bindings): string {
+  private resolveSelfSpeaker(speaker: string, bindings: Bindings, cast?: string): string {
     if (speaker !== "SELF" && speaker !== "ME") return speaker;
     const self = bindings.get("self");
-    if (self === undefined || self.length === 0) return speaker;
-    return self.toUpperCase();
+    if (self !== undefined && self.length > 0) return self.toUpperCase();
+    // No `self` bound (a beat played with no router) — fall back to the beat's
+    // first `cast:` member; if there is none, keep the literal token.
+    if (cast !== undefined && cast.length > 0) return cast.toUpperCase();
+    return speaker;
   }
 
   /**

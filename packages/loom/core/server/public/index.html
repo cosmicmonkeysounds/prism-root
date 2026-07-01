@@ -103,8 +103,12 @@
         document.querySelector("#status .dot").classList.toggle("on", on);
         document.getElementById("status-label").textContent = label;
       }
+      // Served at "/console" (the default event) or "/e/:eventId/console".
+      // In the latter case, scope every API call + the SSE stream to that event.
+      const _evm = location.pathname.match(/^\/e\/([^/]+)\/console\/?$/);
+      const BASE = _evm ? "/e/" + _evm[1] : "";
       async function api(path, body, token) {
-        const r = await fetch(path, {
+        const r = await fetch(BASE + path, {
           method: "POST",
           headers: { "content-type": "application/json", ...(token ? { "x-loom-token": token } : {}) },
           body: JSON.stringify(body || {}),
@@ -116,7 +120,7 @@
       let es = null;
       function stream(role, id, handlers) {
         if (es) es.close();
-        es = new EventSource(`/events?role=${role}&id=${encodeURIComponent(id || "")}`);
+        es = new EventSource(`${BASE}/events?role=${role}&id=${encodeURIComponent(id || "")}`);
         es.onopen = () => setStatus(true, role);
         es.onerror = () => setStatus(false, "reconnecting…");
         for (const [name, fn] of Object.entries(handlers)) es.addEventListener(name, (e) => fn(JSON.parse(e.data)));

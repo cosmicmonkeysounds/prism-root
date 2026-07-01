@@ -101,7 +101,7 @@ export function EventSidebar() {
             <a href={event.joinUrl} target="_blank" rel="noreferrer" className="text-zinc-400 hover:text-zinc-200">
               → Open guest view
             </a>
-            <a href="/console" target="_blank" rel="noreferrer" className="text-zinc-400 hover:text-zinc-200">
+            <a href={`/e/${event.id}/console`} target="_blank" rel="noreferrer" className="text-zinc-400 hover:text-zinc-200">
               → Operator console
             </a>
           </div>
