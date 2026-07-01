@@ -63,7 +63,7 @@ export function guestView(sim: Sim, id: string, decisionChannel: string | null =
     decisionChannel: pendingChoice ? (decisionChannel ?? "lobby") : null,
     channels: sim.visibleChannelsFor(id),
     spaces: sim.spaceList(),
-    roster: sim.publicRoster(id),
+    roster: sim.rosterFor(id),
   };
 }
 

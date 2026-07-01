@@ -82,6 +82,8 @@ export class Sim {
   private occupants = new Map<string, Set<string>>();
   /** Runtime members of authored private/group/dm channels (by channel id). */
   private channelMembers = new Map<string, Set<string>>();
+  /** Story-clock time of each sender's last message per channel (slow mode). */
+  private lastChatAt = new Map<string, number>();
   private pending: Trigger[] = [];
   private beatVisits = new Map<string, number>();
   private revealed = new Set<string>();
@@ -346,8 +348,26 @@ export class Sim {
     const start = this.log.len();
     const aud = audience ?? this.chatAudience(channel, from);
     this.record({ type: "chat", from: this.chatDisplayName(from), channel, text, audience: aud, parentSeq });
+    this.lastChatAt.set(`${channel} ${from}`, this.elapsedMs); // slow-mode clock
     this.drain();
     return this.log.since(start);
+  }
+
+  /** A channel's slow-mode window (ms), or null. */
+  slowModeMsOf(id: string): number | null {
+    return this.model.channels.get(id)?.rules.slowModeMs ?? null;
+  }
+  /** A channel's ephemeral lifetime (ms) after which messages expire, or null. */
+  ephemeralMsOf(id: string): number | null {
+    return this.model.channels.get(id)?.rules.ephemeralMs ?? null;
+  }
+  /** Story-clock ms `from` must still wait before posting to `channel` again. */
+  slowModeRemainingMs(from: string, channel: string): number {
+    const slow = this.slowModeMsOf(channel);
+    if (slow === null || slow <= 0) return 0;
+    const last = this.lastChatAt.get(`${channel} ${from}`);
+    if (last === undefined) return 0;
+    return Math.max(0, slow - (this.elapsedMs - last));
   }
 
   /** A chat sender's display name: a guest's registered name, else the id. */
@@ -478,9 +498,29 @@ export class Sim {
     return [...this.model.spaces.values()].map((s) => ({ id: s.id, title: s.title }));
   }
 
-  /** Public roster (id + name) of everyone but `exclude` — for invite pickers. */
-  publicRoster(exclude?: string): Array<{ id: string; name: string }> {
-    return [...this.persons.values()].filter((p) => p.id !== exclude).map((p) => ({ id: p.id, name: p.name }));
+  /**
+   * The invite roster for `person`: only people they already share a
+   * private-ish space with — faction-mates, plus co-members of any
+   * membership-gated authored channel they belong to. This is deliberately
+   * NOT the whole guest list (open rooms don't count), so a participant's
+   * name isn't exposed to strangers. Tune the policy here to loosen/tighten.
+   */
+  rosterFor(person: string): Array<{ id: string; name: string }> {
+    const ids = new Set<string>();
+    const fac = this.factionOf(person);
+    if (fac !== null) for (const m of this.factionMembers(fac)) ids.add(m);
+    for (const def of this.model.channels.values()) {
+      if (def.kind === "open") continue;
+      if (def.kind === "faction") {
+        if (def.faction !== null && this.factionMembers(def.faction).includes(person)) {
+          for (const m of this.factionMembers(def.faction)) ids.add(m);
+        }
+      } else if (this.isChannelMember(person, def.id)) {
+        for (const m of this.channelMembers.get(def.id) ?? []) ids.add(m);
+      }
+    }
+    ids.delete(person);
+    return [...ids].filter((id) => this.persons.has(id)).map((id) => ({ id, name: this.persons.get(id)!.name }));
   }
 
   /** Current recipients of a channel — for routing system notices. */
@@ -707,8 +747,15 @@ export class Sim {
           break;
         case "dialogue":
           // Enter the speaker's block — its body is plain BodyItems, run by
-          // this same loop with the speaker in scope.
-          stack.push({ items: item.value.body, index: 0, bindings: b, speaker: item.value.speaker });
+          // this same loop with the speaker in scope. `SELF`/`ME` resolve to
+          // whoever `self` is bound to on this frame (the prop whose hook
+          // routed here), so a beat needn't restate its owner.
+          stack.push({
+            items: item.value.body,
+            index: 0,
+            bindings: b,
+            speaker: this.resolveSelfSpeaker(item.value.speaker, b),
+          });
           break;
         case "directive":
           this.runDirective(item.value.raw, b);
@@ -810,6 +857,22 @@ export class Sim {
   private visitKey(name: string, bindings: Bindings): string {
     const subj = bindings.get("guest") ?? bindings.get("self") ?? "__global";
     return `${name}::${subj}`;
+  }
+
+  /**
+   * Resolve a dialogue speaker token. `SELF`/`ME` become whoever `self` is
+   * bound to on the current frame — the prop whose hook routed here — so a
+   * beat needn't restate its owner. The resolved id is upper-cased to match
+   * how explicit speakers are written (`Crawler` → `CRAWLER`,
+   * `Cookie_Banner` → `COOKIE_BANNER`), keeping the speaker column uniform.
+   * With no `self` bound (a top-of-file beat with no router) the literal
+   * token is kept — a later slice lints that and falls back to `cast[0]`.
+   */
+  private resolveSelfSpeaker(speaker: string, bindings: Bindings): string {
+    if (speaker !== "SELF" && speaker !== "ME") return speaker;
+    const self = bindings.get("self");
+    if (self === undefined || self.length === 0) return speaker;
+    return self.toUpperCase();
   }
 
   // -------------------------------------------------------------------

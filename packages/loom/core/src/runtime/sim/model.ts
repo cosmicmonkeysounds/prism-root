@@ -154,6 +154,11 @@ export function compileModel(bundle: Bundle): SimModel {
     gens: [],
   };
 
+  // Resolve `is X, Y` inheritance so `mergedCharacters` is populated before
+  // we read it below. Without this the merge is dead code (its only other
+  // caller is a unit test) and every `is` clause is silently inert.
+  bundle.rebuildSimulacra();
+
   for (const entry of bundle.files) {
     const entryProp = entry.file.header.properties.get("entry");
     if (model.entry === null && entryProp !== undefined) model.entry = entryProp.value;
@@ -180,17 +185,24 @@ export function compileModel(bundle: Bundle): SimModel {
           break;
         case "role":
           if (decl.character) {
-            model.roles.set(decl.name, roleDef(decl.name, decl.character));
+            // Read the merged body so `ROLE X is Trait` picks up inherited
+            // slots + hooks; fall back to the raw body if the merge dropped it.
+            const body = bundle.mergedCharacters.get(decl.name) ?? decl.character;
+            model.roles.set(decl.name, roleDef(decl.name, body));
             model.entityKind.set(decl.name, "role");
             if (model.defaultRole === null) model.defaultRole = decl.name;
           }
           break;
         case "character":
           if (decl.character) {
-            model.characters.set(decl.name, charDef(decl.name, decl.character));
+            // Read the merged body so `is X, Y` inheritance (faction badge,
+            // shared hooks, …) is live at sim time. An abstract character the
+            // merge dropped falls back to its raw declaration.
+            const body = bundle.mergedCharacters.get(decl.name) ?? decl.character;
+            model.characters.set(decl.name, charDef(decl.name, body));
             model.entityKind.set(decl.name, "character");
             // Character-bound generators (spec §10.5) become ambient emitters.
-            for (const gen of decl.character.generators) {
+            for (const gen of body.generators) {
               const spec = genSpec(`${decl.name}.${gen.name}`, gen.body);
               if (spec !== null) model.gens.push(spec);
             }

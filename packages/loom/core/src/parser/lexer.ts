@@ -12,6 +12,7 @@ import {
   allChars,
   isAsciiAlphanumeric,
   splitInclusive,
+  splitTopLevelCommas,
   stripPrefix,
   stripSuffix,
 } from "./rust.ts";
@@ -435,9 +436,14 @@ function parseDeclarationOpener(text: string): DeclarationOpenerParse | null {
     mixinClause = null;
   }
 
+  // Split at top-level commas so a multi-arg trait application
+  // (`CellWatch(loc: Internet, signal: lockdown)`) stays one entry — a comma
+  // inside the argument list is not a separator between applications.
   const mixin =
     mixinClause !== null
-      ? mixinClause.split(",").map((s) => s.trim())
+      ? splitTopLevelCommas(mixinClause)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
       : [];
 
   return { kindWord, name, mixin };

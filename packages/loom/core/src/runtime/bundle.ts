@@ -17,16 +17,19 @@ import type {
   Diagnostic,
   FactionBody,
   GeneratorBody,
+  HookDecl,
   Item,
   ItemBody,
   LocationBody,
   LoomFile,
+  MethodDecl,
+  MixinRef,
   PersonBody,
   Property,
   RosterBody,
   SceneBody,
 } from "../parser/index.ts";
-import { emptyCharacterBody, slotTypeIsRequiredHole } from "../parser/index.ts";
+import { emptyCharacterBody, parseMixinRef, slotTypeIsRequiredHole } from "../parser/index.ts";
 
 /** Index into `Bundle.files`. */
 export type FileIdx = number;
@@ -74,7 +77,8 @@ export type ProjectDiagnostic =
   | { kind: "entryBeatUnresolved"; name: string }
   | { kind: "noEntryBeat" }
   | { kind: "ambiguousSlot"; character: string; prop: string }
-  | { kind: "requiredSlotUnfilled"; character: string; slot: string };
+  | { kind: "requiredSlotUnfilled"; character: string; slot: string }
+  | { kind: "requiredParamUnfilled"; character: string; trait: string; param: string };
 
 /** One compiled Loom project. */
 export class Bundle {
@@ -154,6 +158,11 @@ export class Bundle {
     this.persons.clear();
     this.rosters.clear();
     this.mergedCharacters.clear();
+    // Idempotency: this method is the sole producer of `requiredSlotUnfilled`
+    // / `ambiguousSlot`, so clear them here too. `compileModel` may run more
+    // than once on a bundle (tests, re-compiles); without this a second pass
+    // double-reports every abstractness diagnostic.
+    this.projectDiagnostics = [];
 
     // Pass 1: collect raw ITEM / FACTION bodies (merge order = source).
     const rawItems = new Map<string, ItemBody>();
@@ -221,8 +230,9 @@ export class Bundle {
         if (decl.kind === "character" || decl.kind === "role" || decl.kind === "trait") {
           if (decl.character) {
             const isTrait = decl.kind === "trait";
+            const isRole = decl.kind === "role";
             if (!rawDecls.has(decl.name)) declOrder.push(decl.name);
-            rawDecls.set(decl.name, { body: decl.character, inherits: decl.mixin, isTrait });
+            rawDecls.set(decl.name, { body: decl.character, inherits: decl.mixin, isTrait, isRole });
           }
         }
       }
@@ -236,8 +246,18 @@ export class Bundle {
       const raw = rawDecls.get(name)!;
       const mergedBody = merged.get(name) ?? emptyCharacterBody();
       if (raw.isTrait) continue;
+      // A ROLE is a per-person state *schema*, never an instance: an
+      // `any of FACTION` slot is filled at runtime when a guest picks a
+      // faction, so a role is never "abstract". Exempt it from the
+      // required-slot drop below — otherwise no ROLE could mix in a trait
+      // (its merged body would be discarded and `compileModel` would fall
+      // back to the un-merged raw declaration).
+      if (raw.isRole) {
+        this.mergedCharacters.set(name, mergedBody);
+        continue;
+      }
 
-      // Required-slot abstractness check (spec §8).
+      // Required-slot abstractness check (spec §8) — CHARACTERs only.
       const byName = new Map<string, Property[]>();
       for (const prop of mergedBody.typedProperties) {
         const list = byName.get(prop.name);
@@ -267,6 +287,8 @@ interface RawDecl {
   body: CharacterBody;
   inherits: string[];
   isTrait: boolean;
+  /** True for `ROLE` — a state schema, exempt from the abstractness drop. */
+  isRole: boolean;
 }
 
 /**
@@ -296,8 +318,26 @@ export function mergeCharacter(
   const mergedBody = emptyCharacterBody();
 
   const parentPropertySources = new Map<string, string>();
-  for (const parentName of ownDecl.inherits) {
-    const parentBody = mergeCharacter(parentName, raw, mergedCache, diagnostics, visiting);
+  for (const entry of ownDecl.inherits) {
+    // An `is`-clause entry may carry arguments: `is Scanner(crawler_report)`.
+    const ref = parseMixinRef(entry);
+    const parentName = ref.name;
+    let parentBody = mergeCharacter(parentName, raw, mergedCache, diagnostics, visiting);
+    const parentDecl = raw.get(parentName);
+    if (parentDecl !== undefined && parentDecl.body.params.length > 0) {
+      // Bind the trait's params to this application's args and rewrite every
+      // `self.<param>` in the parent body (spec §2.3). Works on a deep clone,
+      // so the shared trait cache is never mutated.
+      parentBody = substituteParams(
+        parentBody,
+        parentDecl.body.params,
+        ref,
+        own.params,
+        diagnostics,
+        name,
+        parentName,
+      );
+    }
     for (const [k, v] of parentBody.properties) {
       if (own.properties.has(k)) continue;
       if (parentPropertySources.has(k)) {
@@ -413,6 +453,7 @@ export function mergeCharacter(
 
 function cloneCharacterBody(b: CharacterBody): CharacterBody {
   return {
+    params: [...b.params],
     properties: new Map(b.properties),
     statsProfile: b.statsProfile,
     statsCtor: b.statsCtor,
@@ -426,6 +467,93 @@ function cloneCharacterBody(b: CharacterBody): CharacterBody {
     generators: [...b.generators],
     typedProperties: [...b.typedProperties],
   };
+}
+
+/**
+ * A deep clone of the string-bearing fields `substituteParams` rewrites —
+ * hook events + bodies, method bodies + inline expressions, and property
+ * values. The shallow `cloneCharacterBody` shares `HookDecl` / `RawLine`
+ * objects with the merge cache, so mutating them in place would corrupt the
+ * cached trait and make the *next* applier inherit this one's substitutions
+ * (e.g. `Crawler` and `Captcha` both routing to `crawler_report`). Fields
+ * substitution never touches are copied by reference.
+ */
+function deepCloneCharacterBody(b: CharacterBody): CharacterBody {
+  const c = cloneCharacterBody(b);
+  c.hooks = b.hooks.map((h): HookDecl => ({
+    event: h.event,
+    body: h.body.map((l) => ({ indent: l.indent, text: l.text, span: l.span })),
+    suppressed: h.suppressed,
+    span: h.span,
+  }));
+  c.methods = b.methods.map((m): MethodDecl => ({
+    name: m.name,
+    params: m.params,
+    inlineExpr: m.inlineExpr,
+    body: m.body.map((l) => ({ indent: l.indent, text: l.text, span: l.span })),
+    span: m.span,
+  }));
+  c.properties = new Map(
+    [...b.properties].map(([k, v]) => [k, { value: v.value, span: v.span }]),
+  );
+  return c;
+}
+
+/**
+ * Bind a parameterized trait's params to an application's args and rewrite
+ * every `self.<param>` token in the (deep-cloned) parent body (spec §2.3).
+ * Positional args bind by index, named args by name. An arg that is itself a
+ * parameter of the *applier* forwards as `self.<arg>` (stays unbound for the
+ * next layer); any other arg is concrete and consumes the `self.` prefix.
+ */
+function substituteParams(
+  parentBody: CharacterBody,
+  parentParams: string[],
+  ref: MixinRef,
+  applierParams: string[],
+  diagnostics: ProjectDiagnostic[],
+  applierName: string,
+  traitName: string,
+): CharacterBody {
+  const bindings = new Map<string, string>();
+  parentParams.forEach((param, i) => {
+    let arg: string | undefined = ref.named.get(param);
+    if (arg === undefined) arg = ref.positional[i];
+    if (arg === undefined) {
+      diagnostics.push({
+        kind: "requiredParamUnfilled",
+        character: applierName,
+        trait: traitName,
+        param,
+      });
+      return;
+    }
+    // Forwarding: an arg that names one of the applier's own params stays
+    // `self.<arg>` so a later layer can bind it; otherwise it is concrete.
+    bindings.set(param, applierParams.includes(arg) ? `self.${arg}` : arg);
+  });
+  if (bindings.size === 0) return parentBody;
+
+  const body = deepCloneCharacterBody(parentBody);
+  const subst = (text: string): string => {
+    let out = text;
+    for (const [param, value] of bindings) {
+      // Hygienic: match the whole `self.<param>` token only — never a longer
+      // dotted path (`myself.x`) or a partial identifier (`self.params`).
+      out = out.replace(new RegExp(`(?<![\\w.])self\\.${param}(?![\\w])`, "gu"), value);
+    }
+    return out;
+  };
+  for (const h of body.hooks) {
+    h.event = subst(h.event);
+    for (const l of h.body) l.text = subst(l.text);
+  }
+  for (const m of body.methods) {
+    if (m.inlineExpr !== null) m.inlineExpr = subst(m.inlineExpr);
+    for (const l of m.body) l.text = subst(l.text);
+  }
+  for (const [, v] of body.properties) v.value = subst(v.value);
+  return body;
 }
 
 /** Whitespace-collapsing comparison key for hook event clauses. */

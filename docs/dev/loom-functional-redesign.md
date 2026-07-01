@@ -3,6 +3,15 @@
 > Status: proposal, hardened after hostile review. Lowers entirely into the
 > existing `packages/loom/core/` model; the Rust mirror tracks it 1:1.
 > Target file: `docs/dev/loom-functional-redesign.md`.
+>
+> **This document is in two parts.** Part I (§1–§8, below) establishes the
+> spine: parameterized traits, faction badges, and the `SELF` speaker — the
+> flat `is Trait(arg)` one-liner. **[Part II](#part-ii--composition--multiple-beats)
+> (§9–§17) supersedes the "one flat `is`" story** with a `with`-per-line
+> composition surface and class-owned (unique *or* trait-derived) beats. Where
+> Part II amends a specific Part I passage, see its
+> [*Edits to Part I*](#edits-to-part-i-keep-the-two-parts-consistent) note. Read
+> both before implementing.
 
 ## 1. Motivation
 
@@ -564,3 +573,584 @@ The Rust mirror (`Bundle::rebuild_simulacra` + `merge_properties`) already perfo
 - **No forwarding sigil** — forwarding is trait→trait library work, not director-facing; the naming convention + `UnresolvedTraitArg` cover the ambiguity without taxing the common concrete case.
 - **One-line `is`-clause over lexer line-continuation** — no recommended example needs wrapping; line-continuation is deferred to a demand-gated Slice-3 nicety rather than shipped half-built.
 - **`ROLE Guest` left inline** — a singleton schema has no cross-entity repetition to factor; the trait generalization is shown but explicitly not recommended for it.
+
+
+---
+
+## Part II — Composition & multiple beats
+
+> Status: proposal, round 2, hardened after hostile review. Extends Part I
+> (parameterized traits with `self`-params, faction badges, the `SELF` speaker).
+> Lowers entirely into the existing `packages/loom/core/` model; the Rust mirror
+> tracks it 1:1. Continues the section numbering of Part I (§1–§8). **Depends on
+> Part I Slice 1** (the merge actually runs and `compileModel` reads the *merged*
+> body, §2.0) and Slice 2 (`deepCloneCharacterBody`, `parseMixinRef`).
+
+Part I turned a scanner prop into a *shape*: `CHARACTER Crawler is AlgoScanner(crawler_report)`. That collapses nine identical props to one line each — a real win. But it caps out the moment a prop wants to be more than one shape, and it leaves every beat those props route to stranded in a distant global file. Part II removes both ceilings on the **same spine Part I already runs on**: `self` is the entity this code runs on behalf of, and it is now also the namespace a class's beats live in.
+
+---
+
+## 9. Why the flat `is Trait(arg)` is too weak
+
+`is AlgoScanner(firewall)` says exactly one thing: "this prop is the fused faction-plus-scanner shape, routed to the `firewall` beat." Three concrete failures follow.
+
+**9.1 One shape, not many.** A prop is a *class* — it should stack orthogonal capabilities. Consider the brief's stress prop: a Firewall Terminal that is simultaneously (a) in `TheAlgorithm`, (b) scans a guest to a beat, (c) is **breachable** once the guest is captured, and (d) emits an **ambient bark** on a timer. Those are four independent axes. `is AlgoScanner(firewall)` can express (a) and (b) only, and only because someone pre-fused them into one trait. Axes (c) and (d) have no home short of authoring a *new* combined trait `AlgoScannerBreachableAmbient(...)` — a combinatorial explosion of monolithic fusions, one per capability set. That is the opposite of modular.
+
+**9.2 The beat is a global orphan.** `AlgoScanner(firewall)` points at a top-level `== firewall` beat living in `beats/prison.loom`, keyed by the bare global name `firewall` (`model.beats`, model.ts:163). The prop that performs it and the script it performs are in different files. Two props can never both own a beat called `main` or `greet` — the global map collides. The `firewall` name merely echoes the owner a fourth time, the exact restatement Part I set out to kill.
+
+**9.3 A beat can't be shared as a *shape*.** The two prison beats — `interrogation` and `firewall` — are structurally identical: a `<if: guest.captured> … <else> …` gate, a `SELF` speaker, captured-only choices. Today that skeleton is copy-pasted per beat. `is Trait(arg)` gives no way for a trait to ship the *gate shape* and let each prop fill only the varying lines.
+
+The fix is not a bigger `is`. It is (1) a composition surface that stacks N small capabilities, and (2) beats that belong to the class, addressed through `self` — so the capability and the beat it routes to travel together.
+
+---
+
+## 10. The composition model — `with`, one capability per line
+
+### 10.1 Syntax
+
+A class composes capabilities two ways, and they are the **same operation**:
+
+```loom
+# Sugar — the Part I one-liner, unchanged, for a single capability:
+CHARACTER Crawler is AlgoScanner(crawler_report)
+
+# Stacked — one capability per physical line, for a prop that is many things:
+CHARACTER Firewall_Terminal
+  with Algo
+  with Scanner(firewall)
+  with Breachable
+  with Ambient(hum)
+```
+
+`with <ref>` is one trait application per line: a bare badge (`with Algo`), a positional call (`with Scanner(firewall)`), or a named call (`with CellWatch(loc: Internet, signal: lockdown)`). The `is A, B` clause on the opener line remains valid and is **exactly equivalent** to a stack of `with` lines — it is the terse form for the trivial case, and the nine trivial scanner props keep their one-liner unchanged (§15).
+
+**Deliberate call — `with` on its own lines rather than a longer `is` list.** Part I §2.2a made the `is`-clause exactly one physical line and forbade wrapping, because the line-based lexer only stitches parentheticals. That rule means a four-capability prop written `is Algo, Scanner(firewall), Breachable, Ambient(hum)` is a single unwrappable line that fights the column layout and reads as comma-soup. `with`-per-line dissolves the constraint: each entry is self-contained on its own line, the count is unbounded, and the body reads as a crew checklist — *wear the badge, respond to scans, be breakable, murmur on a timer*. This is the round's answer to "the `is` semantics is weak": composition becomes a readable vertical list, not a monolith.
+
+**Rejected alternative — an `init(){}` constructor block** (the "constructor" the user gestured at). An `init` sub-block whose body is a parts list of `is Algo` / `self.captures = 0` statements is a faithful read of the word "constructor," but it earns its keep only as a home for *seed statements* — and Part I already proved that the header `is A, B, C` and a constructor full of `is` lines are the *same merge*. Wrapping composition in an `init:` keyword adds a nesting level and an OOP frame ("impl block", "methods dispatched on self") that a non-programmer director must decode, for zero expressive gain over a flat `with` list. We keep `InitDecl` (ast.ts:453; parsed at decl-body.ts:627) for its existing job — the stats constructor — and do **not** overload it for capability composition. Per-instance state stays a typed slot (`captures: 0 to 100 = 0`), not an imperative seed.
+
+### 10.2 How `with` lowers, and the hook-merge rule (hardened)
+
+`with` produces nothing the merge engine doesn't already consume. Today the rawDecls collection loop (bundle.ts:217-229) populates `RawDecl.inherits` from `decl.mixin` (bundle.ts:225). We add a second source:
+
+- **ast.ts** — `CharacterBody` (ast.ts:449) gains `withClauses: string[]`; `emptyCharacterBody` (ast.ts:464) initializes it to `[]`.
+- **decl-body.ts** — `lowerCharacter` (decl-body.ts:557) gains a `with ` branch: a single-line clone of the keyword dispatch it already does for `goal`/`generator` — `stripPrefix(text, "with ")` → push the trimmed remainder onto `out.withClauses`, `i += 1`, `continue`. Each line is exactly one entry (no top-level-comma split needed — moving off the `is` line was the whole point).
+- **bundle.ts** — the collection at bundle.ts:225 becomes `inherits: [...decl.mixin, ...decl.character.withClauses]`.
+
+From there **every** `with` entry flows through the identical Part I machinery: `parseMixinRef` (§2.2) parses `Scanner(firewall)` into `{name, positional, named}`; `mergeCharacter` (bundle.ts:277) recurses; `substituteParams` (§2.3, on a deep clone) resolves `self.<param>`; properties / hooks / disposition / knowledge merge in source order. Composing N capabilities is N folds of the existing parent loop (bundle.ts:299-349). The sim never learns the word `with`.
+
+**Composition merge semantics — stated precisely (this corrects the review's major #2):**
+
+- **Properties** merge by key: first parent to set a key wins, a genuine cross-parent value conflict emits `ambiguousSlot` (bundle.ts:303-309), and the child's own declaration wins over all (bundle.ts:352). Unchanged.
+- **Hooks compose additively *between traits*.** Every parent/composed hook is appended (bundle.ts:342), and `matchHooks` (sim.ts:638) yields *every* matching hook — so a prop that composes `Scanner` and `Breachable`, both matching `on scan`, runs both. This is the correct additive default for orthogonal capabilities.
+- **A child-body hook of the same signature *overrides* the composed ones.** This is the new rule, and the review correctly found the base code did **not** implement it (bundle.ts:397 plainly pushes the own hook, leaving both to fire). We add it, completing the child-wins rule that already governs properties/methods/init. In `mergeCharacter`, after the existing `: none` suppression filter (bundle.ts:365-372) and *before* the own-hook fold loop (bundle.ts:373):
+
+  ```ts
+  // Child-body hooks win over composed/inherited hooks of the same signature.
+  // (`super` hooks are excluded — they EXTEND the parent, handled below;
+  //  `: none` hooks are excluded — they SUPPRESS with no replacement, above.)
+  const overrideKeys = new Set(
+    own.hooks
+      .filter((h) => !h.suppressed && !h.body.some((l) => l.text.trim() === "super"))
+      .map((h) => normaliseHookEvent(h.event)),
+  );
+  if (overrideKeys.size > 0) {
+    mergedBody.hooks = mergedBody.hooks.filter(
+      (h) => !overrideKeys.has(normaliseHookEvent(h.event)),
+    );
+  }
+  ```
+
+  Then the existing loop (bundle.ts:373-399) pushes the own hooks. A `super` hook still finds its parent (its key is **not** in `overrideKeys`, so the parent survives the filter and the splice at bundle.ts:377-395 works verbatim). A plain own hook's key **is** removed from the composed set, so it replaces rather than duplicates. Net: **traits compose additively; a child body wins; `super` extends; `: none` suppresses** — four distinct, legible behaviors.
+
+  *Deliberate call:* this is a small extension of the existing `super`/`: none` key-matching machinery, not a new subsystem, and it is the mitigation the additive-hook footgun (Open Q #5) actually needs. Rejected alternative — "document strictly additive, `: none` as the only lever": rejected because `: none` suppresses with *no* replacement, so an author who wants "scan should capture, not route" would have to write `on scan guest: none` and then could not re-add behavior under the same trigger without it being re-suppressed. Child-override is the intuitive and composable answer.
+
+Part I's `on <event>: none` suppression still applies to composed hooks unchanged.
+
+---
+
+## 11. Beat ownership
+
+Two ways a class comes to own a beat — it authors one inline, or it derives one from a trait — resolve to **one storage scheme**: a beat keyed `Owner.name` in the same global `SimModel.beats` map, reached by a qualified divert.
+
+### 11.1 Inline / unique beats
+
+```loom
+CHARACTER Sysadmin
+  with Algo
+  with Scanner(interrogation)     # Scanner's self.beat binds to MY interrogation
+  beat interrogation(guest)       # ← authored right here, next to the hook that reaches it
+    SELF
+      <if: guest.captured>
+        Designation {guest.name}. Heat on file: {guest.heat}. Talk.
+      <else>
+        Not in a cell yet? Then we have nothing to discuss. Move along.
+    <if: guest.captured>
+      * Name the Glitchers
+        <set: guest.heat -= 10>
+      * Say nothing
+        <set: guest.karma += 20>
+```
+
+**Storage.** A `beat <name>(params)` sub-block lowers exactly like the `generator <name>` block it is modeled on (decl-body.ts:664-686):
+
+- **ast.ts** — `CharacterBody` gains `beats: OwnedBeat[]` where `OwnedBeat = { name: string; params: string[]; body: RawLine[]; span: Span }`; `emptyCharacterBody` initializes `beats: []`.
+- **decl-body.ts** — a `beat ` branch in `lowerCharacter`, cloned from the generator collector: `stripPrefix(text, "beat ")` → `splitNameAndParams` (decl-body.ts:404, already exists) for name + params → collect indented lines by the same `body[i]!.indent > baseIndent` greedy loop the generator/hook collectors use into `body`.
+- **model.ts** — in the `character` case (model.ts:188), reading the **merged** body per Part I §2.0 (`bundle.mergedCharacters.get(decl.name) ?? decl.character`), register each owned beat beside the existing generator loop at model.ts:193:
+
+  ```ts
+  for (const ob of body.beats) {
+    const key = `${decl.name}.${ob.name}`;
+    model.beats.set(key, {
+      name: key, params: ob.params, contract: new Map(),
+      body: fillSlots(lowerRawBody(ob.body), body.fills),   // fillSlots is a no-op when body.fills is empty (§11.3)
+      span: ob.span,
+    });
+  }
+  ```
+
+  `lowerRawBody` (effects.ts:16) is the same full-grammar lowering hooks already use, so an owned beat is a first-class `Beat`: choices, `<if>`, dialogue, nested diverts all lower identically.
+
+**Collision rule.** The key is `Owner.name`. `Sysadmin.interrogation` and any other prop's `interrogation` are distinct entries — two classes may each own `main`, `greet`, `report` with no clash. Top-level `== name` beats keep their bare key (model.ts:163), untouched.
+
+### 11.2 `-> self.<beat>` and `-> Owner.<beat>` — resolution (the one runtime change)
+
+This finally honors `DivertTarget.qualifier`, which the parser already **populates** for cross-file `/` diverts (parser.ts:767-775) but the sim ignores at the lookup (sim.ts:795).
+
+> **Review correction (minor #6).** An earlier draft called `qualifier` "unused
+> since day one." It is not — `parseDivertTarget` writes it for `/` targets today;
+> the sim simply never reads it. The accurate statement: *the sim ignores the
+> already-populated qualifier.*
+
+**Parser.** `parseDivertTarget` (parser.ts:756) splits on `#` (knot) then `/` (cross-file). Add an owner split that runs **only when no `/` is present** — after the `#` split, before returning the no-slash case:
+
+```ts
+// (no `/` in filePart)
+const dot = filePart.indexOf(".");
+if (dot >= 0) {
+  return { qualifier: filePart.slice(0, dot).trim(), name: filePart.slice(dot + 1).trim(), knot };
+}
+return { qualifier: null, name: filePart, knot };
+```
+
+Precedence is explicit and normative: **`/` beats `.`.** An owner qualifier is a single-segment identifier, so a `.` is an owner split *only* in the no-slash case. A target that carries both — `some/dir.beat` — keeps the slash branch (`qualifier="some/dir"`, `name="dir.beat"`), which then resolves to neither an owned nor a flat beat; that surfaces the new diagnostic below rather than silently splitting a file path. The corpus is safe today (no dotted or slash-plus-dot diverts exist), so this is a latent guard, not a live fix.
+
+`-> self.firewall` → `{qualifier:"self", name:"firewall"}`; `-> Sysadmin.interrogation` → `{qualifier:"Sysadmin", name:"interrogation"}`; a bare `-> lockdown` → `{qualifier:null, name:"lockdown"}` unchanged.
+
+**Sim.** Replace the single lookup at sim.ts:795 with one resolver, and key the visit-count / `beatEntered` record on the **resolved** name (sim.ts:797-799):
+
+```ts
+private resolveBeat(t: DivertTarget, b: Bindings): [string, Beat, Bindings] | undefined {
+  if (t.qualifier !== null) {
+    const owner = (t.qualifier === "self" || t.qualifier === "me") ? b.get("self") : t.qualifier;
+    if (owner !== undefined) {
+      const hit = this.model.beats.get(`${owner}.${t.name}`);
+      if (hit) {
+        // Cross-owner divert: rebind self so the foreign beat runs — and SELF speaks — as ITS owner.
+        const bound = owner === b.get("self") ? b : new Map(b).set("self", owner);
+        return [`${owner}.${t.name}`, hit, bound];
+      }
+      // qualifier present but no owned beat — fall through to the flat lookup, then diagnose if that misses too.
+    }
+  }
+  const flat = this.model.beats.get(t.name);            // bare name → global, exactly as today
+  if (flat) return [t.name, flat, b];
+  if (t.qualifier !== null) {
+    this.record({ type: "diagnostic", message: `divert to \`${t.qualifier}.${t.name}\` resolves to no beat` });
+  }
+  return undefined;
+}
+```
+
+The divert case (sim.ts:792-802) becomes: `const r = this.resolveBeat(d.target, b); if (r) { const [key, beat, bound] = r; this.beatVisits.set(this.visitKey(key, bound), …); this.record({type:"beatEntered", beat: key}); stack.push({ items: beat.body, index: 0, bindings: bound }); }`. `playBeat` (sim.ts:840) takes the same treatment.
+
+Three consequences worth stating:
+
+- **Bare stays global (deliberate, back-compat-critical).** `qualifier === null` skips straight to `model.beats.get(t.name)` — byte-for-byte today's behavior. Existing `-> lockdown` and every other global divert are untouched. Reaching an owned beat **always** requires `self.` or `Owner.` — we reject owner-first *bare* resolution precisely because it would silently change the meaning of existing bare diverts (§15).
+- **Cross-file diverts still work.** A `/`-qualified target misses the `${owner}.${name}` lookup and falls to the flat map — the same result the sim produces today.
+- **Cross-owner self-rebind.** An explicit `-> Sysadmin.interrogation` from *another* prop pushes the beat with `self` rebound to `Sysadmin`, so its `SELF` speaker and `self.x` reads resolve to the true owner, not the caller. For `-> self.beat`, `owner === b.get("self")` already, so `b` is reused with zero allocation.
+
+**Owned-beat history queries (the review's major #3).** `visits(prophecy)` / `played` / `since` match a beat by the bare name an author writes, but owned beats record `beatEntered` under `Owner.name` — so a naïve `visits(prophecy)` would return 0 forever. Fix: the query argument resolves owner-first, identically to a divert. Factor the qualifier resolution into a shared `resolveBeatKey(rawName, bindings)` and call it from both `resolveBeat` and the query paths:
+
+- **The live sim path** is the `visits` case in `callFn` (sim.ts:1184-1188), which reads `this.beatVisits` keyed `${name}::${subj}`. Change it to resolve the name first: strip a leading `self.`/`me.`, take an explicit `Owner.` as given, then try `${self}.${name}` and fall back to bare — using `this.currentBindings.get("self")` (already set at sim.ts:1157). So `visits(self.prophecy)`, `visits(prophecy)`, and `visits(Oracle.prophecy)` all resolve to the `Oracle.prophecy` counter when `self = Oracle`.
+- **The ledger path** (`callQuery` → `beatVisitCount`/`played`/`since`, ledger.ts:169-196) gets the same argument resolution; thread the current owner into `callQuery` (or resolve at the `callFn` wrapper that invokes it) so `firstName()` is owner-qualified before lookup.
+
+**Normative rule (state it for authors):** *a bare beat name in `visits`/`played`/`since` resolves against the current `self` owner first, then globally* — the mirror of divert resolution. `visits(self.prophecy)` is the explicit, recommended spelling.
+
+### 11.3 Derived beats — a trait ships a *shaped* beat; the deriver fills the holes
+
+A `TRAIT` may carry `beat` blocks too — these are **templates**. A template's varying lines are `slot:` holes; the deriver supplies `fill <name>` blocks of pure content.
+
+```loom
+# The captured-vs-free interrogation SHAPE, authored once.
+TRAIT Gatekeeper is Algo
+  on scan guest
+    -> self.confront
+  beat confront(guest)
+    SELF
+      <if: guest.captured>
+        slot: pitch
+      <else>
+        slot: dismissal
+    <if: guest.captured>
+      slot: options
+
+# Two derivers fill the same shape differently — collision-free.
+CHARACTER Interrogation_Booth is Gatekeeper
+  fill pitch
+    Designation {guest.name}. Heat on file: {guest.heat}. Talk.
+  fill dismissal
+    Not in a cell yet? Then we have nothing to discuss. Move along.
+  fill options
+    * Name the Glitchers
+      <set: guest.heat -= 10>
+    + Lie through your teeth
+      <set: guest.heat += 10>
+
+CHARACTER Bouncer is Gatekeeper
+  fill pitch
+    List's closed, {guest.name}. Name a Mod who'll vouch, or wait.
+  fill dismissal
+    Free to roam? Then you don't need me. Next.
+  fill options
+    * Drop a Mod's handle
+      <set: guest.karma += 5>
+    + Bluff
+      <set: guest.heat += 8>
+```
+
+`Gatekeeper` is a **capability bundle**: one derive installs a hook + a beat template as a closed unit — `on scan -> self.confront` and `beat confront` can never drift apart. Both derivers own a beat keyed distinctly (`Interrogation_Booth.confront`, `Bouncer.confront`); the gate skeleton — the `<if: guest.captured>` structure, the `SELF` attribution — is written once.
+
+**`slot:` keeps its colon; `fill` does not (this closes the review's minor #5).** The placeholder stays the **existing** `slot:` form (parser.ts:256-263 lexes `slot:` as a `property` and produces the `slotPlaceholder` BodyItem, ast.ts:689). We deliberately do **not** add a colon-less `slot <name>` alias: inside a beat body, ordinary narration is prose, and a bare `slot machines line the far wall` would be captured as a placeholder and vanish. The colon keeps the placeholder lexically distinct from prose with zero new grammar. `fill`, by contrast, is a **class-body** sub-block opener (a sibling of `beat`/`generator`/`on`/`goal`), dispatched by keyword prefix at `baseIndent` where there is no prose — so `fill pitch` is unambiguous and matches the house style of bare block openers (`beat interrogation(guest)`, `generator name`). No colon needed or wanted there.
+
+**Lowering.**
+
+- `slot: <name>` uses the existing `slotPlaceholder` node (parser produces it, sim.ts:746 treats it as a no-op). Zero new executor behavior.
+- `fill <name>` is a new sub-block in `lowerCharacter`, collected into `CharacterBody.fills: Map<string, RawLine[]>` (new field + `emptyCharacterBody` init), exactly like the `beat`/`generator` collectors.
+- **Merge** (bundle.ts:277): copy each parent trait's `beats` into the child in the parent loop (after the hook fold), and its `fills` child-over-parent by key. Beat bodies are `substituteParams`-substituted so a template's `self.<param>` resolves. Deep-clone first (see below).
+- **Slot fill** happens at model-compile, **on the lowered tree, not the raw text**. `fillSlots(items, fills)` (called in §11.1) walks the lowered `BodyItem[]` and replaces each `{kind:"slotPlaceholder", value:{name}}` with `lowerRawBody(fills.get(name))` spliced in place, recursing into `conditional` / `match` / `dialogue` / `eachVisit` arm bodies (so a hole under a `SELF` block or inside `<if: guest.captured>` is reached). A hole with no matching fill is left inert and reported as `UnfilledDerivedSlot { character, slot }`.
+
+**Deep-clone must enumerate `beats` and `fills` (the review's minor #7).** Part I's `deepCloneCharacterBody` predates these fields, and the shallow `cloneCharacterBody` (bundle.ts:414-429) does not enumerate them. If the clone shares `OwnedBeat.body` `RawLine`s with the trait cache, the first deriver's `substituteParams` mutates the shared `confront` template in place and the second deriver inherits the first's specialized lines — the exact cache corruption Part I fixed for hooks. **Extend `deepCloneCharacterBody` to map `beats` to fresh `OwnedBeat`s with freshly-copied `body: RawLine[]` and `span`, and copy `fills` into a new `Map` of fresh `RawLine[]`.** This is called out explicitly in Slice C, and listed under "Edits to Part I."
+
+**Cross-parent beat collision is loud, not first-wins (the review's minor #4).** Borrowing the generator dedupe (bundle.ts:335-340) would make two distinct parents that each ship a beat of the same name silently collapse to one. Instead: when copying parent beats, if two *distinct* parents contribute a beat of the same name, emit `DerivedBeatConflict { character, beat, traits }` (mirroring `ambiguousSlot`). A child *re-declaring* a derived beat is still legal and wins — that is intentional override — but two colliding parents are a diagnostic.
+
+**Deliberate call — AST-node substitution, not raw-text splice.** A pre-lower RawLine splice would have to re-indent fill lines "to the slot's column"; on an indent-sensitive parser that column arithmetic is the single most fragile step in any candidate design. We avoid it: `fill` blocks lower in their own indent context to a self-consistent `BodyItem[]`, and splicing a lowered list into a placeholder *position* in another lowered list is structurally safe regardless of source columns.
+
+### 11.4 Whole-override and (advanced) `super`
+
+- **Whole override** — a deriver re-declares `beat confront(guest)` with a different body. Child-wins dedupe keeps the deriver's. No new syntax; this is the everyday "different scene, same trigger."
+- **Override-then-extend (`super`)** — a `super` line in an overriding beat body splices the trait template inline. This **reuses the existing hook-`super` machinery** (bundle.ts:377-395), extended to beats at the same merge site. Marked **advanced**: `slot`/`fill` and whole-override are the recommended paths; `super` is an escape hatch for the trait-glossary author.
+
+### 11.5 The unifying predicate — how `with Scanner(x)` reaches *either* an owned beat *or* a global one (hardened; fixes the blocker)
+
+The connection between composition (§10) and beat ownership (§11) is one clause in `substituteParams`: keep the `self.` qualifier on a substituted argument **only if the argument names one of the applier's own or derived beats**; otherwise degrade to the bare global name.
+
+> **Blocker fix (review #1).** The earlier draft computed this set from
+> `mergedBody.beats` *inside* the merge loop — but `mergeCharacter` layers the
+> applier's own beats onto `mergedBody` only *after* the parent loop (bundle.ts
+> folds own decls at 351+), so at substitution time `mergedBody.beats` never
+> contains the class's own `beat` blocks. `with Scanner(interrogation)` would not
+> recognize `interrogation` as owned, degrade to a bare `-> interrogation`, and —
+> because §13 deletes the global `== interrogation` — silently no-op. The flagship
+> examples would not run.
+
+The set is instead **precomputed from the declaration's own beats plus every trait it applies (recursively)** — a pure name walk, no bodies, no substitution, so it is order-independent and available before the merge loop:
+
+```ts
+function collectOwnedBeatNames(name, raw, seen = new Set()): Set<string> {
+  const out = new Set<string>();
+  if (seen.has(name)) return out;
+  seen.add(name);
+  const decl = raw.get(name);
+  if (!decl) return out;
+  for (const ob of decl.body.beats) out.add(ob.name);
+  for (const entry of decl.inherits) {              // `inherits` = [...mixin, ...withClauses]
+    for (const n of collectOwnedBeatNames(parseMixinRef(entry).name, raw, seen)) out.add(n);
+  }
+  return out;
+}
+```
+
+Compute it once at the top of `mergeCharacter` for the *root* applier and thread the **same** set through every recursive `substituteParams` call. The forwarding predicate (Part I §2.3) becomes:
+
+```ts
+const replacement =
+  (ownDecl.params.includes(arg) || ownedBeatNames.has(arg)) ? `self.${arg}` : arg;
+```
+
+`ownDecl.params.includes(arg)` still handles trait→trait forwarding (an intermediate trait passing its own param down); `ownedBeatNames.has(arg)` finalizes to `self.` when the arg is a real leaf-owned beat name. One faction-agnostic `TRAIT Scanner(beat)` with body `-> self.beat` then serves both worlds with no branch:
+
+- `Firewall_Terminal with Scanner(firewall)` — `firewall` ∈ owned set → `-> self.firewall` → resolves (§11.2) to `Firewall_Terminal.firewall`.
+- `Crawler is Scanner(crawler_report)` — `crawler_report` ∉ owned set → bare `-> crawler_report` → flat global lookup (the deleted-nothing case: the global `== crawler_report` still exists).
+
+The `resolveBeat` fallback order *is* the feature: the same `-> self.beat` line means "my beat" when I own one and "the shared beat" when I don't.
+
+> **Rejected alternative — push the decision entirely into `resolveBeat`** (always
+> substitute a forwarded arg to `self.<arg>` and let the runtime pick owned-else-global).
+> It removes the compile-time ordering hazard, but `substituteParams` operates on
+> `self.<param>` references uniformly and can't tell a divert-position param from a
+> value-position one — a location param `self.loc` bound to a global `Internet`
+> would wrongly become `self.Internet`. The precomputed owned-name set adds `self.`
+> *only* for names that are actually owned beats, so non-beat params stay bare. We
+> keep compile-time resolution.
+
+### 11.6 Parser disambiguation rules (normative)
+
+The three ambiguities the review probed, stated once, exactly:
+
+**(a) Inline `beat` block vs hook vs generator.** `lowerCharacter` (decl-body.ts:557) dispatches class-body sub-blocks by **keyword prefix at `baseIndent`**, then greedily consumes every deeper line (`body[i]!.indent > baseIndent`) as that block's body. The prefixes are mutually exclusive and checked in order: `knows:` · `goal ` · `on ` (hook) · `init`/`init(` · `method ` · `generator ` · **`beat `** · **`with `** (single line) · **`fill `** · `reacts ` · disposition/knowledge/props. A line opening `beat confront(guest)` is a beat (name+params via `splitNameAndParams`); `on scan guest` is a hook; `generator gossip` is a generator — no overlap, because no keyword is a prefix of another and the opener must match `"<kw> "` (or the exact word) at column `baseIndent`. Anything at deeper indent belongs to the currently-open block, so a `-> self.beat` or `on` *inside* a beat body is body content, never a new sub-block. `with`/`fill` are free keywords: no existing body line starts with them.
+
+**(b) Derive / compose conflict resolution.** Merge precedence, most-specific last:
+1. *Properties* — first parent wins; genuine cross-parent value conflict → `ambiguousSlot`; child's own → wins.
+2. *Hooks* — traits compose additively; a child-body hook of the same normalized signature (`normaliseHookEvent`) *overrides* all composed hooks of that signature (§10.2); `super` extends the parent; `: none` suppresses.
+3. *Beats* — a child re-declaration of a derived beat wins (override). Two **distinct** parents shipping the same beat name → `DerivedBeatConflict` (never silent first-wins).
+4. *Fills* — child-over-parent by name; an unmatched `slot:` → `UnfilledDerivedSlot`.
+
+**(c) `self.beat` / `Owner.beat` divert resolution.** `resolveBeat` (§11.2), in order: if `qualifier` is `self`/`me`, `owner = bindings.self`; if any other identifier, `owner = qualifier` (an explicit foreign owner, `self` rebound in the pushed frame); look up `${owner}.${name}`; on miss (or `qualifier === null`) fall to the flat global `model.beats.get(name)`; on total miss with a qualifier present, emit an unresolved-divert diagnostic. `/` (cross-file) takes precedence over `.` (owner) in the target text, and a bare divert is always global — never owner-first — so no existing `-> lockdown` changes meaning. The same resolution backs `visits`/`played`/`since` (§11.2).
+
+---
+
+## 12. `self` through it all
+
+There is still exactly one `self` — *the entity this code runs on behalf of* — now doing a third job. Part I fused **state** (`self.captures`) and **speaker** (`SELF`); Part II adds **behavior** (`self.beat`), and all three read the same binding.
+
+- **Bound at dispatch** by every hook binder — scan (`self = scanner`, `bindScan`, sim.ts:693), char hooks (`self = char.id`, sim.ts:681/683), role (`self = subject`, sim.ts:667), timer (`self = ownerId`).
+- **Carried through diverts unchanged.** `-> self.beat` reuses the caller's bindings, so `self` in the owned beat is still the prop whose hook routed in; `SELF` there speaks as the owner (Part I §2.5) with no `cast:` line.
+- **Rebound only for a foreign owner.** `-> Sysadmin.interrogation` from another prop rebinds `self = Sysadmin` (§11.2), so a beat reached across owners runs — and speaks — as *its* owner. This is the one place `self` changes on a divert, and it is exactly correct: the beat belongs to `Sysadmin`.
+- **Derived beats are no different.** `Bouncer.confront` is stored under `Bouncer` and reached through `Bouncer`'s composed `on scan` hook, where `self = Bouncer`. The `SELF` in the shared `Gatekeeper` skeleton resolves to `BOUNCER`. One template, per-owner voice.
+
+The author writes the same word for "my state," "my line," and "my beat," and learns it once as **mine**.
+
+---
+
+## 13. Full worked rewrites
+
+The global `== interrogation` and `== firewall` beats in `beats/prison.loom` are **deleted** — each moves into the prop that owns it. `-> lockdown` stays a shared global.
+
+### 13.1 TheAdmin — stateful, two hooks, no beat (badge only)
+
+```loom
+CHARACTER TheAdmin
+  with Algo
+  captures: 0 to 100 = 0
+  on captured guest
+    <broadcast: doomed to participant(guest)>
+    <set: self.captures += 1>
+    <if: self.captures >= 2>
+      <reveal: TheAlgorithm>
+  on revealed
+    <broadcast: unmasked to faction(Mods) | faction(Chatters)>
+```
+
+Byte-for-byte the Part I rewrite, with `with Algo` for the badge. `captures` is a real typed slot; `self.captures` is a per-owner world var. State never routes, so the beat machinery leaves it alone.
+
+### 13.2 Sysadmin — composition + a uniquely-authored owned beat
+
+```loom
+CHARACTER Sysadmin
+  with Algo
+  with Scanner(interrogation)
+  beat interrogation(guest)
+    SELF
+      <if: guest.captured>
+        Designation {guest.name}. Heat on file: {guest.heat}. Talk.
+        Tell me who showed you the static and maybe your sentence shortens.
+      <else>
+        Not in a cell yet? Then we have nothing to discuss. Move along.
+    <if: guest.captured>
+      * Name the Glitchers
+        <set: guest.heat -= 10>
+        <set: guest.karma -= 15>
+      * Say nothing
+        <set: guest.karma += 20>
+      + Lie through your teeth
+        <set: guest.heat += 10>
+```
+
+The interrogation scene sits inches below the `with Scanner(interrogation)` line that routes to it. `interrogation` is in `Sysadmin`'s precomputed owned set (§11.5), so `Scanner`'s `-> self.beat` stays `self.interrogation` and resolves to `Sysadmin.interrogation`. The captured-gate is verbatim.
+
+### 13.3 Firewall_Terminal — four composed capabilities + two owned beats (the modularity showcase)
+
+The prop `is AlgoScanner(firewall)` **cannot** express this.
+
+```loom
+TRAIT Breachable                    # a capability bundle: ships the escape beat
+  beat breach(guest)
+    <escape: guest>
+
+TRAIT Ambient(bark)                 # a timed bark routed to one of MY beats
+  on every 45s
+    -> self.bark
+
+CHARACTER Firewall_Terminal
+  with Algo                         # (a) faction badge
+  with Scanner(firewall)            # (b) scan → my firewall beat
+  with Breachable                   # (c) composes in a `breach` beat
+  with Ambient(hum)                 # (d) timer → my `hum` bark
+  beat firewall(guest)
+    SELF
+      <if: guest.captured>
+        A seam in the wall, right where the Oracle said it would be. Push it?
+      <else>
+        The firewall hums. Touching it from the outside only gets you noticed.
+    <if: guest.captured>
+      * Force the breach — RUN
+        -> self.breach               # routes into the composed-in Breachable beat
+      + Back away from the wall
+        <set: guest.karma += 2>
+    <else>
+      <set: guest.heat += 15>
+      -> lockdown                    # bare → global, unchanged
+  beat hum()
+    SELF
+      A low electric hum. The wall is always listening.
+```
+
+Four orthogonal capabilities, four independently-authored one-liners. The owned set is `{firewall, hum}` (own beats) ∪ `{breach}` (from `Breachable`), so `Scanner(firewall)` → `self.firewall` → `Firewall_Terminal.firewall`, and `Ambient(hum)`'s param → `self.hum` → `Firewall_Terminal.hum`. The RUN choice's `-> self.breach` resolves to `Firewall_Terminal.breach`, the beat **composed in by `with Breachable`** — composition and owned-beats visibly interlocking. The `<else>` heat+`lockdown` punishment survives verbatim.
+
+**The win vs the base:** to add "breachable" and "ambient bark" under `is AlgoScanner(firewall)` you would author a bespoke fused trait per combination. Here they are two more lines.
+
+### 13.4 Oracle — 2+ owned beats that cross-reference, driven by an owned-beat visit query
+
+This rewrite deliberately uses `visits(self.prophecy)` instead of a hand-rolled counter, to exercise the major-#3 fix: owned-beat history now resolves owner-first.
+
+```loom
+CHARACTER Oracle
+  with Algo
+  on scan guest
+    <if: visits(self.prophecy) == 0>   # owner-resolved: counts Oracle.prophecy entries
+      -> self.prophecy
+    <else>
+      -> self.riddle
+  beat prophecy(guest)                 # → Oracle.prophecy
+    SELF
+      The static showed me your face before you arrived, {guest.name}.
+      There is a seam in the firewall. Find it before the sweep.
+    * Ask for the way out
+      -> self.riddle                   # beat-to-beat, both owned by Oracle
+    + Refuse the vision
+      <set: guest.karma += 5>
+  beat riddle(guest)                   # → Oracle.riddle, distinct key
+    SELF
+      What runs but never walks, and carries you past the gate?
+    <set: guest.heat -= 5>
+    -> lockdown
+```
+
+First scan: `visits(self.prophecy)` is 0 (no `Oracle.prophecy` entry yet) → route to `prophecy`, which records under `Oracle.prophecy`. Next scan: the query resolves `self.prophecy` → `Oracle.prophecy`, now 1 → route to `riddle`. Any other prop may also declare `beat riddle`; it lands at `<Other>.riddle`, zero collision. `self` stays `Oracle` across every intra-class divert, so both beats' `SELF` speak as `ORACLE`.
+
+### 13.5 Derive-and-specialize
+
+`Interrogation_Booth` and `Bouncer` (§11.3) both `is Gatekeeper` and fill `pitch` / `dismissal` / `options` differently. The `<if: guest.captured>` gate and the `SELF` speaker are authored once in the trait; each deriver writes only leaf prose and choices, never a control-flow keyword. Stored as `Interrogation_Booth.confront` and `Bouncer.confront` — the shared shape, two voices, no collision.
+
+---
+
+## 14. Expressiveness check — every hard case survives
+
+| Case | Post-redesign |
+|---|---|
+| **Stateful (TheAdmin.captures)** | `captures: 0 to 100 = 0` typed slot; `<set: self.captures += 1>` per-owner world write. Beats never touch state. ✓ |
+| **Conditional / captured-gated beats** | `interrogation`/`firewall` keep their `<if: guest.captured> … <else>` gates verbatim; `guest` is carried into the owned beat by the scan binder, read live. ✓ |
+| **Multi-hook** | A class lists as many `on` hooks as it likes; composed traits append theirs (additive `matchHooks`). Firewall_Terminal has a scan hook (from `Scanner`) + a timer hook (from `Ambient`). ✓ |
+| **Timer** | `Ambient(bark)`'s `on every 45s` flows through `parseTimer`; routes `-> self.hum`. Surveillance's `on every 60s` writing `TheAlgorithm.sweeps` stays faction-scoped (not `self`). ✓ |
+| **Owned-beat history** | `visits(self.prophecy)` resolves owner-first to `Oracle.prophecy` (§11.2); `played`/`since` same. Regression from the review's major #3 is closed. ✓ |
+| **Disposition / trust** | `trusts Guest: 50 of 100` remains a child declaration merged over the trait (child wins). ✓ |
+| **Knowledge writes** | Unchanged — `<set: Guest.knows.X …>` routes through the character store as before. ✓ |
+| **Hook override intent** | A child-body `on scan` replaces composed routing (§10.2); `super` keeps both. ✓ |
+| **Composed capability contributing a beat** | `with Breachable` installs `Firewall_Terminal.breach`, reached by `-> self.breach`. ✓ |
+
+Nothing the 91-line file expressed is lost; the design only adds power (N-way composition, owned/derived beats, owner-resolved history).
+
+---
+
+## 15. Backward compatibility
+
+**Purely additive. The trivial one-liner is untouched.**
+
+```loom
+CHARACTER Crawler is AlgoScanner(crawler_report)   # still one line, still works
+```
+
+- **Flat `is Scanner(x)` / `is A, B`** parse and merge exactly as in Part I — `with` is a *second* source of the same `inherits` entries, not a replacement. The nine scanner props stay one line each.
+- **Bare diverts stay global.** `resolveBeat` hits `model.beats.get(t.name)` for any `qualifier === null` target — identical to today (sim.ts:795). `-> lockdown`, `-> crawler_report`, every existing global divert is byte-for-byte unchanged. We **reject owner-first bare resolution** (Model 3/4's `-> foo` checking `Owner.foo` before global) because it silently changes existing bare diverts; reaching an owned beat *always* requires `self.`/`Owner.` — a small, deliberate ceremony that buys zero back-compat risk.
+- **Cross-file `/` diverts** fall through the owner lookup to global, the same result as today; `/` outranks `.` in target text (§11.2).
+- **`slot:` placeholders, `super` in hooks, `== name` global beats** — all unchanged; `beat`/`with`/`fill` are new keywords in class-body position, and a file using none of them compiles bit-identically.
+- **The one behavior change to shared merge** is the child-body same-signature **hook override** (§10.2). It affects only cases where a child hook matched a composed/inherited hook of the same signature — which today double-fires. This aligns hooks with the child-wins rule that already governs properties/methods/init; `super` restores the additive behavior where wanted. Flagged under "Edits to Part I."
+
+---
+
+## 16. Phased implementation plan (smallest slice first)
+
+Depends on Part I Slices 1–2 (the merge runs; `compileModel` reads the merged body; `deepCloneCharacterBody`; `parseMixinRef`).
+
+**Slice A — owned beats + qualified diverts (ships §11.1, §11.2, §13.2, §13.4).**
+- ast.ts: `CharacterBody.beats: OwnedBeat[]` + `emptyCharacterBody`.
+- decl-body.ts: `beat ` branch in `lowerCharacter` (clone of the generator collector, decl-body.ts:664).
+- parser.ts: no-slash first-`.` split in `parseDivertTarget` (parser.ts:756), `/` outranks `.`.
+- model.ts: register `${decl.name}.${ob.name}` beside the generator loop (model.ts:193), reading the merged body.
+- sim.ts: `resolveBeat` replacing the lookup at sim.ts:795; key visits/records on the resolved name; cross-owner self-rebind; unresolved-qualified-divert diagnostic. Owner-first resolution in the `visits` `callFn` (sim.ts:1184) and the ledger query path (`played`/`since`).
+- **Tests:** two props owning same-named beats route distinctly; `-> self.beat` → owner's inline beat; `-> Owner.beat` runs and attributes `SELF` to Owner; bare `-> lockdown` still hits the flat map; `visits(self.prophecy)` counts `Oracle.prophecy`; a qualified divert to nothing emits a diagnostic (not a silent no-op).
+
+**Slice B — `with` composition + the forwarding predicate (ships §10, §11.5, §13.3).**
+- ast.ts: `CharacterBody.withClauses: string[]`.
+- decl-body.ts: `with ` branch appending to `withClauses`.
+- bundle.ts: `inherits: [...decl.mixin, ...decl.character.withClauses]`; **child-body hook override** (§10.2 `overrideKeys` filter); copy `parentBody.beats` (deep-cloned + substituted) in `mergeCharacter` with `DerivedBeatConflict` on cross-parent collision; extend `substituteParams` with the **precomputed `ownedBeatNames`** (`collectOwnedBeatNames`, §11.5), not `mergedBody.beats`.
+- **Tests:** a four-`with` prop composes faction + two hooks + owned beats; `Scanner(ownedBeat)` forwards to `self.beat` and `Scanner(globalBeat)` degrades to bare (the blocker regression — assert `Sysadmin.interrogation` and `Firewall_Terminal.hum` actually resolve); a child `on scan` overrides a composed `on scan` (and `super` keeps both); `with` and `is` produce identical merges.
+
+**Slice C — derive-and-specialize (ships §11.3, §11.4, §13.5).**
+- ast.ts: `CharacterBody.fills: Map<string, RawLine[]>`.
+- decl-body.ts: `fill ` class-body branch; keep `slot:` (colon) as the placeholder — no colon-less alias.
+- model.ts: `fillSlots(items, fills)` walk before registration; `UnfilledDerivedSlot` diagnostic.
+- bundle.ts: **extend `deepCloneCharacterBody` to fresh-copy `beats` (each `OwnedBeat.body`) and `fills`** (anti-cache-corruption); extend the hook-`super` splice (bundle.ts:377-395) to beats.
+- **Tests:** two derivers of one template beat get distinct namespaced beats with their own fills; the first deriver's substitution does **not** corrupt the second's (deep-clone regression); an unfilled hole reports and no-ops; two parents shipping the same beat name emit `DerivedBeatConflict`; a narration line beginning with the word "slot" (no colon) stays prose.
+
+**Slice D — optional readability sugar (demand-gated).**
+- `when <cond> … otherwise …` lowering to the existing `conditional` node — reads as a stage cue, no sim change. Deferred (orthogonal to both asks).
+- LSP: complete owned/derived beat names after `self.` / `Owner.`; hover a trait showing the beats it ships; lint `-> self.<undeclared-beat>`, `fill <no-such-slot>`, and `visits(self.<undeclared>)`.
+
+The Rust mirror tracks the same edits against `lower_character` / `parse_divert_target` / `compile_model` / `Sim::resolve_beat` / `merge_character`; it already namespaces generators and runs merge on its compile path, so no wiring fix is needed — but it needs the same precomputed-owned-name set, hook-override, deep-clone-of-beats/fills, and owner-first `visits` edits.
+
+---
+
+## 17. Open questions / risks
+
+1. **`self.<undeclared-beat>` no-op is now diagnosed, not silent.** A `-> self.pressed` with no such owned or global beat records the unresolved-divert diagnostic (§11.2) and no-ops; the `slot`/`fill` path additionally reports `UnfilledDerivedSlot`. The Slice-D lint catches it at author time.
+2. **State-carrying capability applied twice** (inherited from Part I Open Q #4): a trait with its own mutable slot, composed twice, collides on one `self`-owned slot. Recommend applying state-carrying capabilities once; lint a double `with` of a stateful trait.
+3. **Cross-owner divert assumptions.** `-> Owner.beat` rebinds `self` to Owner, so a beat reachable both from its owner's hook and a foreign `Owner.beat` must not assume the caller's identity. Documented; the rebind is the correct semantics.
+4. **Textual substitution ceiling.** `self.<param>` and `fill` splice whole references / whole sub-blocks; neither parameterizes a fragment mid-sentence. Inherited from Part I §8.3.
+5. **Additive hooks vs override surprise.** Two composed capabilities both matching `on scan` both fire (§10.2), correct for orthogonal capabilities but surprising if the author expected exclusivity. Mitigations: the class-body same-signature override (now real) and Part I's `on <event>: none`.
+6. **Knot on an owned beat.** `-> Owner.beat#knot` composes the `#` split with the new `.` split; owned-beat sub-knots are a Slice-D edge, since no current example needs a knot inside an owned beat.
+
+---
+
+## Changes from review
+
+**Resolved (blocker):**
+- **§11.5 (blocker #1):** the forwarding predicate no longer reads the half-built `mergedBody.beats` (which never contains the applier's own beats at substitution time, so `with Scanner(interrogation)` / `with Ambient(hum)` degraded to dead global lookups and the flagship scans/barks silently did nothing). It now reads a set **precomputed** from the declaration's own `beat` blocks plus every applied trait's shipped beats (`collectOwnedBeatNames`), threaded through every recursive `substituteParams`. Added the blocker-specific regression test to Slice B.
+
+**Resolved (majors):**
+- **§10.2 (major #2):** the "child-body hook overrides the composed one" claim is now *implemented* — an `overrideKeys` filter splices out same-signature composed hooks before the own-hook fold — instead of citing code (bundle.ts:397) that only appended. `super` (extend) and `: none` (suppress) are preserved and distinguished. Flagged as a merge-semantics extension in "Edits to Part I."
+- **§11.2 (major #3):** owned-beat history (`visits`/`played`/`since`) now resolves owner-first (shared `resolveBeatKey`), fixing the silent-0 regression for `Owner.name`-keyed beats. Oracle (§13.4) rewritten to *use* `visits(self.prophecy)`, dropping the hand-rolled counter, to exercise the fix.
+
+**Resolved (minors):**
+- **§11.3 (minor #4):** two distinct parents shipping the same beat name now emit `DerivedBeatConflict` instead of silent first-wins; child override stays legal.
+- **§11.3 (minor #5):** kept the placeholder as `slot:` (colon, the existing lexeme) with no colon-less alias, so narration beginning "slot …" can't be swallowed; `fill` stays a bare class-body opener (no prose at that indent).
+- **§11.2 (minor #6):** corrected the false "qualifier unused since day one" claim (it is populated for `/` today, just ignored by the sim), made `/`-outranks-`.` precedence explicit, and added an unresolved-qualified-divert diagnostic.
+- **§11.3 / Slice C (minor #7):** `deepCloneCharacterBody` is explicitly extended to fresh-copy `beats` and `fills`, closing the template-cache-corruption reintroduction; added to the Slice C task list and tests.
+
+**Deliberately kept (with rationale in-doc):**
+- **`with` over an `init(){}` constructor block** (§10.1) — a flat vertical list is more readable for directors and composition is the same merge; `InitDecl` stays scoped to stats.
+- **Compile-time owned-vs-global resolution over always-`self` + runtime fallback** (§11.5 rejected alt) — the runtime-only route corrupts non-beat value params (`self.loc`); the precomputed set is position-safe.
+- **Bare diverts stay global, never owner-first** (§15) — owner-first bare resolution would silently reinterpret every existing `-> beat`.
+- **Child-override implemented rather than dropped** (§10.2) — the additive-hook footgun needs a real mitigation, and `: none` alone can't replace-with-behavior.
+
+## Edits to Part I (keep the two parts consistent)
+
+These spots in the existing document are amended or superseded by Part II; update them when merging:
+
+- **§2.1 line refs.** `CharacterBody` is at **ast.ts:449** and `emptyCharacterBody` at **ast.ts:464** (Part I cites the stale 372/387). Part II adds `withClauses`, `beats`, and `fills` to `CharacterBody` alongside Part I's `params`; update `emptyCharacterBody` for all four.
+- **§2.3 forwarding predicate.** `const replacement = ownDecl.params.includes(arg) ? \`self.${arg}\` : arg;` gains a second clause: `|| ownedBeatNames.has(arg)`, where `ownedBeatNames` is the precomputed set of §11.5. This *extends* the forwarding rule (owned beats also keep `self.`); it does not contradict it.
+- **§2.3 `UnresolvedTraitArg`.** Its "known beat/faction/location/event" resolvability check must additionally treat an owned-beat name (from `ownedBeatNames`) as resolvable — otherwise `with Scanner(interrogation)` where `interrogation` is an owned (not global) beat false-positives.
+- **§2.3 `deepCloneCharacterBody` / bundle.ts:414 `cloneCharacterBody`.** Both must enumerate the new `beats` and `fills` fields (deep-copy `OwnedBeat.body` `RawLine`s and each `fills` entry) for the same cache-corruption reason Part I established for hooks.
+- **§2.0 dependency.** Part II §11.1 registers owned beats from `bundle.mergedCharacters.get(decl.name) ?? decl.character`, so it *requires* Part I §2.0 Change 2 (compileModel reads the merged body). Owned beats do not appear without it.
+- **Hook-merge semantics (touches §4/§5's additive-hook assumption).** Part I leaves composed + own hooks of the same signature both firing; Part II §10.2 makes a **child-body hook of the same signature win** (with `super` to extend). Any Part I prose that assumes a child `on scan` written alongside a composed `on scan` fires *in addition* should point to §10.2. The §5 disposition/trust "child wins" row is unaffected.
+- **§2.5 SELF speaker.** Now also governs owned/derived beats: `self` carried through `-> self.beat` makes `SELF` speak as the owner, and `-> Owner.beat` rebinds `self` for a foreign owner (§11.2/§12). This extends §2.5's scan→beat story to intra-class and cross-owner diverts; no contradiction.

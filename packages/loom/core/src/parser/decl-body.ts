@@ -66,6 +66,7 @@ import {
   parseF64,
   parseU32,
   splitOnce,
+  splitTopLevelCommas,
   stripPrefix,
   stripSuffix,
   trimStartMatches,
@@ -76,9 +77,17 @@ export function lower(decl: Declaration, diagnostics: Diagnostic[]): void {
   switch (decl.kind) {
     case "character":
     case "role":
-    case "trait":
       decl.character = lowerCharacter(decl.body, diagnostics);
       break;
+    case "trait": {
+      // `TRAIT Scanner(beat)` — the name carries a parameter list, split off
+      // exactly like SCENE (spec §2.1). The params ride on the CharacterBody.
+      const [name, params] = splitNameAndParams(decl.name);
+      decl.name = name;
+      decl.character = lowerCharacter(decl.body, diagnostics);
+      decl.character.params = params;
+      break;
+    }
     case "stats":
       decl.stats = lowerStats(decl.body, diagnostics);
       break;
@@ -877,22 +886,53 @@ export function parseConstructorCall(text: string, sp: Span): ConstructorCall | 
   return { class: cls, args, span: sp };
 }
 
-function splitTopLevelCommas(text: string): string[] {
-  const out: string[] = [];
+/**
+ * A parsed `is`-clause entry (spec §2.2). A bare name (`Algo`) has empty
+ * args; a call keeps BOTH positional (`Scanner(crawler_report)`) and named
+ * (`CellWatch(loc: Internet, signal: lockdown)`) arguments — unlike
+ * `parseConstructorCall`, which drops colon-less args.
+ */
+export interface MixinRef {
+  name: string;
+  positional: string[];
+  named: Map<string, string>;
+}
+
+export function parseMixinRef(entry: string): MixinRef {
+  entry = entry.trim();
+  const open = entry.indexOf("(");
+  if (open < 0) return { name: entry, positional: [], named: new Map() };
+  const name = entry.slice(0, open).trim();
+  const close = entry.lastIndexOf(")");
+  const inner = close > open ? entry.slice(open + 1, close) : entry.slice(open + 1);
+  const positional: string[] = [];
+  const named = new Map<string, string>();
+  for (let raw of splitTopLevelCommas(inner)) {
+    raw = raw.trim();
+    if (raw.length === 0) continue;
+    const colon = topLevelColonIndex(raw);
+    if (colon >= 0) {
+      named.set(raw.slice(0, colon).trim(), raw.slice(colon + 1).trim());
+    } else {
+      // Value kept whole so a multi-word arg (`enters Internet`) survives.
+      positional.push(raw);
+    }
+  }
+  return { name, positional, named };
+}
+
+/** Index of the first `:` at bracket depth 0, or -1. */
+function topLevelColonIndex(text: string): number {
   let depth = 0;
-  let start = 0;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]!;
     if (ch === "(" || ch === "[" || ch === "{") depth += 1;
     else if (ch === ")" || ch === "]" || ch === "}") depth -= 1;
-    else if (ch === "," && depth === 0) {
-      out.push(text.slice(start, i));
-      start = i + 1;
-    }
+    else if (ch === ":" && depth === 0) return i;
   }
-  out.push(text.slice(start));
-  return out;
+  return -1;
 }
+
 
 /** Detect the `: none` suppression suffix on a hook event clause. */
 function stripSuppression(text: string): string | null {

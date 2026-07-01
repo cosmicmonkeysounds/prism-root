@@ -143,3 +143,25 @@ export function splitInclusive(source: string, sep: string): string[] {
   }
   return out;
 }
+
+/**
+ * Split on commas at bracket depth 0, so `Scanner(a, b), Algo` splits into
+ * `["Scanner(a, b)", " Algo"]` — a comma inside `()` / `[]` / `{}` is an
+ * argument separator, not a top-level split. Callers trim the pieces.
+ */
+export function splitTopLevelCommas(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === "(" || ch === "[" || ch === "{") depth += 1;
+    else if (ch === ")" || ch === "]" || ch === "}") depth -= 1;
+    else if (ch === "," && depth === 0) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out;
+}

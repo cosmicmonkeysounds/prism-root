@@ -48,7 +48,10 @@ member-scoped "📥 … joined the room" notice.
 in its snapshot (resolved from the `core` channel-type registry). A read-only
 room (`post: none`, e.g. `#announcements`) hides the composer; a
 non-threadable room hides the reply affordance. Broadcasts mirror into rooms
-that subscribe (`routes: *`).
+that subscribe (`routes: *`). A `slow:` room 429s a too-soon post; an
+`ephemeral:` room's messages vanish (a `messageExpired` SSE event drops them
+from the view). The guest invite picker is fed a **scoped roster** (only
+faction-mates + people you share a gated room with), not the whole event.
 
 **Typed chat (hybrid).** Participants type into a channel via a composer
 (`/api/guest/say` · `/api/prime/say`); the message is journaled as a sim

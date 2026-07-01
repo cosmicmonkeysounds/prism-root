@@ -8,7 +8,7 @@ export * from "./keywords.ts";
 export { parse } from "./parser.ts";
 export { scan, scannedLineSpan, type LineKind, type ScannedLine } from "./lexer.ts";
 export { strip as stripComments } from "./comments.ts";
-export { lower as lowerDeclaration } from "./decl-body.ts";
+export { lower as lowerDeclaration, parseMixinRef, type MixinRef } from "./decl-body.ts";
 export {
   type Anchor,
   EditError,

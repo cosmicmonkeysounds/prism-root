@@ -14,11 +14,15 @@ import type { Channel, ChatMessage, Decision, GuestView, PrimeView } from "./typ
 interface GuestId {
   id: string;
   name: string;
+  /** Which event this guest joined — every call is scoped to `/e/:eventId`. */
+  eventId: string;
 }
 interface PrimeAuth {
   token: string;
   character: string;
   admin: boolean;
+  /** Which event this performer signed into. */
+  eventId: string;
 }
 const load = <T,>(k: string): T | null => {
   try {
@@ -144,23 +148,36 @@ export interface GuestSession {
 }
 
 export function useGuestSession(): GuestSession {
-  const [me, setMe] = useState<GuestId | null>(() => load<GuestId>(GK));
+  const [me, setMe] = useState<GuestId | null>(() => {
+    const stored = load<GuestId>(GK);
+    if (stored && !stored.eventId) stored.eventId = "default"; // migrate pre-multi-event sessions
+    return stored;
+  });
   const [status, setStatus] = useState<GuestView | null>(null);
-  const url = me ? `/events?role=guest&id=${encodeURIComponent(me.id)}` : null;
+  const base = me ? `/e/${encodeURIComponent(me.eventId)}` : "";
+  const url = me ? `${base}/events?role=guest&id=${encodeURIComponent(me.id)}` : null;
   const { messages, connected } = useChatStream(url, { onSnapshot: (v) => setStatus(v as GuestView) });
 
-  const join = useCallback((faction: string) => api("/api/guest/join", { id: me!.id, faction }), [me]);
-  const defect = useCallback((to: string) => api("/api/guest/defect", { id: me!.id, to }), [me]);
-  const choose = useCallback((index: number) => api("/api/guest/choose", { id: me!.id, index }), [me]);
-  const escape = useCallback(() => api("/api/guest/escape", { id: me!.id }), [me]);
+  // Every action is scoped to the event the guest joined (`/e/:eventId/...`).
+  const post = useCallback(<T,>(path: string, body?: unknown) => api<T>(`${base}${path}`, body), [base]);
+
+  const join = useCallback((faction: string) => post("/api/guest/join", { id: me!.id, faction }), [post, me]);
+  const defect = useCallback((to: string) => post("/api/guest/defect", { id: me!.id, to }), [post, me]);
+  const choose = useCallback((index: number) => post("/api/guest/choose", { id: me!.id, index }), [post, me]);
+  const escape = useCallback(() => post("/api/guest/escape", { id: me!.id }), [post, me]);
   const say = useCallback(
     (channel: string, text: string, parentSeq?: number) =>
-      api("/api/guest/say", { id: me!.id, channel, text, parentSeq }),
-    [me],
+      post("/api/guest/say", { id: me!.id, channel, text, parentSeq }),
+    [post, me],
   );
   const register = useCallback(async (name: string, code: string) => {
-    const r = await api<{ id: string; name: string }>("/api/guest/register", { name, passcode: code });
-    const m = { id: r.id, name: r.name };
+    // Resolve the short event code to its event, then register there.
+    const { eventId } = await api<{ eventId: string; role: string }>("/api/resolve-code", { code });
+    const r = await api<{ id: string; name: string }>(
+      `/e/${encodeURIComponent(eventId)}/api/guest/register`,
+      { name, passcode: code },
+    );
+    const m = { id: r.id, name: r.name, eventId };
     save(GK, m);
     setMe(m);
   }, []);
@@ -171,12 +188,12 @@ export function useGuestSession(): GuestSession {
   }, []);
 
   const inviteToChannel = useCallback(
-    (person: string, channel: string) => api("/api/guest/channel/invite", { id: me!.id, person, channel }),
-    [me],
+    (person: string, channel: string) => post("/api/guest/channel/invite", { id: me!.id, person, channel }),
+    [post, me],
   );
   const leaveChannel = useCallback(
-    (channel: string) => api("/api/guest/channel/leave", { id: me!.id, channel }),
-    [me],
+    (channel: string) => post("/api/guest/channel/leave", { id: me!.id, channel }),
+    [post, me],
   );
 
   const dock = requiredDecision(status, { choose: (i) => void choose(i), join: (f) => void join(f), escape: () => void escape() });
@@ -276,52 +293,68 @@ export interface PrimeSession {
 }
 
 export function usePrimeSession(): PrimeSession {
-  const [auth, setAuth] = useState<PrimeAuth | null>(() => load<PrimeAuth>(PK));
+  const [auth, setAuth] = useState<PrimeAuth | null>(() => {
+    const stored = load<PrimeAuth>(PK);
+    if (stored && !stored.eventId) stored.eventId = "default"; // migrate pre-multi-event sessions
+    return stored;
+  });
   const [view, setView] = useState<PrimeView | null>(null);
   const [responses, setResponses] = useState<Array<{ id: number; text: string }>>([]);
   const rid = useRef(0);
-  const url = auth ? `/events?role=prime&id=${encodeURIComponent(auth.character)}` : null;
+  const base = auth ? `/e/${encodeURIComponent(auth.eventId)}` : "";
+  const url = auth ? `${base}/events?role=prime&id=${encodeURIComponent(auth.character)}` : null;
   const { messages, connected } = useChatStream(url, {
     onSnapshot: (v) => setView(v as PrimeView),
     onResponse: (text) => setResponses((r) => [{ id: rid.current++, text }, ...r]),
   });
 
+  // Every action is scoped to the event this performer signed into.
+  const post = useCallback(
+    <T,>(path: string, body?: unknown, token?: string) => api<T>(`${base}${path}`, body, token),
+    [base],
+  );
+
   const login = useCallback(async (character: string, passcode: string) => {
-    const r = await api<{ token: string; character: string; admin: boolean }>("/api/prime/login", { character, passcode });
-    const a = { token: r.token, character: r.character, admin: !!r.admin };
+    // Resolve the performer/mod code to its event, then sign in there.
+    const { eventId } = await api<{ eventId: string; role: string }>("/api/resolve-code", { code: passcode });
+    const r = await api<{ token: string; character: string; admin: boolean }>(
+      `/e/${encodeURIComponent(eventId)}/api/prime/login`,
+      { character, passcode },
+    );
+    const a = { token: r.token, character: r.character, admin: !!r.admin, eventId };
     save(PK, a);
     setAuth(a);
   }, []);
-  const scan = useCallback((target: string) => api("/api/scan", { target }, auth!.token), [auth]);
+  const scan = useCallback((target: string) => post("/api/scan", { target }, auth!.token), [post, auth]);
   const say = useCallback(
     (channel: string, text: string, parentSeq?: number) =>
-      api("/api/prime/say", { channel, text, parentSeq }, auth!.token),
-    [auth],
+      post("/api/prime/say", { channel, text, parentSeq }, auth!.token),
+    [post, auth],
   );
   const inviteToChannel = useCallback(
-    (person: string, channel: string) => api("/api/prime/channel/invite", { person, channel }, auth!.token),
-    [auth],
+    (person: string, channel: string) => post("/api/prime/channel/invite", { person, channel }, auth!.token),
+    [post, auth],
   );
   const leaveChannel = useCallback(
-    (channel: string) => api("/api/prime/channel/leave", { channel }, auth!.token),
-    [auth],
+    (channel: string) => post("/api/prime/channel/leave", { channel }, auth!.token),
+    [post, auth],
   );
   const becomeAdmin = useCallback(
     async (passcode: string) => {
-      const r = await api<{ token: string }>("/api/mod/login", { passcode }, auth!.token);
-      const a = { token: r.token, character: auth!.character, admin: true };
+      const r = await api<{ token: string }>(`${base}/api/mod/login`, { passcode }, auth!.token);
+      const a = { token: r.token, character: auth!.character, admin: true, eventId: auth!.eventId };
       save(PK, a);
       setAuth(a);
     },
-    [auth],
+    [base, auth],
   );
   const moderate = useCallback(
-    (id: string, action: string, name?: string) => api("/api/mod/act", { id, action, name }, auth!.token),
-    [auth],
+    (id: string, action: string, name?: string) => post("/api/mod/act", { id, action, name }, auth!.token),
+    [post, auth],
   );
   const setHidden = useCallback(
-    (seq: number, hidden: boolean) => api("/api/mod/message", { seq, hidden }, auth!.token),
-    [auth],
+    (seq: number, hidden: boolean) => post("/api/mod/message", { seq, hidden }, auth!.token),
+    [post, auth],
   );
   const leave = useCallback(() => {
     drop(PK);

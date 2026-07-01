@@ -1,10 +1,17 @@
-//! Loom event server — hosts one live `Sim` and serves the role-based
-//! web client to clients on the local network.
+//! Loom event server — the multi-tenant backbone that hosts live `Sim`
+//! events and serves the role-based web client.
 //!
 //! Transport: Server-Sent Events for server→client push (state
 //! snapshots, broadcasts, choice prompts) + JSON `fetch` POST for
 //! client→server actions. No WebSocket dependency, so it works on any
 //! phone browser on the wifi.
+//!
+//! Each live event is an `EventRuntime` (see `event-runtime.ts`). This file
+//! owns the process: static app serving, the QR endpoint, restart-recovery,
+//! and routing each request to the right runtime. During this first slice a
+//! single default event is hosted at the root paths (identical to the old
+//! single-event server); the `EventRegistry` + `/e/:eventId` namespacing land
+//! next.
 //!
 //! Run: `pnpm --filter @loom/core serve` (or `npx tsx server/server.ts`).
 //! Env: LOOM_PORT, LOOM_HOST, LOOM_EVENT_PASS, LOOM_MOD_PASS,
@@ -14,18 +21,24 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import QRCode from "qrcode";
 
-import { Sim, type SimEvent } from "../src/runtime/sim/index.ts";
-import { guestView, modView, primeView, rosterRow, type RuntimePhase } from "./views.ts";
-import { passOk, resolvePasscodes } from "./auth.ts";
-import { SessionStore } from "./session.ts";
-import { Store, type Mutation } from "./store.ts";
-import { ChatStore, composeGuestMessages, decisionChannelFor, visibleTo, type ChatMessage } from "./chat.ts";
+import { toNodeHandler } from "better-auth/node";
+
+import { resolvePasscodes } from "./auth.ts";
+import { Store } from "./store.ts";
 import { scenarioSource } from "../examples/load.ts";
+import { EventRuntime } from "./event-runtime.ts";
+import { EventRegistry } from "./registry.ts";
+import { readBody, sendJson, str } from "./http-util.ts";
+import { auth, authUser, migrateAuth } from "./auth-server.ts";
+import { dbReady, initSchema } from "./db/index.ts";
+import { liveEvents } from "./db/queries.ts";
+import { DATABASE_URL } from "./config.ts";
+import { handleProjects } from "./projects.ts";
+import { handleEvent, specFromRow } from "./events-api.ts";
 
 const PORT = Number(process.env.LOOM_PORT ?? 7000);
 const HOST = process.env.LOOM_HOST ?? "0.0.0.0";
@@ -76,152 +89,6 @@ function serveAppFile(pathname: string, res: ServerResponse): boolean {
   }
 }
 
-// ---------------------------------------------------------------------
-// Server state
-// ---------------------------------------------------------------------
-
-interface State {
-  sim: Sim | null;
-  phase: RuntimePhase;
-  scenarioName: string;
-  scenarioSource: string;
-}
-
-const state: State = {
-  sim: null,
-  phase: "idle",
-  scenarioName: "escape-the-internet",
-  scenarioSource: DEFAULT_SCENARIO,
-};
-
-// Token → capabilities. One session can be a performer, an admin, or both.
-const sessions = new SessionStore();
-
-// Server-authoritative chat: every visible message, routed to a channel.
-// Rebuilt deterministically from the journal on restart (see `restore`).
-const chat = new ChatStore();
-
-// Where each guest's currently-pending decision should dock (channel id).
-// Ephemeral — re-derived during replay alongside the chat store.
-const decisionChannels = new Map<string, string>();
-
-// ---------------------------------------------------------------------
-// SSE hub
-// ---------------------------------------------------------------------
-
-interface Client {
-  role: "guest" | "prime" | "mod";
-  id: string; // person id (guest), character (prime), or "" (mod)
-  res: ServerResponse;
-}
-
-const clients = new Set<Client>();
-
-function sseSend(res: ServerResponse, event: string, data: unknown): void {
-  res.write(`event: ${event}\n`);
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
-}
-
-function snapshotFor(client: Client): unknown {
-  if (client.role === "guest") return guestView(reqSim(), client.id, decisionChannels.get(client.id) ?? null);
-  if (client.role === "prime") return primeView(state.sim, client.id);
-  return modView(state.sim, state.phase, state.scenarioName);
-}
-
-/** A sim that's never null for guest views (returns an empty live sim). */
-function reqSim(): Sim {
-  return state.sim ?? EMPTY_SIM;
-}
-const EMPTY_SIM = Sim.fromSources("");
-
-/** Push fresh snapshots to every connected client. */
-function pushSnapshots(): void {
-  for (const c of clients) sseSend(c.res, "snapshot", snapshotFor(c));
-}
-
-function toPrime(character: string, event: string, data: unknown): void {
-  for (const c of clients) if (c.role === "prime" && c.id === character) sseSend(c.res, event, data);
-}
-
-/**
- * Deliver one composed message to the clients that should see it: guests
- * whose id is in the audience (hidden messages withheld), and every
- * performer/mod console (the full feed, so admins can moderate live).
- */
-function deliverMessage(m: ChatMessage): void {
-  for (const c of clients) {
-    if (c.role === "guest") {
-      if (!m.hidden && visibleTo(m, c.id)) sseSend(c.res, "message", m);
-    } else {
-      sseSend(c.res, "message", m);
-    }
-  }
-}
-
-/**
- * Route a freshly-emitted batch of sim events. Performer scan readouts go
- * straight to the booth; everything guest-facing is composed into channel
- * messages (the single source of truth), appended to the chat store, and
- * delivered. Pending decisions remember which channel they dock under.
- */
-function fanout(events: SimEvent[]): void {
-  for (const e of events) {
-    if (e.type === "respond") toPrime(e.to, "response", { text: e.text });
-    if (e.type === "choicePrompted" && e.person !== null) {
-      decisionChannels.set(e.person, decisionChannelFor(events, e.person));
-    }
-  }
-  for (const m of chat.append(composeGuestMessages(state.sim ?? EMPTY_SIM, events))) deliverMessage(m);
-  // A consumed choice clears its dock so the next snapshot drops the badge.
-  for (const id of [...decisionChannels.keys()]) {
-    if (state.sim?.pendingChoiceFor(id) == null) decisionChannels.delete(id);
-  }
-  pushSnapshots();
-}
-
-// --- persistence (event-sourced journal, see store.ts) -----------------
-
-// Elapsed sim time not yet written to the journal. Coalescing ticks keeps
-// the journal small without changing replay: the sim's generator/timer
-// loops are cumulative, so one `tick(15000)` ≡ fifteen `tick(1000)`.
-let pendingTickMs = 0;
-function flushTick(): void {
-  if (pendingTickMs > 0) {
-    store.appendCommand("tick", [pendingTickMs]);
-    pendingTickMs = 0;
-  }
-}
-
-/**
- * Apply a sim mutation *and* journal it, so it survives a restart. Any
- * accumulated clock time is flushed first to preserve command/tick order.
- */
-function commit(m: Mutation, ...args: unknown[]): SimEvent[] {
-  flushTick();
-  store.appendCommand(m, args);
-  return (state.sim![m] as (...a: unknown[]) => SimEvent[])(...args);
-}
-
-function persistSessions(): void {
-  store.saveSessions(sessions.entries());
-}
-
-/** Wipe chat history + moderation when a fresh story timeline begins. */
-function resetChat(): void {
-  chat.clear();
-  store.clearHidden();
-  decisionChannels.clear();
-}
-
-function persistMeta(): void {
-  store.saveMeta({
-    version: 1,
-    scenarioName: state.scenarioName,
-    scenarioSource: state.scenarioSource,
-    phase: state.phase,
-  });
-}
-
 /**
  * Best LAN-reachable base URL for guest join QRs. A QR built from the
  * console's `location.origin` is `http://localhost:…` when the operator
@@ -233,68 +100,51 @@ function joinBase(): string {
   return urls.find((u) => !u.includes("localhost")) ?? urls[0]!;
 }
 
-// The autonomous clock: while the doors are open, tick the sim once a
-// second so ambient generators + time-driven hooks advance.
-let ticker: ReturnType<typeof setInterval> | null = null;
-function startTicker(): void {
-  if (ticker !== null) return;
-  ticker = setInterval(() => {
-    if (state.sim !== null && state.phase === "open") {
-      const evs = state.sim.tick(1000);
-      pendingTickMs += 1000;
-      // Flush on activity (preserve bark timing) or every ~15s (bound loss).
-      if (evs.length > 0) {
-        flushTick();
-        fanout(evs);
-      } else if (pendingTickMs >= 15000) {
-        flushTick();
-      }
-    }
-  }, 1000);
-}
-function stopTicker(): void {
-  if (ticker !== null) {
-    clearInterval(ticker);
-    ticker = null;
-  }
-}
+// The multi-tenant registry: one `EventRuntime` per live event, keyed by id.
+const registry = new EventRegistry(STATE_DIR, joinBase);
+
+// The default event journals to the state-dir root (not a sub-directory) so
+// an existing single-event deployment recovers its `.loom-state/` in place.
+// It's reachable both at the root paths (back-compat: the operator console +
+// the current participant app) and at `/e/default`.
+const defaultEvent = registry.register(
+  new EventRuntime({
+    eventId: "default",
+    store,
+    codes: PASS,
+    scenarioName: "escape-the-internet",
+    scenarioSource: DEFAULT_SCENARIO,
+    joinBase,
+  }),
+);
 
 // ---------------------------------------------------------------------
-// HTTP helpers
+// Control plane (author accounts + projects + events) — needs a database.
+// The event plane above runs without one; if the DB is unreachable the
+// control plane stays disabled and its routes answer 503, so a LAN-only
+// deployment is unaffected.
 // ---------------------------------------------------------------------
 
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  const json = JSON.stringify(body);
-  res.writeHead(status, { "content-type": "application/json", "access-control-allow-origin": "*" });
-  res.end(json);
-}
+const authHandler = toNodeHandler(auth);
+let controlPlane = false;
 
-async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  if (chunks.length === 0) return {};
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
-  } catch {
-    return {};
+async function initControlPlane(): Promise<void> {
+  if (!(await dbReady())) {
+    process.stderr.write(`  ⚠️  control plane disabled — database unreachable at ${DATABASE_URL}\n`);
+    return;
   }
-}
-
-function str(body: Record<string, unknown>, key: string): string {
-  const v = body[key];
-  return typeof v === "string" ? v : "";
-}
-
-/** The caller's session token, from the header or the body (`""` → undefined). */
-function tokenOf(req: IncomingMessage, body: Record<string, unknown>): string | undefined {
-  return (req.headers["x-loom-token"] as string | undefined) || str(body, "token") || undefined;
-}
-
-function loadScenario(source: string, name: string): void {
-  state.sim = Sim.fromSources(source);
-  state.scenarioSource = source;
-  state.scenarioName = name;
-  state.phase = "paused";
+  await migrateAuth();
+  await initSchema();
+  controlPlane = true;
+  // Rehydrate every event that was live before this process started: replay
+  // its journal and (for open ones) restart its clock — the multi-event
+  // generalization of the default event's `restore()`.
+  let rehydrated = 0;
+  for (const row of await liveEvents()) {
+    registry.ensure(specFromRow(row));
+    rehydrated++;
+  }
+  if (rehydrated > 0) process.stdout.write(`  ↻ Rehydrated ${rehydrated} live event(s) from the database\n`);
 }
 
 // ---------------------------------------------------------------------
@@ -320,6 +170,27 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     });
     res.end();
     return;
+  }
+
+  // --- author auth plane (BetterAuth owns everything under /api/auth) ---
+  if (path.startsWith("/api/auth")) {
+    if (!controlPlane) return void sendJson(res, 503, { error: "authoring is offline (no database)" });
+    await authHandler(req, res);
+    return;
+  }
+
+  // --- author control plane: projects + files + events (authors only) ---
+  if (path === "/api/projects" || path.startsWith("/api/projects/")) {
+    if (!controlPlane) return void sendJson(res, 503, { error: "authoring is offline (no database)" });
+    const user = await authUser(req);
+    if (user === null) return void sendJson(res, 401, { error: "sign in" });
+    const segs = path.split("/").filter(Boolean); // ["api","projects",id,"event",action?]
+    if (segs.length >= 4 && segs[3] === "event") {
+      if (await handleEvent(req, res, method, segs, user, { registry, joinBase })) return;
+      return void sendJson(res, 404, { error: "not found" });
+    }
+    if (await handleProjects(req, res, method, path, user)) return;
+    return void sendJson(res, 404, { error: "not found" });
   }
 
   // --- operator console (vanilla, no build step) ---
@@ -349,376 +220,30 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     return;
   }
 
-  // --- SSE stream ---
-  if (method === "GET" && path === "/events") {
-    const role = (url.searchParams.get("role") as Client["role"] | null) ?? "mod";
-    const id = url.searchParams.get("id") ?? "";
-    res.writeHead(200, {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "keep-alive",
-      "access-control-allow-origin": "*",
-    });
-    res.write(":ok\n\n");
-    const client: Client = { role, id, res };
-    clients.add(client);
-    sseSend(res, "snapshot", snapshotFor(client));
-    // Replay history so a re-login (or late arrival) sees the conversation so
-    // far — a guest gets their own threads; a performer/mod console gets the
-    // whole room's feed (visible messages) for context + moderation.
-    sseSend(res, "history", role === "guest" ? chat.historyFor(id, false) : chat.all().filter((m) => !m.hidden));
-    const ping = setInterval(() => res.write(":ping\n\n"), 25000);
-    req.on("close", () => {
-      clearInterval(ping);
-      clients.delete(client);
-    });
-    return;
+  // --- public bootstrap: a short passcode → which event + role it grants ---
+  // A guest/performer/moderator knows only their code; this tells the client
+  // which `/e/:eventId` to talk to before it registers or signs in.
+  if (method === "POST" && path === "/api/resolve-code") {
+    const body = await readBody(req);
+    const hit = registry.resolveCode(str(body, "code"));
+    if (hit === null) return void sendJson(res, 404, { error: "no event with that code" });
+    return void sendJson(res, 200, hit);
   }
 
-  // --- read-only state snapshot ---
-  if (method === "GET" && path === "/api/state") {
-    const role = url.searchParams.get("role") ?? "mod";
-    const id = url.searchParams.get("id") ?? "";
-    const view =
-      role === "guest"
-        ? guestView(reqSim(), id, decisionChannels.get(id) ?? null)
-        : role === "prime"
-          ? primeView(state.sim, id)
-          : modView(state.sim, state.phase, state.scenarioName);
-    sendJson(res, 200, view);
-    return;
+  // --- event-scoped routes under /e/:eventId ---
+  if (path.startsWith("/e/")) {
+    const rest = path.slice(3);
+    const slash = rest.indexOf("/");
+    const eventId = slash === -1 ? rest : rest.slice(0, slash);
+    const subPath = slash === -1 ? "/" : rest.slice(slash);
+    const runtime = registry.get(eventId);
+    if (runtime === undefined) return void sendJson(res, 404, { error: "unknown event" });
+    if (await runtime.handle(req, res, method, subPath, url)) return;
+    return void sendJson(res, 404, { error: "not found" });
   }
 
-  // --- a participant's full thread history (since the event began) ---
-  // Guests get their own (hidden withheld); an admin token may inspect any
-  // guest's threads *including* hidden messages, to moderate them.
-  if (method === "GET" && path === "/api/history") {
-    const id = url.searchParams.get("id") ?? "";
-    const token = (req.headers["x-loom-token"] as string | undefined) || url.searchParams.get("token") || undefined;
-    const admin = sessions.canModerate(token);
-    sendJson(res, 200, { messages: chat.historyFor(id, admin) });
-    return;
-  }
-
-  if (method !== "POST") {
-    sendJson(res, 404, { error: "not found" });
-    return;
-  }
-
-  const body = await readBody(req);
-  const open = state.phase === "open" && state.sim !== null;
-
-  switch (path) {
-    // --- guest actions ---
-    case "/api/guest/register": {
-      if (!passOk(str(body, "passcode"), PASS.event)) return void sendJson(res, 403, { error: "wrong event code" });
-      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
-      const name = str(body, "name") || "Guest";
-      const id = `g-${randomUUID().slice(0, 6)}`;
-      fanout(commit("createPerson", id, name));
-      return void sendJson(res, 200, { id, name });
-    }
-    case "/api/guest/join": {
-      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
-      fanout(commit("join", str(body, "id"), str(body, "faction")));
-      return void sendJson(res, 200, { ok: true });
-    }
-    case "/api/guest/defect": {
-      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
-      fanout(commit("defect", str(body, "id"), str(body, "to")));
-      return void sendJson(res, 200, { ok: true });
-    }
-    case "/api/guest/choose": {
-      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
-      const idx = Number(body["index"] ?? -1);
-      fanout(commit("choose", str(body, "id"), idx));
-      return void sendJson(res, 200, { ok: true });
-    }
-    case "/api/guest/escape": {
-      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
-      fanout(commit("escape", str(body, "id")));
-      return void sendJson(res, 200, { ok: true });
-    }
-    case "/api/guest/say": {
-      // Hybrid chat: a guest types into a channel they can see. No access
-      // enforcement in this slice — the channel-type registry owns that later.
-      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
-      const id = str(body, "id");
-      if (!state.sim!.persons.has(id)) return void sendJson(res, 404, { error: "unknown guest" });
-      const channel = str(body, "channel") || "lobby";
-      const text = str(body, "text").trim();
-      if (text === "") return void sendJson(res, 400, { error: "empty message" });
-      if (!state.sim!.canPost(id, channel)) return void sendJson(res, 403, { error: "you can't post here" });
-      // Non-threadable channels drop replies to a flat line.
-      const parentSeq = state.sim!.threadableOf(channel) && body["parentSeq"] != null ? Number(body["parentSeq"]) : null;
-      fanout(commit("say", id, channel, text, parentSeq));
-      return void sendJson(res, 200, { ok: true });
-    }
-    case "/api/guest/channel/invite": {
-      // Invite another participant into a membership-gated authored channel.
-      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
-      const id = str(body, "id");
-      if (!state.sim!.persons.has(id)) return void sendJson(res, 404, { error: "unknown guest" });
-      fanout(commit("inviteToChannel", id, str(body, "person"), str(body, "channel")));
-      return void sendJson(res, 200, { ok: true });
-    }
-    case "/api/guest/channel/leave": {
-      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
-      const id = str(body, "id");
-      if (!state.sim!.persons.has(id)) return void sendJson(res, 404, { error: "unknown guest" });
-      fanout(commit("leaveChannel", id, str(body, "channel")));
-      return void sendJson(res, 200, { ok: true });
-    }
-
-    // --- performer (prime) login: grants the `character` capability ---
-    case "/api/prime/login": {
-      const character = str(body, "character");
-      if (!passOk(str(body, "passcode"), PASS.prime)) return void sendJson(res, 403, { error: "bad passcode" });
-      if (state.sim !== null && !state.sim.model.characters.has(character)) {
-        return void sendJson(res, 404, { error: "unknown character" });
-      }
-      // Upgrade the caller's existing session if they have one (e.g. an
-      // admin picking up a character); otherwise mint a fresh token.
-      let token = tokenOf(req, body);
-      if (token && sessions.grant(token, { character })) {
-        /* upgraded in place */
-      } else {
-        token = randomUUID();
-        sessions.set(token, { character, admin: false });
-      }
-      persistSessions();
-      return void sendJson(res, 200, { token, character, admin: sessions.canModerate(token) });
-    }
-
-    // --- unified scan: capability decides what it does -------------------
-    case "/api/scan": {
-      const token = tokenOf(req, body);
-      if (!sessions.canScan(token)) return void sendJson(res, 403, { error: "no scan capability — sign in" });
-      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
-      const target = str(body, "target");
-      if (!state.sim!.persons.has(target)) return void sendJson(res, 404, { error: "unknown guest" });
-      const admin = sessions.canModerate(token);
-      // Scanner identity. A performer scans as their own character. An admin
-      // may instead pick any character via `as` (firing that character's
-      // story hooks); a blank `as` from a headless admin means a silent,
-      // moderation-only scan.
-      const chosen = str(body, "as");
-      let scanAs = sessions.characterOf(token);
-      if (chosen && admin) {
-        if (!state.sim!.model.characters.has(chosen)) return void sendJson(res, 404, { error: "unknown character" });
-        scanAs = chosen;
-      }
-      // A character identity → run the story scan (hooks + the `respond`
-      // that streams back to that booth). No character → silent.
-      let responses: string[] = [];
-      if (scanAs !== null) {
-        const events = commit("scan", scanAs, target);
-        // The scanner's readout — `respond` lines addressed to this scanner.
-        responses = events
-          .filter((e): e is Extract<SimEvent, { type: "respond" }> => e.type === "respond" && e.to === scanAs)
-          .map((e) => e.text);
-        fanout(events);
-      }
-      // Admins also get the guest identified for moderation; performers get
-      // a basic confirmation (their story beat also arrives over SSE).
-      return void sendJson(res, 200, {
-        ok: true,
-        scannedAs: scanAs,
-        canModerate: admin,
-        responses,
-        guest: admin
-          ? rosterRow(state.sim!, target)
-          : { id: target, name: state.sim!.persons.get(target)?.name ?? target, captured: state.sim!.isCaptured(target) },
-      });
-    }
-
-    // --- performer types into a channel (hybrid chat) -------------------
-    case "/api/prime/say": {
-      const token = tokenOf(req, body);
-      const character = sessions.characterOf(token);
-      if (!character) return void sendJson(res, 403, { error: "no character — sign in" });
-      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
-      const text = str(body, "text").trim();
-      if (text === "") return void sendJson(res, 400, { error: "empty message" });
-      let channel = str(body, "channel") || "lobby";
-      let audience: "all" | string[] | undefined;
-      if (channel.startsWith("guest:")) {
-        // A reply inside a guest's thread → the character's DM with that guest.
-        const gid = channel.slice("guest:".length);
-        if (!state.sim!.persons.has(gid)) return void sendJson(res, 404, { error: "unknown guest" });
-        channel = `dm:${character}`;
-        audience = [gid];
-      }
-      // Performers run every room (post policy is not enforced on them), but a
-      // non-threadable channel still flattens replies.
-      const parentSeq = state.sim!.threadableOf(channel) && body["parentSeq"] != null ? Number(body["parentSeq"]) : null;
-      fanout(commit("say", character, channel, text, parentSeq, audience));
-      return void sendJson(res, 200, { ok: true });
-    }
-    case "/api/prime/channel/invite": {
-      const character = sessions.characterOf(tokenOf(req, body));
-      if (!character) return void sendJson(res, 403, { error: "no character — sign in" });
-      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
-      fanout(commit("inviteToChannel", character, str(body, "person"), str(body, "channel")));
-      return void sendJson(res, 200, { ok: true });
-    }
-    case "/api/prime/channel/leave": {
-      const character = sessions.characterOf(tokenOf(req, body));
-      if (!character) return void sendJson(res, 403, { error: "no character — sign in" });
-      if (!open) return void sendJson(res, 409, { error: "doors are closed" });
-      fanout(commit("leaveChannel", character, str(body, "channel")));
-      return void sendJson(res, 200, { ok: true });
-    }
-
-    // --- moderator login: grants the `admin` capability -----------------
-    case "/api/mod/login": {
-      if (!passOk(str(body, "passcode"), PASS.mod)) return void sendJson(res, 403, { error: "bad passcode" });
-      // Upgrade the caller's existing session (a performer becoming an admin
-      // keeps their token + character); otherwise mint a headless admin.
-      let token = tokenOf(req, body);
-      if (token && sessions.grant(token, { admin: true })) {
-        /* upgraded in place */
-      } else {
-        token = randomUUID();
-        sessions.set(token, { character: null, admin: true });
-      }
-      persistSessions();
-      // The mod is the trusted operator — hand back every code so the
-      // console can show them: event (for guests), prime (for performers),
-      // and mod itself (to recruit a co-moderator). Echoing mod back leaks
-      // nothing: the caller just proved they already know it.
-      return void sendJson(res, 200, {
-        token,
-        character: sessions.characterOf(token),
-        eventPass: PASS.event,
-        primePass: PASS.prime,
-        modPass: PASS.mod,
-      });
-    }
-    default:
-      break;
-  }
-
-  // everything below requires the admin capability
-  if (path.startsWith("/api/mod/")) {
-    if (!sessions.canModerate(tokenOf(req, body))) return void sendJson(res, 403, { error: "moderators only" });
-    switch (path) {
-      case "/api/mod/load": {
-        const source = str(body, "source") || DEFAULT_SCENARIO;
-        const name = str(body, "name") || "custom";
-        stopTicker();
-        loadScenario(source, name);
-        store.clearJournal(); // a new story starts a fresh timeline
-        resetChat();
-        pendingTickMs = 0;
-        persistMeta();
-        pushSnapshots();
-        return void sendJson(res, 200, { ok: true, phase: state.phase });
-      }
-      case "/api/mod/start": {
-        if (state.sim === null) {
-          loadScenario(DEFAULT_SCENARIO, "escape-the-internet");
-          store.clearJournal();
-          resetChat();
-          pendingTickMs = 0;
-        }
-        state.phase = "open";
-        persistMeta();
-        startTicker();
-        pushSnapshots();
-        return void sendJson(res, 200, { ok: true, phase: state.phase });
-      }
-      case "/api/mod/stop": {
-        flushTick();
-        state.phase = "paused";
-        stopTicker();
-        persistMeta();
-        pushSnapshots();
-        return void sendJson(res, 200, { ok: true, phase: state.phase });
-      }
-      case "/api/mod/reset": {
-        stopTicker();
-        loadScenario(state.scenarioSource, state.scenarioName);
-        store.clearJournal(); // wipe the timeline; the doors reopen empty
-        resetChat();
-        pendingTickMs = 0;
-        persistMeta();
-        pushSnapshots();
-        return void sendJson(res, 200, { ok: true, phase: state.phase });
-      }
-      case "/api/mod/codes": {
-        // Fresh codes for the dashboard (a cached login may predate a code
-        // change), plus the LAN URL the join QR should point at.
-        return void sendJson(res, 200, {
-          eventPass: PASS.event,
-          primePass: PASS.prime,
-          modPass: PASS.mod,
-          joinUrl: joinBase(),
-        });
-      }
-      case "/api/mod/act": {
-        // Moderate a scanned guest. Reuses sim primitives so the action set
-        // grows by adding cases, not endpoints.
-        if (state.sim === null) return void sendJson(res, 409, { error: "no scenario loaded" });
-        const id = str(body, "id");
-        if (!state.sim.persons.has(id)) return void sendJson(res, 404, { error: "unknown guest" });
-        switch (str(body, "action")) {
-          case "capture":
-            fanout(commit("capture", id));
-            break;
-          case "release":
-            fanout(commit("escape", id));
-            break;
-          case "signal":
-            fanout(commit("signal", str(body, "name"), id));
-            break;
-          default:
-            return void sendJson(res, 400, { error: "unknown action" });
-        }
-        return void sendJson(res, 200, { ok: true, guest: rosterRow(state.sim, id) });
-      }
-      case "/api/mod/signal": {
-        if (state.sim === null) return void sendJson(res, 409, { error: "no scenario loaded" });
-        const subject = str(body, "subject");
-        fanout(commit("signal", str(body, "name"), subject === "" ? undefined : subject));
-        return void sendJson(res, 200, { ok: true });
-      }
-      case "/api/mod/broadcast": {
-        if (state.sim === null) return void sendJson(res, 409, { error: "no scenario loaded" });
-        // An ad-hoc operator broadcast: route a synthetic broadcast event
-        // through the same composer so it lands in the right channel and can
-        // be moderated. (Not journaled — operator nudges don't replay.)
-        const scope = str(body, "scope");
-        const cue = str(body, "cue") || "cue";
-        const synthetic: SimEvent = { type: "broadcast", cue, audience: state.sim.audienceFor(scope), scope };
-        const stored = chat.append(composeGuestMessages(state.sim, [synthetic]));
-        for (const m of stored) deliverMessage(m);
-        pushSnapshots();
-        return void sendJson(res, 200, { ok: true, reached: stored.reduce((n, m) => n + (m.audience === "all" ? -1 : m.audience.length), 0) });
-      }
-      case "/api/mod/message": {
-        // Hide or restore a single message. Guests in its audience see it
-        // vanish / reappear; performer consoles get the updated flag.
-        const seq = Number(body["seq"] ?? -1);
-        const hide = body["hidden"] === true;
-        const m = chat.setHidden(seq, hide);
-        if (m === null) return void sendJson(res, 404, { error: "unknown message" });
-        store.saveHidden(chat.hiddenSeqs());
-        for (const c of clients) {
-          if (c.role === "guest") {
-            if (!visibleTo(m, c.id)) continue;
-            if (m.hidden) sseSend(c.res, "messageModerated", { seq: m.seq, hidden: true });
-            else sseSend(c.res, "message", m); // restored → re-deliver in full
-          } else {
-            sseSend(c.res, "messageModerated", m); // admins: full payload + flag
-          }
-        }
-        return void sendJson(res, 200, { ok: true, seq, hidden: m.hidden });
-      }
-      default:
-        return void sendJson(res, 404, { error: "unknown mod action" });
-    }
-  }
+  // --- back-compat: bare event routes target the default event ---
+  if (await defaultEvent.handle(req, res, method, path, url)) return;
 
   sendJson(res, 404, { error: "not found" });
 }
@@ -727,58 +252,8 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
 // Boot
 // ---------------------------------------------------------------------
 
-/** Summary of what a restart-recovery brought back, for the boot banner. */
-interface Restored {
-  guests: number;
-  events: number;
-  sessions: number;
-}
-
-/**
- * Rebuild live state from disk by replaying the journal into a fresh sim
- * (see store.ts). Returns `null` on a clean first run. Makes a process
- * restart transparent: nobody re-authenticates, nobody loses their place.
- */
-function restore(): Restored | null {
-  const meta = store.loadMeta();
-  if (meta === null) return null;
-  loadScenario(meta.scenarioSource, meta.scenarioName); // sets phase → paused
-  let events = 0;
-  for (const e of store.readJournal()) {
-    const fn = (state.sim as unknown as Record<string, unknown>)[e.m];
-    if (typeof fn === "function") {
-      try {
-        const out = (fn as (...a: unknown[]) => unknown).apply(state.sim, e.a);
-        events++;
-        // Re-derive chat from the same events live operation composed from,
-        // in the same order → identical `seq`s, so persisted moderation
-        // (keyed by seq) lines back up below.
-        if (Array.isArray(out)) {
-          const batch = out as SimEvent[];
-          for (const ev of batch) {
-            if (ev.type === "choicePrompted" && ev.person !== null) {
-              decisionChannels.set(ev.person, decisionChannelFor(batch, ev.person));
-            }
-          }
-          chat.append(composeGuestMessages(state.sim!, batch));
-        }
-      } catch {
-        /* tolerate a single bad/torn entry rather than abort recovery */
-      }
-    }
-  }
-  chat.loadHidden(store.loadHidden());
-  for (const id of [...decisionChannels.keys()]) {
-    if (state.sim?.pendingChoiceFor(id) == null) decisionChannels.delete(id);
-  }
-  state.phase = meta.phase;
-  const entries = store.loadSessions();
-  sessions.load(entries);
-  if (state.phase === "open") startTicker();
-  return { guests: state.sim?.persons.size ?? 0, events, sessions: entries.length };
-}
-
-const restored = restore();
+const restored = defaultEvent.restore();
+void initControlPlane();
 
 server.listen(PORT, HOST, () => {
   const urls = lanUrls(PORT);
@@ -788,7 +263,7 @@ server.listen(PORT, HOST, () => {
   } catch {
     appBuilt = false;
   }
-  process.stdout.write(`\n  Loom event server — "${state.scenarioName}"  (phase: ${state.phase})\n\n`);
+  process.stdout.write(`\n  Loom event server — "${defaultEvent.scenario}"  (phase: ${defaultEvent.currentPhase})\n\n`);
   process.stdout.write(`  Passcodes — share with the room:\n`);
   process.stdout.write(`    🎟️  Guest event code  : ${PASS.event}\n`);
   process.stdout.write(`    🎭  Performer passcode: ${PASS.prime}\n`);

@@ -447,6 +447,13 @@ export const QUORUM_ANY: QuorumOp = { kind: "any" };
 // ---------------------------------------------------------------------
 
 export interface CharacterBody {
+  /**
+   * Trait parameters — the `beat` in `TRAIT Scanner(beat)`. Empty for a
+   * CHARACTER / ROLE and for an unparameterized trait. A parameter is
+   * referenced inside the body as `self.<param>` and bound at merge time
+   * when the trait is applied via `is Scanner(some_beat)` (spec §2.1).
+   */
+  params: string[];
   properties: Map<string, PropertyValue>;
   statsProfile: string | null;
   statsCtor: ConstructorCall | null;
@@ -463,6 +470,7 @@ export interface CharacterBody {
 
 export function emptyCharacterBody(): CharacterBody {
   return {
+    params: [],
     properties: new Map(),
     statsProfile: null,
     statsCtor: null,

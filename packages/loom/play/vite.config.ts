@@ -13,6 +13,8 @@ export default defineConfig({
     proxy: {
       "/api": { target, changeOrigin: true },
       "/console": { target, changeOrigin: true },
+      // Per-event routes (`/e/:eventId/api/*` + `/e/:eventId/events` SSE).
+      "/e": { target, changeOrigin: true },
       // SSE — keep the connection streaming (no buffering).
       "/events": { target, changeOrigin: true },
     },

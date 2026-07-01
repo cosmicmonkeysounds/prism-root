@@ -22,6 +22,14 @@ SPACE Forums
     kind: open
     label: # introductions
 
+  # A rapid, disappearing side-channel: one post per 3s, messages vanish
+  # after 30s (`slow` + `ephemeral` channel-type rules).
+  CHANNEL quickchat
+    kind: open
+    slow: 3s
+    ephemeral: 30s
+    label: # quick-chat
+
   CHANNEL backroom
     kind: private
     label: # the-backroom

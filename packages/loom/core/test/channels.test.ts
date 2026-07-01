@@ -151,6 +151,57 @@ describe("channel-type registry — post policy, threadability, routing", () => 
   });
 });
 
+describe("channel-type rules — slow mode + ephemeral", () => {
+  const SRC2 = `entry: s
+
+ROLE Guest
+
+CHANNEL fast
+  kind: open
+  slow: 5s
+  ephemeral: 10s
+
+== s
+`;
+  it("resolves the slow-mode + ephemeral windows", () => {
+    const sim = Sim.fromSources(SRC2);
+    expect(sim.slowModeMsOf("room:fast")).toBe(5000);
+    expect(sim.ephemeralMsOf("room:fast")).toBe(10000);
+    expect(sim.slowModeMsOf("room:none")).toBe(null);
+  });
+
+  it("counts down the slow-mode window from the last post", () => {
+    const sim = Sim.fromSources(SRC2);
+    sim.createPerson("g1", "Alice");
+    expect(sim.slowModeRemainingMs("g1", "room:fast")).toBe(0); // no posts yet
+    sim.say("g1", "room:fast", "first");
+    expect(sim.slowModeRemainingMs("g1", "room:fast")).toBe(5000); // full window
+    sim.tick(3000);
+    expect(sim.slowModeRemainingMs("g1", "room:fast")).toBe(2000);
+    sim.tick(3000);
+    expect(sim.slowModeRemainingMs("g1", "room:fast")).toBe(0); // window elapsed
+  });
+});
+
+describe("scoped invite roster", () => {
+  it("shows faction-mates + gated-room co-members, not the whole guest list", () => {
+    const sim = fresh();
+    sim.createPerson("g1", "Alice");
+    sim.join("g1", "Mods");
+    sim.createPerson("g2", "Bob");
+    sim.join("g2", "Mods");
+    sim.createPerson("g3", "Cara"); // unaffiliated — a stranger to g1
+
+    expect(sim.rosterFor("g1").map((p) => p.id).sort()).toEqual(["g2"]); // faction-mate only
+    expect(sim.rosterFor("g3")).toEqual([]); // no faction, no rooms → no one
+
+    // Pull g1 + g3 into the same private room → g1's roster now includes g3.
+    sim.inviteToChannel("Host", "g1", "room:backroom");
+    sim.inviteToChannel("Host", "g3", "room:backroom");
+    expect(sim.rosterFor("g1").map((p) => p.id).sort()).toEqual(["g2", "g3"]);
+  });
+});
+
 describe("determinism — authored channel ops replay identically", () => {
   it("invite + say reproduce the same seqs, channels, and audiences", () => {
     const run = () => {

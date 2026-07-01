@@ -12,7 +12,7 @@ tools) without dragging the runtime + scheduler + Luau bridge along.
 | [`syntax`](./syntax)   | TextMate grammar generator (driven by `loom-parser::keywords`) + Zed / VSCode extension shells |
 | [`server`](./server)   | Multi-user backbone — `loom-relayd` axum server hosting per-workspace Loro CRDTs over `prism-core::network::relay`. See [`docs/dev/loom-multiuser.md`](../../docs/dev/loom-multiuser.md). |
 | [`editor`](./editor)   | React/Vite/CodeMirror web IDE — the user-facing front end |
-| [`core`](./core)       | Native **TypeScript** port of Loom (no WASM, no Prism): parser (incl. authored **`SPACE`/`CHANNEL`** chatroom declarations) + a first-principles social-ecosystem `runtime/sim` + a parser-only **`lsp`** language surface (`@loom/core/lsp` — `Workspace` with completion / hover / definition / documentSymbols / references / diagnostics, the in-process replacement for the wasm `LspWorkspace`) + an SSE/REST **event server** (`pnpm serve`) that hosts a live `Sim` for LAN events, composing its `SimEvent` stream into server-authoritative, channel-routed chat (`server/chat.ts`) with spaces + Slack-style threads (`parentSeq`), **access control** (open / private-invite / faction / group / dm channel membership, journaled `inviteToChannel`/`leaveChannel`, guest↔guest invites) + a **pluggable channel-type registry** (`runtime/sim/channel-types.ts` — per-type post policy / threadability / broadcast routing, e.g. a read-only `announcement` feed), history + moderation, and a journaled `say` command so participant-typed chat replays deterministically. vitest-tested. |
+| [`core`](./core)       | Native **TypeScript** port of Loom (no WASM, no Prism): parser (incl. authored **`SPACE`/`CHANNEL`** chatroom declarations) + a first-principles social-ecosystem `runtime/sim` + a parser-only **`lsp`** language surface (`@loom/core/lsp` — `Workspace` with completion / hover / definition / documentSymbols / references / diagnostics, the in-process replacement for the wasm `LspWorkspace`) + an SSE/REST **event server** (`pnpm serve`) that hosts a live `Sim` for LAN events, composing its `SimEvent` stream into server-authoritative, channel-routed chat (`server/chat.ts`) with spaces + Slack-style threads (`parentSeq`), **access control** (open / private-invite / faction / group / dm channel membership, journaled `inviteToChannel`/`leaveChannel`, guest↔guest invites) + a **pluggable channel-type registry** (`runtime/sim/channel-types.ts` — per-type post policy / threadability / broadcast routing / slow-mode / ephemeral, e.g. a read-only `announcement` feed), a scoped invite roster (`rosterFor`), history + moderation, and a journaled `say` command so participant-typed chat replays deterministically. vitest-tested. |
 | [`play`](./play)       | The **participant React app** (Vite, name `loom-play`) guests + performers use at a live event — an **AOL-chatroom-skinned** client with Discord-style **spaces** (sidebar sections, incl. authored `SPACE`s), Slack-style **message threads** + consecutive-sender banner grouping, **hybrid typed chat** (a composer wired to `/api/*/say`), and **access-controlled rooms** (open/private/faction/group/dm with invite + leave) layered over the story-injected lobby + faction + DM channels (decisions docked per-thread, re-login history) on the `core` server's SSE/REST. `pnpm dev` (:5174, proxies to the server on :7000) / `pnpm build` (served by the event server at `/`). |
 | [`examples`](./examples) | Reference `.loom` projects used by `loom-runtime` integration tests and as authoring tutorials |
 
@@ -233,6 +233,40 @@ the session (native `luau` builds stay strict). The narrative engine
 itself — beats, choices, diverts, conditionals, world, characters,
 stats, the core Rust directives (`set`/`sfx`/`cue`/`broadcast`/`cast`/…)
 — is full-fidelity in the browser.
+
+Functional-redesign Slice 1 landed 2026-06-30 (TS `core/` only so far):
+the `is X, Y` inheritance merge is now actually run on the sim compile
+path — `compileModel` calls `bundle.rebuildSimulacra()` and reads the
+*merged* CHARACTER/ROLE body (previously the merge was dead code, only
+ever invoked from a unit test, so every `is` clause was silently inert
+at runtime). ROLEs are now exempt from the required-slot abstractness
+drop (a role is a per-person schema, never an instance, so an
+`any of FACTION` slot is not an unfilled hole) — so a ROLE can mix in a
+trait. The `SELF`/`ME` dialogue speaker resolves to whoever `self` is
+bound to on the frame (upper-cased to match explicit ALL-CAPS speakers),
+letting a beat drop the line that restates its owner. `rebuildSimulacra`
+is idempotent (clears `projectDiagnostics` too). Design +
+roadmap: [`docs/dev/loom-functional-redesign.md`](../../docs/dev/loom-functional-redesign.md).
+
+Slice 2 landed 2026-06-30 (TS `core/` only): **parameterized traits**.
+`TRAIT Scanner(beat)` takes params after its name (split off like SCENE onto
+`CharacterBody.params`), referenced in the body as `self.<param>`, and applied
+with args via the `is` clause — `CHARACTER Crawler is AlgoScanner(crawler_report)`.
+`mergeCharacter` parses each `is` entry with `parseMixinRef` (positional + named
+args) and runs `substituteParams`: it deep-clones the parent body
+(`deepCloneCharacterBody`, so the trait cache is never mutated) and rewrites every
+`self.<param>` token across hook events + bodies, method bodies/inline-exprs, and
+property values. Forwarding (`is Scanner(beat), Algo` inside a trait) keeps a param
+`self.`-qualified until a concrete character supplies it; at the leaf it always
+resolves to the bare arg (`-> self.beat` → `-> crawler_report`), so no qualified-
+divert resolution is needed yet. The lexer now splits the `is` clause on
+*top-level* commas (`splitTopLevelCommas`, moved to `rust.ts`) so a multi-arg
+application `CellWatch(loc: Internet, signal: lockdown)` stays one entry. Unfilled
+params surface as a `requiredParamUnfilled` project diagnostic.
+(Slice 3: `UnterminatedMixinClause` / `UnresolvedTraitArg` diagnostics, seed
+CHARACTER slot defaults, inline opener divert, LSP. Part II: class-owned + derived
+beats, `with`-composition. The committed example is not yet migrated; Rust mirror
+not yet updated.)
 
 Still to come: a pure-Rust Lua VM (piccolo) so Lua-defined directives
 and `.luau` extensions execute client-side instead of degrading; the

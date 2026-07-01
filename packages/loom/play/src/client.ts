@@ -65,6 +65,16 @@ export function useChatStream(
       }),
     );
     es.addEventListener("message", (e) => upsert(json(e) as ChatMessage));
+    // An ephemeral message aged out — drop it from the view.
+    es.addEventListener("messageExpired", (e) => {
+      const { seq } = json(e) as { seq: number };
+      setMessages((prev) => {
+        if (!prev.has(seq)) return prev;
+        const next = new Map(prev);
+        next.delete(seq);
+        return next;
+      });
+    });
     es.addEventListener("messageModerated", (e) => {
       const d = json(e) as ChatMessage | { seq: number; hidden: boolean };
       if ("text" in d) {

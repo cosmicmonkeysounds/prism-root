@@ -183,7 +183,10 @@ authored channel is `room:<name>`; visibility is computed per participant
 Membership moves through journaled commands — `inviteToChannel` /
 `leaveChannel` (`POST /api/{guest,prime}/channel/{invite,leave}`, and guests
 invite each other from the roster) — so it replays deterministically and a
-join posts a member-scoped notice.
+join posts a member-scoped notice. A guest's invite **roster is scoped**
+(`sim.rosterFor`) to people they already share a private-ish space with —
+faction-mates + gated-channel co-members — so a name isn't exposed to
+strangers across an open room.
 
 **Channel-type registry (behaviour).** Beyond visibility, each channel
 resolves a `ChannelRules` bundle from a **pluggable type registry**
@@ -203,8 +206,17 @@ The server enforces it: `POST /api/guest/say` returns 403 when `canPost` is
 false, non-threadable channels flatten replies, and a `broadcast` mirrors into
 every channel whose `routes` match (scoped to the intersection of the
 broadcast's and the channel's audience, so a faction broadcast can't leak into
-a public feed). `slow:` / `ephemeral:` are parsed into the rules bundle as
-declared-but-not-yet-enforced extension points.
+a public feed). **`slow:`** rate-limits a sender (a too-soon post → 429
+`slow mode`), and **`ephemeral:`** ages messages out — they're withheld from
+re-login history and the server pushes a `messageExpired` event (off the
+deterministic story clock) so live clients drop them. Both are declared inline:
+
+```loom
+CHANNEL quick-chat
+  kind: open
+  slow: 3s          # one post per sender per 3s
+  ephemeral: 30s    # messages vanish 30s after they're sent
+```
 
 ### Persistence (surviving restarts & drops)
 
