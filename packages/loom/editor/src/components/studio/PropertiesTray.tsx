@@ -51,6 +51,10 @@ function tabsFor(_mode: Mode): Tab[] {
 export function PropertiesTray({ mode }: { mode: Mode }) {
   // Run mode's tray is the live participant Inspector, not the author props.
   if (mode === 'operate') return <OperateInspector />
+  return <AuthorTray mode={mode} />
+}
+
+function AuthorTray({ mode }: { mode: Mode }) {
   const tabs = tabsFor(mode)
   const [active, setActive] = useState(tabs[0].id)
   const current = tabs.find((t) => t.id === active) ?? tabs[0]

@@ -30,12 +30,26 @@ export function definitionAt(
     }
   }
 
-  // CHARACTER reference: ALL-CAPS token.
+  // TRAIT reference: a declared trait name (mixed-case, checked before the
+  // ALL-CAPS CHARACTER branch so a name that is both never mis-resolves).
+  const trait = ws.traits.get(token);
+  if (trait) {
+    return { uri: trait.uri, range: trait.nameRange };
+  }
+
+  // CHARACTER reference: ALL-CAPS token. Jump to the tight name range so the
+  // cursor lands on the name, not the top of the whole declaration block.
   if (allChars(token, (c) => isAsciiUppercase(c) || c === "_")) {
     const info = ws.characters.get(token);
     if (info) {
-      return { uri: info.uri, range: info.range };
+      return { uri: info.uri, range: info.nameRange };
     }
+  }
+
+  // Anchor reference: `-> name` / a bare token that names an `<anchor: name>`.
+  const anchor = ws.anchors.get(token);
+  if (anchor && anchor.length > 0) {
+    return anchor.map((a) => ({ uri: a.uri, range: a.range }));
   }
 
   return null;

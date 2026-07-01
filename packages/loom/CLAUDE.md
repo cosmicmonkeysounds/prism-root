@@ -59,7 +59,13 @@ project launches its own **event** (live, or a private server-hosted
   on disk under `LOOM_STATE_DIR/<eventId>`.
 - **Run == admin**: an event's `/e/:eventId/api/mod/*` routes accept either a
   mod token or the owning author's BetterAuth session, so the author moderates
-  from the editor's Run mode (or `/e/:eventId/console`) with no code to type.
+  from the editor's Run mode with no code to type. The `/api/mod/*` surface now
+  also covers `say` (post to any room, as Operator or a character), `set`
+  (edit a guest's score/faction/location/captured), `beat` / `signal` / `scan`
+  (fire narrative), and `reveal` (expose a hidden faction). The old standalone
+  operator console (`/console`, the vanilla `server/public/index.html`) was
+  removed 2026-07-01 — moderation is Run-panel-only; guests + performers use
+  the `play` app.
 
 The Rust `server` crate (see below) is the older, separate multi-workspace
 backbone; the SaaS lives entirely in the TS stack.

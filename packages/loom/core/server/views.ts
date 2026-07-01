@@ -132,7 +132,7 @@ export interface ModView {
   roster: RosterRow[];
   factions: FactionSummary[];
   locations: LocationSummary[];
-  /** Character ids (kept for the back-compat operator console). */
+  /** Character ids (thin list; the run panel uses `cast` for factions too). */
   characters: string[];
   /** The cast with their factions — the run panel's "speak/fire as" picker. */
   cast: CastSummary[];

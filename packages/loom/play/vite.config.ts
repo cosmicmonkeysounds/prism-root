@@ -12,7 +12,6 @@ export default defineConfig({
     host: true, // expose on the LAN so phones can hit the dev server too
     proxy: {
       "/api": { target, changeOrigin: true },
-      "/console": { target, changeOrigin: true },
       // Per-event routes (`/e/:eventId/api/*` + `/e/:eventId/events` SSE).
       "/e": { target, changeOrigin: true },
       // SSE — keep the connection streaming (no buffering).

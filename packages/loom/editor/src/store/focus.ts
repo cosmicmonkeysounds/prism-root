@@ -8,6 +8,7 @@
 // remains is the small focus store + a detail descriptor.
 
 import { create } from 'zustand'
+import type { Position } from '@loom/core/lsp'
 
 // ---------------------------------------------------------------------------
 // Refs
@@ -17,6 +18,9 @@ export type FocusRef =
   | { kind: 'character'; name: string }
   | { kind: 'beat'; name: string }
   | { kind: 'world-key'; key: string }
+  // A cursor-positioned symbol — richer than a bare name, so the References
+  // panel resolves the actual token under the cursor via `referencesAt`.
+  | { kind: 'symbol'; label: string; uri: string; pos: Position }
 
 export type DetailSink = 'panel' | 'popover' | 'modal' | 'side'
 
@@ -37,6 +41,8 @@ export function refKey(ref: FocusRef | null): string {
       return `beat:${ref.name}`
     case 'world-key':
       return `wkey:${ref.key}`
+    case 'symbol':
+      return `sym:${ref.uri}:${ref.pos.line}:${ref.pos.character}`
   }
 }
 

@@ -3,14 +3,33 @@ import clsx from 'clsx'
 import type { FsEntry } from '@/lib/fs'
 import { useWorkspace } from '@/store/workspace'
 import { useSettings } from '@/store/settings'
+import { lspWorkspaceSync, uriFor } from '@/lib/lsp-client'
+import { navigateToLocation } from '@/lib/lsp-nav'
+import { useLspIndexGen } from '@/lib/lsp-index'
 
-type Mode = 'files' | 'commands'
+type Mode = 'files' | 'commands' | 'symbols' | 'wsymbols'
 
 type Command = {
   id: string
   label: string
   hint?: string
   run: () => void | Promise<void>
+}
+
+type SymbolHit = {
+  name: string
+  kindLabel: string
+  uri: string
+  path: string
+  line: number
+  character: number
+}
+
+// LSP SymbolKind → short label (subset Loom emits; see core/src/lsp/symbols.ts).
+const KIND_LABEL: Record<number, string> = {
+  2: 'mod', 3: 'ns', 5: 'class', 6: 'method', 7: 'prop', 10: 'enum', 11: 'iface',
+  12: 'fn', 13: 'var', 17: 'bool', 19: 'object', 22: 'struct', 23: 'event',
+  24: 'operator', 25: 'array',
 }
 
 function flatten(entry: FsEntry, out: FsEntry[] = []): FsEntry[] {
@@ -31,6 +50,20 @@ function score(query: string, haystack: string): number {
   return qi === q.length ? 100 - (n.length - q.length) : 0
 }
 
+/** Document symbols for one URI, mapped to palette hits. */
+function symbolsForUri(uri: string, path: string): SymbolHit[] {
+  const syms = lspWorkspaceSync().documentSymbols(uri)
+  if (!syms) return []
+  return syms.map((s) => ({
+    name: s.name,
+    kindLabel: KIND_LABEL[s.kind] ?? 'decl',
+    uri,
+    path,
+    line: s.range.start.line,
+    character: s.range.start.character,
+  }))
+}
+
 export function CommandPalette() {
   const root = useWorkspace((s) => s.root)
   const openFile = useWorkspace((s) => s.openFile)
@@ -44,6 +77,9 @@ export function CommandPalette() {
   const setSetting = useSettings((s) => s.set)
   const wordWrap = useSettings((s) => s.wordWrap)
   const theme = useSettings((s) => s.theme)
+  // Recompute symbol lists when the LSP index changes (async project index
+  // completing while the palette is open).
+  const indexGen = useLspIndexGen((s) => s.gen)
 
   const [isOpen, setOpen] = useState(false)
   const [mode, setMode] = useState<Mode>('files')
@@ -60,6 +96,13 @@ export function CommandPalette() {
         setMode(e.shiftKey ? 'commands' : 'files')
         setQuery(e.shiftKey ? '>' : '')
         setSelected(0)
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === 'o') {
+        // ⌘/Ctrl+Shift+O — go to symbol in file.
+        e.preventDefault()
+        setOpen(true)
+        setMode('symbols')
+        setQuery('@')
+        setSelected(0)
       } else if (e.key === 'Escape') {
         setOpen(false)
       }
@@ -72,8 +115,12 @@ export function CommandPalette() {
     if (isOpen) requestAnimationFrame(() => inputRef.current?.focus())
   }, [isOpen])
 
-  const trimmed = query.startsWith('>') ? query.slice(1).trim() : query
-  const effectiveMode: Mode = query.startsWith('>') ? 'commands' : mode
+  // The leading sigil selects the mode: `>` commands, `@` file symbols,
+  // `#` workspace symbols, else the file picker.
+  const sigil = query[0]
+  const effectiveMode: Mode =
+    sigil === '>' ? 'commands' : sigil === '@' ? 'symbols' : sigil === '#' ? 'wsymbols' : mode
+  const trimmed = ['>', '@', '#'].includes(sigil ?? '') ? query.slice(1).trim() : query.trim()
 
   const commands: Command[] = useMemo(
     () => [
@@ -91,6 +138,8 @@ export function CommandPalette() {
       { id: 'reopen-closed', label: 'File: Reopen Closed Tab', hint: '⌥⇧T', run: () => reopenClosed() },
       { id: 'next-tab', label: 'View: Next Tab', hint: '⌥]', run: () => cycleTab(1) },
       { id: 'prev-tab', label: 'View: Previous Tab', hint: '⌥[', run: () => cycleTab(-1) },
+      { id: 'goto-symbol', label: 'Go to Symbol in File…', hint: '⌘⇧O', run: () => setQuery('@') },
+      { id: 'goto-wsymbol', label: 'Go to Symbol in Workspace…', run: () => setQuery('#') },
       {
         id: 'toggle-wrap',
         label: `View: ${wordWrap ? 'Disable' : 'Enable'} Word Wrap`,
@@ -118,6 +167,28 @@ export function CommandPalette() {
 
   const files = useMemo(() => (root ? flatten(root) : []), [root])
 
+  // Symbols for the current mode. Only computed when the palette is open and
+  // in a symbol mode, so we never walk the LSP index needlessly.
+  const symbols = useMemo<SymbolHit[]>(() => {
+    // `indexGen` is read (not just a dep) so this recomputes when the LSP
+    // index version changes — the symbol data comes from the mutable
+    // Workspace via documentSymbols, which React can't otherwise track.
+    // `indexGen` only ever increases from 0, so `< 0` is always false.
+    if (!isOpen || indexGen < 0) return []
+    if (effectiveMode === 'symbols') {
+      return activePath ? symbolsForUri(uriFor(activePath), activePath) : []
+    }
+    if (effectiveMode === 'wsymbols') {
+      const out: SymbolHit[] = []
+      for (const f of files) {
+        if (!f.path.endsWith('.loom')) continue
+        out.push(...symbolsForUri(uriFor(f.path), f.path))
+      }
+      return out
+    }
+    return []
+  }, [isOpen, effectiveMode, activePath, files, indexGen])
+
   const fileResults = useMemo(() => {
     return files
       .map((f) => ({ f, s: score(trimmed, f.path) }))
@@ -135,20 +206,58 @@ export function CommandPalette() {
       .map((x) => x.c)
   }, [commands, trimmed])
 
+  const symbolResults = useMemo(() => {
+    return symbols
+      .map((sym) => ({ sym, s: score(trimmed, sym.name) }))
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, 50)
+      .map((x) => x.sym)
+  }, [symbols, trimmed])
+
   if (!isOpen) return null
 
-  const results: ({ kind: 'file'; entry: FsEntry } | { kind: 'cmd'; cmd: Command })[] =
+  const results:
+    | { kind: 'file'; entry: FsEntry }[]
+    | { kind: 'cmd'; cmd: Command }[]
+    | { kind: 'sym'; sym: SymbolHit }[] =
     effectiveMode === 'commands'
       ? commandResults.map((c) => ({ kind: 'cmd' as const, cmd: c }))
-      : fileResults.map((f) => ({ kind: 'file' as const, entry: f }))
+      : effectiveMode === 'symbols' || effectiveMode === 'wsymbols'
+        ? symbolResults.map((sym) => ({ kind: 'sym' as const, sym }))
+        : fileResults.map((f) => ({ kind: 'file' as const, entry: f }))
 
   const submit = (idx: number) => {
     const pick = results[idx]
     if (!pick) return
     if (pick.kind === 'file') void openFile(pick.entry)
-    else void pick.cmd.run()
+    else if (pick.kind === 'cmd') void pick.cmd.run()
+    else {
+      void navigateToLocation({
+        uri: pick.sym.uri,
+        range: {
+          start: { line: pick.sym.line, character: pick.sym.character },
+          end: { line: pick.sym.line, character: pick.sym.character },
+        },
+      })
+    }
+    // Keep the palette open when a command just rewrote the query (e.g. the
+    // "Go to Symbol…" commands switch mode in place).
+    if (pick.kind === 'cmd' && (pick.cmd.id === 'goto-symbol' || pick.cmd.id === 'goto-wsymbol')) {
+      setSelected(0)
+      return
+    }
     setOpen(false)
   }
+
+  const placeholder =
+    effectiveMode === 'commands'
+      ? 'Run command…'
+      : effectiveMode === 'symbols'
+        ? 'Go to symbol in file…'
+        : effectiveMode === 'wsymbols'
+          ? 'Go to symbol in workspace…'
+          : 'Go to file…  (> commands · @ symbols · # workspace symbols)'
 
   return (
     <div
@@ -178,7 +287,7 @@ export function CommandPalette() {
               submit(selected)
             }
           }}
-          placeholder={effectiveMode === 'commands' ? 'Run command…' : 'Go to file…  (prefix with > for commands)'}
+          placeholder={placeholder}
           className="w-full px-4 py-3 bg-transparent text-sm text-white outline-none border-b border-white/10"
         />
         <ul className="max-h-80 overflow-auto">
@@ -187,7 +296,7 @@ export function CommandPalette() {
           )}
           {results.map((r, i) => (
             <li
-              key={r.kind === 'file' ? r.entry.path : r.cmd.id}
+              key={r.kind === 'file' ? r.entry.path : r.kind === 'cmd' ? r.cmd.id : `${r.sym.uri}:${r.sym.line}:${r.sym.name}`}
               onMouseEnter={() => setSelected(i)}
               onClick={() => submit(i)}
               className={clsx(
@@ -200,10 +309,20 @@ export function CommandPalette() {
                   <span className="truncate">{r.entry.name}</span>
                   <span className="text-xs text-zinc-500 truncate">{r.entry.path}</span>
                 </>
-              ) : (
+              ) : r.kind === 'cmd' ? (
                 <>
                   <span className="truncate">{r.cmd.label}</span>
                   {r.cmd.hint && <span className="text-xs text-zinc-500">{r.cmd.hint}</span>}
+                </>
+              ) : (
+                <>
+                  <span className="truncate">
+                    <span className="text-amber-400/80 mr-2 text-xs uppercase">{r.sym.kindLabel}</span>
+                    {r.sym.name}
+                  </span>
+                  <span className="text-xs text-zinc-500 truncate">
+                    {effectiveMode === 'wsymbols' ? `${r.sym.path}:${r.sym.line + 1}` : r.sym.line + 1}
+                  </span>
                 </>
               )}
             </li>

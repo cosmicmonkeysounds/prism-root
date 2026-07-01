@@ -14,8 +14,12 @@ import { useMode, MODES, type Mode, type ModeUi } from '@/store/mode'
 import { LeftRail, CenterStage, TimelineDock, Region } from './regions'
 import { PropertiesTray } from './PropertiesTray'
 import { ModeBar } from './ModeBar'
+import { useLspProjectIndex } from '@/lib/use-lsp-index'
 
 export function StudioShell() {
+  // Keep the whole `.loom` project indexed in the LSP workspace for the life
+  // of the open workspace (cross-file hover / goto / references / diagnostics).
+  useLspProjectIndex()
   const mode = useMode((s) => s.mode)
   const ui = useMode((s) => s.ui[s.mode])
   const setMode = useMode((s) => s.setMode)

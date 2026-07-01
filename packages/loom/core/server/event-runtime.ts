@@ -943,6 +943,21 @@ export class EventRuntime {
         sendJson(res, 200, { ok: true, guest: rosterRow(this.sim, target) });
         return true;
       }
+      case "/api/mod/reveal": {
+        // Expose a hidden faction (the secret-villain reveal).
+        if (this.sim === null) {
+          sendJson(res, 409, { error: "no scenario loaded" });
+          return true;
+        }
+        const faction = str(body, "faction");
+        if (!this.sim.model.factions.has(faction)) {
+          sendJson(res, 404, { error: "unknown faction" });
+          return true;
+        }
+        this.fanout(this.commit("reveal", faction));
+        sendJson(res, 200, { ok: true });
+        return true;
+      }
       default:
         sendJson(res, 404, { error: "unknown mod action" });
         return true;

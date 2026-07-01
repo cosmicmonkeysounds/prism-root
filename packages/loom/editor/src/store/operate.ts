@@ -83,11 +83,16 @@ interface ModSnapshot {
   ledgerLen: number
 }
 
-/** What's selected in the Roster → drives the Inspector tray. */
+/** What's selected across the cockpit → drives the Inspector tray. */
 export type Selection =
   | { kind: 'guest'; id: string }
   | { kind: 'character'; id: string }
+  | { kind: 'faction'; id: string }
+  | { kind: 'location'; id: string }
   | null
+
+/** The Run cockpit's center pages. */
+export type RunTab = 'event' | 'chat' | 'roster' | 'world' | 'director'
 
 type OperateState = {
   projectId: string | null
@@ -107,9 +112,11 @@ type OperateState = {
   busy: boolean
   error: string | null
 
+  /** The active center page. */
+  activeTab: RunTab
   /** The room the Chat tab is peering into (channel id), null → lobby. */
   activeChannel: string
-  /** The roster row / cast member the Inspector tray is bound to. */
+  /** The entity (guest / character / faction / location) the Inspector is bound to. */
   selection: Selection
 
   init: (projectId: string) => Promise<void>
@@ -130,8 +137,10 @@ type OperateState = {
   fireBeat: (name: string, subject?: string) => Promise<void>
   fireSignal: (name: string, subject?: string) => Promise<void>
   scanAs: (as: string, target: string) => Promise<void>
+  reveal: (faction: string) => Promise<void>
 
   // UI selection
+  setTab: (tab: RunTab) => void
   selectChannel: (channel: string) => void
   select: (selection: Selection) => void
 }
@@ -139,15 +148,15 @@ type OperateState = {
 // One live mod stream at a time (Operate mode is a single surface).
 let es: EventSource | null = null
 
-const EMPTY_SNAPSHOT: Omit<ModSnapshot, 'phase' | 'scenario'> = {
-  roster: [],
-  factions: [],
-  locations: [],
-  characters: [],
-  cast: [],
-  channels: [],
-  spaces: [],
-  beats: [],
+/** The snapshot-driven fields, reset to empty on init/teardown/end. */
+const EMPTY_SNAPSHOT = {
+  roster: [] as RosterRow[],
+  factions: [] as FactionSummary[],
+  locations: [] as LocationSummary[],
+  cast: [] as CastSummary[],
+  channels: [] as ChannelSummary[],
+  spaces: [] as SpaceSummary[],
+  beats: [] as string[],
   ledgerLen: 0,
 }
 
@@ -183,7 +192,6 @@ export const useOperate = create<OperateState>((set, get) => {
         roster: snap.roster ?? [],
         factions: snap.factions ?? [],
         locations: snap.locations ?? [],
-        characters: snap.characters ?? [],
         cast: snap.cast ?? [],
         channels: snap.channels ?? [],
         spaces: snap.spaces ?? [],
@@ -225,12 +233,13 @@ export const useOperate = create<OperateState>((set, get) => {
     connected: false,
     busy: false,
     error: null,
+    activeTab: 'event',
     activeChannel: 'lobby',
     selection: null,
 
     init: async (projectId) => {
       if (get().projectId === projectId && get().event) return // already live for this project
-      set({ projectId, error: null, messages: [], selection: null, ...EMPTY_SNAPSHOT })
+      set({ projectId, error: null, messages: [], selection: null, activeTab: 'event', activeChannel: 'lobby', ...EMPTY_SNAPSHOT })
       try {
         const event = await eventsApi.status(projectId)
         set({ event, phase: event?.status ?? 'idle' })
@@ -249,6 +258,7 @@ export const useOperate = create<OperateState>((set, get) => {
         scenario: null,
         messages: [],
         selection: null,
+        activeTab: 'event',
         activeChannel: 'lobby',
         ...EMPTY_SNAPSHOT,
       })
@@ -307,6 +317,7 @@ export const useOperate = create<OperateState>((set, get) => {
           scenario: null,
           messages: [],
           selection: null,
+          activeChannel: 'lobby',
           ...EMPTY_SNAPSHOT,
         })
       } finally {
@@ -327,7 +338,9 @@ export const useOperate = create<OperateState>((set, get) => {
     fireBeat: (name, subject) => withEvent((ev) => modApi.fireBeat(ev, name, subject)),
     fireSignal: (name, subject) => withEvent((ev) => modApi.fireSignal(ev, name, subject)),
     scanAs: (as, target) => withEvent((ev) => modApi.scanAs(ev, as, target)),
+    reveal: (faction) => withEvent((ev) => modApi.reveal(ev, faction)),
 
+    setTab: (activeTab) => set({ activeTab }),
     selectChannel: (activeChannel) => set({ activeChannel }),
     select: (selection) => set({ selection }),
   }

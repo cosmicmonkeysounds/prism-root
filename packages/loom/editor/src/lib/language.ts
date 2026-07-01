@@ -15,7 +15,6 @@ import { java } from '@codemirror/lang-java'
 import { php } from '@codemirror/lang-php'
 import { vue } from '@codemirror/lang-vue'
 import { loomLanguage } from './loom-language'
-import { loomLint } from './loom-lint'
 
 export type LanguageId =
   | 'javascript'
@@ -201,7 +200,10 @@ export function extensionForPath(path: string): Extension[] {
     case 'vue':
       return [vue()]
     case 'loom':
-      return [loomLanguage(), loomLint()]
+      // The Loom StreamLanguage only. Diagnostics + the LSP IDE extensions
+      // (hover / completion / goto / references / occurrences) are composed
+      // in `Editor.tsx`, where the editor settings + file path are available.
+      return [loomLanguage()]
     default:
       return []
   }

@@ -20,6 +20,21 @@ export type EditorSettings = {
   closeBrackets: boolean
   autocompletion: boolean
   foldGutter: boolean
+  // ── IDE / LSP (Loom `.loom` files) ──────────────────────────────────
+  /** Show markdown hover tooltips over directives / beats / characters. */
+  hoverEnabled: boolean
+  /** Delay before a hover tooltip appears, ms (⌘/Ctrl-hover is instant). */
+  hoverDelayMs: number
+  /** Use the Loom language server for completion (vs. generic word list). */
+  lspCompletion: boolean
+  /** ⌘/Ctrl-Click a symbol to jump to its definition. */
+  gotoOnClick: boolean
+  /** Highlight every occurrence of the identifier under the cursor. */
+  occurrenceHighlight: boolean
+  /** Surface cross-file project diagnostics in the gutter, not just parser errors. */
+  projectDiagnostics: boolean
+  /** Index every `.loom` in the project (not just open tabs) for cross-file nav. */
+  indexWholeProject: boolean
 }
 
 type SettingsState = EditorSettings & {
@@ -45,6 +60,13 @@ const DEFAULTS: EditorSettings = {
   closeBrackets: true,
   autocompletion: true,
   foldGutter: true,
+  hoverEnabled: true,
+  hoverDelayMs: 500,
+  lspCompletion: true,
+  gotoOnClick: true,
+  occurrenceHighlight: true,
+  projectDiagnostics: true,
+  indexWholeProject: true,
 }
 
 export const useSettings = create<SettingsState>()(

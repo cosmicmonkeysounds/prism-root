@@ -28,9 +28,6 @@ export function App() {
       <button className="choice ghost" onClick={() => setRole("prime")}>
         🎭 I'm a Performer
       </button>
-      <a className="link console" href="/console">
-        Operator console →
-      </a>
     </div>
   );
 }

@@ -754,3 +754,53 @@ CHARACTER Host
     expect(said[0]!.speaker).toBe("HOST"); // spoken line (speaker cue), not narration
   });
 });
+
+describe("operator mutations — setScore + fireBeat", () => {
+  it("setScore writes a person's score directly and emits a worldSet", () => {
+    const sim = fresh();
+    sim.createPerson("g1", "Alice");
+    expect(sim.scoreOf("g1")).toBe(0);
+    const evs = sim.setScore("g1", 42);
+    expect(sim.scoreOf("g1")).toBe(42);
+    expect(evs.some((e) => e.type === "worldSet")).toBe(true);
+  });
+
+  it("fireBeat plays a named beat and records beatEntered", () => {
+    const sim = Sim.fromSources(`
+== announce
+  The internet awakens.
+`);
+    const evs = sim.fireBeat("announce");
+    expect(evs.some((e) => e.type === "beatEntered" && (e as { beat: string }).beat === "announce")).toBe(true);
+  });
+
+  it("fireBeat binds the subject as `guest` so a per-guest beat targets one person", () => {
+    const sim = Sim.fromSources(`
+== tag
+  <set: guest.score += 10>
+`);
+    sim.createPerson("g1", "Alice");
+    sim.createPerson("g2", "Bob");
+    sim.fireBeat("tag", "g1");
+    expect(sim.scoreOf("g1")).toBe(10);
+    expect(sim.scoreOf("g2")).toBe(0); // untouched
+  });
+
+  it("fireBeat on an unknown beat is a quiet no-op", () => {
+    const sim = fresh();
+    expect(sim.fireBeat("does-not-exist")).toEqual([]);
+  });
+
+  it("reveal exposes a hidden faction (secret-villain reveal)", () => {
+    const sim = fresh();
+    sim.createPerson("g1", "Alice");
+    sim.join("g1", "TheAlgorithm"); // a hidden faction — masked until revealed
+    expect(sim.publicFactionOf("g1")).toBeNull();
+    expect(sim.factionRevealed("TheAlgorithm")).toBe(false);
+    const evs = sim.reveal("TheAlgorithm");
+    expect(sim.factionRevealed("TheAlgorithm")).toBe(true);
+    expect(sim.publicFactionOf("g1")).toBe("TheAlgorithm"); // now visible to all
+    expect(evs.some((e) => e.type === "factionRevealed")).toBe(true);
+    expect(sim.reveal("TheAlgorithm")).toEqual([]); // idempotent
+  });
+});

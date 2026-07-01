@@ -117,6 +117,9 @@ importers:
       '@dnd-kit/sortable':
         specifier: ^10.0.0
         version: 10.0.0(@dnd-kit/core@6.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
+      '@lezer/highlight':
+        specifier: ^1.2.3
+        version: 1.2.3
       '@loom/core':
         specifier: workspace:*
         version: link:../core
@@ -190,6 +193,9 @@ importers:
       vite:
         specifier: ^8.0.12
         version: 8.1.0(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@24.13.2)(lightningcss@1.32.0)
 
   play:
     dependencies:

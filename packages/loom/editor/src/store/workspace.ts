@@ -17,6 +17,7 @@ import {
 import { idbDel, idbGet, idbSet } from '@/lib/idb'
 import { useSettings } from '@/store/settings'
 import { projectsApi, type ProjectFile } from '@/lib/api'
+import { resetIndexCache, dropIndexedPath } from '@/lib/lsp-index'
 
 function applyFormat(text: string): string {
   // Trim trailing whitespace on every line, and ensure exactly one final newline.
@@ -212,6 +213,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
           void syncOpenFileFromDisk(path)
         } else if (r.type === 'disappeared') {
           structural = true
+          dropIndexedPath(path) // drop the vanished file from the LSP index
           // close any open file that lived under the removed path
           const open = get().openFiles
           for (const p of Object.keys(open)) {
@@ -267,6 +269,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     openRoot: async (handle) => {
       // Fresh workspace: drop previous tabs/canvas state (and any server project).
       stopObserver()
+      resetIndexCache() // clear the previous project's LSP docs + caches
       set({ projectId: null, projectName: null, openFiles: {}, tabOrder: [], activePath: null, recentlyClosed: [], nodes: [], edges: [] })
       await idbSet(ROOT_HANDLE_KEY, handle)
       await adoptRoot(handle)
@@ -275,6 +278,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     openServerProject: async (project, files) => {
       // Server projects don't use the on-disk observer or handles.
       stopObserver()
+      resetIndexCache() // clear the previous project's LSP docs + caches
       await idbDel(ROOT_HANDLE_KEY)
       const root = buildServerTree(project.name, files)
       set({
@@ -333,6 +337,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
 
     closeRoot: async () => {
       stopObserver()
+      resetIndexCache() // drop the LSP workspace + index caches
       await idbDel(ROOT_HANDLE_KEY)
       set({
         root: null,
@@ -602,6 +607,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       const label = entry.kind === 'directory' ? `folder “${entry.name}” and all its contents` : `file “${entry.name}”`
       if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return
       await removeEntry(parent.handle as FileSystemDirectoryHandle, entry.name, entry.kind === 'directory')
+      // Drop the removed file(s) from the LSP index immediately (the gated
+      // reindex only prunes when whole-project indexing is on).
+      for (const p of Object.keys(get().openFiles)) {
+        if (p === entry.path || p.startsWith(`${entry.path}/`)) dropIndexedPath(p)
+      }
+      dropIndexedPath(entry.path)
       // close any open file that lived under the removed path
       set((s) => {
         const next = { ...s.openFiles }
@@ -631,6 +642,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       }
       const oldPath = entry.path
       const newPath = `${parent.path}/${trimmed}`
+      // Drop old URIs from the LSP index; the reindex re-adds under the new
+      // path (and the active-buffer sync covers a renamed open file).
+      for (const p of Object.keys(get().openFiles)) {
+        if (p === oldPath || p.startsWith(`${oldPath}/`)) dropIndexedPath(p)
+      }
+      dropIndexedPath(oldPath)
       set((s) => {
         const next: typeof s.openFiles = {}
         const order = s.tabOrder.map((p) => {

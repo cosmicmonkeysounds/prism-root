@@ -149,9 +149,76 @@ describe("Workspace.definitionAt", () => {
   it("jumps a CHARACTER cue to its declaration", () => {
     const def = ws.definitionAt(URI, { line: 6, character: 9 });
     expect(Array.isArray(def)).toBe(false);
-    const loc = def as { uri: string; range: { start: { line: number } } };
+    const loc = def as { uri: string; range: { start: { line: number; character: number } } };
     expect(loc.uri).toBe(URI);
     expect(loc.range.start.line).toBe(0);
+    // Tight name range: lands on `WREN` (col 10), not the block head (col 0).
+    expect(loc.range.start.character).toBe(10);
+  });
+
+  it("jumps a TRAIT mixin reference to the trait declaration", () => {
+    // Cursor on `Keeper` in `CHARACTER WREN is Keeper` (line 0).
+    const def = ws.definitionAt(URI, { line: 0, character: 20 });
+    expect(Array.isArray(def)).toBe(false);
+    const loc = def as { uri: string; range: { start: { line: number } } };
+    expect(loc.uri).toBe(URI);
+    expect(loc.range.start.line).toBe(3); // `TRAIT Keeper`
+  });
+
+  it("resolves an anchor name to its <anchor:> site", () => {
+    // Cursor on `arrival` inside `<anchor: arrival>` (line 11).
+    const def = ws.definitionAt(URI, { line: 11, character: 10 });
+    const locs = Array.isArray(def) ? def : def ? [def] : [];
+    expect(locs).toHaveLength(1);
+    expect(locs[0]!.range.start.line).toBe(11);
+  });
+});
+
+describe("Workspace.updateMany", () => {
+  it("indexes many documents with a single rebuild", () => {
+    const w = new Workspace();
+    w.updateMany([
+      ["inmemory://a.loom", "== alpha\n  cast: X\n"],
+      ["inmemory://b.loom", "== beta\n  cast: Y\n"],
+    ]);
+    expect([...w.beats.keys()].sort()).toEqual(["alpha", "beta"]);
+    expect(w.diagnosticsFor("inmemory://a.loom")).not.toBeNull();
+    expect(w.diagnosticsFor("inmemory://b.loom")).not.toBeNull();
+  });
+
+  it("is a no-op on an empty batch", () => {
+    const w = new Workspace();
+    w.open(URI, SRC);
+    const before = [...w.beats.keys()].sort();
+    w.updateMany([]);
+    expect([...w.beats.keys()].sort()).toEqual(before);
+  });
+});
+
+describe("Workspace.reset", () => {
+  it("drops every document and clears the index", () => {
+    const w = new Workspace();
+    w.open("inmemory://a.loom", "== alpha\n");
+    w.open("inmemory://b.loom", "== beta\n");
+    expect([...w.beats.keys()].sort()).toEqual(["alpha", "beta"]);
+    w.reset();
+    expect([...w.beats.keys()]).toEqual([]);
+    expect(w.diagnosticsFor("inmemory://a.loom")).toBeNull();
+  });
+});
+
+describe("nameRange token-boundary (definitionAt)", () => {
+  it("resolves a name to the whole-word site, not a keyword substring", () => {
+    // `OLE` is a substring of the leading `ROLE` keyword — a raw indexOf
+    // would land the definition inside `ROLE` (char 1). Token-boundary
+    // matching must land on the real name at char 5.
+    const w = new Workspace();
+    const uri = "inmemory://ole.loom";
+    w.open(uri, "ROLE OLE\n  voice: low\n== b\n  cast: OLE\n");
+    const def = w.definitionAt(uri, { line: 3, character: 9 }); // on `OLE` in cast
+    const loc = Array.isArray(def) ? def[0]! : def!;
+    expect(loc.range.start.line).toBe(0);
+    expect(loc.range.start.character).toBe(5);
   });
 });
 

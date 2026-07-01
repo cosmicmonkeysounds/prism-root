@@ -56,11 +56,15 @@ export function nameRangeInText(text: string, span: Span, name: string): Range {
   for (let lineIdx = span.start.line; lineIdx <= span.end.line; lineIdx++) {
     const line = ls[lineIdx];
     if (line === undefined) continue;
-    const col = line.indexOf(name);
-    if (col >= 0) {
+    // Whole-word match, not a raw substring: a short name (`OLE`) must not
+    // resolve inside the leading keyword (`ROLE`) — take the first
+    // token-boundary hit on the line.
+    const spans = findTokenSpans(line, name);
+    if (spans.length > 0) {
+      const [start, end] = spans[0]!;
       return {
-        start: { line: lineIdx, character: col },
-        end: { line: lineIdx, character: col + name.length },
+        start: { line: lineIdx, character: start },
+        end: { line: lineIdx, character: end },
       };
     }
   }

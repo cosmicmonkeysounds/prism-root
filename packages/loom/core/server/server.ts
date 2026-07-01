@@ -51,7 +51,6 @@ const store = new Store(STATE_DIR);
 const PASS = resolvePasscodes(process.env, store.loadCodes());
 store.saveCodes(PASS);
 
-const CONSOLE_HTML = readFileSync(new URL("./public/index.html", import.meta.url), "utf8");
 // The default scenario is a multi-file project under `examples/`; the loader
 // concatenates `main.loom` + the rest into one source (identical to bundling
 // the files separately) so the journal-replay store keeps a single string.
@@ -193,21 +192,22 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     return void sendJson(res, 404, { error: "not found" });
   }
 
-  // --- operator console (vanilla, no build step) ---
-  if (method === "GET" && path === "/console") {
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(CONSOLE_HTML);
-    return;
-  }
   // --- the built participant app (loom-play) at `/` + its static assets ---
+  // Moderation now lives in the Loom editor's Run panel, not a standalone
+  // console; guests + performers use this app.
   if (
     method === "GET" &&
     (path === "/" || path === "/index.html" || path.startsWith("/assets/") || path === "/favicon.ico")
   ) {
     if (serveAppFile(path, res)) return;
-    // Not built yet — fall back to the console so the server is still usable.
+    // Not built yet — a plain hint rather than a blank page.
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(CONSOLE_HTML);
+    res.end(
+      `<!doctype html><meta charset=utf-8><title>Loom</title>` +
+        `<body style="font:16px system-ui;background:#0b0d12;color:#e7ecf3;padding:2rem">` +
+        `<h1>Loom event server</h1><p>The participant app isn't built yet. Run ` +
+        `<code>pnpm --filter loom-play build</code> (or <code>cd ../play && pnpm dev</code> for live dev on :5174).</p>`,
+    );
     return;
   }
 
@@ -238,12 +238,6 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const subPath = slash === -1 ? "/" : rest.slice(slash);
     const runtime = registry.get(eventId);
     if (runtime === undefined) return void sendJson(res, 404, { error: "unknown event" });
-    // Per-event operator console (the same HTML, scoped to this event by path).
-    if (method === "GET" && subPath === "/console") {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(CONSOLE_HTML);
-      return;
-    }
     // The owning author moderates via their session — no mod code needed.
     let moderator = false;
     if (controlPlane && subPath.startsWith("/api/mod/")) {
@@ -280,19 +274,19 @@ server.listen(PORT, HOST, () => {
   process.stdout.write(`    🎟️  Guest event code  : ${PASS.event}\n`);
   process.stdout.write(`    🎭  Performer passcode: ${PASS.prime}\n`);
   process.stdout.write(`    🛡️  Moderator passcode: ${PASS.mod}\n`);
-  process.stdout.write(`    (sign in at /console with the moderator code; also saved to ${STATE_DIR}/codes.json)\n\n`);
+  process.stdout.write(`    (moderate from the Loom editor's Run panel; also saved to ${STATE_DIR}/codes.json)\n\n`);
   if (restored) {
     process.stdout.write(
       `  ↻ Restored ${restored.guests} guest(s), ${restored.events} event(s), ${restored.sessions} live session(s) from ${STATE_DIR}\n\n`,
     );
   }
   for (const u of urls) process.stdout.write(`  → ${u}  (participant app)\n`);
-  process.stdout.write(`  → ${urls[0]}/console  (operator console)\n\n`);
+  process.stdout.write(`\n`);
   if (appBuilt) {
-    process.stdout.write(`  Guests/performers use the app at /. Mods open the doors from /console.\n\n`);
+    process.stdout.write(`  Guests + performers use the app at /. Authors moderate from the editor's Run panel (⌘3).\n\n`);
   } else {
     process.stdout.write(`  ⚠️  participant app not built — run \`pnpm --filter loom-play build\`\n`);
-    process.stdout.write(`     (or for live dev: \`cd ../play && pnpm dev\` and use :5174). / falls back to the console.\n\n`);
+    process.stdout.write(`     (or for live dev: \`cd ../play && pnpm dev\` and use :5174).\n\n`);
   }
 });
 

@@ -62,7 +62,10 @@ export interface Todo {
 /** Per-character snapshot we expose to hover. */
 export interface CharacterInfo {
   uri: string;
+  /** The whole declaration span (used by hover). */
   range: Range;
+  /** Tight range over just the declared name (used by go-to-definition). */
+  nameRange: Range;
   /** Declared `is X, Y` mixins. */
   mixins: string[];
   /** Raw indented body lines, one per source line. */
@@ -80,6 +83,8 @@ export interface CharacterInfo {
 export interface TraitInfo {
   uri: string;
   range: Range;
+  /** Tight range over just the trait name (used by go-to-definition). */
+  nameRange: Range;
   params: string[];
   /** Shipped-beat names authored inside the trait body. */
   beats: string[];
@@ -123,6 +128,13 @@ export class Workspace {
     this.rebuildIndex();
   }
 
+  /** Drop every document (project switch / close) and rebuild empty. */
+  reset(): void {
+    if (this.docs.size === 0) return;
+    this.docs.clear();
+    this.rebuildIndex();
+  }
+
   /**
    * Latest diagnostics for a single document, packaged for
    * `textDocument/publishDiagnostics`. Returns `null` if the document
@@ -146,6 +158,23 @@ export class Workspace {
       this.indexFile(uri, doc.file, doc.text);
     }
     this.rebuildProjectDiagnostics();
+  }
+
+  /**
+   * Batch replace many documents with a **single** index rebuild. Plain
+   * `update` reparses + rebuilds the whole cross-file index (and recompiles
+   * the throwaway diagnostics bundle) on every call, so pushing N files one
+   * at a time is O(N²). `updateMany` parses each doc once, then rebuilds the
+   * index a single time — used by the editor's whole-project indexer so
+   * opening a project is one rebuild, not one-per-file.
+   */
+  updateMany(entries: Array<[string, string]>): void {
+    if (entries.length === 0) return;
+    for (const [uri, text] of entries) {
+      const [file, diagnostics] = parse(text);
+      this.docs.set(uri, { text, file, diagnostics });
+    }
+    this.rebuildIndex();
   }
 
   /**
@@ -266,7 +295,7 @@ export class Workspace {
     for (const item of file.items) {
       switch (item.kind) {
         case "declaration":
-          this.indexDeclaration(uri, item.value);
+          this.indexDeclaration(uri, item.value, text);
           break;
         case "beat":
           this.indexBeat(uri, item.value, text);
@@ -295,12 +324,14 @@ export class Workspace {
     }
   }
 
-  private indexDeclaration(uri: string, decl: Declaration): void {
+  private indexDeclaration(uri: string, decl: Declaration, text: string): void {
     const range = spanToRange(decl.span);
+    const nameRange = nameRangeInText(text, decl.span, decl.name);
     if (decl.kind === "character" || decl.kind === "role") {
       this.characters.set(decl.name, {
         uri,
         range,
+        nameRange,
         mixins: [...decl.mixin],
         body: decl.body.map((l) => l.text),
         ownedBeats: decl.character?.beats.map((b) => b.name) ?? [],
@@ -309,6 +340,7 @@ export class Workspace {
       this.traits.set(decl.name, {
         uri,
         range,
+        nameRange,
         params: decl.character ? [...decl.character.params] : [],
         beats: decl.character?.beats.map((b) => b.name) ?? [],
       });

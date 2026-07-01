@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
@@ -14,7 +14,6 @@ export default defineConfig({
       // Same-origin from the browser so the BetterAuth session cookie flows.
       '/api': { target: apiTarget, changeOrigin: true },
       '/e': { target: apiTarget, changeOrigin: true },
-      '/console': { target: apiTarget, changeOrigin: true },
     },
   },
   resolve: {
@@ -26,5 +25,11 @@ export default defineConfig({
       '@loom/core': path.resolve(__dirname, '../core/src/index.ts'),
       '@': path.resolve(__dirname, './src'),
     },
+  },
+  // Unit tests only — the Playwright `e2e/*.spec.ts` suites run via the
+  // separate `test:e2e` script and must not be swept up by vitest.
+  test: {
+    include: ['src/**/*.test.ts'],
+    exclude: ['e2e/**', 'node_modules/**'],
   },
 })

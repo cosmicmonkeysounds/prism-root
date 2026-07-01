@@ -53,10 +53,27 @@ describe("server views", () => {
     expect(v.guests.map((g) => g.id)).toEqual(["g1"]);
   });
 
+  it("enumerates operator rooms, the cast, and the beat picker", () => {
+    const sim = Sim.fromSources(SCENARIO);
+    const v = modView(sim, "open", "escape-the-internet");
+    // The lobby plus one derived broadcast channel per faction.
+    expect(v.channels.find((c) => c.id === "lobby")).toBeDefined();
+    expect(v.channels.some((c) => c.id === "faction:Mods")).toBe(true);
+    // The cast carries each character's faction, for the "speak/fire as" picker.
+    const admin = v.cast.find((c) => c.id === "Moderator_Prime");
+    expect(admin).toBeDefined();
+    expect(admin!.faction).toBe("Mods");
+    // Every named beat is offered to the "fire beat" picker.
+    expect(v.beats.length).toBeGreaterThan(0);
+  });
+
   it("returns empty views when no scenario is loaded", () => {
     const v = modView(null, "idle", null);
     expect(v.roster).toEqual([]);
     expect(v.characters).toEqual([]);
+    expect(v.cast).toEqual([]);
+    expect(v.channels).toEqual([]);
+    expect(v.beats).toEqual([]);
     expect(primeView(null, "X").guests).toEqual([]);
   });
 });

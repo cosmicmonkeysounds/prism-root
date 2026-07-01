@@ -8,7 +8,9 @@ import { indentWithTab } from '@codemirror/commands'
 import { indentationMarkers } from '@replit/codemirror-indentation-markers'
 import { useWorkspace } from '@/store/workspace'
 import { useSettings } from '@/store/settings'
-import { extensionForPath } from '@/lib/language'
+import { extensionForPath, languageForPath } from '@/lib/language'
+import { loomLspExtensions } from '@/lib/loom-lsp'
+import { loomLint, loomLintProject } from '@/lib/loom-lint'
 
 export function Editor() {
   const activePath = useWorkspace((s) => s.activePath)
@@ -41,9 +43,35 @@ export function Editor() {
     return () => clearTimeout(timer)
   }, [settings.autoSave, settings.autoSaveDelayMs, file?.dirty, file?.contents, saveActive, file])
 
+  // Depend on the PATH, not the whole `file` object: `file` gets a fresh
+  // identity on every keystroke (updateContents), which would otherwise
+  // reconfigure CodeMirror — tearing down the stateful LSP ViewPlugins —
+  // on each edit. The path only changes when the active tab does.
+  const filePath = file?.path ?? null
+
   const extensions = useMemo(() => {
-    if (!file) return []
-    const ext: Extension[] = [...extensionForPath(file.path)]
+    if (!filePath) return []
+    const ext: Extension[] = [...extensionForPath(filePath)]
+    // Loom IDE layer: diagnostics + hover / completion / goto / references /
+    // occurrences, all driven by `@loom/core/lsp`. Composed here (not in
+    // `extensionForPath`) so it can read the editor settings + file path.
+    if (languageForPath(filePath) === 'loom') {
+      // Cross-file (project) diagnostics are only trustworthy once the whole
+      // project is indexed; otherwise the compile sees a partial doc set and
+      // can emit false errors (e.g. `unresolvedTraitArg`). Fall back to the
+      // parser-only linter when whole-project indexing is off.
+      const projectLint = settings.projectDiagnostics && settings.indexWholeProject
+      ext.push(projectLint ? loomLintProject(filePath) : loomLint())
+      ext.push(
+        ...loomLspExtensions(filePath, {
+          hoverEnabled: settings.hoverEnabled,
+          hoverDelayMs: settings.hoverDelayMs,
+          lspCompletion: settings.lspCompletion,
+          gotoOnClick: settings.gotoOnClick,
+          occurrenceHighlight: settings.occurrenceHighlight,
+        }),
+      )
+    }
     ext.push(EditorState.tabSize.of(settings.tabSize))
     ext.push(indentUnit.of(settings.indentWithTabs ? '\t' : ' '.repeat(settings.tabSize)))
     ext.push(keymap.of([indentWithTab]))
@@ -69,13 +97,20 @@ export function Editor() {
     )
     return ext
   }, [
-    file,
+    filePath,
     settings.tabSize,
     settings.indentWithTabs,
     settings.wordWrap,
     settings.showIndentGuides,
     settings.fontSize,
     settings.fontFamily,
+    settings.projectDiagnostics,
+    settings.indexWholeProject,
+    settings.hoverEnabled,
+    settings.hoverDelayMs,
+    settings.lspCompletion,
+    settings.gotoOnClick,
+    settings.occurrenceHighlight,
     setCursor,
   ])
 
@@ -83,10 +118,16 @@ export function Editor() {
     if (!file) setCursor(null)
   }, [file, setCursor])
 
-  // Honor pending cursor reveal (e.g. clicking a result in project-wide search).
+  // Honor pending cursor reveal (e.g. go-to-definition, References/Outline
+  // row click, project-wide search). Depend on `pendingCursor` + `filePath`
+  // ONLY — NOT the whole `file` object, which gets a new identity on every
+  // keystroke and would otherwise re-run this effect mid-typing and yank the
+  // caret back to the last reveal. The `token` guard makes each reveal fire
+  // exactly once (a stale reveal isn't re-applied on tab switch).
+  const lastRevealToken = useRef(-1)
   useEffect(() => {
-    if (!pendingCursor || !file || pendingCursor.path !== file.path) return
-    // Wait a frame so the document is mounted, then dispatch a selection + scroll.
+    if (!pendingCursor || pendingCursor.path !== filePath) return
+    if (pendingCursor.token === lastRevealToken.current) return
     const id = requestAnimationFrame(() => {
       const view = cmRef.current?.view
       if (!view) return
@@ -99,9 +140,10 @@ export function Editor() {
         effects: EditorView.scrollIntoView(pos, { y: 'center' }),
       })
       view.focus()
+      lastRevealToken.current = pendingCursor.token
     })
     return () => cancelAnimationFrame(id)
-  }, [pendingCursor, file?.path, file])
+  }, [pendingCursor, filePath])
 
   if (!file) {
     return (

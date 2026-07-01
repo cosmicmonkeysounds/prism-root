@@ -88,16 +88,66 @@ package's `.ts` source.) Everything here is synchronous; there is no
 bundle to load or rebuild.
 
 - `src/lib/loom-language.ts` — CodeMirror `StreamLanguage` mirroring
-  the parser's line classifier. Token shapes match the TextMate grammar
-  shipped to Zed/VSCode by `loom_syntax::emit_tmgrammar`.
-- `src/lib/loom-lint.ts` — `linter()` extension that calls
-  `@loom/core` `parse(source)` and maps the diagnostics' spans straight
-  to CodeMirror (the parser reports UTF-16 offsets, so no byte↔char
-  remap).
-- `src/lib/lsp-client.ts` — a long-lived `Workspace` from
-  `@loom/core/lsp` (completion / hover / definition / documentSymbols /
-  references / diagnostics), kept in sync with the open-file map. Drives
-  the Outline + References panels.
+  the parser's line classifier. It **imports the keyword tables straight
+  from `@loom/core/parser`** (`DECLARATIONS`, `SYNTACTIC_DIRECTIVES`,
+  `CONTRACT_KEYS`, `RESERVED_INLINE`, `LIVE_KEYWORDS`,
+  `SIMULACRA_KEYWORDS`, `MERIDIAN_KEYWORDS`) so the highlighter can never
+  drift from the language (`keywords.ts` is the single source of truth for
+  the parser AND every editor surface). It is a small per-line state
+  machine: each line is classified into a `mode` (prose / value / expr /
+  hook / decl / knot / divert) and `<…>` / `{…}` push a nested `ctx`; the
+  key invariant is that reserved words (`is`/`with`/`END`/`self`/…) light
+  up **only in expression contexts, never in prose/dialogue**. Token names
+  map through a `tokenTable` to precise `@lezer/highlight` tags the
+  one-dark theme colours reliably (kw→violet, type→yellow, label→blue,
+  fn→blue, prop→coral, num→yellow, str→green, atom/speaker/interp→orange).
+  Covered by `loom-language.test.ts` (`pnpm --filter loom-app test`),
+  which drives the raw `loomStreamParser` over real corpus lines. The Rust
+  `loom_syntax::emit_tmgrammar` TextMate grammar (Zed/VSCode) is the
+  sibling surface and is behind on hooks / live-keywords (Rust
+  deprioritized).
+- `src/lib/loom-lint.ts` — CodeMirror `linter()` extensions. `loomLint()`
+  is the parser-only fallback (`parse(source)` → CM spans; UTF-16 offsets,
+  no remap). `loomLintProject(path)` is the default: it sources
+  `Workspace.diagnosticsFor(uri)` so the gutter shows **cross-file project
+  diagnostics** (`requiredSlotUnfilled` / `unresolvedTraitArg` /
+  `derivedBeatConflict` / …), not just parser errors. `Editor.tsx` picks
+  the project linter only when **both** `projectDiagnostics` **and**
+  `indexWholeProject` are on (a partial index would emit false cross-file
+  errors).
+- `src/lib/lsp-client.ts` — the long-lived singleton `Workspace` from
+  `@loom/core/lsp` (`lspWorkspaceSync()` / async `lspWorkspace()`), plus
+  `uriFor` / `pathForUri` (per-segment encode/decode) and `docText(uri)`.
+- `src/lib/loom-lsp.ts` — **the CodeMirror ⇄ LSP glue** — the IDE layer
+  that makes CodeMirror behave like VSCode for `.loom`. `loomLspExtensions(path, opts)`
+  composes: markdown **hover** tooltips (safe `textContent` render;
+  `hoverDelayMs` delay, instant on ⌘/Ctrl-hover), LSP **completion**
+  (`autocompletion` override → `completionAt`, replacing only the trailing
+  identifier so owner-qualified diverts keep their `self.`), **go-to-definition**
+  (⌘/Ctrl-Click + F12, cross-file) with a ⌘/Ctrl-hover **link underline**,
+  **find-references** (Shift-F12 → focus bus → References panel), and
+  **occurrence highlight**. All read live Workspace/store state at event
+  time via getters, so the extension array stays stable across keystrokes
+  (`Editor.tsx` memoizes on `file.path`, never the per-keystroke `file`).
+- `src/lib/lsp-nav.ts` — position mapping (`offsetToLsp` / `lspToOffset`,
+  0-based LSP ↔ CM offset) + cross-file nav: `navigateToLocation(loc)`
+  (same-file `revealActive` vs. sibling `revealAt`), `findFileEntryByPath`,
+  `firstLocation`.
+- `src/lib/lsp-index.ts` + `src/lib/use-lsp-index.ts` — **whole-project
+  indexing**. `indexProjectTree` walks the `root` FsEntry tree and pushes
+  every `.loom` into the Workspace (server `.content` inline; local read
+  lazily, mtime-gated), diffed via a text/mtime cache and batched through
+  `Workspace.updateMany` (one rebuild). `syncBuffer` keeps the active
+  unsaved buffer live; `dropIndexedPath` / `resetIndexCache` drop docs on
+  delete/rename/project-switch (wired from `store/workspace.ts`). A
+  `useLspIndexGen` counter bumps whenever indexed text changes, so the
+  References panel + Command-Palette symbol lists recompute when async
+  indexing lands. `useLspProjectIndex()` (mounted once in `StudioShell`)
+  owns the reindex-on-`root` + buffer-sync effects.
+  These drive the Outline + References panels **and** the in-buffer LSP
+  features above; go-to-symbol lives in the Command Palette (`@` file /
+  `#` workspace, `⌘⇧O`). Toggles + `hoverDelayMs` live in Settings
+  (`store/settings.ts`, "Loom IDE" section).
 - `src/lib/loom-ast.ts` — author-time typed-AST access for the
   Properties tray, plus `useLoomEdit` wrapping `@loom/core/parser`'s
   `applyBeatProperty` / `applyMoveBeat` / `applyInsertBeat` /
@@ -114,8 +164,11 @@ bundle to load or rebuild.
 ## Authoring-only — no in-editor play or collaboration
 
 The editor is an **authoring tool**: open a folder, edit, highlight,
-lint, LSP (Outline / References / completion / hover / definition),
-structural beat edits, and the static graph / beat-flow views. It does
+lint, full **in-buffer LSP** (hover / go-to-definition on ⌘/Ctrl-Click +
+F12 / completion / find-references on ⇧F12 / occurrence highlight /
+project diagnostics, plus the Outline / References panels and
+go-to-symbol), structural beat edits, and the static graph / beat-flow
+views. It does
 **not** run the show or co-edit over a relay — the former wasm
 `LoomSession` (local play) and `LoomDoc` (Loro CRDT collaboration) were
 removed in the wasm cutover. **Runtime lives in the sibling packages**:

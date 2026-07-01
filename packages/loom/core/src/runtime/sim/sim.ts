@@ -283,8 +283,23 @@ export class Sim {
     const bindings: Bindings = new Map();
     const dot = name.indexOf(".");
     if (dot > 0) bindings.set("self", name.slice(0, dot));
-    if (subject !== undefined && subject.length > 0) bindings.set("guest", subject);
+    // Truthy check (not `!== undefined`): the journal round-trips a missing
+    // arg through JSON as `null`, and `null !== undefined` would then throw on
+    // `.length` during replay, silently dropping the beat + desyncing chat seqs.
+    if (subject) bindings.set("guest", subject);
     this.playBeat(name, bindings);
+    this.drain();
+    return this.log.since(from);
+  }
+
+  /**
+   * An operator exposes a hidden faction (the secret-villain reveal), the
+   * scanner-less twin of a `<reveal:>` directive. Idempotent — re-revealing is
+   * a no-op — and journaled, so it replays deterministically.
+   */
+  reveal(faction: string): SimEvent[] {
+    const from = this.log.len();
+    this.doReveal(faction);
     this.drain();
     return this.log.since(from);
   }

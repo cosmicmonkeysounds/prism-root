@@ -72,6 +72,16 @@ const BOOL_ROWS: Row<keyof EditorSettings>[] = [
   { key: 'formatOnSave', label: 'Format on save', description: 'Trim trailing whitespace and ensure final newline' },
 ]
 
+// Loom `.loom` IDE / language-server features.
+const LSP_ROWS: Row<keyof EditorSettings>[] = [
+  { key: 'hoverEnabled', label: 'Hover tooltips', description: 'Docs on directives, beats, characters & traits' },
+  { key: 'lspCompletion', label: 'Smart completion', description: 'Divert targets, directives & mixins from the language server' },
+  { key: 'gotoOnClick', label: '⌘/Ctrl-click to definition', description: 'Also underlines jumpable symbols on ⌘/Ctrl-hover' },
+  { key: 'occurrenceHighlight', label: 'Highlight occurrences', description: 'Every use of the identifier under the cursor' },
+  { key: 'projectDiagnostics', label: 'Project diagnostics', description: 'Surface cross-file errors, not just parser errors' },
+  { key: 'indexWholeProject', label: 'Index whole project', description: 'Enable cross-file go-to-definition & references' },
+]
+
 export function SettingsPanel() {
   const [isOpen, setOpen] = useState(false)
   const s = useSettings()
@@ -158,6 +168,25 @@ export function SettingsPanel() {
                   max={10000}
                   step={100}
                   onChange={(v) => s.set('autoSaveDelayMs', v)}
+                />
+              </Field>
+            )}
+          </Section>
+
+          <Section title="Loom IDE">
+            {LSP_ROWS.map(({ key, label, description }) => (
+              <Field key={key} label={label} description={description}>
+                <Toggle value={Boolean(s[key])} onChange={(v) => s.set(key, v as never)} />
+              </Field>
+            ))}
+            {s.hoverEnabled && (
+              <Field label="Hover delay (ms)" description="⌘/Ctrl-hover shows instantly">
+                <NumberInput
+                  value={s.hoverDelayMs}
+                  min={0}
+                  max={2000}
+                  step={50}
+                  onChange={(v) => s.set('hoverDelayMs', v)}
                 />
               </Field>
             )}

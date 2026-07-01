@@ -12,6 +12,7 @@ type LspDocSymbol = {
   name: string;
   kind: number;
   range: { start: { line: number; character: number } };
+  selectionRange?: { start: { line: number; character: number } };
 };
 
 // Subset of LSP SymbolKind we care to label.
@@ -89,22 +90,24 @@ export function OutlinePanel() {
       </div>
     );
   }
+  const revealActive = useWorkspace.getState().revealActive;
   return (
     <div className="h-full overflow-auto bg-zinc-950 px-2 py-2 font-mono text-xs">
-      {symbols.map((s, i) => (
-        <div
-          key={i}
-          className="flex gap-2 px-1 py-0.5 hover:bg-white/5 rounded"
-        >
-          <span className="text-zinc-600 w-10 text-right">
-            {s.range.start.line + 1}
-          </span>
-          <span className="text-amber-300 w-16 shrink-0">
-            {KIND_LABEL[s.kind] ?? "decl"}
-          </span>
-          <span className="text-zinc-200 truncate">{s.name}</span>
-        </div>
-      ))}
+      {symbols.map((s, i) => {
+        const at = s.selectionRange?.start ?? s.range.start;
+        return (
+          <button
+            key={i}
+            type="button"
+            onClick={() => revealActive(at.line + 1, at.character + 1)}
+            className="w-full text-left flex gap-2 px-1 py-0.5 hover:bg-white/5 rounded cursor-pointer"
+          >
+            <span className="text-zinc-600 w-10 text-right">{s.range.start.line + 1}</span>
+            <span className="text-amber-300 w-16 shrink-0">{KIND_LABEL[s.kind] ?? "decl"}</span>
+            <span className="text-zinc-200 truncate">{s.name}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

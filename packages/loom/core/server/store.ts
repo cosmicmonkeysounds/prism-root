@@ -36,6 +36,7 @@ export type Mutation =
   | "capture"
   | "setScore"
   | "fireBeat"
+  | "reveal"
   | "choose"
   | "say"
   | "inviteToChannel"

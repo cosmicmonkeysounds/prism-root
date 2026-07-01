@@ -151,6 +151,10 @@ export const modApi = {
   async scanAs(eventId: string, as: string, target: string): Promise<void> {
     await req('POST', `/e/${eventId}/api/mod/scan`, { as, target })
   },
+  /** Expose a hidden faction (the secret-villain reveal). */
+  async reveal(eventId: string, faction: string): Promise<void> {
+    await req('POST', `/e/${eventId}/api/mod/reveal`, { faction })
+  },
   /** Reset the event: clear the journal + replay from the loaded scenario. */
   async reset(eventId: string): Promise<void> {
     await req('POST', `/e/${eventId}/api/mod/reset`, {})

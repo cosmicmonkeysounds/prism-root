@@ -15,7 +15,7 @@ import { Breadcrumbs } from '@/components/editor/Breadcrumbs'
 import { OutlinePanel } from '@/components/runner/Outline'
 import { GraphPanel } from '@/components/runner/Graph'
 import { BeatTimeline } from './BeatTimeline'
-import { EventSidebar } from '@/components/operate/EventSidebar'
+import { RoomsRail } from '@/components/operate/RoomsRail'
 import { OperateStage } from '@/components/operate/OperateStage'
 
 /** Fills an allotment pane and clips overflow so leaf panels scroll. */
@@ -47,7 +47,7 @@ export function LeftRail({ mode }: { mode: Mode }) {
       // Story Bin stand-in until the dedicated beat/scene browser lands.
       return <OutlinePanel />
     case 'operate':
-      return <EventSidebar />
+      return <RoomsRail />
   }
 }
 
