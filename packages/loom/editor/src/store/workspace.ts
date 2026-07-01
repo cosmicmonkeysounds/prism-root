@@ -16,6 +16,7 @@ import {
 } from '@/lib/fs'
 import { idbDel, idbGet, idbSet } from '@/lib/idb'
 import { useSettings } from '@/store/settings'
+import { projectsApi, type ProjectFile } from '@/lib/api'
 
 function applyFormat(text: string): string {
   // Trim trailing whitespace on every line, and ensure exactly one final newline.
@@ -27,7 +28,11 @@ function applyFormat(text: string): string {
 
 export type OpenFile = {
   path: string
-  handle: FileSystemFileHandle
+  /** Present for local files; server-backed files save through the API. */
+  handle?: FileSystemFileHandle
+  backend: 'local' | 'server'
+  /** The owning project id, for server-backed files. */
+  projectId?: string
   contents: string
   dirty: boolean
 }
@@ -41,10 +46,13 @@ const ROOT_HANDLE_KEY = 'root-handle'
 type WorkspaceState = {
   root: FsEntry | null
   rootStatus: RootStatus
+  /** The open server project (SaaS), or null when editing a local folder. */
+  projectId: string | null
+  projectName: string | null
   openFiles: Record<string, OpenFile>
   tabOrder: string[]
   activePath: string | null
-  recentlyClosed: { path: string; handle: FileSystemFileHandle }[]
+  recentlyClosed: { path: string; handle?: FileSystemFileHandle }[]
   cursor: CursorInfo | null
   pendingCursor: { path: string; line: number; column: number; token: number } | null
 
@@ -52,6 +60,8 @@ type WorkspaceState = {
   edges: Edge[]
 
   openRoot: (handle: FileSystemDirectoryHandle) => Promise<void>
+  /** Open a server-backed project: load its files into an editable tree. */
+  openServerProject: (project: { id: string; name: string }, files: ProjectFile[]) => Promise<void>
   restoreRoot: () => Promise<void>
   requestPermission: () => Promise<void>
   closeRoot: () => Promise<void>
@@ -100,6 +110,55 @@ function buildNodeForPath(path: string, index: number): Node {
   }
 }
 
+/** Build a synthetic file tree (no handles) for a server-backed project. */
+function buildServerTree(name: string, files: ProjectFile[]): FsEntry {
+  const root: FsEntry = { name, path: name, kind: 'directory', backend: 'server', children: [] }
+  for (const f of [...files].sort((a, b) => (a.path < b.path ? -1 : 1))) {
+    const parts = f.path.split('/')
+    let dir = root
+    for (let i = 0; i < parts.length - 1; i++) {
+      const segPath = parts.slice(0, i + 1).join('/')
+      let child = dir.children!.find((c) => c.kind === 'directory' && c.path === segPath)
+      if (!child) {
+        child = { name: parts[i], path: segPath, kind: 'directory', backend: 'server', children: [] }
+        dir.children!.push(child)
+      }
+      dir = child
+    }
+    dir.children!.push({ name: parts[parts.length - 1], path: f.path, kind: 'file', backend: 'server', content: f.content })
+  }
+  return root
+}
+
+/** Find the first file entry with an exact relative path, depth-first. */
+function findFileEntry(entry: FsEntry, path: string): FsEntry | null {
+  if (entry.kind === 'file') return entry.path === path ? entry : null
+  for (const c of entry.children ?? []) {
+    const hit = findFileEntry(c, path)
+    if (hit) return hit
+  }
+  return null
+}
+
+/** The first file entry anywhere in the tree (fallback when no main.loom). */
+function firstFileEntry(entry: FsEntry): FsEntry | null {
+  if (entry.kind === 'file') return entry
+  for (const c of entry.children ?? []) {
+    const hit = firstFileEntry(c)
+    if (hit) return hit
+  }
+  return null
+}
+
+/** Persist one open file to its backend (server API or the local disk handle). */
+async function writeOpenFile(file: OpenFile, formatted: string): Promise<void> {
+  if (file.backend === 'server') {
+    await projectsApi.putFile(file.projectId!, file.path, formatted)
+  } else {
+    await writeFileText(file.handle!, formatted)
+  }
+}
+
 // One live observer per workspace; tied to the current root handle.
 let activeObserver: ReturnType<typeof createFsObserver> = null
 
@@ -115,7 +174,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
   // (If the user has unsaved edits, we leave them alone — last-write-wins on save.)
   const syncOpenFileFromDisk = async (path: string) => {
     const file = get().openFiles[path]
-    if (!file || file.dirty) return
+    if (!file || file.dirty || !file.handle) return
     try {
       const fresh = await readFileText(file.handle)
       if (fresh === file.contents) return
@@ -194,6 +253,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
   return {
     root: null,
     rootStatus: 'idle',
+    projectId: null,
+    projectName: null,
     openFiles: {},
     tabOrder: [],
     activePath: null,
@@ -204,11 +265,32 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     edges: [],
 
     openRoot: async (handle) => {
-      // Fresh workspace: drop previous tabs/canvas state.
+      // Fresh workspace: drop previous tabs/canvas state (and any server project).
       stopObserver()
-      set({ openFiles: {}, tabOrder: [], activePath: null, recentlyClosed: [], nodes: [], edges: [] })
+      set({ projectId: null, projectName: null, openFiles: {}, tabOrder: [], activePath: null, recentlyClosed: [], nodes: [], edges: [] })
       await idbSet(ROOT_HANDLE_KEY, handle)
       await adoptRoot(handle)
+    },
+
+    openServerProject: async (project, files) => {
+      // Server projects don't use the on-disk observer or handles.
+      stopObserver()
+      await idbDel(ROOT_HANDLE_KEY)
+      const root = buildServerTree(project.name, files)
+      set({
+        root,
+        rootStatus: 'connected',
+        projectId: project.id,
+        projectName: project.name,
+        openFiles: {},
+        tabOrder: [],
+        activePath: null,
+        recentlyClosed: [],
+        nodes: [],
+        edges: [],
+      })
+      const main = findFileEntry(root, 'main.loom') ?? firstFileEntry(root)
+      if (main) await get().openFile(main)
     },
 
     restoreRoot: async () => {
@@ -255,6 +337,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       set({
         root: null,
         rootStatus: 'idle',
+        projectId: null,
+        projectName: null,
         openFiles: {},
         tabOrder: [],
         activePath: null,
@@ -266,8 +350,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     },
 
     refreshTree: async () => {
-      const { root } = get()
-      if (!root) return
+      const { root, projectId } = get()
+      if (!root || projectId) return // server projects have no on-disk tree to refresh
       const fresh = await readDirectoryTree(root.handle as FileSystemDirectoryHandle)
       set({ root: fresh })
     },
@@ -279,15 +363,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         set({ activePath: entry.path })
         return
       }
-      const handle = entry.handle as FileSystemFileHandle
-      const contents = await readFileText(handle)
+      const open: OpenFile =
+        entry.backend === 'server'
+          ? { path: entry.path, backend: 'server', projectId: get().projectId ?? undefined, contents: entry.content ?? '', dirty: false }
+          : { path: entry.path, backend: 'local', handle: entry.handle as FileSystemFileHandle, contents: await readFileText(entry.handle as FileSystemFileHandle), dirty: false }
       set((s) => {
         const hasNode = s.nodes.some((n) => n.id === entry.path)
         return {
-          openFiles: {
-            ...s.openFiles,
-            [entry.path]: { path: entry.path, handle, contents, dirty: false },
-          },
+          openFiles: { ...s.openFiles, [entry.path]: open },
           tabOrder: s.tabOrder.includes(entry.path) ? s.tabOrder : [...s.tabOrder, entry.path],
           activePath: entry.path,
           nodes: hasNode ? s.nodes : [...s.nodes, buildNodeForPath(entry.path, s.nodes.length)],
@@ -355,12 +438,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       const next = recentlyClosed[0]
       if (!next) return
       set({ recentlyClosed: recentlyClosed.slice(1) })
+      if (!next.handle) return // server-backed tabs aren't restored from recentlyClosed
       try {
         const contents = await readFileText(next.handle)
         set((s) => ({
           openFiles: {
             ...s.openFiles,
-            [next.path]: { path: next.path, handle: next.handle, contents, dirty: false },
+            [next.path]: { path: next.path, backend: 'local', handle: next.handle, contents, dirty: false },
           },
           tabOrder: s.tabOrder.includes(next.path) ? s.tabOrder : [...s.tabOrder, next.path],
           activePath: next.path,
@@ -432,7 +516,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       if (!file) return
       const formatOnSave = useSettings.getState().formatOnSave
       const formatted = formatOnSave ? applyFormat(file.contents) : file.contents
-      await writeFileText(file.handle, formatted)
+      await writeOpenFile(file, formatted)
       set((s) => ({
         openFiles: {
           ...s.openFiles,
@@ -449,7 +533,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         formatted: formatOnSave ? applyFormat(f.contents) : f.contents,
         file: f,
       }))
-      await Promise.all(updates.map((u) => writeFileText(u.file.handle, u.formatted)))
+      await Promise.all(updates.map((u) => writeOpenFile(u.file, u.formatted)))
       set((s) => {
         const next = { ...s.openFiles }
         for (const u of updates) next[u.path] = { ...next[u.path], contents: u.formatted, dirty: false }
@@ -463,6 +547,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         alert('Open a folder first.')
         return
       }
+      if (get().projectId) {
+        alert('Adding files to a server project isn’t supported yet.')
+        return
+      }
       const handle = await createFile(root.handle as FileSystemDirectoryHandle, name)
       await writeFileText(handle, '')
       await refreshTree()
@@ -470,7 +558,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       set((s) => ({
         openFiles: {
           ...s.openFiles,
-          [path]: { path, handle, contents: '', dirty: false },
+          [path]: { path, handle, backend: 'local', contents: '', dirty: false },
         },
         tabOrder: s.tabOrder.includes(path) ? s.tabOrder : [...s.tabOrder, path],
         activePath: path,
@@ -480,6 +568,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
 
     createFileIn: async (dir, name) => {
       if (dir.kind !== 'directory') return
+      if (get().projectId) {
+        alert('Adding files to a server project isn’t supported yet.')
+        return
+      }
       const trimmed = name.trim()
       if (!trimmed) return
       const handle = await createFile(dir.handle as FileSystemDirectoryHandle, trimmed)
@@ -489,7 +581,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       set((s) => ({
         openFiles: {
           ...s.openFiles,
-          [path]: { path, handle, contents: '', dirty: false },
+          [path]: { path, handle, backend: 'local', contents: '', dirty: false },
         },
         tabOrder: s.tabOrder.includes(path) ? s.tabOrder : [...s.tabOrder, path],
         activePath: path,
@@ -498,6 +590,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
 
     createDirectoryIn: async (dir, name) => {
       if (dir.kind !== 'directory') return
+      if (get().projectId) return
       const trimmed = name.trim()
       if (!trimmed) return
       await createDirectory(dir.handle as FileSystemDirectoryHandle, trimmed)
@@ -505,7 +598,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     },
 
     deleteEntry: async (parent, entry) => {
-      if (parent.kind !== 'directory') return
+      if (parent.kind !== 'directory' || get().projectId) return
       const label = entry.kind === 'directory' ? `folder “${entry.name}” and all its contents` : `file “${entry.name}”`
       if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return
       await removeEntry(parent.handle as FileSystemDirectoryHandle, entry.name, entry.kind === 'directory')
@@ -528,6 +621,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     },
 
     renameEntry: async (parent, entry, newName) => {
+      if (get().projectId) return
       const trimmed = newName.trim()
       if (!trimmed || trimmed === entry.name) return
       const ok = await renameHandle(entry.handle as FileSystemFileHandle | FileSystemDirectoryHandle, trimmed)

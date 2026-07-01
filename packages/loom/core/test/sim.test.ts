@@ -121,6 +121,39 @@ describe("Escape the Internet — accounts & factions", () => {
   });
 });
 
+describe("Escape the Internet — functional redesign (traits / owned beats / SELF)", () => {
+  it("resolves a badge trait's faction onto every scanner prop", () => {
+    const sim = fresh();
+    // `is AlgoScanner(beat)` factors the faction badge in from `cast/kit.loom`.
+    expect(sim.model.characters.get("Crawler")!.faction).toBe("TheAlgorithm");
+    expect(sim.model.characters.get("Moderator_Prime")!.faction).toBe("Mods");
+    expect(sim.model.characters.get("Glitch")!.faction).toBe("Glitchers");
+    // A neutral prop uses the bare router — no faction.
+    expect(sim.model.characters.get("Recycle_Bin")!.faction).toBeNull();
+  });
+
+  it("runs an owned beat via `-> self.beat` and speaks it as the owner", () => {
+    const sim = fresh();
+    sim.createPerson("g1", "Ada");
+    // Firewall_Terminal owns `firewall`, keyed Owner.name and reached by the
+    // inline `on scan guest -> self.firewall`.
+    expect(sim.model.beats.has("Firewall_Terminal.firewall")).toBe(true);
+    expect(sim.model.beats.has("firewall")).toBe(false); // no longer global
+    const ev = sim.scan("Firewall_Terminal", "g1");
+    // Free guest: the wall hums, spoken as FIREWALL_TERMINAL (SELF).
+    const line = ev.find((e) => e.type === "dialogue") as { speaker: string; text: string };
+    expect(line.speaker).toBe("FIREWALL_TERMINAL");
+    expect(line.text).toContain("The firewall hums");
+    // The `<else>` branch raised heat and funnelled to the still-global lockdown.
+    expect(sim.world.get("g1.heat")).toEqual({ kind: "number", value: 15 });
+  });
+
+  it("keeps TheAdmin's tally on self.captures (seeded to 0)", () => {
+    const sim = fresh();
+    expect(sim.world.get("TheAdmin.captures")).toEqual({ kind: "number", value: 0 });
+  });
+});
+
 describe("Escape the Internet — QR scans drive character relationships", () => {
   it("a Mod moderator greets a fellow Mod and rewards them", () => {
     const sim = fresh();

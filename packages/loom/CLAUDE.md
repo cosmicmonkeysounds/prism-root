@@ -263,10 +263,57 @@ divert resolution is needed yet. The lexer now splits the `is` clause on
 *top-level* commas (`splitTopLevelCommas`, moved to `rust.ts`) so a multi-arg
 application `CellWatch(loc: Internet, signal: lockdown)` stays one entry. Unfilled
 params surface as a `requiredParamUnfilled` project diagnostic.
-(Slice 3: `UnterminatedMixinClause` / `UnresolvedTraitArg` diagnostics, seed
-CHARACTER slot defaults, inline opener divert, LSP. Part II: class-owned + derived
-beats, `with`-composition. The committed example is not yet migrated; Rust mirror
-not yet updated.)
+Part II Slice A + Slice 3 landed 2026-06-30 (TS `core/` only):
+
+- **Class-owned beats + qualified diverts (Slice A).** A CHARACTER body may
+  author `beat name(params)` sub-blocks (parsed like the `generator` block);
+  they register in `model.beats` under `Owner.name`, so two props may each own a
+  `main`/`greet` with no collision. `parseDivertTarget` splits a slash-free
+  target on the first `.` into `{qualifier, name}` (`/` still outranks `.`), and
+  the sim's new `resolveBeat` honors it: `self.`/`me.` resolve against the `self`
+  binding, an explicit `Owner.` is taken as-is, a **bare name stays global**
+  (existing `-> lockdown` diverts unchanged), a cross-owner `-> Owner.beat`
+  rebinds `self` so the foreign beat's `SELF` speaks as its true owner, and an
+  unresolved qualified divert emits a `diagnostic` event. `visits()` resolves the
+  beat name owner-first too (`resolveBeatKey`).
+- **Slice 3 niceties.** CHARACTER typed-slot defaults are seeded into the world
+  (`CharDef.defaults`), so `self.captures` starts at `0` rather than
+  implicitly-zero on first `+=`. An **inline opener divert** `on scan guest -> beat`
+  is split into a synthetic body divert. A wrapped `is`-clause (trailing top-level
+  comma / unbalanced parens) raises `L1008UnterminatedMixinClause`. *Deferred:*
+  `UnresolvedTraitArg`, the `SELF`→`cast[0]` fallback, and LSP completion/hover
+  (`RequiredParamUnfilled` already covers the missing-arg case).
+
+**The `escape-the-internet` example is migrated** to the new surface:
+`cast/kit.loom` holds the shared traits (`Scanner(beat)` + faction badges +
+combined `<Faction>Scanner(beat)`); every scanner prop is a one-liner; `TheAdmin`
+tallies on `self.captures`; `Sysadmin` and `Firewall_Terminal` **own** their beats
+(`interrogation`/`firewall` moved out of `beats/prison.loom` onto the props,
+reached via `-> self.beat`); several beats speak as `SELF`. The migration is
+behavior-preserving — the full vitest suite stays green.
+
+Part II Slice B (owned-beat forwarding — a trait param naming an owned beat stays
+`self.`-qualified) landed alongside a review pass, so `is Scanner(myOwnedBeat)`
+routes to the deriver's own beat; a trait can also ship a concrete `beat` block
+that each deriver inherits namespaced to itself.
+
+Part II Slice C landed 2026-07-01 (TS `core/` only): **derived beat templates.**
+A `TRAIT` ships a `beat name(params)` whose varying lines are `slot: <name>`
+holes; each deriving `CHARACTER` supplies `fill <name>` blocks of content. At
+compile, `model.ts::fillSlots` splices the fill content in place of each
+`slotPlaceholder` on the lowered tree (recursing through every nested
+control-flow body), per deriver — so `Interrogation_Booth` and `Bouncer` sharing
+one `confront` template get `Booth.confront` / `Bouncer.confront` with their own
+lines and no cross-corruption. A hole with no matching `fill` raises
+`unfilledDerivedSlot`; two distinct parents shipping a same-named beat raise
+`derivedBeatConflict`; a child re-declaring a derived `beat` whole-overrides it.
+The `slot:` placeholder keeps its colon (a bare `slot …` line stays prose);
+`fill` is a class-body opener like `beat`/`generator`.
+
+Deferred: beat-level `super` (override-then-extend), `UnresolvedTraitArg`, and LSP.
+**The Rust mirror (parser + runtime crates) is not yet updated for ANY of Slices
+1/2/A/3/B/C — that is the largest remaining gap; the TS and Rust engines will
+drift until it is ported.**
 
 Still to come: a pure-Rust Lua VM (piccolo) so Lua-defined directives
 and `.luau` extensions execute client-side instead of degrading; the

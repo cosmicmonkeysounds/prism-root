@@ -24,6 +24,7 @@ import type {
   LoomFile,
   MethodDecl,
   MixinRef,
+  OwnedBeat,
   PersonBody,
   Property,
   RosterBody,
@@ -78,7 +79,9 @@ export type ProjectDiagnostic =
   | { kind: "noEntryBeat" }
   | { kind: "ambiguousSlot"; character: string; prop: string }
   | { kind: "requiredSlotUnfilled"; character: string; slot: string }
-  | { kind: "requiredParamUnfilled"; character: string; trait: string; param: string };
+  | { kind: "requiredParamUnfilled"; character: string; trait: string; param: string }
+  | { kind: "derivedBeatConflict"; character: string; beat: string }
+  | { kind: "unfilledDerivedSlot"; character: string; beat: string; slot: string };
 
 /** One compiled Loom project. */
 export class Bundle {
@@ -317,7 +320,18 @@ export function mergeCharacter(
   const own = ownDecl.body;
   const mergedBody = emptyCharacterBody();
 
+  // Every beat this declaration will own — its own plus every one inherited
+  // through the `is` chain. A trait param bound to one of these is a route to
+  // an *owned* beat, so it must stay `self.`-qualified (spec §11.5); computed
+  // upfront (a pure name walk) so it's stable regardless of merge order.
+  const ownedBeatNames = collectOwnedBeatNames(name, raw, new Set());
+
   const parentPropertySources = new Map<string, string>();
+  // Keyed by beat NAME → the originating `OwnedBeat` object. A diamond
+  // (`Hero is Left, Right`, both `is Base`) propagates ONE authored beat by
+  // reference, so identity distinguishes a real name collision (two distinct
+  // authored beats) from the same beat reaching a deriver twice.
+  const beatSources = new Map<string, OwnedBeat>();
   for (const entry of ownDecl.inherits) {
     // An `is`-clause entry may carry arguments: `is Scanner(crawler_report)`.
     const ref = parseMixinRef(entry);
@@ -333,6 +347,7 @@ export function mergeCharacter(
         parentDecl.body.params,
         ref,
         own.params,
+        ownedBeatNames,
         diagnostics,
         name,
         parentName,
@@ -386,6 +401,28 @@ export function mergeCharacter(
         own.typedProperties.some((e) => e.name === p.name);
       if (!exists) mergedBody.typedProperties.push(p);
     }
+    // A trait may ship an owned `beat` block; the deriver inherits it,
+    // namespaced to the deriver at compile (model.ts). Child wins (below); two
+    // *distinct* parents shipping the same beat name is a conflict.
+    for (const bt of parentBody.beats) {
+      if (own.beats.some((e) => e.name === bt.name)) continue; // child overrides
+      const prior = beatSources.get(bt.name);
+      if (prior !== undefined) {
+        // Same authored beat via two paths (diamond) → fine; two *distinct*
+        // beats of one name from different origins → a real conflict.
+        if (prior !== bt) {
+          diagnostics.push({ kind: "derivedBeatConflict", character: name, beat: bt.name });
+        }
+        continue;
+      }
+      beatSources.set(bt.name, bt);
+      mergedBody.beats.push(bt);
+    }
+    // Inherit the trait's `fill` blocks (a parent trait can pre-fill a slot);
+    // a child's own fill wins (layered after the loop).
+    for (const [k, v] of parentBody.fills) {
+      if (!own.fills.has(k) && !mergedBody.fills.has(k)) mergedBody.fills.set(k, v);
+    }
   }
 
   // Layer the child's own declarations on top — child wins.
@@ -399,6 +436,8 @@ export function mergeCharacter(
   for (const g of own.goals) mergedBody.goals.push(g);
   for (const g of own.generators) mergedBody.generators.push(g);
   for (const r of own.reacts) mergedBody.reacts.push(r);
+  for (const bt of own.beats) mergedBody.beats.push(bt);
+  for (const [k, v] of own.fills) mergedBody.fills.set(k, v);
 
   // Hook composition with `super` + `: none` (spec §9.4 + §9.5).
   const suppressed = new Set<string>();
@@ -466,6 +505,8 @@ function cloneCharacterBody(b: CharacterBody): CharacterBody {
     hooks: [...b.hooks],
     generators: [...b.generators],
     typedProperties: [...b.typedProperties],
+    beats: [...b.beats],
+    fills: new Map(b.fills),
   };
 }
 
@@ -496,6 +537,18 @@ function deepCloneCharacterBody(b: CharacterBody): CharacterBody {
   c.properties = new Map(
     [...b.properties].map(([k, v]) => [k, { value: v.value, span: v.span }]),
   );
+  c.beats = b.beats.map((bt) => ({
+    name: bt.name,
+    params: bt.params,
+    body: bt.body.map((l) => ({ indent: l.indent, text: l.text, span: l.span })),
+    span: bt.span,
+  }));
+  c.fills = new Map(
+    [...b.fills].map(([k, lines]) => [
+      k,
+      lines.map((l) => ({ indent: l.indent, text: l.text, span: l.span })),
+    ]),
+  );
   return c;
 }
 
@@ -503,22 +556,28 @@ function deepCloneCharacterBody(b: CharacterBody): CharacterBody {
  * Bind a parameterized trait's params to an application's args and rewrite
  * every `self.<param>` token in the (deep-cloned) parent body (spec §2.3).
  * Positional args bind by index, named args by name. An arg that is itself a
- * parameter of the *applier* forwards as `self.<arg>` (stays unbound for the
- * next layer); any other arg is concrete and consumes the `self.` prefix.
+ * parameter of the *applier* — or names one of the applier's own beats —
+ * forwards as `self.<arg>` (stays unbound for the next layer); any other arg
+ * is concrete and consumes the `self.` prefix.
  */
 function substituteParams(
   parentBody: CharacterBody,
   parentParams: string[],
   ref: MixinRef,
   applierParams: string[],
+  ownedBeatNames: Set<string>,
   diagnostics: ProjectDiagnostic[],
   applierName: string,
   traitName: string,
 ): CharacterBody {
   const bindings = new Map<string, string>();
-  parentParams.forEach((param, i) => {
+  let posCursor = 0;
+  for (const param of parentParams) {
     let arg: string | undefined = ref.named.get(param);
-    if (arg === undefined) arg = ref.positional[i];
+    if (arg === undefined) {
+      arg = ref.positional[posCursor];
+      if (arg !== undefined) posCursor += 1;
+    }
     if (arg === undefined) {
       diagnostics.push({
         kind: "requiredParamUnfilled",
@@ -526,12 +585,14 @@ function substituteParams(
         trait: traitName,
         param,
       });
-      return;
+      continue;
     }
-    // Forwarding: an arg that names one of the applier's own params stays
-    // `self.<arg>` so a later layer can bind it; otherwise it is concrete.
-    bindings.set(param, applierParams.includes(arg) ? `self.${arg}` : arg);
-  });
+    // Forwarding: an arg that names one of the applier's own params, or routes
+    // to an owned beat, stays `self.<arg>` so a later layer can bind it;
+    // otherwise it is concrete.
+    const forward = applierParams.includes(arg) || ownedBeatNames.has(arg);
+    bindings.set(param, forward ? `self.${arg}` : arg);
+  }
   if (bindings.size === 0) return parentBody;
 
   const body = deepCloneCharacterBody(parentBody);
@@ -553,7 +614,32 @@ function substituteParams(
     for (const l of m.body) l.text = subst(l.text);
   }
   for (const [, v] of body.properties) v.value = subst(v.value);
+  for (const bt of body.beats) {
+    for (const l of bt.body) l.text = subst(l.text);
+  }
   return body;
+}
+
+/**
+ * The transitive set of beat names a declaration owns — its own `beat`
+ * blocks plus every one reachable through its `is` chain. A pure name walk
+ * (no body merge) so it is stable regardless of merge order.
+ */
+function collectOwnedBeatNames(
+  name: string,
+  raw: Map<string, RawDecl>,
+  seen: Set<string>,
+): Set<string> {
+  const out = new Set<string>();
+  if (seen.has(name)) return out;
+  seen.add(name);
+  const decl = raw.get(name);
+  if (decl === undefined) return out;
+  for (const bt of decl.body.beats) out.add(bt.name);
+  for (const entry of decl.inherits) {
+    for (const n of collectOwnedBeatNames(parseMixinRef(entry).name, raw, seen)) out.add(n);
+  }
+  return out;
 }
 
 /** Whitespace-collapsing comparison key for hook event clauses. */

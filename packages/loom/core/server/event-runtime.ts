@@ -340,9 +340,18 @@ export class EventRuntime {
   /**
    * Handle one event-scoped request. `path` is already relative to this
    * event (the `/e/:eventId` prefix, if any, has been stripped by the
-   * router). Returns true when the request matched an event route.
+   * router). `opts.moderator` is set by the router when the caller is the
+   * owning author (a BetterAuth session), granting mod access without a code.
+   * Returns true when the request matched an event route.
    */
-  async handle(req: IncomingMessage, res: ServerResponse, method: string, path: string, url: URL): Promise<boolean> {
+  async handle(
+    req: IncomingMessage,
+    res: ServerResponse,
+    method: string,
+    path: string,
+    url: URL,
+    opts: { moderator?: boolean } = {},
+  ): Promise<boolean> {
     // --- SSE stream ---
     if (method === "GET" && path === "/events") {
       const role = (url.searchParams.get("role") as Client["role"] | null) ?? "mod";
@@ -397,8 +406,10 @@ export class EventRuntime {
     if (this.handlePost(req, res, path, body)) return true;
 
     // --- admin-only actions ---
+    // Authorized by a per-event mod token OR by the owning author's session
+    // (opts.moderator) — the same capability, two front doors.
     if (path.startsWith("/api/mod/")) {
-      if (!this.sessions.canModerate(tokenOf(req, body))) {
+      if (!opts.moderator && !this.sessions.canModerate(tokenOf(req, body))) {
         sendJson(res, 403, { error: "moderators only" });
         return true;
       }

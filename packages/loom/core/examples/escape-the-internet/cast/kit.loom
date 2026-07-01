@@ -1,0 +1,30 @@
+# Cast kit — the shared shapes every prop is built from
+#
+# A "scanner prop" is not really a character, it is a character *shape*:
+# belong to a faction, and on scan route the guest to one beat. That shape is
+# a trait now. `Scanner(beat)` is the faction-agnostic router; the four badges
+# stamp faction membership; the combined `<Faction>Scanner(beat)` traits fuse
+# the two so a plain prop is a single honest line in its cast file.
+
+TRAIT Scanner(beat)
+  on scan guest
+    -> self.beat
+
+# ── Faction badges ──────────────────────────────────────────────────
+TRAIT Algo
+  faction: TheAlgorithm
+
+TRAIT Mod
+  faction: Mods
+
+TRAIT Chatter
+  faction: Chatters
+
+TRAIT Glitcher
+  faction: Glitchers
+
+# ── Badge + router, composed ────────────────────────────────────────
+TRAIT AlgoScanner(beat) is Scanner(beat), Algo
+TRAIT ModScanner(beat) is Scanner(beat), Mod
+TRAIT ChatterScanner(beat) is Scanner(beat), Chatter
+TRAIT GlitcherScanner(beat) is Scanner(beat), Glitcher

@@ -192,3 +192,16 @@ export async function liveEvents(): Promise<EventRow[]> {
   const { rows } = await pool().query<EventRow>("select * from event where status <> 'ended'");
   return rows;
 }
+
+/**
+ * The author id that owns the project behind an event, or null. Lets the
+ * event's moderator routes accept the owning author's session — the author
+ * *is* the operator, so they moderate without typing a mod code.
+ */
+export async function eventOwnerId(eventId: string): Promise<string | null> {
+  const { rows } = await pool().query<{ owner_id: string }>(
+    "select p.owner_id from event e join project p on p.id = e.project_id where e.id = $1",
+    [eventId],
+  );
+  return rows[0]?.owner_id ?? null;
+}

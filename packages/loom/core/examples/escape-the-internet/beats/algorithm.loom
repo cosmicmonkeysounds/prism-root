@@ -8,7 +8,9 @@
 # The Crawler indexes a guest and flags them. Two flags is a lockdown.
 == crawler_report(guest)
   cast: Crawler, guest
-  CRAWLER
+  # `SELF` speaks as whoever routed here — Crawler — so the beat needn't
+  # restate its owner in a fourth place.
+  SELF
     Crawling. Indexing. Flag raised.
     Heat {guest.heat}. The Algorithm sees you now.
   <set: guest.heat += 40>

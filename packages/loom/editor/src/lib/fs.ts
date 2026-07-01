@@ -7,8 +7,13 @@ export type FsEntry = {
   name: string
   path: string
   kind: 'file' | 'directory'
-  handle: FileSystemFileHandle | FileSystemDirectoryHandle
+  /** Present for local (File System Access) entries; absent for server ones. */
+  handle?: FileSystemFileHandle | FileSystemDirectoryHandle
   children?: FsEntry[]
+  /** Storage backend. Local (on-disk) by default; 'server' for SaaS projects. */
+  backend?: 'local' | 'server'
+  /** For server-backed files, the file contents (loaded with the project). */
+  content?: string
 }
 
 export function isFsAccessSupported(): boolean {

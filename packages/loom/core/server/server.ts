@@ -35,7 +35,7 @@ import { EventRegistry } from "./registry.ts";
 import { readBody, sendJson, str } from "./http-util.ts";
 import { auth, authUser, migrateAuth } from "./auth-server.ts";
 import { dbReady, initSchema } from "./db/index.ts";
-import { liveEvents } from "./db/queries.ts";
+import { eventOwnerId, liveEvents } from "./db/queries.ts";
 import { DATABASE_URL } from "./config.ts";
 import { handleProjects } from "./projects.ts";
 import { handleEvent, specFromRow } from "./events-api.ts";
@@ -238,7 +238,13 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const subPath = slash === -1 ? "/" : rest.slice(slash);
     const runtime = registry.get(eventId);
     if (runtime === undefined) return void sendJson(res, 404, { error: "unknown event" });
-    if (await runtime.handle(req, res, method, subPath, url)) return;
+    // The owning author moderates via their session — no mod code needed.
+    let moderator = false;
+    if (controlPlane && subPath.startsWith("/api/mod/")) {
+      const user = await authUser(req);
+      if (user !== null) moderator = (await eventOwnerId(eventId)) === user.id;
+    }
+    if (await runtime.handle(req, res, method, subPath, url, { moderator })) return;
     return void sendJson(res, 404, { error: "not found" });
   }
 

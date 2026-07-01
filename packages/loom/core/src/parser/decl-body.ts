@@ -38,6 +38,7 @@ import {
   type KnowledgeField,
   type LocationBody,
   type MethodDecl,
+  type OwnedBeat,
   type PersonBody,
   type Property,
   type RawLine,
@@ -615,12 +616,30 @@ function lowerCharacter(body: RawLine[], diagnostics: Diagnostic[]): CharacterBo
     {
       const rest0 = stripPrefix(text, "on ");
       if (rest0 !== null) {
-        const rest = rest0.trim();
+        let rest = rest0.trim();
+        // Inline opener divert: `on scan guest -> beat` (spec §2.6). Split a
+        // trailing `-> target` off the opener into a synthetic body divert.
+        let inlineDivert: string | null = null;
+        {
+          const arrow = rest.indexOf("->");
+          if (arrow >= 0) {
+            const target = rest.slice(arrow + 2).trim();
+            rest = rest.slice(0, arrow).trim();
+            if (target.length > 0) inlineDivert = target;
+          }
+        }
         const stripped = stripSuppression(rest);
         const eventText = stripped !== null ? stripped : rest;
         const suppressed = stripped !== null;
         const spanStart = line.span.start;
         const hook = { event: eventText, body: [] as RawLine[], suppressed, span: line.span };
+        if (inlineDivert !== null && !suppressed) {
+          hook.body.push({
+            indent: baseIndent + 2,
+            text: `-> ${inlineDivert}`,
+            span: line.span,
+          });
+        }
         i += 1;
         while (i < body.length && body[i]!.indent > baseIndent) {
           if (!suppressed) hook.body.push(body[i]!);
@@ -691,6 +710,41 @@ function lowerCharacter(body: RawLine[], diagnostics: Diagnostic[]): CharacterBo
           i += 1;
         }
         out.generators.push(gen);
+        continue;
+      }
+    }
+
+    // `beat name(params)` — a class-owned beat block (spec §11.1),
+    // collected verbatim exactly like the generator block above.
+    {
+      const rest = stripPrefix(text, "beat ");
+      if (rest !== null) {
+        const [bname, bparams] = splitNameAndParams(rest.trim());
+        const beat: OwnedBeat = { name: bname, params: bparams, body: [], span: line.span };
+        i += 1;
+        while (i < body.length && body[i]!.indent > baseIndent) {
+          beat.body.push(body[i]!);
+          beat.span = span(beat.span.start, body[i]!.span.end);
+          i += 1;
+        }
+        out.beats.push(beat);
+        continue;
+      }
+    }
+
+    // `fill name` — content for a `slot: name` hole in a derived beat template
+    // (spec §11.3). Pure body lines, collected verbatim like a beat block.
+    {
+      const rest = stripPrefix(text, "fill ");
+      if (rest !== null) {
+        const fname = rest.trim();
+        const lines: RawLine[] = [];
+        i += 1;
+        while (i < body.length && body[i]!.indent > baseIndent) {
+          lines.push(body[i]!);
+          i += 1;
+        }
+        if (fname.length > 0) out.fills.set(fname, lines);
         continue;
       }
     }

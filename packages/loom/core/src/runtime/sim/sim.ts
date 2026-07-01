@@ -5,7 +5,7 @@
 //! QR scans, faction joins) and draining the reactive hook engine to a
 //! fixpoint. See `DESIGN.md`.
 
-import type { Beat, BodyItem } from "../../parser/index.ts";
+import type { Beat, BodyItem, DivertTarget } from "../../parser/index.ts";
 import {
   CallArg,
   ExprError,
@@ -119,6 +119,9 @@ export class Sim {
     // and `guest.faction == self.faction` resolve.
     for (const char of model.characters.values()) {
       if (char.faction !== null) this.world.set(`${char.id}.faction`, vString(char.faction));
+      // Typed-slot defaults (`captures: 0 to 100 = 0`) so `self.captures`
+      // starts defined, not implicitly-zero on first `+=`.
+      for (const [k, v] of char.defaults) this.world.set(`${char.id}.${k}`, v);
     }
     this.world.setCollection("Persons", vList([]));
     // Seed declared members of membership-gated channels (private/group/dm).
@@ -799,12 +802,17 @@ export class Sim {
         case "divert": {
           const d = item.value;
           if (d.kind === "to") {
-            const beat = this.model.beats.get(d.target.name);
-            if (beat !== undefined) {
-              const key = this.visitKey(d.target.name, b);
+            const r = this.resolveBeat(d.target, b);
+            if (r !== undefined) {
+              const [name, beat, bound] = r;
+              // Key the visit on the CALLER's bindings, not the (possibly
+              // self-rebound) `bound` — `visits()` later queries from the
+              // caller's frame, so a cross-owner divert with no participant
+              // bound would otherwise record under the owner and read 0.
+              const key = this.visitKey(name, b);
               this.beatVisits.set(key, (this.beatVisits.get(key) ?? 0) + 1);
-              this.record({ type: "beatEntered", beat: d.target.name });
-              stack.push({ items: beat.body, index: 0, bindings: b });
+              this.record({ type: "beatEntered", beat: name });
+              stack.push({ items: beat.body, index: 0, bindings: bound });
             }
           }
           break; // end / return / tunnel: terminate this branch
@@ -873,6 +881,62 @@ export class Sim {
     const self = bindings.get("self");
     if (self === undefined || self.length === 0) return speaker;
     return self.toUpperCase();
+  }
+
+  /**
+   * Resolve a divert target to `[resolvedName, beat, bindings]`, honoring the
+   * owner qualifier (spec §11.2). `self.`/`me.` resolve against the current
+   * `self`; an explicit `Owner.` is taken as-is; a bare name stays global —
+   * so existing `-> lockdown` diverts are byte-for-byte unchanged. Reaching a
+   * *foreign* owner's beat rebinds `self` to that owner, so its `SELF` speaker
+   * and `self.x` reads resolve as the beat's true owner, not the caller.
+   */
+  private resolveBeat(t: DivertTarget, b: Bindings): [string, Beat, Bindings] | undefined {
+    if (t.qualifier !== null) {
+      const owner =
+        t.qualifier === "self" || t.qualifier === "me" ? b.get("self") : t.qualifier;
+      if (owner !== undefined && owner.length > 0) {
+        const key = `${owner}.${t.name}`;
+        const hit = this.model.beats.get(key);
+        if (hit !== undefined) {
+          const bound = owner === b.get("self") ? b : new Map(b).set("self", owner);
+          return [key, hit, bound];
+        }
+      }
+      // Qualifier present but no owned beat — fall through to the flat lookup
+      // (a cross-file `/` target lands here too), then diagnose if that misses.
+    }
+    const flat = this.model.beats.get(t.name);
+    if (flat !== undefined) return [t.name, flat, b];
+    if (t.qualifier !== null) {
+      this.record({
+        type: "diagnostic",
+        message: `divert to \`${t.qualifier}.${t.name}\` resolves to no beat`,
+      });
+    }
+    return undefined;
+  }
+
+  /**
+   * Resolve a beat name written in a history query (`visits`/…) to its stored
+   * key, owner-first — the mirror of `resolveBeat`. `visits(self.prophecy)`,
+   * `visits(prophecy)` (when `self` owns one), and `visits(Oracle.prophecy)`
+   * all land on the `Oracle.prophecy` counter.
+   */
+  private resolveBeatKey(rawName: string): string {
+    const self = this.currentBindings.get("self");
+    const dot = rawName.indexOf(".");
+    if (dot >= 0) {
+      const q = rawName.slice(0, dot);
+      const n = rawName.slice(dot + 1);
+      const owner = q === "self" || q === "me" ? self : q;
+      if (owner !== undefined && this.model.beats.has(`${owner}.${n}`)) return `${owner}.${n}`;
+      return n;
+    }
+    if (self !== undefined && this.model.beats.has(`${self}.${rawName}`)) {
+      return `${self}.${rawName}`;
+    }
+    return rawName;
   }
 
   // -------------------------------------------------------------------
@@ -1207,7 +1271,8 @@ export class Sim {
       case "visits": {
         const subj =
           this.currentBindings.get("guest") ?? this.currentBindings.get("self") ?? "__global";
-        return vNumber(this.beatVisits.get(`${args[0]?.asName() ?? ""}::${subj}`) ?? 0);
+        const beatKey = this.resolveBeatKey(args[0]?.asName() ?? "");
+        return vNumber(this.beatVisits.get(`${beatKey}::${subj}`) ?? 0);
       }
       default:
         return VNULL;

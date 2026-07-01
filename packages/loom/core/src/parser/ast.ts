@@ -466,6 +466,25 @@ export interface CharacterBody {
   hooks: HookDecl[];
   generators: GeneratorDecl[];
   typedProperties: Property[];
+  /**
+   * Beats the class owns, authored inline as `beat name(params)` blocks
+   * (spec §11.1). Stored `Owner.name` at compile so two classes may each own
+   * a `main` / `greet`, reached by a qualified divert `-> self.name`.
+   */
+  beats: OwnedBeat[];
+  /**
+   * `fill <name>` blocks (spec §11.3) — the content a deriver supplies for a
+   * `slot: <name>` hole in a trait's beat template, keyed by slot name.
+   */
+  fills: Map<string, RawLine[]>;
+}
+
+/** A class-owned beat block (`beat confront(guest)`), spec §11.1. */
+export interface OwnedBeat {
+  name: string;
+  params: string[];
+  body: RawLine[];
+  span: Span;
 }
 
 export function emptyCharacterBody(): CharacterBody {
@@ -483,6 +502,8 @@ export function emptyCharacterBody(): CharacterBody {
     hooks: [],
     generators: [],
     typedProperties: [],
+    beats: [],
+    fills: new Map(),
   };
 }
 

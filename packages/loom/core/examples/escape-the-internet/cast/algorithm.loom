@@ -1,91 +1,88 @@
 # Cast — The Algorithm (hidden faction)
 #
-# The villain. It never sweeps the room — it reacts to individuals. The
-# scanner props raise a guest's heat or capture them outright; TheAdmin
-# keeps the tally and unmasks the faction once it's been too greedy; the
-# Sentinel narrates each personal lockdown to its victim; Surveillance
-# just ticks; the Sysadmin works the cells. Every dark pattern on the
-# floor — cookies, ads, downloads, paywalls, the firewall — is its tool.
+# The villain. It never sweeps the room — it reacts to individuals. Every
+# plain scanner prop is now one line: an `AlgoScanner(beat)` (faction badge +
+# the scan→beat router, from `cast/kit.loom`). The members that carry real
+# behaviour of their own take only the `Algo` badge and write their hooks
+# inline. `Sysadmin` and `Firewall_Terminal` go further still — they *own*
+# their beat, authored right beside the scan that reaches it (`-> self.beat`).
 
-CHARACTER ModBot
-  faction: TheAlgorithm
+# ── Members with behaviour of their own (badge only) ─────────────────
+CHARACTER ModBot is Algo
   on scan guest
     <capture: guest into Internet>
 
-CHARACTER TheAdmin
-  faction: TheAlgorithm
+CHARACTER TheAdmin is Algo
+  captures: 0 to 100 = 0
   on captured guest
     <broadcast: doomed to participant(guest)>
-    <set: TheAdmin.captures += 1>
-    <if: TheAdmin.captures >= 2>
+    <set: self.captures += 1>
+    <if: self.captures >= 2>
       # Too many disappearances — the hidden faction is exposed.
       <reveal: TheAlgorithm>
   on revealed
     <broadcast: unmasked to faction(Mods) | faction(Chatters)>
 
-CHARACTER Sentinel
-  faction: TheAlgorithm
-  # Targeted, never ambient: the Sentinel only speaks to the one guest
-  # who just crossed into a cell, addressing them by their pass.
+CHARACTER Sentinel is Algo
+  # Targeted, never ambient: the Sentinel only speaks to the one guest who
+  # just crossed into a cell, addressing them by their pass.
   on enters Internet captive
     <broadcast: lockdown to participant(captive)>
   on enters Servers captive
     <broadcast: deep_lockdown to participant(captive)>
 
-CHARACTER Surveillance
-  faction: TheAlgorithm
-  # The autonomous clock the host ticks — pure indifferent bookkeeping,
-  # no room-wide effect. Demonstrates a time-driven hook (`on every`).
+CHARACTER Surveillance is Algo
+  # The autonomous clock the host ticks — pure indifferent bookkeeping.
   on every 60s
     <set: TheAlgorithm.sweeps += 1>
 
-CHARACTER Crawler
-  faction: TheAlgorithm
+# ── Members that OWN their beat (scan routes to `self.<beat>`) ────────
+# The Sysadmin works a captive for names — its scene lives right here.
+CHARACTER Sysadmin is Algo
   on scan guest
-    -> crawler_report
+    -> self.interrogation
+  beat interrogation(guest)
+    SELF
+      <if: guest.captured>
+        Designation {guest.name}. Heat on file: {guest.heat}. Talk.
+        Tell me who showed you the static and maybe your sentence shortens.
+      <else>
+        Not in a cell yet? Then we have nothing to discuss. Move along.
+    <if: guest.captured>
+      * Name the Glitchers
+        <set: guest.heat -= 10>
+        <set: guest.karma -= 15>
+        <respond: Cooperation logged. Pathetic.>
+      * Say nothing
+        <set: guest.karma += 20>
+        <broadcast: stayed_silent to participant(guest)>
+      + Lie through your teeth
+        <set: guest.heat += 10>
 
-CHARACTER Captcha
-  faction: TheAlgorithm
+# The firewall: a wall to the free, a seam to the trapped.
+CHARACTER Firewall_Terminal is Algo
   on scan guest
-    -> captcha_gate
+    -> self.firewall
+  beat firewall(guest)
+    SELF
+      <if: guest.captured>
+        A seam in the wall, right where the Oracle said it would be. Push it?
+      <else>
+        The firewall hums. Touching it from the outside only gets you noticed.
+    <if: guest.captured>
+      * Force the breach — RUN
+        <escape: guest>
+      + Back away from the wall
+        <set: guest.karma += 2>
+    <else>
+      <set: guest.heat += 15>
+      -> lockdown
 
-CHARACTER Terminal
-  faction: TheAlgorithm
-  on scan guest
-    -> the_terminal
-
-# Named performer: the interrogator who works the cells.
-CHARACTER Sysadmin
-  faction: TheAlgorithm
-  on scan guest
-    -> interrogation
-
-# Prop: the cookie consent banner — the friendliest trap.
-CHARACTER Cookie_Banner
-  faction: TheAlgorithm
-  on scan guest
-    -> cookie_consent
-
-# Prop: an unskippable ad.
-CHARACTER Ad_Popup
-  faction: TheAlgorithm
-  on scan guest
-    -> the_ad
-
-# Prop: a too-good-to-be-true download.
-CHARACTER Download_Station
-  faction: TheAlgorithm
-  on scan guest
-    -> download
-
-# Prop: the paywall across reality.
-CHARACTER Paywall
-  faction: TheAlgorithm
-  on scan guest
-    -> paywall
-
-# Prop: the firewall at the edge of the world — and the seam in it.
-CHARACTER Firewall_Terminal
-  faction: TheAlgorithm
-  on scan guest
-    -> firewall
+# ── Plain scanner props — one line each ──────────────────────────────
+CHARACTER Crawler          is AlgoScanner(crawler_report)
+CHARACTER Captcha          is AlgoScanner(captcha_gate)
+CHARACTER Terminal         is AlgoScanner(the_terminal)
+CHARACTER Cookie_Banner    is AlgoScanner(cookie_consent)
+CHARACTER Ad_Popup         is AlgoScanner(the_ad)
+CHARACTER Download_Station is AlgoScanner(download)
+CHARACTER Paywall          is AlgoScanner(paywall)

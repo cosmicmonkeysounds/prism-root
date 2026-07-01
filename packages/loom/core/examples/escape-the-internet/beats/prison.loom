@@ -1,33 +1,16 @@
 # Beats — inside the Internet (the cells + the way out)
 #
-# These play to a captured guest. The Sysadmin interrogates; Hacker_Zero
-# arms; The_Banned warns; the Firewall is the seam the Oracle promised.
-# Each gates on `guest.captured` so they read differently to the free.
+# These play to a captured guest. Hacker_Zero arms; The_Banned warns. Each
+# gates on `guest.captured` so it reads differently to the free. The Sysadmin
+# interrogation and the Firewall now live *on their props* as owned beats
+# (see `cast/algorithm.loom`), reached by `-> self.interrogation` /
+# `-> self.firewall` — the scene sits beside the scan that triggers it.
 
-# The Sysadmin works a captive for names.
-== interrogation(guest)
-  cast: Sysadmin, guest
-  SYSADMIN
-    <if: guest.captured>
-      Designation {guest.name}. Heat on file: {guest.heat}. Talk.
-      Tell me who showed you the static and maybe your sentence shortens.
-    <else>
-      Not in a cell yet? Then we have nothing to discuss. Move along.
-  <if: guest.captured>
-    * Name the Glitchers
-      <set: guest.heat -= 10>
-      <set: guest.karma -= 15>
-      <respond: Cooperation logged. Pathetic.>
-    * Say nothing
-      <set: guest.karma += 20>
-      <broadcast: stayed_silent to participant(guest)>
-    + Lie through your teeth
-      <set: guest.heat += 10>
-
-# Hacker_Zero arms a captive instead of saving them.
+# Hacker_Zero arms a captive instead of saving them. `SELF` resolves to
+# whichever prop routed here (Hacker_Zero), so the booth needn't restate it.
 == hacker_tool(guest)
   cast: Hacker_Zero, guest
-  HACKER_ZERO
+  SELF
     The Glitchers don't break you out. We hand you the tools and you walk yourself out.
     Take this — a one-time heat-sink. Burns your trail clean.
   * Take the heat-sink
@@ -40,26 +23,9 @@
 # The Banned — a ghost nobody could log out.
 == banned_ghost(guest)
   cast: The_Banned, guest
-  THE_BANNED
+  SELF
     <after: guest.captured>
       I've been in here since the old forums. Permabanned. No appeal, no escape.
       Don't end up like me. The Glitchers are real. Find the static.
     <otherwise>
       A flickering figure mouths something at you through the glass. You can't quite read it.
-
-# The firewall: a wall to the free, a seam to the trapped.
-== firewall(guest)
-  cast: Firewall_Terminal, guest
-  FIREWALL_TERMINAL
-    <if: guest.captured>
-      A seam in the wall, right where the Oracle said it would be. Push it?
-    <else>
-      The firewall hums. Touching it from the outside only gets you noticed.
-  <if: guest.captured>
-    * Force the breach — RUN
-      <escape: guest>
-    + Back away from the wall
-      <set: guest.karma += 2>
-  <else>
-    <set: guest.heat += 15>
-    -> lockdown

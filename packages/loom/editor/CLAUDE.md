@@ -1,11 +1,28 @@
 # Loom
 
-A local-first IDE with a visual canvas, running entirely in the browser.
+The Loom SaaS authoring app: sign in, manage projects, author `.loom`,
+and run live events — all in the browser. Still works local-first on a
+folder with no account.
 
 ## Intent
-- **Edit real files on disk** via the File System Access API — no server, no upload.
+- **Author `.loom` two ways**: server-backed **projects** (BetterAuth
+  account → the SaaS backend, `store/projects.ts` + `store/auth.ts`) OR a
+  local folder via the File System Access API (no account). The workspace
+  store is backend-aware (`OpenFile.backend`, `openServerProject`); saves
+  route to the API or the on-disk handle accordingly.
+- **Run events from the editor**: **Operate** mode (`⌘3`) is the shared
+  run + admin surface — launch preview/live, share the join code + QR,
+  pause/resume/end, and moderate the live roster/feed. Backed by
+  `store/operate.ts` over the per-event mod SSE + `/e/:eventId/api/mod/*`
+  (authorized by the author's session — the author *is* the operator).
 - **See structure visually** alongside code: every open file is also a node on a React Flow canvas, and edges represent relationships between them.
 - **Stay minimal**: a thin shell over CodeMirror + xyflow, with a small Zustand store as the single source of truth.
+
+The app is gated in `App.tsx`: no workspace open → signed-out shows
+`AuthGate`, signed-in shows `ProjectsLaunchpad`; opening a project (or a
+local folder) enters the Studio shell. Dev talks to the backend
+(`@loom/core` server, :7000) through the Vite proxy (`/api` + `/e`), so
+the BetterAuth cookie flows same-origin. Override with `LOOM_SERVER`.
 
 ## Stack
 - React 19 + TypeScript + Vite
@@ -39,8 +56,10 @@ src/
 
 ## Shell (v2 modal topology)
 
-The IDE is one app with two **author modes** — Writing / Editing —
-switched from a bottom **Mode Bar** (`⌘1` / `⌘2`), DaVinci-Resolve-style.
+The IDE is one app with three **modes** — Writing / Editing / **Run** —
+switched from a bottom **Mode Bar** (`⌘1` / `⌘2` / `⌘3`), DaVinci-Resolve-style.
+Run (`components/operate/`) is the live event-control surface; Writing +
+Editing are the authoring facets.
 (The play/perform/produce modes were removed with the runtime; runtime
 lives in the `core` server + `play` app.) Each mode is a fixed,
 resizable `allotment` layout (left rail · center stage · right
@@ -56,7 +75,7 @@ activity-bar + free-docking model. Full design:
 ## Conventions
 - Path alias `@/*` → `src/*`.
 - Keep components small; put logic in `lib/` or `store/`.
-- No backend. Anything persistent goes through the FS handles the user grants.
+- Two persistence backends: the SaaS API (server projects) and FS handles (local folders). New persistence goes through `store/workspace.ts`'s backend-aware paths, not a third mechanism.
 - Browser support: Chromium-based (File System Access API).
 
 ## Loom integration
@@ -101,8 +120,11 @@ structural beat edits, and the static graph / beat-flow views. It does
 `LoomSession` (local play) and `LoomDoc` (Loro CRDT collaboration) were
 removed in the wasm cutover. **Runtime lives in the sibling packages**:
 `packages/loom/core` (the TS engine + SSE/REST event server) and
-`packages/loom/play` (the participant app). The Mode Bar is two modes —
-**Writing** (`⌘1`) and **Editing** (`⌘2`).
+`packages/loom/play` (the participant app). The editor does not render the
+guest chat; instead **Run** mode (`⌘3`) *controls + moderates* events on
+that server (launch, codes/QR, roster, moderation) — the participant view
+stays in the `play` app. The Mode Bar is three modes — **Writing** (`⌘1`),
+**Editing** (`⌘2`), **Run** (`⌘3`).
 
 ## Hosting
 

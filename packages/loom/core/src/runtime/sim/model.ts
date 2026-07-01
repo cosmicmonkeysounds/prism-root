@@ -81,6 +81,8 @@ export interface CharDef {
   hooks: Hook[];
   /** `trusts X: N of M` axes (relationship seeds against the role). */
   disposition: CharacterBody["disposition"];
+  /** Typed-slot defaults (`captures: 0 to 100 = 0`) seeded as `id.slot`. */
+  defaults: Map<string, Value>;
 }
 
 /** The default space authored channels fall into when none is named. */
@@ -206,6 +208,30 @@ export function compileModel(bundle: Bundle): SimModel {
               const spec = genSpec(`${decl.name}.${gen.name}`, gen.body);
               if (spec !== null) model.gens.push(spec);
             }
+            // Class-owned beats (spec §11.1) register under `Owner.name` so two
+            // props may each own a `main`/`greet`, reached by `-> self.name`.
+            // A derived beat's `slot:` holes are filled from the deriver's
+            // `fill` blocks here, on the lowered tree (spec §11.3).
+            for (const ob of body.beats) {
+              const key = `${decl.name}.${ob.name}`;
+              const missing = new Set<string>();
+              const filled = fillSlots(lowerRawBody(ob.body), body.fills, missing);
+              for (const slot of missing) {
+                bundle.projectDiagnostics.push({
+                  kind: "unfilledDerivedSlot",
+                  character: decl.name,
+                  beat: ob.name,
+                  slot,
+                });
+              }
+              model.beats.set(key, {
+                name: key,
+                params: ob.params,
+                contract: new Map(),
+                body: filled,
+                span: ob.span,
+              });
+            }
           }
           break;
         case "generator":
@@ -303,6 +329,76 @@ function locationDef(id: string, body: LocationBody): LocationDef {
   };
 }
 
+/**
+ * Splice `fill` content into a lowered beat body in place of each `slot:`
+ * placeholder (spec §11.3), recursing into every nested control-flow body so a
+ * hole under a `SELF` block or inside `<if:>` is reached. A slot with no
+ * matching fill is dropped and its name collected in `missing`.
+ */
+function fillSlots(
+  items: BodyItem[],
+  fills: Map<string, RawLine[]>,
+  missing: Set<string>,
+): BodyItem[] {
+  const recur = (b: BodyItem[]): BodyItem[] => fillSlots(b, fills, missing);
+  const out: BodyItem[] = [];
+  for (const item of items) {
+    switch (item.kind) {
+      case "slotPlaceholder": {
+        const fill = fills.get(item.value.name);
+        if (fill !== undefined) out.push(...lowerRawBody(fill));
+        else missing.add(item.value.name);
+        break;
+      }
+      case "dialogue":
+        out.push({ kind: "dialogue", value: { ...item.value, body: recur(item.value.body) } });
+        break;
+      case "choice":
+        out.push({ kind: "choice", value: { ...item.value, body: recur(item.value.body) } });
+        break;
+      case "directiveBlock":
+        out.push({ kind: "directiveBlock", value: { ...item.value, body: recur(item.value.body) } });
+        break;
+      case "conditional":
+        out.push({
+          kind: "conditional",
+          value: { ...item.value, arms: item.value.arms.map((a) => ({ ...a, body: recur(a.body) })) },
+        });
+        break;
+      case "match":
+        out.push({
+          kind: "match",
+          value: { ...item.value, arms: item.value.arms.map((a) => ({ ...a, body: recur(a.body) })) },
+        });
+        break;
+      case "eachVisit":
+        out.push({
+          kind: "eachVisit",
+          value: {
+            ...item.value,
+            first: recur(item.value.first),
+            then: recur(item.value.then),
+            finally: recur(item.value.finally),
+          },
+        });
+        break;
+      case "afterMorph":
+        out.push({
+          kind: "afterMorph",
+          value: {
+            ...item.value,
+            after: recur(item.value.after),
+            otherwise: recur(item.value.otherwise),
+          },
+        });
+        break;
+      default:
+        out.push(item);
+    }
+  }
+  return out;
+}
+
 function roleDef(id: string, body: CharacterBody): RoleDef {
   const defaults = new Map<string, Value>();
   for (const prop of body.typedProperties) {
@@ -313,11 +409,17 @@ function roleDef(id: string, body: CharacterBody): RoleDef {
 }
 
 function charDef(id: string, body: CharacterBody): CharDef {
+  const defaults = new Map<string, Value>();
+  for (const prop of body.typedProperties) {
+    const v = defaultValueOf(prop);
+    if (v !== null) defaults.set(prop.name, v);
+  }
   return {
     id,
     faction: body.properties.get("faction")?.value ?? null,
     hooks: hooksOf(id, "character", body),
     disposition: body.disposition,
+    defaults,
   };
 }
 

@@ -290,6 +290,15 @@ function classify(
           ),
         );
       }
+      if (opener.unterminatedMixin) {
+        diagnostics.push(
+          errorDiagnostic(
+            Code.L1008UnterminatedMixinClause,
+            lineSpan(line, startByte, text),
+            `\`is\` clause must fit on one line — a wrapped clause is dropped`,
+          ),
+        );
+      }
       return {
         kind: "declarationOpener",
         kindWord: opener.kindWord,
@@ -410,6 +419,8 @@ interface DeclarationOpenerParse {
   kindWord: string;
   name: string;
   mixin: string[];
+  /** True if the `is`-clause looks wrapped (trailing `,` / unbalanced `()`). */
+  unterminatedMixin: boolean;
 }
 
 function parseDeclarationOpener(text: string): DeclarationOpenerParse | null {
@@ -446,5 +457,19 @@ function parseDeclarationOpener(text: string): DeclarationOpenerParse | null {
           .filter((s) => s.length > 0)
       : [];
 
-  return { kindWord, name, mixin };
+  // The `is`-clause is exactly one physical line (spec §2.2a). A trailing
+  // top-level comma or unbalanced parens means it was wrapped — the remainder
+  // would be silently dropped into the body, so flag it instead.
+  let unterminatedMixin = false;
+  if (mixinClause !== null) {
+    const trimmed = mixinClause.trim();
+    let depth = 0;
+    for (const ch of trimmed) {
+      if (ch === "(") depth += 1;
+      else if (ch === ")") depth -= 1;
+    }
+    if (depth !== 0 || trimmed.endsWith(",")) unterminatedMixin = true;
+  }
+
+  return { kindWord, name, mixin, unterminatedMixin };
 }

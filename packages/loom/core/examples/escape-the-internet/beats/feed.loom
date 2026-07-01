@@ -7,7 +7,7 @@
 
 == the_terminal(guest)
   cast: Terminal, guest
-  TERMINAL
+  SELF
     A blank post box blinks. The whole network is listening.
     What do you put on the feed?
   * Something kind

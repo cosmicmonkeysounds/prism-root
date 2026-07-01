@@ -177,6 +177,10 @@ class Parser {
       if (line.indent <= openerIndent) break;
       const k = line.kind;
       if (k.kind === "property") {
+        // `slot:` is a reserved body placeholder (a derived-beat hole), never a
+        // contract key — stop so it reaches the body loop as a slotPlaceholder,
+        // even when it is the first line of the beat.
+        if (k.key === "slot") break;
         out.set(k.key, { value: k.value, span: scannedLineSpan(line) });
         this.cursor += 1;
       } else {
@@ -769,6 +773,16 @@ function parseDivertTarget(text: string): DivertTarget {
     return {
       qualifier: filePart.slice(0, slash),
       name: filePart.slice(slash + 1),
+      knot,
+    };
+  }
+  // No `/` — a `.` denotes an owner qualifier (`self.beat` / `Owner.beat`,
+  // spec §11.2). `/` outranks `.`, so this only fires for a slash-free target.
+  const dot = filePart.indexOf(".");
+  if (dot >= 0) {
+    return {
+      qualifier: filePart.slice(0, dot).trim(),
+      name: filePart.slice(dot + 1).trim(),
       knot,
     };
   }

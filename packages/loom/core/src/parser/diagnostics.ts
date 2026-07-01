@@ -29,6 +29,8 @@ export const Code = {
   L1006UnnamedDeclaration: "L1006",
   /** A `/*` block comment opened but never closed before end of file. */
   L1007UnterminatedBlockComment: "L1007",
+  /** An `is`-clause wrapped past the opener line (trailing `,` / unbalanced `()`). */
+  L1008UnterminatedMixinClause: "L1008",
   /** Dialogue lines appeared without a SPEAKER above them. */
   L2001OrphanedDialogue: "L2001",
   /** `<-` appeared outside any tunnel context. */
