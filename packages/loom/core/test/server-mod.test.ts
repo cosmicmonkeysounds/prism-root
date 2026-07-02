@@ -205,4 +205,41 @@ describe("run-panel mod routes", () => {
     const denied = await post(rt, "/api/mod/set", { id, field: "score", value: 1 }, false);
     expect(denied.status).toBe(403);
   });
+
+  it("the mod SSE stream carries the raw sim feed (beatEntered → story map)", async () => {
+    const rt = freshRuntime();
+    await withGuest(rt);
+
+    // A fake streaming response that records every SSE frame written.
+    const chunks: string[] = [];
+    const stream = {
+      writeHead() {
+        return stream;
+      },
+      write(s: unknown) {
+        chunks.push(String(s));
+        return true;
+      },
+      end() {
+        return stream;
+      },
+    } as unknown as ServerResponse;
+    await rt.handle(
+      fakeReq(null),
+      stream,
+      "GET",
+      "/events",
+      new URL("http://x/events?role=mod"),
+      { moderator: true },
+    );
+
+    const probe = Sim.fromSources(SCENARIO);
+    const beat = [...probe.model.beats.keys()].find((b) => !b.includes("."))!;
+    expect((await post(rt, "/api/mod/beat", { name: beat })).status).toBe(200);
+
+    const feed = chunks.join("");
+    expect(feed).toContain("event: sim");
+    expect(feed).toContain('"beatEntered"');
+    expect(feed).toContain(JSON.stringify(beat));
+  });
 });

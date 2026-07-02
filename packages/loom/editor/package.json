@@ -38,6 +38,7 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@lezer/highlight": "^1.2.3",
     "@loom/core": "workspace:*",
     "@replit/codemirror-indentation-markers": "^6.5.3",
@@ -45,6 +46,7 @@
     "@xyflow/react": "^12.10.2",
     "allotment": "^1.20.5",
     "clsx": "^2.1.1",
+    "elkjs": "^0.11.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "zustand": "^5.0.13"
@@ -57,6 +59,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/mocker": "^4.1.9",
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
@@ -65,6 +68,6 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
-    "vitest": "^2.1.9"
+    "vitest": "^4.1.9"
   }
 }

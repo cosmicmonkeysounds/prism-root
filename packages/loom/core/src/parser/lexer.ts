@@ -230,6 +230,16 @@ function classify(
   if (text === "<-") {
     return { kind: "tunnelReturn" };
   }
+  // Tunnel call — `(name) ->` / `(name with k: v) ->` (spec §7.2). The
+  // parser's divert lowering owns the inner split; classify the whole
+  // line as a divert so it reaches `parseDivertText` (a bare `(…)` line
+  // with no trailing arrow stays a parenthetical below).
+  if (text.startsWith("(")) {
+    const close = text.indexOf(")");
+    if (close >= 0 && text.slice(close + 1).trim() === "->") {
+      return { kind: "divertLine", text };
+    }
+  }
 
   // Choice — `*` or `+` followed by required whitespace + text.
   {

@@ -18,7 +18,6 @@ import type {
   FactionBody,
   GeneratorBody,
   HookDecl,
-  Item,
   ItemBody,
   LocationBody,
   LoomFile,

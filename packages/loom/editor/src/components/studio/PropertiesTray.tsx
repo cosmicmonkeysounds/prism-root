@@ -15,11 +15,16 @@
 
 import { useMemo, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
+import type { GraphBeat, GraphEntity, StoryGraph } from '@loom/core/lsp'
+import { applyBeatProperty } from '@loom/core/parser'
 import type { Mode } from '@/store/mode'
 import { useWorkspace } from '@/store/workspace'
 import { useFocus, type FocusRef } from '@/store/focus'
 import { ReferencesPanel } from '@/components/runner/References'
 import { OperateInspector } from '@/components/operate/OperateInspector'
+import { docText, pathForUri } from '@/lib/lsp-client'
+import { useStoryGraph, writePathContents } from '@/lib/story-graph'
+import { useGraph } from '@/store/graph'
 import {
   bodyBreakdown,
   declKindLabel,
@@ -39,11 +44,15 @@ import {
 
 type Tab = { id: string; label: string; node: ReactNode }
 
-function tabsFor(_mode: Mode): Tab[] {
-  // Both author modes share the same tray: cursor-following properties
-  // + the workspace References panel.
+function tabsFor(mode: Mode): Tab[] {
+  // Writing follows the cursor; Editing follows the canvas selection
+  // (falling back to the cursor when nothing is selected).
   return [
-    { id: 'props', label: 'Properties', node: <AuthorProperties /> },
+    {
+      id: 'props',
+      label: 'Properties',
+      node: mode === 'editing' ? <EditingProperties /> : <AuthorProperties />,
+    },
     { id: 'refs', label: 'References', node: <ReferencesPanel /> },
   ]
 }
@@ -80,6 +89,186 @@ function AuthorTray({ mode }: { mode: Mode }) {
         ))}
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">{current.node}</div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Editing-mode properties — follows the story-graph canvas selection
+// ---------------------------------------------------------------------------
+
+function EditingProperties() {
+  const selected = useGraph((s) => s.selected)
+  const graph = useStoryGraph()
+  if (selected !== null) {
+    const beat = graph.beats.get(selected)
+    if (beat !== undefined) return <GraphBeatDetail beat={beat} graph={graph} />
+    const ent = graph.entities.get(selected)
+    if (ent !== undefined) return <GraphEntityDetail ent={ent} graph={graph} />
+  }
+  return <AuthorProperties />
+}
+
+function GraphBeatDetail({ beat, graph }: { beat: GraphBeat; graph: StoryGraph }) {
+  const pin = useFocus((s) => s.pin)
+  const select = useGraph((s) => s.select)
+  const openBeat = useGraph((s) => s.openBeat)
+
+  // The beat's contract lives in its authored file — parse it there so
+  // property edits round-trip to the right document, open or not.
+  const text = beat.uri !== null ? docText(beat.uri) : null
+  const parse = useLoomParser()
+  const item = useMemo(() => {
+    if (parse === null || text === null || beat.structural !== 'file') return null
+    try {
+      return findBeat(parse(text).ast, beat.name)
+    } catch {
+      return null
+    }
+  }, [parse, text, beat])
+
+  const onSet =
+    beat.structural === 'file' && text !== null && beat.uri !== null
+      ? (name: string, key: string, value: string) => {
+          try {
+            const next = applyBeatProperty(text, name, key, value)
+            if (next !== text) void writePathContents(pathForUri(beat.uri!), next)
+          } catch {
+            /* invalid edit — leave source untouched */
+          }
+        }
+      : undefined
+
+  const contract = item !== null ? entries(field(itemPayload(item), 'contract')) : []
+  const outgoing = graph.edges.filter((e) => e.narrative && e.from === beat.key)
+  const incoming = graph.edges.filter((e) => e.narrative && e.to === beat.key)
+
+  const jump = (id: string): void => {
+    select(id)
+    const b = graph.beats.get(id)
+    if (b !== undefined) pin({ kind: 'beat', name: b.name })
+  }
+
+  return (
+    <div className="h-full overflow-auto bg-zinc-950 font-mono">
+      <Header
+        kind={`Beat · ${beat.structural}`}
+        title={beat.key}
+        subtitle={beat.uri !== null ? pathForUri(beat.uri) : undefined}
+        onPin={() => pin({ kind: 'beat', name: beat.name })}
+      />
+      {beat.entry && <Row label="entry" value="▶ project entry beat" />}
+      {beat.shadowed && <Row label="⚠" value="shadowed by a later same-named beat" />}
+      {beat.params.length > 0 && <Row label="params" value={beat.params.join(', ')} />}
+      {beat.structural === 'file' && (
+        <Section title="Contract">
+          {contract.map(([k, pv]) =>
+            onSet !== undefined ? (
+              <EditableRow
+                key={k}
+                label={k}
+                value={propText(pv)}
+                onCommit={(v) => onSet(beat.name, k, v)}
+              />
+            ) : (
+              <Row key={k} label={k} value={propText(pv)} />
+            ),
+          )}
+          {onSet !== undefined && <AddField onAdd={(k, v) => onSet(beat.name, k, v)} />}
+        </Section>
+      )}
+      <Section title={`Out · ${outgoing.length}`}>
+        {outgoing.length === 0 && <Empty msg="No outgoing links." />}
+        {outgoing.map((e) => (
+          <button
+            key={e.id}
+            className="flex w-full gap-2 px-3 py-1 border-b border-white/5 hover:bg-white/5 text-xs text-left"
+            onClick={() => {
+              if (e.to !== null) jump(e.to)
+            }}
+          >
+            <span className="text-zinc-500 w-14 shrink-0">{e.kind}</span>
+            <span className="text-zinc-200 truncate">
+              {e.to ?? `⚠ ${e.unresolved ?? '?'}`}
+              {e.label !== null && <span className="text-zinc-500"> · {e.label}</span>}
+            </span>
+          </button>
+        ))}
+      </Section>
+      <Section title={`In · ${incoming.length}`}>
+        {incoming.length === 0 && <Empty msg="Nothing routes here." />}
+        {incoming.map((e) => (
+          <button
+            key={e.id}
+            className="flex w-full gap-2 px-3 py-1 border-b border-white/5 hover:bg-white/5 text-xs text-left"
+            onClick={() => jump(e.from)}
+          >
+            <span className="text-zinc-500 w-14 shrink-0">{e.kind}</span>
+            <span className="text-zinc-200 truncate">
+              {e.from}
+              {e.label !== null && <span className="text-zinc-500"> · {e.label}</span>}
+            </span>
+          </button>
+        ))}
+      </Section>
+      <div className="px-3 py-2">
+        <button
+          className="rounded border border-white/10 px-2 py-1 text-[11px] text-zinc-300 hover:bg-white/5"
+          onClick={() => openBeat(beat.key)}
+        >
+          Open beat flow →
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function GraphEntityDetail({ ent, graph }: { ent: GraphEntity; graph: StoryGraph }) {
+  const pin = useFocus((s) => s.pin)
+  const select = useGraph((s) => s.select)
+  const hooks = graph.edges.filter((e) => e.kind === 'hook' && e.from === ent.id)
+  return (
+    <div className="h-full overflow-auto bg-zinc-950 font-mono">
+      <Header
+        kind={ent.kind}
+        title={ent.name}
+        subtitle={pathForUri(ent.uri)}
+        onPin={
+          ent.kind === 'character' || ent.kind === 'role'
+            ? () => pin({ kind: 'character', name: ent.name })
+            : undefined
+        }
+      />
+      {ent.faction !== null && <Row label="faction" value={ent.faction} />}
+      {ent.mixins.length > 0 && <Row label="is" value={ent.mixins.join(', ')} />}
+      {ent.ownedBeats.length > 0 && (
+        <Section title={`Owned beats · ${ent.ownedBeats.length}`}>
+          {ent.ownedBeats.map((k) => (
+            <button
+              key={k}
+              className="flex w-full px-3 py-1 border-b border-white/5 hover:bg-white/5 text-xs text-left text-zinc-200"
+              onClick={() => select(k)}
+            >
+              {k}
+            </button>
+          ))}
+        </Section>
+      )}
+      <Section title={`Hook routes · ${hooks.length}`}>
+        {hooks.length === 0 && <Empty msg="No reactive routes." />}
+        {hooks.map((e) => (
+          <button
+            key={e.id}
+            className="flex w-full gap-2 px-3 py-1 border-b border-white/5 hover:bg-white/5 text-xs text-left"
+            onClick={() => {
+              if (e.to !== null) select(e.to)
+            }}
+          >
+            <span className="text-cyan-300/80 shrink-0">{e.label ?? 'on ?'}</span>
+            <span className="text-zinc-200 truncate">→ {e.to ?? `⚠ ${e.unresolved ?? '?'}`}</span>
+          </button>
+        ))}
+      </Section>
     </div>
   )
 }

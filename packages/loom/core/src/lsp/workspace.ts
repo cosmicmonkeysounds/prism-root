@@ -16,9 +16,17 @@ import type {
   Declaration,
   LoomFile,
 } from "../parser/ast.ts";
-import { type Diagnostic as ParserDiagnostic, parse, parseMixinRef } from "../parser/index.ts";
+import {
+  type Diagnostic as ParserDiagnostic,
+  type TextEdit,
+  parse,
+  parseMixinRef,
+} from "../parser/index.ts";
 import { Bundle, type LoomFileEntry } from "../runtime/bundle.ts";
-import { compileModel } from "../runtime/sim/model.ts";
+import { lowerRawBody } from "../runtime/sim/effects.ts";
+import { compileModel, type SimModel } from "../runtime/sim/model.ts";
+import { buildStoryGraph, type StoryGraph } from "./graph.ts";
+import { renameBeatEdits } from "./rename.ts";
 import type {
   CompletionItem,
   Diagnostic as LspDiagnostic,
@@ -109,6 +117,15 @@ export class Workspace {
   todos: Todo[] = [];
   /** Cross-file project diagnostics keyed by owning document URI. */
   projectDiagnostics = new Map<string, LspDiagnostic[]>();
+  /**
+   * Last good compiled model (kept across a mid-keystroke compile
+   * failure so graph consumers never blank out on a partial edit).
+   */
+  private compiled: SimModel | null = null;
+  /** Lazily-built project story graph; invalidated on every rebuild. */
+  private graph: StoryGraph | null = null;
+  /** Bumped on every index rebuild — cheap staleness key for caches. */
+  generation = 0;
 
   /** Insert or replace a document, reparse, rebuild the index. */
   open(uri: string, text: string): void {
@@ -154,10 +171,72 @@ export class Workspace {
     this.beats.clear();
     this.anchors.clear();
     this.todos = [];
+    this.graph = null;
+    this.generation += 1;
     for (const [uri, doc] of this.docs) {
       this.indexFile(uri, doc.file, doc.text);
     }
     this.rebuildProjectDiagnostics();
+  }
+
+  /**
+   * The project-wide story graph — every beat (top-level, class-owned,
+   * trait-derived) and every narrative transition (diverts / choices /
+   * tunnels / hooks) across all open documents, with source anchors for
+   * graph-side structural edits. Built lazily and cached until the next
+   * document change. See [`buildStoryGraph`].
+   */
+  storyGraph(): StoryGraph {
+    if (this.graph === null) {
+      this.graph = buildStoryGraph(this.docs, this.compiled);
+    }
+    return this.graph;
+  }
+
+  /**
+   * Project-wide beat rename: the declaration line plus every resolved
+   * divert reference, as per-document edit batches the caller routes
+   * through its own save path. See [`renameBeatEdits`].
+   */
+  renameBeat(key: string, newName: string): Map<string, TextEdit[]> {
+    return renameBeatEdits(this, key, newName);
+  }
+
+  /**
+   * The lowered body of the beat under graph key `key`, for the node
+   * editor's drill-in view. Top-level beats return their AST body
+   * (authored spans intact); class-owned beats lower their raw lines
+   * the way the runtime does (synthetic spans); trait-derived beats
+   * return the compiled model's filled body. Null when unknown.
+   */
+  beatBody(key: string): BodyItem[] | null {
+    const node = this.storyGraph().beats.get(key);
+    if (node === undefined) return null;
+    if (node.structural === "derived") {
+      return this.compiled?.beats.get(key)?.body ?? null;
+    }
+    if (node.uri === null || node.span === null) return null;
+    const doc = this.docs.get(node.uri);
+    if (doc === undefined) return null;
+    if (node.structural === "file") {
+      for (const item of doc.file.items) {
+        if (
+          item.kind === "beat" &&
+          item.value.name === node.name &&
+          item.value.span.start.offset === node.span.start.offset
+        ) {
+          return item.value.body;
+        }
+      }
+      return null;
+    }
+    // Owned: find the owner declaration's `beat name(…)` block.
+    for (const item of doc.file.items) {
+      if (item.kind !== "declaration" || item.value.name !== node.owner) continue;
+      const ob = item.value.character?.beats.find((b) => b.name === node.name);
+      if (ob !== undefined) return lowerRawBody(ob.body);
+    }
+    return null;
   }
 
   /**
@@ -186,7 +265,10 @@ export class Workspace {
    */
   private rebuildProjectDiagnostics(): void {
     this.projectDiagnostics.clear();
-    if (this.docs.size === 0) return;
+    if (this.docs.size === 0) {
+      this.compiled = null; // project closed — don't leak the old model
+      return;
+    }
     const firstUri = this.docs.keys().next().value as string;
     const bundle = new Bundle();
     for (const [uri, doc] of this.docs) {
@@ -201,10 +283,11 @@ export class Workspace {
       bundle.files.push(entry);
     }
     try {
-      compileModel(bundle);
+      this.compiled = compileModel(bundle);
     } catch {
       // Defensive: a partial edit can trip a compile invariant. Never let
-      // that break parser diagnostics / completion / hover.
+      // that break parser diagnostics / completion / hover — and keep the
+      // last good compile so `storyGraph()` degrades instead of blanking.
       return;
     }
     for (const d of bundle.projectDiagnostics) {

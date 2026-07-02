@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { useWorkspace } from '@/store/workspace'
 import { useOperate, type RosterRow, type RunTab } from '@/store/operate'
+import { StoryGraphPanel } from '@/components/graph/StoryGraphPanel'
 import { FactionPill } from './ui'
 import { useRooms } from './rooms'
 import { useInspect } from './inspect'
@@ -18,6 +19,7 @@ const TABS: { id: RunTab; label: string }[] = [
   { id: 'chat', label: 'Chat' },
   { id: 'roster', label: 'Roster' },
   { id: 'world', label: 'World' },
+  { id: 'story', label: 'Story' },
   { id: 'director', label: 'Director' },
 ]
 
@@ -497,6 +499,7 @@ export function OperateStage() {
         {tab === 'chat' && <ChatTab />}
         {tab === 'roster' && <RosterTab />}
         {tab === 'world' && <WorldTab />}
+        {tab === 'story' && <StoryGraphPanel variant="run" />}
         {tab === 'director' && <DirectorTab />}
       </div>
     </div>

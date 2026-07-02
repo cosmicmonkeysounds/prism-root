@@ -30,6 +30,22 @@ export {
 } from "./completion.ts";
 export { hoverAt } from "./hover.ts";
 export { definitionAt } from "./definition.ts";
+export {
+  buildStoryGraph,
+  displayTarget,
+  entityId,
+  findTargetRange,
+  type BeatStructural,
+  type GraphBeat,
+  type GraphDoc,
+  type GraphEdge,
+  type GraphEdgeKind,
+  type GraphEntity,
+  type GraphFile,
+  type StoryGraph,
+  type TargetRange,
+} from "./graph.ts";
+export { renameBeatEdits, rewriteTargetName, type RenameHost } from "./rename.ts";
 export { documentSymbols } from "./symbols.ts";
 export { referencesAt } from "./references.ts";
 export {

@@ -39,7 +39,14 @@ export type Anchor =
   | { kind: "end" };
 
 /** Why a structural edit could not be produced. */
-export type EditErrorCode = "beatNotFound" | "anchorNotFound" | "overlappingEdits";
+export type EditErrorCode =
+  | "beatNotFound"
+  | "anchorNotFound"
+  | "overlappingEdits"
+  | "staleAnchor"
+  | "itemNotFound"
+  | "nameTaken"
+  | "notRenameable";
 
 export class EditError extends Error {
   readonly code: EditErrorCode;
@@ -221,6 +228,151 @@ export function moveBodyItem(
   // original index" convention.
   const target = to > from ? to + 1 : to;
   return reorderBlockEdits(source, blocks, from, target);
+}
+
+// ---------------------------------------------------------------------------
+// Graph-editor operations — the write side of the story-graph canvas.
+// ---------------------------------------------------------------------------
+
+/**
+ * Validated exact-range replacement — the primitive under every
+ * graph-side rewrite. `expect` is what the caller believes currently
+ * occupies `start..end` (a divert target, a choice's text, …); a
+ * mismatch means the anchor went stale (the buffer changed since the
+ * graph was built) and the edit is refused rather than misapplied.
+ */
+export function replaceExact(
+  source: string,
+  start: number,
+  end: number,
+  expect: string,
+  replacement: string,
+): TextEdit[] {
+  if (start < 0 || end > source.length || source.slice(start, end) !== expect) {
+    throw new EditError("staleAnchor", `anchor no longer reads \`${expect}\``);
+  }
+  if (expect === replacement) return [];
+  return [{ start, end, replacement }];
+}
+
+/**
+ * Rewire a divert: replace the target text at `start..end` (the
+ * `targetRange` the story graph computed) with `newTarget`, refusing a
+ * stale anchor. Works for any divert form — plain, choice-nested,
+ * tunnel call, owned-beat raw line — because the range is the exact
+ * written target.
+ */
+export function retargetDivert(
+  source: string,
+  start: number,
+  end: number,
+  oldTarget: string,
+  newTarget: string,
+): TextEdit[] {
+  return replaceExact(source, start, end, oldTarget, newTarget);
+}
+
+/**
+ * Append a `-> target` divert as the last body line of `beat` — the
+ * canvas's drag-a-connection edit. The line indents to match the last
+ * body item (or two spaces under a bare opener).
+ */
+export function appendDivert(
+  source: string,
+  file: LoomFile,
+  beat: string,
+  target: string,
+): TextEdit[] {
+  return appendBodyLines(source, file, beat, [`-> ${target}`]);
+}
+
+/**
+ * Append a choice option (`* text` / `+ text`), optionally already
+ * wired to a target beat.
+ */
+export function appendChoice(
+  source: string,
+  file: LoomFile,
+  beat: string,
+  text: string,
+  opts?: { sticky?: boolean; target?: string },
+): TextEdit[] {
+  const marker = opts?.sticky === true ? "+" : "*";
+  const lines = [`${marker} ${text}`];
+  if (opts?.target !== undefined) lines.push(`  -> ${opts.target}`);
+  return appendBodyLines(source, file, beat, lines);
+}
+
+/**
+ * Append raw body lines (already relative-indented among themselves) to
+ * the end of `beat`'s block, before its trailing separator.
+ */
+export function appendBodyLines(
+  source: string,
+  file: LoomFile,
+  beat: string,
+  lines: string[],
+): TextEdit[] {
+  const b = beatAt(file, beat);
+  if (!b) throw beatNotFound(beat);
+  const i = beatIndex(file, beat)!;
+  const blocks = itemBlocks(source, file);
+  const [bs, be] = blocks[i]!;
+  const content = source.slice(bs, be).replace(/\s+$/u, "");
+  const insertAt = bs + content.length;
+
+  // Match the indentation of the beat's last body item, defaulting to
+  // two spaces directly under the `==` opener.
+  let indent = "  ";
+  const last = b.body.at(-1);
+  if (last !== undefined) {
+    const [ls, le] = lineBounds(source, bodyItemSpan(last).start.offset);
+    indent = leadingWs(source.slice(ls, le));
+    if (indent.length === 0) indent = "  ";
+  }
+  const replacement = lines.map((l) => `\n${indent}${l}`).join("");
+  return [{ start: insertAt, end: insertAt, replacement }];
+}
+
+/**
+ * Delete the body item at (0-based) `index` in `beat` — its whole line
+ * block, including nested content, up to the next sibling item.
+ */
+export function removeBodyItem(
+  source: string,
+  file: LoomFile,
+  beat: string,
+  index: number,
+): TextEdit[] {
+  const b = beatAt(file, beat);
+  if (!b) throw beatNotFound(beat);
+  if (index < 0 || index >= b.body.length) {
+    throw new EditError("itemNotFound", `no body item at index ${index}`);
+  }
+  const starts = b.body.map((it) => lineBounds(source, bodyItemSpan(it).start.offset)[0]);
+  const regionEnd = Math.min(b.span.end.offset, source.length);
+  const end = index + 1 < starts.length ? starts[index + 1]! : regionEnd;
+  return [{ start: starts[index]!, end, replacement: "" }];
+}
+
+/**
+ * Rename a top-level beat's declaration line (`== old` → `== new`).
+ * Reference updates live at the workspace layer (`lsp/rename.ts`),
+ * which sees every file; this op is the declaration site only.
+ */
+export function renameBeatDecl(
+  source: string,
+  file: LoomFile,
+  oldName: string,
+  newName: string,
+): TextEdit[] {
+  const b = beatAt(file, oldName);
+  if (!b) throw beatNotFound(oldName);
+  const [ls, le] = lineBounds(source, b.span.start.offset);
+  const line = source.slice(ls, le);
+  const at = line.indexOf(oldName);
+  if (at < 0) throw new EditError("staleAnchor", `opener line lost \`${oldName}\``);
+  return replaceExact(source, ls + at, ls + at + oldName.length, oldName, newName);
 }
 
 // ---------------------------------------------------------------------------

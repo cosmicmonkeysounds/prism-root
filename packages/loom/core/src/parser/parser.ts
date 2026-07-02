@@ -757,7 +757,14 @@ function parseDivertText(text: string, sp: Span): Divert {
   return { kind: "to", target, params, slots: new Map(), scopeAs, span: sp };
 }
 
-function parseDivertTarget(text: string): DivertTarget {
+/**
+ * Split a raw divert target (`lockdown`, `self.beat`, `Owner.beat`,
+ * `cast/wren#intro`) into its structured parts. `/` (a file/namespace
+ * qualifier) outranks `.` (an owner qualifier, spec §11.2); `#` splits
+ * off a knot. Public: graph extraction + structural edits reuse the
+ * exact split the parser applies, so target semantics can never drift.
+ */
+export function parseDivertTarget(text: string): DivertTarget {
   let filePart: string;
   let knot: string | null;
   const hash = text.indexOf("#");

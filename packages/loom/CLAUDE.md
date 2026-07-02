@@ -351,10 +351,50 @@ speaks as the beat's first `cast:` member); and the **LSP batch** — trait hove
 (`unresolvedTraitArg`, `unfilledDerivedSlot`, `derivedBeatConflict`,
 `requiredParamUnfilled`, …) in the editor via `Workspace.diagnosticsFor`.
 
-Everything in the TS engine is done and green (278 vitest tests). The only
-remaining work is the **Rust mirror** (parser + runtime crates), which is not yet
-updated for ANY of Slices 1/2/A/3/B/C or these gaps — the TS and Rust engines will
-drift until it is ported. (Explicitly deprioritized by the user for now.)
+**The story-graph node editor landed 2026-07-01** (TS `core/` + `editor`):
+Editing mode (`⌘2`) is now a **global node editor, 1:1 with Loom Lang**,
+replacing the vacant per-file graphs (`runner/Graph.tsx`, `BeatTimeline.tsx`,
+`lib/loom-story.ts` — all deleted).
+
+- **Engine (`core/src/lsp/graph.ts`)**: `Workspace.storyGraph()` lifts every
+  indexed document + the compiled model into one project graph — beats
+  (top-level / class-owned / trait-derived, `structural:` tagged), narrative
+  edges (divert / choice / tunnel / END / **hook** — `on scan guest` routings,
+  incl. trait-inherited ones through param substitution) with choice labels,
+  guard context (`<if:>`/match/visit arms), and **exact `targetRange` anchors**
+  for rewiring; relationship overlay edges (cast/setting/member/is/owns/
+  contains); shadowed same-name duplicates re-keyed `name~N`; static
+  `resolveBeat` mirror (self./Owner./bare + cast[0] fallback, `dynamic`
+  flagged). Cached per index rebuild (`Workspace.generation`); last-good
+  compile survives mid-keystroke parse failures. `Workspace.beatBody(key)`
+  serves drill-in bodies (file AST spans exact; owned via `lowerRawBody`
+  line-remap; derived from the model).
+- **Edit ops (`core/src/parser/edit.ts` + `core/src/lsp/rename.ts`)**:
+  `replaceExact` (validated range splice — refuses stale anchors),
+  `retargetDivert`, `appendDivert`, `appendChoice`, `appendBodyLines`,
+  `removeBodyItem`, `renameBeatDecl`, and workspace-level
+  `Workspace.renameBeat(key, newName)` → per-URI `TextEdit[]` batches
+  (declaration + every resolved reference, `.`/`/`/`#knot` separators
+  preserved, `entry:` header included; derived beats refused).
+  `parseDivertTarget` is public now. **Lexer fix**: the tunnel call
+  `(name) ->` was classified as prose (the parser's tunnel branch was
+  unreachable) — it now lexes as a divert line.
+- **Editor (`editor/src/components/graph/`)**: see `editor/CLAUDE.md` —
+  ELK-laid-out project map (file containers, cross-file edges, ghost nodes,
+  runtime overlay), beat drill-in flow, Files+Story-Bin rail, BeatStrip dock,
+  graph-selection Properties tray, and full source round-trip (connect /
+  rewire / create / rename / delete / inline text edits).
+- **Run overlay**: the mod SSE stream now forwards the raw **`sim` feed**
+  (`server/event-runtime.ts` fanout) — `beatEntered` lights the story map
+  live in Run mode; a future in-editor simulator drives the same
+  `RuntimeOverlay` contract.
+
+Everything in the TS engine is done and green (344 vitest tests in `core`,
++24 in the editor incl. the graph-pipeline corpus test). The only remaining
+work is the **Rust mirror** (parser + runtime crates), which is not yet
+updated for ANY of Slices 1/2/A/3/B/C, these gaps, or the story graph — the
+TS and Rust engines will drift until it is ported. (Explicitly deprioritized
+by the user for now.)
 
 Still to come: a pure-Rust Lua VM (piccolo) so Lua-defined directives
 and `.luau` extensions execute client-side instead of degrading; the

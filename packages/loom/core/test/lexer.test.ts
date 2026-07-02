@@ -54,6 +54,14 @@ describe("lexer::scan", () => {
     expect(first("<-\n")).toEqual({ kind: "tunnelReturn" });
   });
 
+  it("classifies a tunnel call as a divert line, not prose", () => {
+    expect(first("(ringing) ->\n")).toEqual({ kind: "divertLine", text: "(ringing) ->" });
+    expect(first("(ringing with tone: low) ->\n")).toEqual({
+      kind: "divertLine",
+      text: "(ringing with tone: low) ->",
+    });
+  });
+
   it("parses a parenthetical line", () => {
     expect(first("(quietly)\n")).toEqual({ kind: "parenthetical", text: "quietly" });
   });

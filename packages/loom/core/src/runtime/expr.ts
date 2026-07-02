@@ -184,10 +184,13 @@ export class ExprError extends Error {
 
 /** One argument passed to a `callFn` — both the parsed AST and value. */
 export class CallArg {
-  constructor(
-    public expr: Expr,
-    public value: Value,
-  ) {}
+  expr: Expr;
+  value: Value;
+
+  constructor(expr: Expr, value: Value) {
+    this.expr = expr;
+    this.value = value;
+  }
 
   /** Best-effort symbolic name for a path argument, else null. */
   symbol(): string | null {

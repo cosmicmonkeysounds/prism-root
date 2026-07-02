@@ -10,6 +10,7 @@
 
 import { create } from 'zustand'
 import { eventsApi, modApi, type EventInfo, type StatField } from '@/lib/api'
+import { useGraph } from '@/store/graph'
 
 export interface RosterRow {
   id: string
@@ -92,7 +93,7 @@ export type Selection =
   | null
 
 /** The Run cockpit's center pages. */
-export type RunTab = 'event' | 'chat' | 'roster' | 'world' | 'director'
+export type RunTab = 'event' | 'chat' | 'roster' | 'world' | 'director' | 'story'
 
 type OperateState = {
   projectId: string | null
@@ -181,6 +182,7 @@ export const useOperate = create<OperateState>((set, get) => {
 
   const connect = (eventId: string) => {
     disconnect()
+    useGraph.getState().runtimeReset() // fresh event → fresh overlay
     const source = new EventSource(`/e/${encodeURIComponent(eventId)}/events?role=mod`)
     source.onopen = () => set({ connected: true })
     source.onerror = () => set({ connected: false })
@@ -212,6 +214,14 @@ export const useOperate = create<OperateState>((set, get) => {
     source.addEventListener('messageModerated', (e) => {
       const d = JSON.parse((e as MessageEvent).data) as OperateMessage
       if ('text' in d) upsert(d)
+    })
+    // Raw sim feed (mods only): drives the story-graph runtime overlay —
+    // the same contract a future in-editor simulator will feed locally.
+    source.addEventListener('sim', (e) => {
+      const ev = JSON.parse((e as MessageEvent).data) as { type?: string; beat?: string }
+      if (ev.type === 'beatEntered' && typeof ev.beat === 'string') {
+        useGraph.getState().runtimeEnter(ev.beat)
+      }
     })
     es = source
   }
@@ -251,6 +261,7 @@ export const useOperate = create<OperateState>((set, get) => {
 
     teardown: () => {
       disconnect()
+      useGraph.getState().runtimeReset()
       set({
         projectId: null,
         event: null,

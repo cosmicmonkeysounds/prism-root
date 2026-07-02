@@ -5,7 +5,7 @@ export * from "./source.ts";
 export * from "./diagnostics.ts";
 export * from "./ast.ts";
 export * from "./keywords.ts";
-export { parse } from "./parser.ts";
+export { parse, parseDivertTarget } from "./parser.ts";
 export { scan, scannedLineSpan, type LineKind, type ScannedLine } from "./lexer.ts";
 export { strip as stripComments } from "./comments.ts";
 export { lower as lowerDeclaration, parseMixinRef, type MixinRef } from "./decl-body.ts";
@@ -14,6 +14,9 @@ export {
   EditError,
   type EditErrorCode,
   type TextEdit,
+  appendBodyLines,
+  appendChoice,
+  appendDivert,
   applyBeatProperty,
   applyEdits,
   applyInsertBeat,
@@ -23,5 +26,9 @@ export {
   moveBeat,
   moveBodyItem,
   removeBeat,
+  removeBodyItem,
+  renameBeatDecl,
+  replaceExact,
+  retargetDivert,
   setBeatProperty,
 } from "./edit.ts";

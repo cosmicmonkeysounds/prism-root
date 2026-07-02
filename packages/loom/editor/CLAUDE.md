@@ -28,9 +28,10 @@ the BetterAuth cookie flows same-origin. Override with `LOOM_SERVER`.
 - React 19 + TypeScript + Vite
 - Tailwind CSS v4 (`@tailwindcss/vite`)
 - `@uiw/react-codemirror` (one-dark theme, per-language extensions)
-- `@xyflow/react` for the canvas
+- `@xyflow/react` for the node-editor canvas + `elkjs` (layered
+  compound layout for the story graph)
 - `allotment` for the fixed modal-shell region splits (IDE redesign v2)
-- `@dnd-kit` (core + sortable) for the Editing-facet beat reorder
+- `@dnd-kit` (core + sortable + utilities) for the BeatStrip clip reorder
 - `zustand` for state
 - `pnpm` for package management
 
@@ -45,12 +46,12 @@ the loom root, or `pnpm <script>` from this directory.
 ```
 src/
   lib/        # fs (File System Access), language (CM extensions),
-              #   loom-lint / lsp-client / loom-ast / loom-story (@loom/core)
+              #   loom-lint / lsp-client / loom-ast / story-graph (@loom/core)
   store/      # zustand stores: workspace (files), focus (projection bus),
-              #   mode (modal shell), settings
+              #   mode (modal shell), graph (node-editor state), settings
   components/ # studio/ (StudioShell + ModeBar + per-mode regions),
-              #   files, editor, canvas, runner (Outline/References/Graph),
-              #   detail, shell
+              #   graph/ (the Editing-mode node editor), files, editor,
+              #   operate, runner (Outline/References), detail, shell
   App.tsx     # top bar + StudioShell + status bar + overlays
 ```
 
@@ -66,11 +67,60 @@ resizable `allotment` layout (left rail · center stage · right
 properties tray · optional bottom Timeline dock) that composes the leaf
 panels; `store/mode.ts` owns the active mode + per-mode region sizes
 (persisted to `localStorage["loom.studio"]`). The right **Properties
-tray** (`components/studio/PropertiesTray.tsx`) is tabbed: it follows
-the editor cursor and reads the active file's AST via `lib/loom-ast.ts`,
-plus a workspace References panel. This replaced the old `dockview`
-activity-bar + free-docking model. Full design:
+tray** (`components/studio/PropertiesTray.tsx`) is tabbed: in Writing it
+follows the editor cursor (active-file AST via `lib/loom-ast.ts`); in
+Editing it follows the **canvas selection** (beat/entity inspector with
+editable contract + In/Out link lists); plus a workspace References
+panel. This replaced the old `dockview` activity-bar + free-docking
+model. Full design:
 [`docs/dev/loom-ide-redesign.md` Part II](../../../docs/dev/loom-ide-redesign.md).
+
+### Editing mode — the story-graph node editor (`components/graph/`)
+
+Editing (`⌘2`) is a **global node editor over the whole project**, 1:1
+with Loom Lang (Articy-Draft-style nesting, Pixel-Crushers-style
+dialogue flows). Data comes from `@loom/core/lsp`'s
+`Workspace.storyGraph()` (every indexed `.loom` file — never just the
+active buffer) via `lib/story-graph.ts`'s `useStoryGraph()`
+(recomputes on the `useLspIndexGen` counter).
+
+- **Center — `StoryGraphPanel`.** Two nested levels: the **project
+  map** (beats as cards inside collapsible per-file containers; divert /
+  choice / tunnel edges cross files; `on <event>` **hook** edges from
+  character pills; red **ghost nodes** for unresolved targets; ▶ entry
+  badge, END terminal) and the **beat drill-in** (double-click a beat:
+  its body as a top-down flow — dialogue cards, choice fan-outs that
+  re-merge past the menu, `<if:>`/`<match:>`/`<each visit>`/`<after:>`
+  branch heads with labeled arms, divert exit pills that double-click
+  through to their target). Breadcrumb (`Story map › beat`) navigates
+  back. ELK (`elkjs`) layered layout with compound containers
+  (`graph/layout.ts`); manual drags persist per project
+  (`localStorage["loom.graph.layouts"]`, `store/graph.ts`).
+- **Edits round-trip to `.loom` source** through `@loom/core/parser`'s
+  span-preserving `TextEdit` ops (`lib/story-graph.ts` applies per-URI
+  batches via `writePathContents` — opens the file as a dirty tab +
+  `syncBuffer`s the LSP so the graph re-derives instantly): drag a
+  connection between beats → `appendDivert`; drag an edge end onto
+  another beat → `retargetDivert` against the edge's exact
+  `targetRange`; `+ beat` / context-menu delete → `insertBeat` /
+  `removeBeat`; **Rename…** → `Workspace.renameBeat` (declaration +
+  every cross-file reference + `entry:`); right-click a body node →
+  Edit text… (`replaceExact`). Owned beats retarget only; derived
+  (trait-template) beats are honest projections — edit the template.
+- **Left rail — `EditingRail`**: Files (the Writing `Sidebar`) ⇄
+  **Story Bin** (`StoryBin`, the project-wide navigator: beats grouped
+  by file + every declared entity, filterable; click selects on canvas,
+  double-click jumps to source).
+- **Bottom dock — `BeatStrip`**: the selected beat's body as linear
+  clips; drag-reorder → `moveBodyItem`, right-click delete →
+  `removeBodyItem`, composer appends raw lines (`appendBodyLines`).
+- **Run overlay**: the same canvas mounts in Run mode (Story tab,
+  `variant="run"`, read-only) and lights up from `store/graph.ts`'s
+  `RuntimeOverlay` — `store/operate.ts` listens to the mod SSE `sim`
+  feed (`beatEntered` → visit badges + current-beat pulse). A future
+  in-editor simulator drives the identical contract locally.
+- Pipeline regression test: `components/graph/graph-pipeline.test.ts`
+  (core graph → flow projection → ELK, over `escape-the-internet`).
 
 ## Conventions
 - Path alias `@/*` → `src/*`.
@@ -153,13 +203,14 @@ bundle to load or rebuild.
   `applyBeatProperty` / `applyMoveBeat` / `applyInsertBeat` /
   `applyRemoveBeat` structural edits (editable tray fields + beat-flow
   drag rewrite `.loom` source).
-- `src/lib/loom-story.ts` — pure helper that lifts a parsed `.loom`
-  file into a static **story model** (beats / characters / locations /
-  cohorts + beat→beat divert/choice/tunnel edges) and a reach-depth
-  layout. Feeds the Editing mode's center **`runner/Graph.tsx`** entity
-  graph and the dock **`studio/BeatTimeline.tsx`** beat flow-DAG (both
-  xyflow). Node double-click jumps to source via
-  `workspace.revealActive` + Writing mode.
+- `src/lib/story-graph.ts` — the node-editor data layer:
+  `useStoryGraph()` (the project-wide `Workspace.storyGraph()`, memoized
+  on the index generation), `writePathContents` / `applyEditMap` (the
+  graph-edit write path: open-as-tab + `updateContents` + `syncBuffer`),
+  `writtenTargetFor` / `beatPath`. Replaced the old per-file
+  `loom-story.ts` (and `runner/Graph.tsx` + `studio/BeatTimeline.tsx`,
+  both deleted) — see **Editing mode** above for the `components/graph/`
+  surface it feeds.
 
 ## Authoring-only — no in-editor play or collaboration
 
@@ -167,8 +218,8 @@ The editor is an **authoring tool**: open a folder, edit, highlight,
 lint, full **in-buffer LSP** (hover / go-to-definition on ⌘/Ctrl-Click +
 F12 / completion / find-references on ⇧F12 / occurrence highlight /
 project diagnostics, plus the Outline / References panels and
-go-to-symbol), structural beat edits, and the static graph / beat-flow
-views. It does
+go-to-symbol), structural beat edits, and the project-wide story-graph
+node editor. It does
 **not** run the show or co-edit over a relay — the former wasm
 `LoomSession` (local play) and `LoomDoc` (Loro CRDT collaboration) were
 removed in the wasm cutover. **Runtime lives in the sibling packages**:

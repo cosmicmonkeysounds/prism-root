@@ -177,6 +177,10 @@ export class EventRuntime {
       if (e.type === "choicePrompted" && e.person !== null) {
         this.decisionChannels.set(e.person, decisionChannelFor(events, e.person));
       }
+      // Mods (the editor's Run mode) also get the raw sim feed, so the
+      // story-graph overlay lights beats up as they fire and a future
+      // in-editor simulator can mirror the whole run.
+      for (const c of this.clients) if (c.role === "mod") sseSend(c.res, "sim", e);
     }
     for (const m of this.chat.append(composeGuestMessages(this.sim ?? EMPTY_SIM, events))) this.deliverMessage(m);
     for (const id of [...this.decisionChannels.keys()]) {
