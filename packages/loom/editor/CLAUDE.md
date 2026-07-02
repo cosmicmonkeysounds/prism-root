@@ -119,6 +119,32 @@ active buffer) via `lib/story-graph.ts`'s `useStoryGraph()`
   `RuntimeOverlay` — `store/operate.ts` listens to the mod SSE `sim`
   feed (`beatEntered` → visit badges + current-beat pulse). A future
   in-editor simulator drives the identical contract locally.
+- **Ergonomics** (all in `StoryGraphPanel` + `store/graph.ts`):
+  - **Hover tooltips** on every node + edge (beat preview + `file:line`,
+    entity summary, edge kind/text/guard/route), 220 ms delay; node
+    hover also feeds the **focus bus** (`useFocus.setHover`).
+  - **Edges are selectable** — clicking one (label included) opens the
+    tray's **connection inspector**: route (jump either end), choice
+    text/stickiness, guard, plus a **Rewire to** beat picker that
+    rewrites the divert target in source. File containers select too
+    (file inspector: beats/declarations, Open in Writing).
+  - **`reveal(id)` centering** — Story Bin rows, tray link lists, and
+    toolbar search all center+zoom the canvas on the target, retrying
+    across relayouts, auto-enabling the entity overlay (or popping out
+    of a drill-in) when the target is hidden.
+  - **True inline editing** in the drill-in: double-click (or context
+    menu → Edit in place) a prose/dialogue/choice/directive node to get
+    an in-node textarea over the item's **raw source slice** — Enter
+    commits via `replaceExact`, Shift+Enter newline, Esc cancels.
+  - **Fit-to-content layout**: after first paint, React Flow's measured
+    node sizes feed a second ELK pass (`onNodesChange` dimension
+    changes → one re-layout per flow), so boxes always fit their text.
+  - **MiniMap** (project view, pannable/zoomable); selecting a node
+    **emphasises its connections** and dims the rest; **ghost nodes
+    double-click to create the missing beat** (every dangling divert
+    then resolves); file-container double-click opens the file.
+  - **Keyboard**: Esc backs out of a drill-in / clears selection,
+    F2 renames the selected beat, Delete removes it (file beats).
 - Pipeline regression test: `components/graph/graph-pipeline.test.ts`
   (core graph → flow projection → ELK, over `escape-the-internet`).
 

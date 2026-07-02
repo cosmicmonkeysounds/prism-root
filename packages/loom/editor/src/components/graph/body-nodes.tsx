@@ -5,7 +5,7 @@
 // exits, and slot holes. Pixel-Crushers-style: options and branches
 // fan out, everything else chains downward.
 
-import { memo } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import clsx from 'clsx'
 import type { LoomSpan } from '@/lib/loom-ast'
@@ -14,7 +14,82 @@ import { BODY_W, BRANCH_W, EXIT_W, START_W } from './metrics'
 export type SourceAnchor = { uri: string; span: LoomSpan } | null
 
 /** Shared payload: every body node can point back at authored source. */
-type Anchored = { anchor: SourceAnchor }
+type Anchored = {
+  anchor: SourceAnchor
+  /** In-place editing (wired by the canvas for `file`-structural beats). */
+  editing?: boolean
+  editSlice?: string | null
+  onCommitEdit?: (next: string) => void
+  onCancelEdit?: () => void
+}
+
+/**
+ * The in-node source editor: a textarea over the item's raw `.loom`
+ * slice (indentation included for multi-line blocks — what you edit IS
+ * the text). Enter commits (Shift+Enter for a newline), Esc cancels,
+ * blur commits.
+ */
+function InlineEdit({
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  initial: string
+  onCommit: (next: string) => void
+  onCancel: () => void
+}) {
+  const [value, setValue] = useState(initial)
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (el === null) return
+    el.focus()
+    el.select()
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [])
+  const commit = () => {
+    if (value !== initial) onCommit(value)
+    else onCancel()
+  }
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={(e) => {
+        setValue(e.target.value)
+        e.target.style.height = 'auto'
+        e.target.style.height = `${e.target.scrollHeight}px`
+      }}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        e.stopPropagation()
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault()
+          commit()
+        } else if (e.key === 'Escape') {
+          e.preventDefault()
+          onCancel()
+        }
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+      className="nodrag nopan w-full resize-none rounded border border-sky-400/50 bg-zinc-950 px-1.5 py-1 font-mono text-[11px] leading-[15px] text-zinc-100 outline-none"
+      spellCheck={false}
+    />
+  )
+}
+
+/** Render the inline editor when a node is in editing state. */
+function maybeEdit(data: Anchored): React.ReactNode | null {
+  if (data.editing !== true || data.editSlice == null) return null
+  return (
+    <InlineEdit
+      initial={data.editSlice}
+      onCommit={data.onCommitEdit ?? (() => undefined)}
+      onCancel={data.onCancelEdit ?? (() => undefined)}
+    />
+  )
+}
 
 export type BodyStartData = Anchored & {
   title: string
@@ -77,7 +152,9 @@ export const BodyTextNode = memo(function BodyTextNode({
       style={{ width: BODY_W }}
     >
       <Ports />
-      <div className="text-[11px] leading-[14px] text-zinc-300 whitespace-pre-wrap">{data.text}</div>
+      {maybeEdit(data) ?? (
+        <div className="text-[11px] leading-[14px] text-zinc-300 whitespace-pre-wrap">{data.text}</div>
+      )}
     </div>
   )
 })
@@ -92,17 +169,21 @@ export const BodyDialogueNode = memo(function BodyDialogueNode({
       style={{ width: BODY_W }}
     >
       <Ports />
-      <div className="text-[10px] font-semibold tracking-wide text-cyan-200">
-        {data.speaker}
-        {data.parenthetical !== null && (
-          <span className="ml-1 font-normal text-zinc-500">({data.parenthetical})</span>
-        )}
-      </div>
-      {data.lines.map((l, i) => (
-        <div key={i} className="text-[11px] leading-[14px] text-zinc-300">
-          {l}
-        </div>
-      ))}
+      {maybeEdit(data) ?? (
+        <>
+          <div className="text-[10px] font-semibold tracking-wide text-cyan-200">
+            {data.speaker}
+            {data.parenthetical !== null && (
+              <span className="ml-1 font-normal text-zinc-500">({data.parenthetical})</span>
+            )}
+          </div>
+          {data.lines.map((l, i) => (
+            <div key={i} className="mt-0.5 text-[11px] leading-[15px] text-zinc-300 whitespace-pre-wrap">
+              {l}
+            </div>
+          ))}
+        </>
+      )}
     </div>
   )
 })
@@ -114,13 +195,13 @@ export const BodyDirectiveNode = memo(function BodyDirectiveNode({
   return (
     <div
       className={clsx(
-        'rounded-full border border-orange-300/30 bg-orange-950/30 px-2.5 py-1 font-mono text-[10px] text-orange-200/90',
+        'rounded-xl border border-orange-300/30 bg-orange-950/30 px-2.5 py-1 font-mono text-[10px] text-orange-200/90',
         selected && 'ring-2 ring-sky-400/70',
       )}
-      style={{ maxWidth: BODY_W }}
+      style={{ maxWidth: BODY_W, minWidth: data.editing === true ? BODY_W : undefined }}
     >
       <Ports />
-      <span className="block truncate">{data.raw}</span>
+      {maybeEdit(data) ?? <span className="block break-words">{data.raw}</span>}
     </div>
   )
 })
@@ -135,14 +216,18 @@ export const BodyChoiceNode = memo(function BodyChoiceNode({
       style={{ width: BODY_W }}
     >
       <Ports />
-      <div className="flex items-start gap-1.5">
-        <span className="text-[11px] text-emerald-300" title={data.sticky ? 'sticky (+)' : 'once (*)'}>
-          {data.sticky ? '+' : '*'}
-        </span>
-        <span className="text-[11px] leading-[14px] text-zinc-200">{data.text}</span>
-      </div>
-      {data.suppressed !== null && (
-        <div className="pl-4 text-[9px] text-zinc-500">[{data.suppressed}]</div>
+      {maybeEdit(data) ?? (
+        <>
+          <div className="flex items-start gap-1.5">
+            <span className="text-[11px] text-emerald-300" title={data.sticky ? 'sticky (+)' : 'once (*)'}>
+              {data.sticky ? '+' : '*'}
+            </span>
+            <span className="text-[11px] leading-[15px] text-zinc-200">{data.text}</span>
+          </div>
+          {data.suppressed !== null && (
+            <div className="pl-4 text-[9px] text-zinc-500">[{data.suppressed}]</div>
+          )}
+        </>
       )}
     </div>
   )

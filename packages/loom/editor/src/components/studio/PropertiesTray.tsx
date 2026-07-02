@@ -15,15 +15,16 @@
 
 import { useMemo, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
-import type { GraphBeat, GraphEntity, StoryGraph } from '@loom/core/lsp'
+import type { GraphBeat, GraphEdge, GraphEntity, StoryGraph } from '@loom/core/lsp'
 import { applyBeatProperty } from '@loom/core/parser'
-import type { Mode } from '@/store/mode'
+import { useMode, type Mode } from '@/store/mode'
 import { useWorkspace } from '@/store/workspace'
 import { useFocus, type FocusRef } from '@/store/focus'
 import { ReferencesPanel } from '@/components/runner/References'
 import { OperateInspector } from '@/components/operate/OperateInspector'
 import { docText, pathForUri } from '@/lib/lsp-client'
-import { useStoryGraph, writePathContents } from '@/lib/story-graph'
+import { findFileEntryByPath } from '@/lib/lsp-nav'
+import { rewireGraphEdge, useStoryGraph, writePathContents } from '@/lib/story-graph'
 import { useGraph } from '@/store/graph'
 import {
   bodyBreakdown,
@@ -99,19 +100,176 @@ function AuthorTray({ mode }: { mode: Mode }) {
 
 function EditingProperties() {
   const selected = useGraph((s) => s.selected)
+  const selectedEdge = useGraph((s) => s.selectedEdge)
   const graph = useStoryGraph()
+  if (selectedEdge !== null) {
+    const edge = graph.edges.find((e) => e.id === selectedEdge)
+    if (edge !== undefined) return <GraphEdgeDetail edge={edge} graph={graph} />
+  }
   if (selected !== null) {
     const beat = graph.beats.get(selected)
     if (beat !== undefined) return <GraphBeatDetail beat={beat} graph={graph} />
     const ent = graph.entities.get(selected)
     if (ent !== undefined) return <GraphEntityDetail ent={ent} graph={graph} />
+    if (selected.startsWith('file:')) {
+      const file = graph.files.find((f) => `file:${f.uri}` === selected)
+      if (file !== undefined) return <GraphFileDetail uri={file.uri} graph={graph} />
+    }
   }
   return <AuthorProperties />
 }
 
+/** Inspector for a selected connection (divert / choice / hook / …). */
+function GraphEdgeDetail({ edge, graph }: { edge: GraphEdge; graph: StoryGraph }) {
+  const reveal = useGraph((s) => s.reveal)
+  const [error, setError] = useState<string | null>(null)
+
+  const kindLabel =
+    edge.kind === 'hook' ? 'Hook route'
+    : edge.kind === 'choice' ? 'Choice link'
+    : edge.kind === 'tunnel' ? 'Tunnel call'
+    : edge.kind === 'end' ? 'Ending'
+    : edge.narrative ? 'Divert'
+    : `${edge.kind} (overlay)`
+
+  const rewireTargets = [...graph.beats.values()].filter((b) => !b.shadowed)
+  const canRewire = edge.narrative && edge.targetRange !== null && edge.kind !== 'end'
+
+  const onRewire = async (key: string): Promise<void> => {
+    if (key === (edge.to ?? '')) return
+    const err = await rewireGraphEdge(graph, edge, key)
+    setError(err)
+    if (err !== null) window.setTimeout(() => setError(null), 4000)
+  }
+
+  const showSource = async (): Promise<void> => {
+    if (edge.uri === null || edge.span === null) return
+    const ws = useWorkspace.getState()
+    const entry = ws.root ? findFileEntryByPath(ws.root, pathForUri(edge.uri)) : null
+    if (entry) await ws.revealAt(entry, edge.span.start.line + 1, edge.span.start.column + 1)
+    useMode.getState().setMode('writing')
+  }
+
+  return (
+    <div className="h-full overflow-auto bg-zinc-950 font-mono">
+      <Header kind={kindLabel} title={edge.label ?? `${edge.from} → ${edge.to ?? edge.unresolved ?? '?'}`} />
+      {error !== null && <Row label="⚠" value={error} />}
+      <Section title="Route">
+        <button
+          className="flex w-full gap-3 px-3 py-1 border-b border-white/5 hover:bg-white/5 text-xs text-left"
+          onClick={() => reveal(edge.from)}
+        >
+          <span className="text-zinc-500 w-14 shrink-0">from</span>
+          <span className="text-zinc-200 truncate">{edge.from}</span>
+        </button>
+        {edge.to !== null ? (
+          <button
+            className="flex w-full gap-3 px-3 py-1 border-b border-white/5 hover:bg-white/5 text-xs text-left"
+            onClick={() => reveal(edge.to!)}
+          >
+            <span className="text-zinc-500 w-14 shrink-0">to</span>
+            <span className="text-zinc-200 truncate">{edge.to}</span>
+          </button>
+        ) : (
+          <Row label="to" value={edge.kind === 'end' ? 'END' : `⚠ ${edge.unresolved ?? '?'} (unresolved)`} />
+        )}
+        {edge.label !== null && <Row label={edge.kind === 'hook' ? 'trigger' : 'text'} value={edge.label} />}
+        {edge.sticky !== null && <Row label="repeats" value={edge.sticky ? 'sticky (+)' : 'once (*)'} />}
+        {edge.condition !== null && <Row label="when" value={edge.condition} />}
+        {edge.dynamic && (
+          <Row label="binding" value="self resolves at play time (shown best-effort)" />
+        )}
+      </Section>
+      {canRewire && (
+        <Section title="Rewire to">
+          <div className="px-3 py-1.5">
+            <select
+              value={edge.to ?? ''}
+              onChange={(e) => void onRewire(e.target.value)}
+              className="w-full rounded border border-white/10 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-sky-400/50"
+              data-testid="edge-rewire-select"
+            >
+              {edge.to === null && <option value="">⚠ unresolved</option>}
+              {rewireTargets.map((b) => (
+                <option key={b.key} value={b.key}>
+                  {b.key}
+                </option>
+              ))}
+            </select>
+            <div className="pt-1 text-[10px] text-zinc-600">
+              Rewrites the divert target in source.
+            </div>
+          </div>
+        </Section>
+      )}
+      {edge.uri !== null && edge.span !== null && (
+        <div className="px-3 py-2">
+          <button
+            className="rounded border border-white/10 px-2 py-1 text-[11px] text-zinc-300 hover:bg-white/5"
+            onClick={() => void showSource()}
+          >
+            Show source · {base(pathForUri(edge.uri))}:{edge.span.start.line + 1}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Inspector for a selected file container. */
+function GraphFileDetail({ uri, graph }: { uri: string; graph: StoryGraph }) {
+  const reveal = useGraph((s) => s.reveal)
+  const file = graph.files.find((f) => f.uri === uri)
+  const path = pathForUri(uri)
+  const openInWriting = async (): Promise<void> => {
+    const ws = useWorkspace.getState()
+    const entry = ws.root ? findFileEntryByPath(ws.root, path) : null
+    if (entry) await ws.revealAt(entry, 1, 1)
+    useMode.getState().setMode('writing')
+  }
+  if (file === undefined) return <Empty msg="File not indexed." />
+  return (
+    <div className="h-full overflow-auto bg-zinc-950 font-mono">
+      <Header kind="File" title={base(path)} subtitle={path} />
+      <Section title={`Beats · ${file.beats.length}`}>
+        {file.beats.map((k) => (
+          <button
+            key={k}
+            className="flex w-full px-3 py-1 border-b border-white/5 hover:bg-white/5 text-xs text-left text-zinc-200"
+            onClick={() => reveal(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </Section>
+      {file.entities.length > 0 && (
+        <Section title={`Declarations · ${file.entities.length}`}>
+          {file.entities.map((id) => (
+            <button
+              key={id}
+              className="flex w-full px-3 py-1 border-b border-white/5 hover:bg-white/5 text-xs text-left text-zinc-200"
+              onClick={() => reveal(id)}
+            >
+              {id.replace(':', ' · ')}
+            </button>
+          ))}
+        </Section>
+      )}
+      <div className="px-3 py-2">
+        <button
+          className="rounded border border-white/10 px-2 py-1 text-[11px] text-zinc-300 hover:bg-white/5"
+          onClick={() => void openInWriting()}
+        >
+          Open in Writing →
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function GraphBeatDetail({ beat, graph }: { beat: GraphBeat; graph: StoryGraph }) {
   const pin = useFocus((s) => s.pin)
-  const select = useGraph((s) => s.select)
+  const reveal = useGraph((s) => s.reveal)
   const openBeat = useGraph((s) => s.openBeat)
 
   // The beat's contract lives in its authored file — parse it there so
@@ -144,7 +302,7 @@ function GraphBeatDetail({ beat, graph }: { beat: GraphBeat; graph: StoryGraph }
   const incoming = graph.edges.filter((e) => e.narrative && e.to === beat.key)
 
   const jump = (id: string): void => {
-    select(id)
+    reveal(id) // select + center the canvas on it
     const b = graph.beats.get(id)
     if (b !== undefined) pin({ kind: 'beat', name: b.name })
   }
@@ -225,7 +383,7 @@ function GraphBeatDetail({ beat, graph }: { beat: GraphBeat; graph: StoryGraph }
 
 function GraphEntityDetail({ ent, graph }: { ent: GraphEntity; graph: StoryGraph }) {
   const pin = useFocus((s) => s.pin)
-  const select = useGraph((s) => s.select)
+  const select = useGraph((s) => s.reveal)
   const hooks = graph.edges.filter((e) => e.kind === 'hook' && e.from === ent.id)
   return (
     <div className="h-full overflow-auto bg-zinc-950 font-mono">

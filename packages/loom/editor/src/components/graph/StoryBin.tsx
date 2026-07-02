@@ -39,7 +39,7 @@ export function StoryBin() {
   const graph = useStoryGraph()
   const [filter, setFilter] = useState('')
   const selected = useGraph((s) => s.selected)
-  const select = useGraph((s) => s.select)
+  const reveal = useGraph((s) => s.reveal)
   const openProject = useGraph((s) => s.openProject)
   const pin = useFocus((s) => s.pin)
   const setMode = useMode((s) => s.setMode)
@@ -113,7 +113,7 @@ export function StoryBin() {
                   )}
                   onClick={() => {
                     openProject()
-                    select(b.key)
+                    reveal(b.key) // select + center the canvas on it
                     pin({ kind: 'beat', name: b.name })
                   }}
                   onDoubleClick={() => void revealBeat(b)}
@@ -153,7 +153,8 @@ export function StoryBin() {
                       selected === e.id && 'bg-sky-500/10 text-sky-200',
                     )}
                     onClick={() => {
-                      select(e.id)
+                      openProject()
+                      reveal(e.id) // centers; pulls the entity overlay on if hidden
                       if (e.kind === 'character' || e.kind === 'role') {
                         pin({ kind: 'character', name: e.name })
                       }

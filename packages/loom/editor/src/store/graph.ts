@@ -37,8 +37,18 @@ const EMPTY_RUNTIME: RuntimeOverlay = { visits: {}, current: null }
 
 type GraphState = {
   view: GraphView
-  /** Selected canvas node id (beat key or entity id). */
+  /** Selected canvas node id (beat key / entity id / `file:` group). */
   selected: string | null
+  /** Selected edge id (mutually exclusive with `selected`). */
+  selectedEdge: string | null
+  /**
+   * A pending "bring this node into view" command (from the Story Bin,
+   * the tray's link lists, search…). The canvas consumes it — retrying
+   * across relayouts until the node exists — then clears it.
+   */
+  centerRequest: { id: string; token: number } | null
+  /** Drill-in node currently inline-editing its source slice. */
+  editingNode: string | null
   overlays: GraphOverlays
   /** Per-project manual position overrides (projectKey → overrides). */
   layouts: Record<string, LayoutOverrides>
@@ -48,6 +58,11 @@ type GraphState = {
   openProject(): void
   openBeat(beatKey: string): void
   select(id: string | null): void
+  selectEdge(id: string | null): void
+  /** Select + ask the canvas to center/zoom on `id`. */
+  reveal(id: string): void
+  clearCenter(token: number): void
+  setEditing(id: string | null): void
   setOverlay(key: keyof GraphOverlays, on: boolean): void
   setSearch(q: string): void
   moveNode(projectKey: string, id: string, pos: { x: number; y: number }): void
@@ -78,14 +93,28 @@ function persist(layouts: Record<string, LayoutOverrides>): void {
 export const useGraph = create<GraphState>((set) => ({
   view: { kind: 'project' },
   selected: null,
+  selectedEdge: null,
+  centerRequest: null,
+  editingNode: null,
   overlays: { hooks: true, entities: false, labels: true },
   layouts: loadLayouts(),
   runtime: EMPTY_RUNTIME,
   search: '',
 
-  openProject: () => set({ view: { kind: 'project' } }),
-  openBeat: (beatKey) => set({ view: { kind: 'beat', beatKey }, selected: beatKey }),
-  select: (id) => set({ selected: id }),
+  openProject: () => set({ view: { kind: 'project' }, editingNode: null }),
+  openBeat: (beatKey) =>
+    set({ view: { kind: 'beat', beatKey }, selected: beatKey, selectedEdge: null, editingNode: null }),
+  select: (id) => set({ selected: id, selectedEdge: null }),
+  selectEdge: (id) => set({ selectedEdge: id, selected: null }),
+  reveal: (id) =>
+    set((s) => ({
+      selected: id,
+      selectedEdge: null,
+      centerRequest: { id, token: (s.centerRequest?.token ?? 0) + 1 },
+    })),
+  clearCenter: (token) =>
+    set((s) => (s.centerRequest?.token === token ? { centerRequest: null } : {})),
+  setEditing: (id) => set({ editingNode: id }),
   setOverlay: (key, on) => set((s) => ({ overlays: { ...s.overlays, [key]: on } })),
   setSearch: (q) => set({ search: q }),
   moveNode: (projectKey, id, pos) =>

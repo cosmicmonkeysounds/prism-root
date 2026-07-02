@@ -177,8 +177,12 @@ function clipText(item: BodyItem): string {
     case 'sceneHeading':
     case 'metadata':
       return item.value.value
-    case 'dialogue':
-      return item.value.speaker
+    case 'dialogue': {
+      // Show the actual spoken text, not just the speaker.
+      const first = item.value.body.find((c) => c.kind === 'action')
+      const text = first !== undefined && first.kind === 'action' ? first.value.value : ''
+      return text.length > 0 ? text : item.value.speaker
+    }
     case 'choice':
       return `${item.value.sticky ? '+' : '*'} ${item.value.text}`
     case 'divert': {
@@ -227,6 +231,7 @@ function Clip({
   })
   const style = KIND_STYLE[item.kind] ?? KIND_STYLE.action!
   const text = clipText(item)
+  const speaker = item.kind === 'dialogue' ? item.value.speaker : null
   return (
     <div
       ref={setNodeRef}
@@ -234,7 +239,7 @@ function Clip({
       {...listeners}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={clsx(
-        'flex min-w-24 max-w-52 cursor-grab select-none flex-col justify-center rounded border bg-zinc-900/90 px-2 py-1',
+        'flex min-w-28 max-w-72 cursor-grab select-none flex-col justify-center rounded border bg-zinc-900/90 px-2 py-1',
         style.cls,
         isDragging && 'opacity-60 cursor-grabbing',
       )}
@@ -246,10 +251,13 @@ function Clip({
           { x: e.clientX, y: e.clientY },
         )
       }}
-      title={text}
+      title={speaker !== null ? `${speaker}: ${text}` : text}
     >
-      <span className="text-[8px] uppercase tracking-wider opacity-60">{style.label}</span>
-      <span className="truncate text-[10px]">{text}</span>
+      <span className="text-[8px] uppercase tracking-wider opacity-60">
+        {style.label}
+        {speaker !== null && <span className="ml-1 normal-case tracking-normal">· {speaker}</span>}
+      </span>
+      <span className="line-clamp-2 text-[10px] leading-[13px]">{text}</span>
     </div>
   )
 }

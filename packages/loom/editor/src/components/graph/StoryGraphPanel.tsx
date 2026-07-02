@@ -17,12 +17,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   Controls,
+  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
   type Connection,
   type Edge,
   type Node,
+  type NodeChange,
 } from '@xyflow/react'
 import clsx from 'clsx'
 import {
@@ -31,15 +33,20 @@ import {
   parse,
   removeBeat,
   replaceExact,
-  retargetDivert,
   EditError,
-  type TextEdit,
 } from '@loom/core/parser'
 import type { GraphBeat, GraphEdge, StoryGraph } from '@loom/core/lsp'
 import { docText, lspWorkspaceSync, uriFor } from '@/lib/lsp-client'
 import { pathForUri } from '@/lib/lsp-client'
 import { findFileEntryByPath } from '@/lib/lsp-nav'
-import { applyEditMap, applyEditsToUri, useProjectKey, useStoryGraph, writtenTargetFor } from '@/lib/story-graph'
+import {
+  applyEditMap,
+  applyEditsToUri,
+  rewireGraphEdge,
+  useProjectKey,
+  useStoryGraph,
+  writtenTargetFor,
+} from '@/lib/story-graph'
 import { useFocus } from '@/store/focus'
 import { useGraph } from '@/store/graph'
 import { useMode } from '@/store/mode'
@@ -78,6 +85,16 @@ const ALL_NODE_TYPES = {
   bodySlot: BodySlotNode,
 } as const
 
+/** Drill-in node types that support in-place source editing. */
+const INLINE_EDITABLE = new Set(['bodyText', 'bodyChoice', 'bodyDialogue', 'bodyDirective'])
+
+/** The current raw source slice behind an anchor (the inline-edit seed). */
+function sliceOf(anchor: NonNullable<SourceAnchor>): string | null {
+  const text = docText(anchor.uri)
+  if (text === null) return null
+  return text.slice(anchor.span.start.offset, Math.min(anchor.span.end.offset, text.length))
+}
+
 export function StoryGraphPanel({ variant = 'edit' }: { variant?: 'edit' | 'run' }) {
   return (
     <ReactFlowProvider>
@@ -96,12 +113,16 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
   const overlays = useGraph((s) => s.overlays)
   const runtime = useGraph((s) => s.runtime)
   const selected = useGraph((s) => s.selected)
+  const selectedEdge = useGraph((s) => s.selectedEdge)
+  const editingNode = useGraph((s) => s.editingNode)
+  const centerRequest = useGraph((s) => s.centerRequest)
   const search = useGraph((s) => s.search)
   const projectKey = useProjectKey()
   const editable = variant === 'edit'
 
   const [positioned, setPositioned] = useState<{ nodes: Node[]; edges: Edge[] } | null>(null)
   const [status, setStatus] = useState<string | null>(null)
+  const [tip, setTip] = useState<TipState | null>(null)
   const flowRef = useRef<HTMLDivElement>(null)
   const rf = useReactFlow()
 
@@ -123,36 +144,88 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
     return { kind: 'project' as const, ...buildProjectFlow(graph, overlays) }
   }, [graph, overlays, beatKey])
 
+  // Sizes React Flow actually measured after render — fed back into a
+  // second ELK pass so boxes truly fit their text (estimates only seed
+  // the first paint). One measured pass per flow build.
+  const measuredRef = useRef(new Map<string, { width: number; height: number }>())
+  const remeasuredRef = useRef<object | null>(null)
+  const [measureTick, setMeasureTick] = useState(0)
+
+  const runLayout = useCallback(
+    (f: NonNullable<typeof flow>, sizes: Map<string, { width: number; height: number }>) => {
+      let cancelled = false
+      const layoutNodes = f.layoutNodes.map((n) => {
+        const m = sizes.get(n.id)
+        return m !== undefined && !n.isGroup ? { ...n, width: m.width, height: m.height } : n
+      })
+      void layeredLayout(layoutNodes, f.layoutEdges, f.kind === 'beat' ? 'DOWN' : 'RIGHT').then(
+        ({ positions, groupSizes }) => {
+          if (cancelled) return
+          // Drag overrides are read non-reactively: applying one must not
+          // re-run ELK (the drag already moved the node live on the canvas).
+          const overrides =
+            f.kind === 'project' ? (useGraph.getState().layouts[projectKey] ?? {}) : {}
+          const nodes = f.nodes.map((n) => {
+            const pos = overrides[n.id] ?? positions.get(n.id) ?? { x: 0, y: 0 }
+            const size = groupSizes.get(n.id)
+            return {
+              ...n,
+              position: pos,
+              ...(size !== undefined
+                ? { style: { ...n.style, width: size.width, height: size.height } }
+                : {}),
+            }
+          })
+          setPositioned({ nodes, edges: f.edges })
+        },
+      )
+      return () => {
+        cancelled = true
+      }
+    },
+    [projectKey],
+  )
+
   useEffect(() => {
     // A null flow (missing beat mid-edit) keeps the last layout; the
     // render below falls back to the empty state instead.
     if (flow === null) return
-    let cancelled = false
-    void layeredLayout(flow.layoutNodes, flow.layoutEdges, flow.kind === 'beat' ? 'DOWN' : 'RIGHT').then(
-      ({ positions, groupSizes }) => {
-        if (cancelled) return
-        // Drag overrides are read non-reactively: applying one must not
-        // re-run ELK (the drag already moved the node live on the canvas).
-        const overrides =
-          flow.kind === 'project' ? (useGraph.getState().layouts[projectKey] ?? {}) : {}
-        const nodes = flow.nodes.map((n) => {
-          const pos = overrides[n.id] ?? positions.get(n.id) ?? { x: 0, y: 0 }
-          const size = groupSizes.get(n.id)
-          return {
-            ...n,
-            position: pos,
-            ...(size !== undefined
-              ? { style: { ...n.style, width: size.width, height: size.height } }
-              : {}),
-          }
-        })
-        setPositioned({ nodes, edges: flow.edges })
-      },
-    )
-    return () => {
-      cancelled = true
+    measuredRef.current = new Map()
+    remeasuredRef.current = null
+    return runLayout(flow, new Map())
+  }, [flow, runLayout])
+
+  // Second pass: once real dimensions arrive and diverge from the
+  // estimates, re-run ELK with them.
+  useEffect(() => {
+    if (flow === null || remeasuredRef.current === flow || measureTick === 0) return
+    const measured = measuredRef.current
+    const real = flow.layoutNodes.filter((n) => !n.isGroup)
+    if (real.length === 0) return
+    let covered = 0
+    let diverges = false
+    for (const n of real) {
+      const m = measured.get(n.id)
+      if (m === undefined) continue
+      covered += 1
+      if (Math.abs(m.height - n.height) > 6 || Math.abs(m.width - n.width) > 6) diverges = true
     }
-  }, [flow, projectKey])
+    if (covered < real.length) return
+    remeasuredRef.current = flow
+    if (!diverges) return
+    return runLayout(flow, measured)
+  }, [measureTick, flow, runLayout])
+
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    let dims = false
+    for (const c of changes) {
+      if (c.type === 'dimensions' && c.dimensions !== undefined) {
+        measuredRef.current.set(c.id, c.dimensions)
+        dims = true
+      }
+    }
+    if (dims) setMeasureTick((t) => t + 1)
+  }, [])
 
   // Re-fit once per view change, after the layout for that view lands.
   const viewKindKey = `${flow?.kind ?? 'empty'}:${beatKey ?? ''}`
@@ -164,32 +237,122 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
     return () => window.clearTimeout(t)
   }, [positioned, viewKindKey, rf])
 
-  // ---- decoration (selection + runtime) --------------------------------
+  // ---- center-on-request (Story Bin / tray / search) --------------------
+
+  const centerAttemptsRef = useRef({ token: 0, tries: 0 })
+  useEffect(() => {
+    if (centerRequest === null || positioned === null) return
+    const { id, token } = centerRequest
+    if (centerAttemptsRef.current.token !== token) {
+      centerAttemptsRef.current = { token, tries: 0 }
+    }
+    const hit = positioned.nodes.find((n) => n.id === id)
+    if (hit !== undefined) {
+      const abs = absolutePosition(hit, positioned.nodes)
+      const w = (hit.measured?.width ?? hit.width ?? 180) as number
+      const h = (hit.measured?.height ?? hit.height ?? 60) as number
+      rf.setCenter(abs.x + w / 2, abs.y + h / 2, { zoom: Math.max(rf.getZoom(), 0.9), duration: 320 })
+      useGraph.getState().clearCenter(token)
+      return
+    }
+    // Not on the canvas yet. An entity hidden by the overlay? Turn the
+    // overlay on and let the relayout retry this same request.
+    centerAttemptsRef.current.tries += 1
+    if (centerAttemptsRef.current.tries > 6) {
+      useGraph.getState().clearCenter(token)
+      return
+    }
+    if (graph.entities.has(id) && !useGraph.getState().overlays.entities) {
+      useGraph.getState().setOverlay('entities', true)
+      return
+    }
+    // A beat hidden inside a drill-in view → pop back to the project map.
+    if (graph.beats.has(id) && useGraph.getState().view.kind === 'beat' && id !== beatKey) {
+      useGraph.getState().openProject()
+    }
+  }, [centerRequest, positioned, graph, rf, beatKey])
+
+  // ---- decoration (selection + runtime + inline editing) ----------------
+
+  const setEditing = useGraph((s) => s.setEditing)
+
+  const commitInlineEdit = useCallback(
+    async (anchor: NonNullable<SourceAnchor>, next: string): Promise<void> => {
+      const text = docText(anchor.uri)
+      if (text === null) return
+      const start = anchor.span.start.offset
+      const end = Math.min(anchor.span.end.offset, text.length)
+      try {
+        const current = text.slice(start, end)
+        const edits = replaceExact(text, start, end, current, next)
+        if (edits.length > 0) await applyEditsToUri(anchor.uri, edits)
+      } catch (e) {
+        say(e instanceof EditError ? e.message : 'Edit failed — source changed underneath.')
+      } finally {
+        useGraph.getState().setEditing(null)
+      }
+    },
+    [say],
+  )
+
+  const beatEditable =
+    editable && beatKey !== null && graph.beats.get(beatKey)?.structural === 'file'
 
   const nodes = useMemo(() => {
     if (positioned === null) return []
     return positioned.nodes.map((n) => {
       const isBeat = n.type === 'beat'
+      const anchor = (n.data as { anchor?: SourceAnchor }).anchor ?? null
+      const inlineEditable =
+        beatEditable && anchor !== null && INLINE_EDITABLE.has(n.type ?? '')
+      const isEditing = inlineEditable && editingNode === n.id
       const decorated: Node = {
         ...n,
         selected: n.id === selected,
-        ...(isBeat
-          ? {
-              data: {
-                ...n.data,
-                visits: runtime.visits[n.id],
-                isCurrent: runtime.current === n.id,
-              },
-            }
-          : {}),
+        data: {
+          ...n.data,
+          ...(isBeat
+            ? { visits: runtime.visits[n.id], isCurrent: runtime.current === n.id }
+            : {}),
+          ...(inlineEditable
+            ? {
+                editing: isEditing,
+                editSlice: isEditing && anchor !== null ? sliceOf(anchor) : null,
+                onCommitEdit: (next: string) => void commitInlineEdit(anchor!, next),
+                onCancelEdit: () => setEditing(null),
+              }
+            : {}),
+        },
         draggable: editable || n.type === 'fileGroup' ? editable : false,
         connectable: editable && isBeat,
       }
       return decorated
     })
-  }, [positioned, selected, runtime, editable])
+  }, [positioned, selected, runtime, editable, beatEditable, editingNode, commitInlineEdit, setEditing])
 
-  const edges = positioned?.edges ?? []
+  const edges = useMemo(() => {
+    if (positioned === null) return []
+    return positioned.edges.map((e) => {
+      if (e.id === selectedEdge) {
+        return { ...e, selected: true, style: { ...e.style, strokeWidth: 2.6, opacity: 1 } }
+      }
+      // A selected node emphasises its own connections and dims the rest
+      // (Articy-style connection highlighting).
+      if (selected !== null && selectedEdge === null) {
+        const touches = e.source === selected || e.target === selected
+        const base = typeof e.style?.opacity === 'number' ? e.style.opacity : 0.9
+        const width = typeof e.style?.strokeWidth === 'number' ? e.style.strokeWidth : 1.5
+        return {
+          ...e,
+          selected: false,
+          style: touches
+            ? { ...e.style, opacity: 1, strokeWidth: width + 0.8 }
+            : { ...e.style, opacity: base * 0.22 },
+        }
+      }
+      return { ...e, selected: false }
+    })
+  }, [positioned, selectedEdge, selected])
 
   // ---- interactions -----------------------------------------------------
 
@@ -236,7 +399,8 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
 
   const onNodeDoubleClick = useCallback(
     (_: unknown, node: Node) => {
-      // Project level: drill into a beat. Beat level: follow exits / open source.
+      // Project level: drill into a beat. Beat level: inline-edit text
+      // nodes, follow exits, or fall back to opening the source.
       const beat = graph.beats.get(node.id)
       if (beat !== undefined) {
         openBeat(beat.key)
@@ -249,15 +413,133 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
           return
         }
       }
+      // Double-clicking a ghost creates the missing beat (when nameable).
+      if (node.type === 'ghost' && editable) {
+        const target = (node.data as { target: string }).target
+        if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(target)) void createBeat(graph, say, target)
+        return
+      }
+      // Double-clicking a file container opens the file in Writing mode.
+      if (node.type === 'fileGroup') {
+        const path = (node.data as { path: string }).path
+        const ws = useWorkspace.getState()
+        const entry = ws.root ? findFileEntryByPath(ws.root, path) : null
+        if (entry) {
+          void ws.revealAt(entry, 1, 1).then(() => setMode('writing'))
+        }
+        return
+      }
       const anchor = (node.data as { anchor?: SourceAnchor }).anchor ?? null
+      if (beatEditable && anchor !== null && INLINE_EDITABLE.has(node.type ?? '')) {
+        setTip(null)
+        setEditing(node.id)
+        return
+      }
       if (anchor !== null) void revealAnchor(anchor)
       else if (node.type === 'entity') {
         const ent = graph.entities.get(node.id)
         if (ent !== undefined) void revealAnchor({ uri: ent.uri, span: ent.span })
       }
     },
-    [graph, openBeat, revealAnchor],
+    [graph, openBeat, revealAnchor, beatEditable, setEditing, editable, say, setMode],
   )
+
+  // ---- edge selection + hover tooltips -----------------------------------
+
+  const selectEdge = useGraph((s) => s.selectEdge)
+
+  const onEdgeClick = useCallback(
+    (_: unknown, edge: Edge) => {
+      selectEdge(edge.id)
+    },
+    [selectEdge],
+  )
+
+  const tipTimer = useRef<number | null>(null)
+  const showTip = useCallback((event: React.MouseEvent, lines: TipLine[]) => {
+    if (tipTimer.current !== null) window.clearTimeout(tipTimer.current)
+    const host = flowRef.current?.getBoundingClientRect()
+    if (host === undefined || lines.length === 0) return
+    const x = event.clientX - host.left
+    const y = event.clientY - host.top
+    tipTimer.current = window.setTimeout(() => setTip({ x, y, lines }), 220)
+  }, [])
+  const hideTip = useCallback(() => {
+    if (tipTimer.current !== null) window.clearTimeout(tipTimer.current)
+    tipTimer.current = null
+    setTip(null)
+  }, [])
+
+  const setHover = useFocus((s) => s.setHover)
+
+  const onNodeMouseEnter = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      // Feed the cross-panel focus bus (References dim/highlight, …).
+      const beat = graph.beats.get(node.id)
+      if (beat !== undefined) setHover({ kind: 'beat', name: beat.name })
+      else {
+        const ent = graph.entities.get(node.id)
+        if (ent !== undefined && (ent.kind === 'character' || ent.kind === 'role')) {
+          setHover({ kind: 'character', name: ent.name })
+        }
+      }
+      if (editingNode !== null) return
+      showTip(event, nodeTipLines(graph, node))
+    },
+    [graph, showTip, editingNode, setHover],
+  )
+  const onNodeMouseLeave = useCallback(() => {
+    setHover(null)
+    hideTip()
+  }, [setHover, hideTip])
+  const onEdgeMouseEnter = useCallback(
+    (event: React.MouseEvent, edge: Edge) => {
+      const ge = (edge.data as { graphEdge?: GraphEdge } | undefined)?.graphEdge
+      showTip(event, ge !== undefined ? edgeTipLines(ge) : [])
+    },
+    [showTip],
+  )
+
+  // ---- keyboard flow ------------------------------------------------------
+  // Esc backs out of the drill-in (or clears selection); F2 renames the
+  // selected beat; Delete removes it. Never while typing somewhere.
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (
+        t !== null &&
+        (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t.isContentEditable)
+      ) {
+        return
+      }
+      const st = useGraph.getState()
+      if (e.key === 'Escape') {
+        if (st.editingNode !== null) return // the textarea owns its Esc
+        if (st.view.kind === 'beat') {
+          e.preventDefault()
+          st.openProject()
+        } else if (st.selected !== null || st.selectedEdge !== null) {
+          st.select(null)
+          st.selectEdge(null)
+        }
+        return
+      }
+      if (!editable || st.selected === null) return
+      const beat = graph.beats.get(st.selected)
+      if (beat === undefined) return
+      if (e.key === 'F2') {
+        e.preventDefault()
+        if (beat.structural !== 'derived') void renameBeat(beat, say)
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        if (beat.structural === 'file') void deleteBeat(beat, say)
+        else say('Only top-level beats delete from the canvas — owned/derived beats live in their owner.')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [editable, graph, say])
 
   const onNodeDragStop = useCallback(
     (_: unknown, node: Node) => {
@@ -305,27 +587,41 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
         )
         return
       }
-      // Beat-view body nodes: jump to source, and edit single-line items.
+      // Ghost node: offer to create the missing beat — every dangling
+      // divert to this name resolves the moment it exists.
+      if (node.type === 'ghost' && editable) {
+        const target = (node.data as { target: string }).target
+        const bare = /^[A-Za-z_][A-Za-z0-9_]*$/.test(target)
+        openContextMenu(
+          [
+            {
+              label: `Create beat \`${target}\``,
+              disabled: !bare,
+              onSelect: () => void createBeat(graph, say, target),
+            },
+          ],
+          anchor,
+        )
+        return
+      }
+      // Beat-view body nodes: jump to source or edit in place.
       const bodyAnchor = (node.data as { anchor?: SourceAnchor }).anchor ?? null
       if (bodyAnchor !== null) {
         const items = [
           { label: 'Show source', onSelect: () => void revealAnchor(bodyAnchor) },
         ]
-        if (editable) {
-          const text = docText(bodyAnchor.uri)
-          const slice =
-            text?.slice(bodyAnchor.span.start.offset, bodyAnchor.span.end.offset) ?? null
-          if (slice !== null && !slice.includes('\n') && slice.trim().length > 0) {
-            items.push({
-              label: 'Edit text…',
-              onSelect: () => void editAnchoredText(bodyAnchor, slice, say),
-            })
-          }
+        if (beatEditable && INLINE_EDITABLE.has(node.type ?? '')) {
+          items.push({
+            label: 'Edit in place',
+            onSelect: () => {
+              setEditing(node.id)
+            },
+          })
         }
         openContextMenu(items, anchor)
       }
     },
-    [graph, editable, openBeat, revealBeatSource, revealAnchor, say],
+    [graph, editable, beatEditable, openBeat, revealBeatSource, revealAnchor, say, setEditing],
   )
 
   const onPaneContextMenu = useCallback(
@@ -364,14 +660,15 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
   // ---- search ------------------------------------------------------------
 
   const onSearchSubmit = useCallback(() => {
-    if (search.trim().length === 0 || positioned === null) return
     const q = search.trim().toLowerCase()
-    const hit = positioned.nodes.find((n) => n.id.toLowerCase().includes(q))
-    if (hit === undefined) return
-    select(hit.id)
-    const abs = absolutePosition(hit, positioned.nodes)
-    rf.setCenter(abs.x + (hit.width ?? 100) / 2, abs.y + 40, { zoom: 1, duration: 300 })
-  }, [search, positioned, rf, select])
+    if (q.length === 0) return
+    // Beats first, then entities — routed through the shared reveal
+    // mechanism so hidden targets pull their overlay on.
+    const beat = [...graph.beats.keys()].find((k) => k.toLowerCase().includes(q))
+    const ent = beat === undefined ? [...graph.entities.keys()].find((k) => k.toLowerCase().includes(q)) : undefined
+    const hit = beat ?? ent
+    if (hit !== undefined) useGraph.getState().reveal(hit)
+  }, [search, graph])
 
   // ---- render ------------------------------------------------------------
 
@@ -414,23 +711,170 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
             edgesReconnectable={editable && view.kind === 'project'}
             elementsSelectable
             proOptions={{ hideAttribution: true }}
+            onNodesChange={onNodesChange}
             onNodeClick={onNodeClick}
             onNodeDoubleClick={onNodeDoubleClick}
+            onNodeDragStart={hideTip}
             onNodeDragStop={onNodeDragStop}
             onNodeContextMenu={onNodeContextMenu}
+            onNodeMouseEnter={onNodeMouseEnter}
+            onNodeMouseLeave={onNodeMouseLeave}
+            onEdgeClick={onEdgeClick}
+            onEdgeMouseEnter={onEdgeMouseEnter}
+            onEdgeMouseLeave={hideTip}
             onPaneContextMenu={onPaneContextMenu}
-            onPaneClick={() => select(null)}
+            onPaneClick={() => {
+              select(null)
+              selectEdge(null)
+              hideTip()
+            }}
+            onMoveStart={hideTip}
             onConnect={onConnect}
             onReconnect={onReconnect}
             deleteKeyCode={null}
           >
             <Background gap={18} size={1} color="#1f2430" />
             <Controls className="!bg-zinc-900 !border-white/10" showInteractive={false} />
+            {view.kind === 'project' && (
+              <MiniMap
+                pannable
+                zoomable
+                className="!bg-zinc-900/90 !border !border-white/10 !rounded-md"
+                maskColor="rgba(15, 17, 21, 0.78)"
+                nodeStrokeWidth={2}
+                nodeColor={miniMapColor}
+              />
+            )}
           </ReactFlow>
         )}
       </div>
+      {tip !== null && <Tooltip tip={tip} />}
     </div>
   )
+}
+
+// ---------------------------------------------------------------------------
+// Hover tooltips
+// ---------------------------------------------------------------------------
+
+type TipLine = { text: string; dim?: boolean; mono?: boolean }
+type TipState = { x: number; y: number; lines: TipLine[] }
+
+function Tooltip({ tip }: { tip: TipState }) {
+  return (
+    <div
+      className="pointer-events-none absolute z-50 max-w-80 rounded-md border border-white/15 bg-zinc-900/95 px-2.5 py-1.5 shadow-xl"
+      style={{ left: tip.x + 14, top: tip.y + 10 }}
+    >
+      {tip.lines.map((l, i) => (
+        <div
+          key={i}
+          className={clsx(
+            'text-[10px] leading-[15px]',
+            l.dim === true ? 'text-zinc-500' : 'text-zinc-200',
+            l.mono === true && 'font-mono',
+          )}
+        >
+          {l.text}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Tooltip content for any canvas node. */
+function nodeTipLines(graph: StoryGraph, node: Node): TipLine[] {
+  const beat = graph.beats.get(node.id)
+  if (beat !== undefined) {
+    const lines: TipLine[] = [{ text: beat.key, mono: true }]
+    lines.push({
+      text: `${beat.structural} beat${beat.entry ? ' · entry' : ''}${beat.shadowed ? ' · SHADOWED' : ''}`,
+      dim: true,
+    })
+    if (beat.uri !== null && beat.span !== null) {
+      lines.push({ text: `${pathForUri(beat.uri)}:${beat.span.start.line + 1}`, dim: true, mono: true })
+    }
+    for (const p of beat.preview) lines.push({ text: p })
+    const stats: string[] = []
+    if (beat.counts.dialogues > 0) stats.push(`${beat.counts.dialogues} lines`)
+    if (beat.counts.choices > 0) stats.push(`${beat.counts.choices} choices`)
+    if (beat.counts.diverts > 0) stats.push(`${beat.counts.diverts} diverts`)
+    if (stats.length > 0) lines.push({ text: stats.join(' · '), dim: true })
+    lines.push({ text: 'double-click to open · right-click for actions', dim: true })
+    return lines
+  }
+  const ent = graph.entities.get(node.id)
+  if (ent !== undefined) {
+    const lines: TipLine[] = [{ text: `${ent.kind} ${ent.name}`, mono: true }]
+    if (ent.faction !== null) lines.push({ text: `faction: ${ent.faction}` })
+    if (ent.mixins.length > 0) lines.push({ text: `is ${ent.mixins.join(', ')}` })
+    if (ent.hookCount > 0) lines.push({ text: `${ent.hookCount} reactive hook${ent.hookCount === 1 ? '' : 's'}` })
+    if (ent.ownedBeats.length > 0) lines.push({ text: `owns ${ent.ownedBeats.join(', ')}`, dim: true })
+    lines.push({ text: `${pathForUri(ent.uri)}:${ent.span.start.line + 1}`, dim: true, mono: true })
+    return lines
+  }
+  if (node.type === 'ghost') {
+    const target = (node.data as { target: string }).target
+    return [
+      { text: `-> ${target}`, mono: true },
+      { text: 'no beat with this name — the divert is dangling', dim: true },
+      { text: 'double-click to create it · or rewire the edge', dim: true },
+    ]
+  }
+  // Drill-in body nodes: show anchor + a fuller text.
+  const anchor = (node.data as { anchor?: SourceAnchor }).anchor ?? null
+  const lines: TipLine[] = []
+  const d = node.data as Record<string, unknown>
+  if (typeof d.text === 'string') lines.push({ text: d.text as string })
+  else if (typeof d.raw === 'string') lines.push({ text: d.raw as string, mono: true })
+  else if (Array.isArray(d.lines) && typeof d.speaker === 'string') {
+    lines.push({ text: d.speaker as string, mono: true })
+    for (const l of d.lines as string[]) lines.push({ text: l })
+  }
+  if (anchor !== null) {
+    lines.push({ text: `${pathForUri(anchor.uri)}:${anchor.span.start.line + 1}`, dim: true, mono: true })
+    lines.push({ text: 'double-click to edit in place', dim: true })
+  }
+  return lines
+}
+
+/** Tooltip content for an edge. */
+function edgeTipLines(e: GraphEdge): TipLine[] {
+  const lines: TipLine[] = []
+  const head =
+    e.kind === 'hook'
+      ? `${e.label ?? 'hook'}`
+      : e.kind === 'choice'
+        ? `choice · ${e.sticky === true ? 'sticky (+)' : 'once (*)'}`
+        : e.kind
+  lines.push({ text: head, mono: true })
+  if (e.kind === 'choice' && e.label !== null) lines.push({ text: `“${e.label}”` })
+  if (e.condition !== null) lines.push({ text: `when ${e.condition}` })
+  lines.push({ text: `${e.from} → ${e.to ?? `⚠ ${e.unresolved ?? '?'}`}`, mono: true })
+  if (e.dynamic) lines.push({ text: 'self-binding resolved at play time (best-effort here)', dim: true })
+  if (e.uri !== null && e.span !== null) {
+    lines.push({ text: `${pathForUri(e.uri)}:${e.span.start.line + 1}`, dim: true, mono: true })
+  }
+  lines.push({ text: 'click for details in Properties', dim: true })
+  return lines
+}
+
+/** MiniMap swatches per node type. */
+function miniMapColor(node: Node): string {
+  switch (node.type) {
+    case 'beat':
+      return '#6366f1'
+    case 'entity':
+      return '#155e75'
+    case 'ghost':
+      return '#b91c1c'
+    case 'end':
+      return '#52525b'
+    case 'fileGroup':
+      return 'rgba(63, 63, 70, 0.35)'
+    default:
+      return '#3f3f46'
+  }
 }
 
 /** Absolute canvas position (child coordinates are parent-relative). */
@@ -644,37 +1088,17 @@ async function rewireEdge(
   say: (m: string) => void,
 ): Promise<void> {
   if (targetId === null) return
-  if (edge.targetRange === null) {
-    say('This connection has no editable source anchor.')
-    return
-  }
-  const target = graph.beats.get(targetId)
-  if (target === undefined) {
-    say('Connections land on beats.')
-    return
-  }
-  const written = writtenTargetFor(target)
-  if (written === null) {
-    say('That beat is shadowed — rename one of the duplicates first.')
-    return
-  }
-  const { uri, start, end } = edge.targetRange
-  const text = docText(uri)
-  if (text === null) return
-  const current = text.slice(start, end)
-  try {
-    const edits: TextEdit[] = retargetDivert(text, start, end, current, written)
-    if (edits.length === 0) return
-    await applyEditsToUri(uri, edits)
-    say(`Rewired → ${written}`)
-  } catch (e) {
-    say(e instanceof EditError ? e.message : 'Could not rewire — source changed underneath.')
-  }
+  const err = await rewireGraphEdge(graph, edge, targetId)
+  say(err ?? `Rewired → ${targetId}`)
 }
 
 /** Create a new beat in the active (or first) `.loom` file. */
-async function createBeat(graph: StoryGraph, say: (m: string) => void): Promise<void> {
-  const name = window.prompt('New beat name:')
+async function createBeat(
+  graph: StoryGraph,
+  say: (m: string) => void,
+  presetName?: string,
+): Promise<void> {
+  const name = presetName ?? window.prompt('New beat name:')
   if (name === null || name.trim().length === 0) return
   const clean = name.trim()
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(clean)) {
@@ -702,7 +1126,7 @@ async function createBeat(graph: StoryGraph, say: (m: string) => void): Promise<
   const [file] = parse(text)
   const edits = insertBeat(text, file, clean, { kind: 'end' })
   await applyEditsToUri(uri, edits)
-  useGraph.getState().select(clean)
+  useGraph.getState().reveal(clean)
   say(`Created \`${clean}\` in ${path}`)
 }
 
@@ -718,24 +1142,6 @@ async function renameBeat(beat: GraphBeat, say: (m: string) => void): Promise<vo
     say(`Renamed to \`${newKey}\` (${edits.size} file${edits.size === 1 ? '' : 's'})`)
   } catch (e) {
     say(e instanceof EditError ? e.message : 'Rename failed.')
-  }
-}
-
-/** Inline-edit a single-line body item (choice text, prose, directive). */
-async function editAnchoredText(
-  anchor: NonNullable<SourceAnchor>,
-  current: string,
-  say: (m: string) => void,
-): Promise<void> {
-  const next = window.prompt('Edit line:', current)
-  if (next === null || next === current) return
-  const text = docText(anchor.uri)
-  if (text === null) return
-  try {
-    const edits = replaceExact(text, anchor.span.start.offset, anchor.span.end.offset, current, next)
-    await applyEditsToUri(anchor.uri, edits)
-  } catch (e) {
-    say(e instanceof EditError ? e.message : 'Edit failed — source changed underneath.')
   }
 }
 

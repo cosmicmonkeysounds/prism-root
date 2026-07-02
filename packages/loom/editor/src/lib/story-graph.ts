@@ -9,8 +9,8 @@
 // Workspace so the graph re-derives without waiting for a debounce).
 
 import { useMemo } from 'react'
-import { applyEdits, type TextEdit } from '@loom/core/parser'
-import type { GraphBeat, StoryGraph } from '@loom/core/lsp'
+import { EditError, applyEdits, retargetDivert, type TextEdit } from '@loom/core/parser'
+import type { GraphBeat, GraphEdge, StoryGraph } from '@loom/core/lsp'
 import { docText, lspWorkspaceSync, pathForUri, uriFor } from '@/lib/lsp-client'
 import { syncBuffer } from '@/lib/lsp-index'
 import { useLspIndexGen } from '@/lib/lsp-index'
@@ -81,6 +81,33 @@ export function writtenTargetFor(beat: GraphBeat): string | null {
 /** Convenience: the graph beat's document path (for reveal / editing). */
 export function beatPath(beat: GraphBeat): string | null {
   return beat.uri === null ? null : pathForUri(beat.uri)
+}
+
+/**
+ * Rewire a narrative edge onto a new target beat by rewriting the
+ * divert's target text at its exact source range. Returns null on
+ * success, or a human-readable reason the rewire was refused.
+ */
+export async function rewireGraphEdge(
+  graph: StoryGraph,
+  edge: GraphEdge,
+  targetKey: string,
+): Promise<string | null> {
+  if (edge.targetRange === null) return 'This connection has no editable source anchor.'
+  const target = graph.beats.get(targetKey)
+  if (target === undefined) return 'Connections land on beats.'
+  const written = writtenTargetFor(target)
+  if (written === null) return 'That beat is shadowed — rename one of the duplicates first.'
+  const { uri, start, end } = edge.targetRange
+  const text = docText(uri)
+  if (text === null) return `\`${pathForUri(uri)}\` isn’t indexed yet.`
+  try {
+    const edits = retargetDivert(text, start, end, text.slice(start, end), written)
+    if (edits.length > 0) await applyEditsToUri(uri, edits)
+    return null
+  } catch (e) {
+    return e instanceof EditError ? e.message : 'Could not rewire — source changed underneath.'
+  }
 }
 
 /** uri for a workspace-relative path (re-export for graph components). */
