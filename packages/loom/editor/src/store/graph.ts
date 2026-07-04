@@ -24,16 +24,23 @@ export type GraphOverlays = {
 export type LayoutOverrides = Record<string, { x: number; y: number }>
 
 /**
- * Live-run overlay: beat keys → visit counts, plus the most recently
- * entered beat (pulsed on the canvas). Fed by the operate store's mod
- * feed in Run mode; a local simulator drives the same contract.
+ * Live-run overlay: beat keys → visit counts, the most recently
+ * entered beat (pulsed on the canvas), and best-effort edge traversal
+ * counts (`from→to` between consecutively entered beats). Fed by the
+ * operate store's mod feed in Run mode and by the local Sim-mode
+ * simulator (`store/sim.ts`) — the identical contract.
  */
 export type RuntimeOverlay = {
   visits: Record<string, number>
   current: string | null
+  /** `${from}→${to}` → times the runtime moved between those beats. */
+  traversed: Record<string, number>
 }
 
-const EMPTY_RUNTIME: RuntimeOverlay = { visits: {}, current: null }
+/** The traversal key an edge decoration looks up. */
+export const traversalKey = (from: string, to: string): string => `${from}→${to}`
+
+const EMPTY_RUNTIME: RuntimeOverlay = { visits: {}, current: null, traversed: {} }
 
 type GraphState = {
   view: GraphView
@@ -49,6 +56,20 @@ type GraphState = {
   centerRequest: { id: string; token: number } | null
   /** Drill-in node currently inline-editing its source slice. */
   editingNode: string | null
+  /** Project-view word block currently inline-editing its source slice. */
+  editingBlock: { beatKey: string; index: number } | null
+  /**
+   * Beat keys whose project-view card is expanded to show every word
+   * block of its body (the card stretches to fit; collapse restores
+   * the compact preview). Session-local — layout, not document, state.
+   */
+  expanded: Record<string, true>
+  /**
+   * File containers collapsed to a compact header-only node (keyed by
+   * path). Their beats/entities hide and edges re-route to the file
+   * node. Session-local — layout, not document, state.
+   */
+  collapsedFiles: Record<string, true>
   overlays: GraphOverlays
   /** Per-project manual position overrides (projectKey → overrides). */
   layouts: Record<string, LayoutOverrides>
@@ -63,6 +84,13 @@ type GraphState = {
   reveal(id: string): void
   clearCenter(token: number): void
   setEditing(id: string | null): void
+  setEditingBlock(v: { beatKey: string; index: number } | null): void
+  /** Expand / collapse one beat card's word blocks. */
+  toggleExpanded(beatKey: string): void
+  /** Expand (`true`) or collapse (`false`) every beat card at once. */
+  setAllExpanded(keys: string[], on: boolean): void
+  /** Collapse / expand one file container. */
+  toggleFileCollapsed(path: string): void
   setOverlay(key: keyof GraphOverlays, on: boolean): void
   setSearch(q: string): void
   moveNode(projectKey: string, id: string, pos: { x: number; y: number }): void
@@ -96,14 +124,23 @@ export const useGraph = create<GraphState>((set) => ({
   selectedEdge: null,
   centerRequest: null,
   editingNode: null,
+  editingBlock: null,
+  expanded: {},
+  collapsedFiles: {},
   overlays: { hooks: true, entities: false, labels: true },
   layouts: loadLayouts(),
   runtime: EMPTY_RUNTIME,
   search: '',
 
-  openProject: () => set({ view: { kind: 'project' }, editingNode: null }),
+  openProject: () => set({ view: { kind: 'project' }, editingNode: null, editingBlock: null }),
   openBeat: (beatKey) =>
-    set({ view: { kind: 'beat', beatKey }, selected: beatKey, selectedEdge: null, editingNode: null }),
+    set({
+      view: { kind: 'beat', beatKey },
+      selected: beatKey,
+      selectedEdge: null,
+      editingNode: null,
+      editingBlock: null,
+    }),
   select: (id) => set({ selected: id, selectedEdge: null }),
   selectEdge: (id) => set({ selectedEdge: id, selected: null }),
   reveal: (id) =>
@@ -115,6 +152,27 @@ export const useGraph = create<GraphState>((set) => ({
   clearCenter: (token) =>
     set((s) => (s.centerRequest?.token === token ? { centerRequest: null } : {})),
   setEditing: (id) => set({ editingNode: id }),
+  setEditingBlock: (v) => set({ editingBlock: v }),
+  toggleExpanded: (beatKey) =>
+    set((s) => {
+      const expanded = { ...s.expanded }
+      if (expanded[beatKey]) delete expanded[beatKey]
+      else expanded[beatKey] = true
+      return { expanded }
+    }),
+  setAllExpanded: (keys, on) =>
+    set(() => {
+      const expanded: Record<string, true> = {}
+      if (on) for (const k of keys) expanded[k] = true
+      return { expanded }
+    }),
+  toggleFileCollapsed: (path) =>
+    set((s) => {
+      const collapsedFiles = { ...s.collapsedFiles }
+      if (collapsedFiles[path]) delete collapsedFiles[path]
+      else collapsedFiles[path] = true
+      return { collapsedFiles }
+    }),
   setOverlay: (key, on) => set((s) => ({ overlays: { ...s.overlays, [key]: on } })),
   setSearch: (q) => set({ search: q }),
   moveNode: (projectKey, id, pos) =>
@@ -132,11 +190,22 @@ export const useGraph = create<GraphState>((set) => ({
       return { layouts }
     }),
   runtimeEnter: (beatKey) =>
-    set((s) => ({
-      runtime: {
-        visits: { ...s.runtime.visits, [beatKey]: (s.runtime.visits[beatKey] ?? 0) + 1 },
-        current: beatKey,
-      },
-    })),
+    set((s) => {
+      // Best-effort traversal: mark the hop from the previous beat. A hook
+      // may interleave unrelated beats, so this is a heat overlay, not an
+      // exact trace — good enough to light the routes a run actually took.
+      const traversed = { ...s.runtime.traversed }
+      if (s.runtime.current !== null && s.runtime.current !== beatKey) {
+        const k = traversalKey(s.runtime.current, beatKey)
+        traversed[k] = (traversed[k] ?? 0) + 1
+      }
+      return {
+        runtime: {
+          visits: { ...s.runtime.visits, [beatKey]: (s.runtime.visits[beatKey] ?? 0) + 1 },
+          current: beatKey,
+          traversed,
+        },
+      }
+    }),
   runtimeReset: () => set({ runtime: EMPTY_RUNTIME }),
 }))

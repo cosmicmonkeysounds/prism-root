@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { useOperate } from '@/store/operate'
-import { useInspect } from './inspect'
+import { useInspect } from '@/components/cockpit/inspect'
 
 // The Barcode Detection API isn't in the TS DOM lib; narrow shim (no `any`).
 interface BarcodeDetectorLike {

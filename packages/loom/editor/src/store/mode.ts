@@ -6,25 +6,27 @@
 
 import { create } from 'zustand'
 
-// Play / perform / produce (Simulating / Performing / Production) were
-// removed when the editor became authoring-only; runtime lives in the
-// `core` server + `play` app. Two author modes remain.
-export type Mode = 'writing' | 'editing' | 'operate'
+// Four modes: two author facets (Writing / Editing), the local
+// simulator (Sim — the in-editor rehearsal cockpit over `@loom/core`'s
+// `Sim`), and the live event cockpit (Run). Sim and Run share the
+// cockpit UI (`components/cockpit/`); only the backend differs.
+export type Mode = 'writing' | 'editing' | 'sim' | 'operate'
 
 export type ModeDescriptor = {
   id: Mode
   label: string
-  /** Keybinding hint shown on the Mode Bar (⌘1..⌘3). */
+  /** Keybinding hint shown on the Mode Bar (⌘1..⌘4). */
   hint: string
   /** Whether the bottom Timeline dock is present in this mode. */
   hasTimeline: boolean
 }
 
-/** Ordered left→right as they appear on the Mode Bar; index ↔ ⌘1..⌘3. */
+/** Ordered left→right as they appear on the Mode Bar; index ↔ ⌘1..⌘4. */
 export const MODES: ModeDescriptor[] = [
   { id: 'writing', label: 'Writing', hint: '⌘1', hasTimeline: false },
   { id: 'editing', label: 'Editing', hint: '⌘2', hasTimeline: true },
-  { id: 'operate', label: 'Run', hint: '⌘3', hasTimeline: false },
+  { id: 'sim', label: 'Sim', hint: '⌘3', hasTimeline: false },
+  { id: 'operate', label: 'Run', hint: '⌘4', hasTimeline: false },
 ]
 
 export type ModeUi = {
@@ -42,6 +44,8 @@ function defaultUi(): Record<Mode, ModeUi> {
   return {
     writing: { cols: [260, 960, 320], rows: [620, 200], trayOpen: true, railOpen: true },
     editing: { cols: [240, 780, 360], rows: [400, 320], trayOpen: true, railOpen: true },
+    // Sim mode: rooms rail · local-simulator cockpit · inspector tray.
+    sim: { cols: [300, 820, 340], rows: [620, 200], trayOpen: true, railOpen: true },
     // Run mode: event control + rooms rail · live admin stage · inspector tray.
     operate: { cols: [300, 820, 340], rows: [620, 200], trayOpen: true, railOpen: true },
   }

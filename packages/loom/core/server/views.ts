@@ -142,6 +142,9 @@ export interface ModView {
   spaces: SpaceSnapshot[];
   /** Every named beat, for the "fire beat" picker. */
   beats: string[];
+  /** Outstanding choices per person id (`__global` for unbound menus) —
+   *  lets the run panel surface + answer a stuck decision. */
+  choices: Record<string, string[]>;
   ledgerLen: number;
 }
 
@@ -155,6 +158,10 @@ function operatorChannels(sim: Sim): ChannelSummary[] {
   const out: ChannelSummary[] = [{ id: "lobby", kind: "lobby", title: "The Internet", spaceId: "internet" }];
   for (const f of sim.model.factions.values()) {
     out.push({ id: `faction:${f.id}`, kind: "faction", title: `#${f.id.toLowerCase()}`, spaceId: "internet" });
+  }
+  // Every location's derived room — where a beat's setting routes its story.
+  for (const l of sim.model.locations.values()) {
+    out.push({ id: `loc:${l.id}`, kind: "location", title: l.label ?? l.id, spaceId: "internet" });
   }
   for (const id of sim.model.channels.keys()) {
     const h = sim.channelHead(id);
@@ -176,6 +183,7 @@ export function modView(sim: Sim | null, phase: RuntimePhase, scenario: string |
       channels: [],
       spaces: [],
       beats: [],
+      choices: {},
       ledgerLen: 0,
     };
   }
@@ -205,6 +213,7 @@ export function modView(sim: Sim | null, phase: RuntimePhase, scenario: string |
     channels: operatorChannels(sim),
     spaces: sim.spaceList(),
     beats: [...sim.model.beats.keys()],
+    choices: sim.allPendingChoices(),
     ledgerLen: sim.log.len(),
   };
 }

@@ -3,6 +3,47 @@
 //! scans, faction joins) and internal effects (captures, broadcasts,
 //! dialogue) all land here in source order.
 
+/**
+ * Enum of every `SimEvent` discriminant. The values ARE the wire/journal
+ * strings, so `e.type === SimEventType.BeatEntered` and `e.type ===
+ * "beatEntered"` are interchangeable — but consumers should switch on the
+ * enum so a renamed event breaks loudly at compile time. (A const object
+ * rather than a TS `enum`: the workspace compiles with
+ * `erasableSyntaxOnly`, which forbids runtime enum syntax.)
+ */
+export const SimEventType = {
+  AccountCreated: "accountCreated",
+  Joined: "joined",
+  Defected: "defected",
+  Betrayed: "betrayed",
+  FactionRevealed: "factionRevealed",
+  Scanned: "scanned",
+  Captured: "captured",
+  Released: "released",
+  Escaped: "escaped",
+  Arrived: "arrived",
+  Cast: "cast",
+  Promoted: "promoted",
+  WorldSet: "worldSet",
+  RelationshipChanged: "relationshipChanged",
+  Broadcast: "broadcast",
+  Dialogue: "dialogue",
+  Chat: "chat",
+  ChannelInvited: "channelInvited",
+  ChannelLeft: "channelLeft",
+  Action: "action",
+  Directive: "directive",
+  BeatEntered: "beatEntered",
+  ChoicePrompted: "choicePrompted",
+  Respond: "respond",
+  Signal: "signal",
+  Ambient: "ambient",
+  Tick: "tick",
+  Diagnostic: "diagnostic",
+} as const;
+
+export type SimEventType = (typeof SimEventType)[keyof typeof SimEventType];
+
 /** One thing that happened in the world. */
 export type SimEvent =
   | { type: "accountCreated"; person: string; name: string; role: string }
@@ -20,7 +61,11 @@ export type SimEvent =
   | { type: "worldSet"; path: string; value: string }
   | { type: "relationshipChanged"; subject: string; relation: string; object: string; value: number }
   | { type: "broadcast"; cue: string; audience: string[]; scope: string }
-  | { type: "dialogue"; speaker: string; text: string; audience: string[] }
+  // A scripted line. `setting` is the enclosing beat's `setting:` location
+  // (inherited through diverts) and `beat` the beat it was spoken in — chat
+  // routes an un-addressed line to the setting's room, and the cockpit links
+  // any line back to its beat on the story map.
+  | { type: "dialogue"; speaker: string; text: string; audience: string[]; setting: string | null; beat: string | null }
   // A participant typed a message into a channel. `from` is the display name,
   // `audience` is resolved at send time ("all" or guest ids), `parentSeq` links
   // a reply to its root message (null for a top-level message).
@@ -29,15 +74,23 @@ export type SimEvent =
   // changes for private/group/dm rooms drive who can see + post.
   | { type: "channelInvited"; channel: string; person: string; by: string }
   | { type: "channelLeft"; channel: string; person: string }
-  | { type: "action"; text: string }
+  // Speakerless narration — the Narrator's voice. Carries the same room
+  // context as `dialogue` so it lands in the setting's channel, not a log.
+  | { type: "action"; text: string; setting: string | null; beat: string | null }
   | { type: "directive"; verb: string; args: string }
-  | { type: "beatEntered"; beat: string }
+  | { type: "beatEntered"; beat: string; setting: string | null }
   | { type: "choicePrompted"; person: string | null; promptId: string; options: string[] }
   | { type: "respond"; to: string; text: string }
   | { type: "signal"; name: string; subject: string | null }
   | { type: "ambient"; source: string; text: string }
   | { type: "tick"; elapsedMs: number }
   | { type: "diagnostic"; message: string };
+
+type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+/** Compile-time guard: the `SimEventType` enum and the union's `type`
+ *  discriminants match 1:1 — adding an event to one side without the
+ *  other fails right here. */
+export const SIM_EVENT_TYPES_MATCH: MutuallyAssignable<SimEvent["type"], SimEventType> = true;
 
 /** Append-only event log with the queries the rule engine + app need. */
 export class SimLog {

@@ -118,8 +118,8 @@ export function Editor() {
     if (!file) setCursor(null)
   }, [file, setCursor])
 
-  // Honor pending cursor reveal (e.g. go-to-definition, References/Outline
-  // row click, project-wide search). Depend on `pendingCursor` + `filePath`
+  // Honor pending cursor reveal (e.g. go-to-definition, a References
+  // row click, go-to-symbol). Depend on `pendingCursor` + `filePath`
   // ONLY — NOT the whole `file` object, which gets a new identity on every
   // keystroke and would otherwise re-run this effect mid-typing and yank the
   // caret back to the last reveal. The `token` guard makes each reveal fire

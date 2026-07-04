@@ -243,3 +243,54 @@ describe("run-panel mod routes", () => {
     expect(feed).toContain(JSON.stringify(beat));
   });
 });
+
+describe("openDoors plays the entry beat", () => {
+  it("delivers the entry narration into the setting's room on first open, once", async () => {
+    const rt = freshRuntime();
+    const id = await withGuest(rt);
+
+    // `doors_open` (setting: Party) fired on open: the NARRATOR's word block
+    // lands in the Party location room, addressed to everyone.
+    const h1 = await get(rt, `/api/history?id=${id}`);
+    const opening = (h1.json.messages as Array<{ channel: string; from: string; text: string }>).filter(
+      (m) => m.channel === "loc:Party" && m.from === "NARRATOR",
+    );
+    expect(opening.length).toBeGreaterThan(0);
+    expect(opening[0]!.text).toContain("doors hiss open");
+
+    // Pause → reopen must not replay the opening.
+    rt.pause();
+    rt.openDoors();
+    const h2 = await get(rt, `/api/history?id=${id}`);
+    expect(h2.json.messages.length).toBe(h1.json.messages.length);
+  });
+});
+
+describe("mod choice answering", () => {
+  it("surfaces pending choices in the mod snapshot and answers them via /api/mod/choose", async () => {
+    const rt = freshRuntime();
+    const id = await withGuest(rt);
+
+    // captcha_gate(guest) prompts a menu bound to the guest.
+    expect((await post(rt, "/api/mod/beat", { name: "captcha_gate", subject: id })).status).toBe(200);
+    const before = await get(rt, `/api/state?role=mod`);
+    const options = (before.json.choices as Record<string, string[]>)[id];
+    expect(options).toBeDefined();
+    expect(options![0]).toContain("Tap the traffic lights");
+
+    // The moderator answers on the guest's behalf — journaled `choose`.
+    const r = await post(rt, "/api/mod/choose", { person: id, index: 0 });
+    expect(r.status).toBe(200);
+    const after = await get(rt, `/api/state?role=mod`);
+    expect((after.json.choices as Record<string, string[]>)[id]).toBeUndefined();
+    // The chosen arm ran: verified flips true.
+    const guest = (after.json.roster as Array<{ id: string; captured: boolean }>).find((g) => g.id === id)
+    expect(guest).toBeDefined();
+  });
+
+  it("rejects a choose with no person", async () => {
+    const rt = freshRuntime();
+    await withGuest(rt);
+    expect((await post(rt, "/api/mod/choose", { index: 0 })).status).toBe(400);
+  });
+});

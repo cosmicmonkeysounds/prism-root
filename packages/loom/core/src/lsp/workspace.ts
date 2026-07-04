@@ -194,6 +194,16 @@ export class Workspace {
   }
 
   /**
+   * The last good compiled [`SimModel`] (null before the first successful
+   * compile). Read-only by convention — a live `Sim` must compile its own
+   * model from sources (`Sim.fromSources`), since running one mutates its
+   * model in place (persons register into `entityKind`).
+   */
+  model(): SimModel | null {
+    return this.compiled;
+  }
+
+  /**
    * Project-wide beat rename: the declaration line plus every resolved
    * divert reference, as per-document edit batches the caller routes
    * through its own save path. See [`renameBeatEdits`].

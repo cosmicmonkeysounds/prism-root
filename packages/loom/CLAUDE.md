@@ -11,7 +11,7 @@ tools) without dragging the runtime + scheduler + Luau bridge along.
 | [`lsp`](./lsp)         | Stdio JSON-RPC server backed by `loom-parser` + a workspace-wide name index |
 | [`syntax`](./syntax)   | TextMate grammar generator (driven by `loom-parser::keywords`) + Zed / VSCode extension shells |
 | [`server`](./server)   | Multi-user backbone — `loom-relayd` axum server hosting per-workspace Loro CRDTs over `prism-core::network::relay`. See [`docs/dev/loom-multiuser.md`](../../docs/dev/loom-multiuser.md). |
-| [`editor`](./editor)   | React/Vite/CodeMirror web IDE — the author front end: a BetterAuth sign-in gate → projects launchpad → Studio shell; **server-backed projects** (or a local folder), plus a **Run** mode (`⌘3`) to launch + moderate live events. |
+| [`editor`](./editor)   | React/Vite/CodeMirror web IDE — the author front end: a BetterAuth sign-in gate → projects launchpad → Studio shell; **server-backed projects** (or a local folder), a **Sim** mode (`⌘3`) that rehearses the story on a local in-browser `@loom/core` `Sim` (personas + choices + named events + live story-map overlay), and a **Run** mode (`⌘4`) to launch + moderate live events — Sim and Run share one cockpit. |
 | [`core`](./core)       | Native **TypeScript** port of Loom (no WASM, no Prism): parser (incl. authored **`SPACE`/`CHANNEL`** chatroom declarations) + a first-principles social-ecosystem `runtime/sim` + a parser-only **`lsp`** language surface (`@loom/core/lsp` — `Workspace` with completion / hover / definition / documentSymbols / references / diagnostics, the in-process replacement for the wasm `LspWorkspace`) + an SSE/REST **event server** (`pnpm serve`) that hosts a live `Sim` for LAN events, composing its `SimEvent` stream into server-authoritative, channel-routed chat (`server/chat.ts`) with spaces + Slack-style threads (`parentSeq`), **access control** (open / private-invite / faction / group / dm channel membership, journaled `inviteToChannel`/`leaveChannel`, guest↔guest invites) + a **pluggable channel-type registry** (`runtime/sim/channel-types.ts` — per-type post policy / threadability / broadcast routing / slow-mode / ephemeral, e.g. a read-only `announcement` feed), a scoped invite roster (`rosterFor`), history + moderation, and a journaled `say` command so participant-typed chat replays deterministically. Now a **multi-tenant SaaS backend**: BetterAuth author accounts + Postgres (`server/db/`, `server/auth-server.ts`), projects + files CRUD (`server/projects.ts`), event launch/lifecycle (`server/events-api.ts`, one live event per project), and a per-event `EventRuntime` + `EventRegistry` routed under `/e/:eventId` with a `resolve-code` bootstrap — the old single-event root paths still serve a default event. vitest-tested. |
 | [`play`](./play)       | The **participant React app** (Vite, name `loom-play`) guests + performers use at a live event — an **AOL-chatroom-skinned** client with Discord-style **spaces** (sidebar sections, incl. authored `SPACE`s), Slack-style **message threads** + consecutive-sender banner grouping, **hybrid typed chat** (a composer wired to `/api/*/say`), and **access-controlled rooms** (open/private/faction/group/dm with invite + leave) layered over the story-injected lobby + faction + DM channels (decisions docked per-thread, re-login history) on the `core` server's SSE/REST. Multi-event aware: a short code resolves via `/api/resolve-code` to its event, then every call is scoped to `/e/:eventId`. `pnpm dev` (:5174, proxies to the server on :7000) / `pnpm build` (served by the event server at `/`). |
 | [`examples`](./examples) | Reference `.loom` projects used by `loom-runtime` integration tests and as authoring tutorials |
@@ -386,15 +386,90 @@ replacing the vacant per-file graphs (`runner/Graph.tsx`, `BeatTimeline.tsx`,
   rewire / create / rename / delete / inline text edits).
 - **Run overlay**: the mod SSE stream now forwards the raw **`sim` feed**
   (`server/event-runtime.ts` fanout) — `beatEntered` lights the story map
-  live in Run mode; a future in-editor simulator drives the same
-  `RuntimeOverlay` contract.
+  live in Run mode via the shared `RuntimeOverlay` contract.
 
-Everything in the TS engine is done and green (344 vitest tests in `core`,
-+24 in the editor incl. the graph-pipeline corpus test). The only remaining
-work is the **Rust mirror** (parser + runtime crates), which is not yet
-updated for ANY of Slices 1/2/A/3/B/C, these gaps, or the story graph — the
-TS and Rust engines will drift until it is ported. (Explicitly deprioritized
-by the user for now.)
+**Sim mode + node-editor upgrades landed 2026-07-02** (TS `core/` +
+`editor`): the Mode Bar grew a fourth mode — **Sim** (`⌘3`, Run moved
+to `⌘4`) — an in-editor simulator that compiles the indexed project
+into a real `@loom/core` `Sim` and drives it in-browser: personas the
+writer acts as (choices resume the engine's saved continuations, incl.
+unbound global menus), named events fired from anywhere (a **closed,
+model-enumerated list** — `namedEvents(model)` / `BuiltinVerb` /
+`SimEventType` const-object enums, new in `core`, plus a read-only
+`Workspace.model()` accessor), a raw-ledger Log tab, and the story map
+lighting up live (visit badges + current pulse + amber **edge
+traversal**). Sim and Run share one cockpit — `store/cockpit.ts`
+defines the contract + context, `components/cockpit/` holds the shared
+chat / roster / world / director / rail / inspector — and Sim reuses
+the server's pure `chat.ts`/`views.ts` projections verbatim (new
+`@loom/core/chat` + `@loom/core/views` exports), so a rehearsal reads
+exactly like the live event. The Editing canvas also got: **real node
+dragging** (React Flow changes now apply to state — drags used to
+snap back; `expandParent` grows file containers instead of clamping),
+**word blocks** (every beat card expands to its full typed body —
+`WordBlockKind` enum — and stretches to fit, feeding ELK sizes), and
+**floating connectors** (project-view edges anchor to the closest node
+border, so links survive any manual arrangement).
+
+**The unified conversation model landed 2026-07-03** (TS `core/` +
+`editor` + `play` mirrors; design:
+[`docs/dev/loom-conversation-model.md`](../../docs/dev/loom-conversation-model.md)):
+every line of story now lands in exactly one room. **Locations are
+rooms** — each `LOCATION` derives a `loc:<Id>` channel (kind
+`location`, listed in every view; `member`/`canPost` = "standing
+there", story narration `audience: "all"`, typed chat scoped to
+occupants at send time). The executor threads the enclosing beat's
+`setting:` + name through its frame stack (control-flow children
+inherit; a divert swaps to the target's own setting or keeps the
+caller's), so `dialogue`/`action` events carry `setting` + `beat` and
+`beatEntered` carries `setting`. `composeGuestMessages` routes:
+subject-bound dialogue → `dm:<SPEAKER>` (unchanged); **un-addressed
+dialogue + `action` narration → the setting's `loc:` room (else
+lobby), `from: "Narrator"` / `kind: "narration"`, `audience: "all"`**
+(previously `action` was dropped and unbound dialogue landed in a
+phantom empty-audience DM); `respond` → the scanner's lobby feed.
+`EventRuntime.openDoors()` fires `model.entry` through the journaled
+`fireBeat` on first open, so a live event opens exactly like a
+rehearsal. Cockpit: a **perspective lens** (`CockpitState.perspective`
+— Operator god view / any guest / any character) filters the rooms
+rail + feed via the pure `buildRooms` model, an **act-as-anyone
+composer** (Operator · Narrator · guests · cast, guest speech through
+the journaled `say`, presence-gated in location rooms), kind-aware
+message rendering (narration blocks, system notices, sender-run
+grouping), a **decision tray** docking the lens persona's pending
+choice in the room, and `⤷ beat` links from any scripted line to its
+node on the story map. The Editing canvas also gained **collapsible
+file containers** (edges re-route to the compact node, `N links`
+aggregation), a **live filter** (dims non-matching nodes/edges,
+Enter still jumps), and **arrow-key navigation** (nearest-node
+selection walk, Enter drills in / expands).
+
+**Run-mode choice answering + node-editor authoring parity landed
+2026-07-03** (same session): `ModView.choices` carries every pending
+choice (`Sim.allPendingChoices`, `__global` incl.), and
+`POST /api/mod/choose` answers one on a guest's behalf through the
+same journaled `choose` mutation as the guest's own tap — the
+cockpit's decision tray + guest-Inspector `PendingChoice` now work
+identically in Sim and Run. And **Editing mode is a full authoring
+surface, 1:1 with the Writing screenplay format**: word blocks on
+expanded beat cards carry exact source anchors
+(`spanStart/spanEnd/topIndex` + pure `blockEditRange`) and
+double-click-edit in place via `replaceExact`; block context menus
+insert lines above/below (`insertBodyLines`, new in `parser/edit.ts`)
+and delete items; card menus add lines/choices; file-container + pane
+menus create beats and CHARACTER/LOCATION/FACTION declarations
+(`appendDeclaration`, new) — every write flows through the
+span-preserving `@loom/core/parser` edit ops, so nodes author the
+same `.loom` text Writing mode shows.
+
+Everything in the TS engine is done and green (367 vitest tests in `core`,
++68 in the editor incl. the graph-pipeline corpus, word-blocks, rooms-lens,
+flow-collapse, navigation, filter, and sim-store suites). The only
+remaining work is the **Rust mirror**
+(parser + runtime crates), which is not yet updated for ANY of Slices
+1/2/A/3/B/C, these gaps, or the story graph — the TS and Rust engines
+will drift until it is ported. (Explicitly deprioritized by the user
+for now.)
 
 Still to come: a pure-Rust Lua VM (piccolo) so Lua-defined directives
 and `.luau` extensions execute client-side instead of degrading; the
@@ -482,18 +557,27 @@ a **Projects launchpad** (create/open server projects) → the modal
 **Studio** shell. Storage is backend-aware (`store/workspace.ts`): a
 server project's `.loom` files load/save over the control-plane API,
 while a **local folder** (File System Access) still works with no
-account. The Mode Bar has **three** modes — **Writing** (`⌘1`),
-**Editing** (`⌘2`), and **Run** (`⌘3`). Run (`components/operate/` +
-`store/operate.ts`) launches an event, shares the join code + QR, and
-moderates the live roster / feed — the "run panel" and "admin tools"
-are one shared surface, authorized by the author's session (see
-**Run == admin** above). The participant chat itself stays in `play`;
-the editor controls + moderates, it does not render the guest view.
+account. The Mode Bar has **four** modes — **Writing** (`⌘1`),
+**Editing** (`⌘2`), **Sim** (`⌘3`), and **Run** (`⌘4`). Sim
+(`components/sim/` + `store/sim.ts`) rehearses the story on a **local
+in-browser `Sim`** compiled from the indexed project — personas making
+choices, model-enumerated named events fired from anywhere, the story
+map lighting up live. Run (`components/operate/` + `store/operate.ts`)
+launches an event, shares the join code + QR, and moderates the live
+roster / feed — the "run panel" and "admin tools" are one shared
+surface, authorized by the author's session (see **Run == admin**
+above). Sim and Run share one cockpit (`store/cockpit.ts` contract +
+`components/cockpit/` chat / roster / world / director / rail /
+inspector, swapped via a provider), and Sim reuses the server's pure
+`chat.ts` / `views.ts` projections so a rehearsal reads exactly like
+the live event. The participant chat itself stays in `play`; the
+editor controls + moderates, it does not render the guest view.
 
 The former in-editor runtime — multi-head branching play, the
 Transcript / Ledger / Timeline / World / Cast / Booth surfaces, and
 relay-backed cloud collaboration (Loro CRDT) — was removed with the
-`wasm` crate. **The live runtime lives in the sibling packages**: the
+`wasm` crate; **Sim mode is its native-TS successor for local play**,
+while **the live runtime lives in the sibling packages**: the
 `core` event server + the `play` participant app. See
 [`docs/dev/loom-ide-redesign.md` Part II](../../docs/dev/loom-ide-redesign.md)
 for the shell design.

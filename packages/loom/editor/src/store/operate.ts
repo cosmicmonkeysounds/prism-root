@@ -9,66 +9,27 @@
 //! mod SSE + `/e/:eventId/api/mod/*`, authorized by the author's session.
 
 import { create } from 'zustand'
-import { eventsApi, modApi, type EventInfo, type StatField } from '@/lib/api'
+import { namedEvents } from '@loom/core/sim'
+import { eventsApi, modApi, type EventInfo } from '@/lib/api'
+import { lspWorkspaceSync } from '@/lib/lsp-client'
 import { useGraph } from '@/store/graph'
+import {
+  CockpitTab,
+  OPERATOR_LENS,
+  type CastSummary,
+  type ChannelSummary,
+  type CockpitMessage,
+  type CockpitState,
+  type FactionSummary,
+  type LocationSummary,
+  type RosterRow,
+  type Selection,
+  type SpaceSummary,
+} from '@/store/cockpit'
 
-export interface RosterRow {
-  id: string
-  name: string
-  role: string
-  faction: string | null
-  trueFaction: string | null
-  location: string | null
-  captured: boolean
-  score: number
-}
-
-export interface OperateMessage {
-  seq: number
-  channel: string
-  channelKind?: string
-  title?: string
-  from: string
-  text: string
-  kind: string
-  ts: number
-  hidden?: boolean
-  audience: 'all' | string[]
-  parentSeq?: number | null
-}
-
-export interface FactionSummary {
-  id: string
-  hidden: boolean
-  revealed: boolean
-  ethos?: string | null
-  rival?: string | null
-  members: string[]
-}
-
-export interface LocationSummary {
-  id: string
-  label: string | null
-  prison: boolean
-  occupants: string[]
-}
-
-export interface ChannelSummary {
-  id: string
-  kind: string
-  title: string
-  spaceId: string
-}
-
-export interface CastSummary {
-  id: string
-  faction: string | null
-}
-
-export interface SpaceSummary {
-  id: string
-  title: string
-}
+// The shared cockpit shapes (roster rows, messages, faction/location
+// summaries, selection) live in `store/cockpit.ts` — Sim mode renders
+// the identical surfaces off its local simulator.
 
 interface ModSnapshot {
   phase: string
@@ -81,44 +42,14 @@ interface ModSnapshot {
   channels: ChannelSummary[]
   spaces: SpaceSummary[]
   beats: string[]
+  choices: Record<string, string[]>
   ledgerLen: number
 }
 
-/** What's selected across the cockpit → drives the Inspector tray. */
-export type Selection =
-  | { kind: 'guest'; id: string }
-  | { kind: 'character'; id: string }
-  | { kind: 'faction'; id: string }
-  | { kind: 'location'; id: string }
-  | null
-
-/** The Run cockpit's center pages. */
-export type RunTab = 'event' | 'chat' | 'roster' | 'world' | 'director' | 'story'
-
-type OperateState = {
+interface OperateState extends CockpitState {
   projectId: string | null
   event: EventInfo | null
-  phase: string
-  scenario: string | null
-  roster: RosterRow[]
-  factions: FactionSummary[]
-  locations: LocationSummary[]
-  cast: CastSummary[]
-  channels: ChannelSummary[]
-  spaces: SpaceSummary[]
-  beats: string[]
-  ledgerLen: number
-  messages: OperateMessage[]
-  connected: boolean
   busy: boolean
-  error: string | null
-
-  /** The active center page. */
-  activeTab: RunTab
-  /** The room the Chat tab is peering into (channel id), null → lobby. */
-  activeChannel: string
-  /** The entity (guest / character / faction / location) the Inspector is bound to. */
-  selection: Selection
 
   init: (projectId: string) => Promise<void>
   teardown: () => void
@@ -127,23 +58,6 @@ type OperateState = {
   resume: () => Promise<void>
   end: () => Promise<void>
   reset: () => Promise<void>
-
-  // live moderation
-  capture: (id: string) => Promise<void>
-  release: (id: string) => Promise<void>
-  hideMessage: (seq: number, hidden: boolean) => Promise<void>
-  broadcast: (scope: string, cue: string) => Promise<void>
-  say: (channel: string, text: string, as?: string, parentSeq?: number | null) => Promise<void>
-  setStat: (id: string, field: StatField, value: string | number | boolean) => Promise<void>
-  fireBeat: (name: string, subject?: string) => Promise<void>
-  fireSignal: (name: string, subject?: string) => Promise<void>
-  scanAs: (as: string, target: string) => Promise<void>
-  reveal: (faction: string) => Promise<void>
-
-  // UI selection
-  setTab: (tab: RunTab) => void
-  selectChannel: (channel: string) => void
-  select: (selection: Selection) => void
 }
 
 // One live mod stream at a time (Operate mode is a single surface).
@@ -198,21 +112,22 @@ export const useOperate = create<OperateState>((set, get) => {
         channels: snap.channels ?? [],
         spaces: snap.spaces ?? [],
         beats: snap.beats ?? [],
+        choices: snap.choices ?? {},
         ledgerLen: snap.ledgerLen ?? 0,
       })
     })
     source.addEventListener('history', (e) => {
-      const msgs = JSON.parse((e as MessageEvent).data) as OperateMessage[]
+      const msgs = JSON.parse((e as MessageEvent).data) as CockpitMessage[]
       set({ messages: msgs })
     })
-    const upsert = (m: OperateMessage) =>
+    const upsert = (m: CockpitMessage) =>
       set((s) => {
         const rest = s.messages.filter((x) => x.seq !== m.seq)
         return { messages: [...rest, m].sort((a, b) => a.seq - b.seq) }
       })
-    source.addEventListener('message', (e) => upsert(JSON.parse((e as MessageEvent).data) as OperateMessage))
+    source.addEventListener('message', (e) => upsert(JSON.parse((e as MessageEvent).data) as CockpitMessage))
     source.addEventListener('messageModerated', (e) => {
-      const d = JSON.parse((e as MessageEvent).data) as OperateMessage
+      const d = JSON.parse((e as MessageEvent).data) as CockpitMessage
       if ('text' in d) upsert(d)
     })
     // Raw sim feed (mods only): drives the story-graph runtime overlay —
@@ -238,21 +153,37 @@ export const useOperate = create<OperateState>((set, get) => {
     channels: [],
     spaces: [],
     beats: [],
+    events: [],
     ledgerLen: 0,
     messages: [],
     connected: false,
+    live: false,
     busy: false,
     error: null,
-    activeTab: 'event',
+    activeTab: CockpitTab.Event,
     activeChannel: 'lobby',
     selection: null,
+    choices: {},
+    perspective: OPERATOR_LENS,
 
     init: async (projectId) => {
       if (get().projectId === projectId && get().event) return // already live for this project
-      set({ projectId, error: null, messages: [], selection: null, activeTab: 'event', activeChannel: 'lobby', ...EMPTY_SNAPSHOT })
+      set({
+        projectId,
+        error: null,
+        messages: [],
+        selection: null,
+        perspective: OPERATOR_LENS,
+        activeTab: CockpitTab.Event,
+        activeChannel: 'lobby',
+        // Named events come from the locally-indexed model (best-effort —
+        // the running event's code is a snapshot of the same project).
+        events: localNamedEvents(),
+        ...EMPTY_SNAPSHOT,
+      })
       try {
         const event = await eventsApi.status(projectId)
-        set({ event, phase: event?.status ?? 'idle' })
+        set({ event, live: event !== null, phase: event?.status ?? 'idle' })
         if (event) connect(event.id)
       } catch (e) {
         set({ error: (e as Error).message })
@@ -265,11 +196,13 @@ export const useOperate = create<OperateState>((set, get) => {
       set({
         projectId: null,
         event: null,
+        live: false,
         phase: 'idle',
         scenario: null,
         messages: [],
         selection: null,
-        activeTab: 'event',
+        perspective: OPERATOR_LENS,
+        activeTab: CockpitTab.Event,
         activeChannel: 'lobby',
         ...EMPTY_SNAPSHOT,
       })
@@ -281,7 +214,7 @@ export const useOperate = create<OperateState>((set, get) => {
       set({ busy: true, error: null })
       try {
         const event = await eventsApi.launch(projectId, mode)
-        set({ event, phase: event.status })
+        set({ event, live: true, phase: event.status, events: localNamedEvents() })
         connect(event.id)
       } catch (e) {
         set({ error: (e as Error).message })
@@ -324,6 +257,7 @@ export const useOperate = create<OperateState>((set, get) => {
         disconnect()
         set({
           event: null,
+          live: false,
           phase: 'idle',
           scenario: null,
           messages: [],
@@ -350,9 +284,24 @@ export const useOperate = create<OperateState>((set, get) => {
     fireSignal: (name, subject) => withEvent((ev) => modApi.fireSignal(ev, name, subject)),
     scanAs: (as, target) => withEvent((ev) => modApi.scanAs(ev, as, target)),
     reveal: (faction) => withEvent((ev) => modApi.reveal(ev, faction)),
+    // The mod snapshot carries pending choices, and this answers one on a
+    // guest's behalf — journaled exactly like the guest's own tap.
+    choose: (person, index) => withEvent((ev) => modApi.choose(ev, person, index)),
 
     setTab: (activeTab) => set({ activeTab }),
     selectChannel: (activeChannel) => set({ activeChannel }),
-    select: (selection) => set({ selection }),
+    select: (selection: Selection) => set({ selection }),
+    setPerspective: (perspective) => set({ perspective }),
   }
 })
+
+/** Authored named events from the locally-indexed model (may be empty
+ *  before the first successful compile). */
+function localNamedEvents(): string[] {
+  try {
+    const model = lspWorkspaceSync().model()
+    return model !== null ? namedEvents(model) : []
+  } catch {
+    return []
+  }
+}

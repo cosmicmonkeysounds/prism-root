@@ -30,11 +30,18 @@ describe("channel descriptors + spaces", () => {
     const d = describeChannel("dm:RECRUITER");
     expect(d.channelKind).toBe("dm");
     expect(d.title).toBe("RECRUITER");
+    expect(d.order).toBe(3);
+  });
+
+  it("describes a location room by its id (label needs the sim)", () => {
+    const d = describeChannel("loc:Party");
+    expect(d.channelKind).toBe("location");
+    expect(d.title).toBe("Party");
     expect(d.order).toBe(2);
   });
 
-  it("orders the sidebar lobby → faction → dm", () => {
-    const orders = ["lobby", "faction:Mods", "dm:X"].map((id) => describeChannel(id).order);
-    expect(orders).toEqual([0, 1, 2]);
+  it("orders the sidebar lobby → faction → location → dm", () => {
+    const orders = ["lobby", "faction:Mods", "loc:Party", "dm:X"].map((id) => describeChannel(id).order);
+    expect(orders).toEqual([0, 1, 2, 3]);
   });
 });

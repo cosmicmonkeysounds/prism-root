@@ -63,6 +63,7 @@ export function ContextMenuHost() {
           type="button"
           role="menuitem"
           disabled={item.disabled}
+          data-testid={item.testid}
           onClick={() => {
             if (item.disabled) return
             item.onSelect()

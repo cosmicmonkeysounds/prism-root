@@ -335,6 +335,55 @@ export function appendBodyLines(
 }
 
 /**
+ * Insert raw body lines (already relative-indented among themselves)
+ * *before* the top-level body item at (0-based) `index` in `beat`.
+ * `index >= body.length` appends. The lines indent to match the item
+ * they're inserted before (two spaces under a bare opener), so the
+ * node editor can compose a beat top-down, not just append.
+ */
+export function insertBodyLines(
+  source: string,
+  file: LoomFile,
+  beat: string,
+  index: number,
+  lines: string[],
+): TextEdit[] {
+  const b = beatAt(file, beat);
+  if (!b) throw beatNotFound(beat);
+  if (index < 0) throw new EditError("itemNotFound", `no body item at index ${index}`);
+  if (index >= b.body.length) return appendBodyLines(source, file, beat, lines);
+  const anchor = b.body[index]!;
+  const [ls, le] = lineBounds(source, bodyItemSpan(anchor).start.offset);
+  let indent = leadingWs(source.slice(ls, le));
+  if (indent.length === 0) indent = "  ";
+  const replacement = lines.map((l) => `${indent}${l}\n`).join("");
+  return [{ start: ls, end: ls, replacement }];
+}
+
+/**
+ * Append a top-level declaration block (`CHARACTER Name`, `LOCATION Name`,
+ * …) at the end of the file, bracketed by a blank line. `props` become
+ * indented `key: value` lines. The canvas's "new entity" edit — the
+ * declaration parses back into the same node the graph would draw for it.
+ */
+export function appendDeclaration(
+  source: string,
+  kind: string,
+  name: string,
+  props?: Record<string, string>,
+): TextEdit[] {
+  const trailing = trailingNewlines(source);
+  let replacement = "";
+  if (source.length > 0) replacement += "\n".repeat(Math.max(0, 2 - trailing));
+  replacement += `${kind} ${name}\n`;
+  for (const [k, v] of Object.entries(props ?? {})) {
+    replacement += `  ${k}: ${v}\n`;
+  }
+  const at = source.length;
+  return [{ start: at, end: at, replacement }];
+}
+
+/**
  * Delete the body item at (0-based) `index` in `beat` — its whole line
  * block, including nested content, up to the next sibling item.
  */

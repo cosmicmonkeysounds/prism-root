@@ -26,6 +26,9 @@
     "paths": {
       "@loom/core/parser": ["../core/src/parser/index.ts"],
       "@loom/core/lsp": ["../core/src/lsp/index.ts"],
+      "@loom/core/sim": ["../core/src/runtime/sim/index.ts"],
+      "@loom/core/chat": ["../core/server/chat.ts"],
+      "@loom/core/views": ["../core/server/views.ts"],
       "@loom/core": ["../core/src/index.ts"],
       "@/*": ["./src/*"]
     }

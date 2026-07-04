@@ -23,6 +23,8 @@ export function channelGlyph(kind: string | undefined): string {
       return '🌐'
     case 'faction':
       return '🚩'
+    case 'location':
+      return '📍'
     case 'dm':
       return '✉️'
     case 'announcement':

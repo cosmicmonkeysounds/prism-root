@@ -9,6 +9,8 @@ export type ContextMenuItem = {
   onSelect(): void
   kind?: 'danger' | 'default'
   disabled?: boolean
+  /** Optional e2e hook rendered as `data-testid` on the menu button. */
+  testid?: string
 }
 
 type State = {

@@ -1,8 +1,8 @@
 // Browser-side LSP client. One long-lived `Workspace` from `@loom/core`
 // is kept in sync with the editor's open-file map. The Loom engine is
 // now pure TypeScript (no wasm), so this is fully synchronous — but the
-// public functions stay async so existing callers (Outline / References)
-// need no change.
+// public functions stay async so existing callers (the References
+// panel) need no change.
 
 import { Workspace } from '@loom/core/lsp'
 
@@ -35,7 +35,7 @@ export function lspWorkspaceSync(): Workspace {
   return ws
 }
 
-/** Async wrapper kept for legacy callers (Outline / References panels). */
+/** Async wrapper kept for legacy callers (the References panel). */
 export async function lspWorkspace(): Promise<Workspace> {
   return lspWorkspaceSync()
 }

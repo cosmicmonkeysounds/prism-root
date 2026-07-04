@@ -126,6 +126,14 @@ function ModeGlyph({ id }: { id: Mode }) {
           <rect x="3" y="13" width="11" height="4" rx="1" />
         </svg>
       )
+    case 'sim':
+      // Play-in-a-circle — rehearse the story locally, no server.
+      return (
+        <svg {...common} aria-hidden>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M10 8.5l6 3.5-6 3.5Z" />
+        </svg>
+      )
     case 'operate':
       // Broadcast tower — running + moderating the live event.
       return (

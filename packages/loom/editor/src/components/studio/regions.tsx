@@ -15,8 +15,10 @@ import { Breadcrumbs } from '@/components/editor/Breadcrumbs'
 import { BeatStrip } from '@/components/graph/BeatStrip'
 import { EditingRail } from '@/components/graph/EditingRail'
 import { StoryGraphPanel } from '@/components/graph/StoryGraphPanel'
-import { RoomsRail } from '@/components/operate/RoomsRail'
+import { CockpitRail } from '@/components/cockpit/Rail'
+import { OperateCockpit, SimCockpit } from '@/components/cockpit/providers'
 import { OperateStage } from '@/components/operate/OperateStage'
+import { SimStage } from '@/components/sim/SimStage'
 
 /** Fills an allotment pane and clips overflow so leaf panels scroll. */
 export function Region({ children }: { children: ReactNode }) {
@@ -46,8 +48,18 @@ export function LeftRail({ mode }: { mode: Mode }) {
     case 'editing':
       // Files + project-wide Story Bin, tabbed.
       return <EditingRail />
+    case 'sim':
+      return (
+        <SimCockpit>
+          <CockpitRail />
+        </SimCockpit>
+      )
     case 'operate':
-      return <RoomsRail />
+      return (
+        <OperateCockpit>
+          <CockpitRail />
+        </OperateCockpit>
+      )
   }
 }
 
@@ -58,6 +70,9 @@ export function CenterStage({ mode }: { mode: Mode }) {
     case 'editing':
       // The global story-graph node editor (project ⇄ beat drill-in).
       return <StoryGraphPanel />
+    case 'sim':
+      // The local rehearsal cockpit (provider is inside SimStage).
+      return <SimStage />
     case 'operate':
       return <OperateStage />
   }

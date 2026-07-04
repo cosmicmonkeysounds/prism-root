@@ -4,7 +4,7 @@
 
 // --- server-authoritative chat (mirror of server/chat.ts) -------------------
 
-export type ChannelKind = "lobby" | "faction" | "dm" | "group" | "open" | "private";
+export type ChannelKind = "lobby" | "faction" | "dm" | "group" | "open" | "private" | "location";
 export type MessageKind = "line" | "narration" | "signal" | "system";
 
 /** One delivered message — the unit a conversation thread is built from. */
@@ -22,6 +22,8 @@ export interface ChatMessage {
   /** Slack thread link: root message's `seq`, or `null` for a top-level line. */
   parentSeq: number | null;
   hidden: boolean;
+  /** Beat a scripted line was spoken in, when known (mirror of server chat). */
+  beat?: string | null;
 }
 
 // --- per-role snapshots (mirror of server/views.ts) -------------------------

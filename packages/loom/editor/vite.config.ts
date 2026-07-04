@@ -19,9 +19,16 @@ export default defineConfig({
   resolve: {
     alias: {
       // Loom engine as TypeScript source (no wasm). Subpaths first so
-      // they win over the bare-package fallback.
+      // they win over the bare-package fallback. `sim` is the ecosystem
+      // runtime (drives Sim mode locally); `chat` + `views` are the
+      // server's pure, dependency-free projections (message composition
+      // + snapshot shapes) reused verbatim so the local simulator and
+      // the live event render identically.
       '@loom/core/parser': path.resolve(__dirname, '../core/src/parser/index.ts'),
       '@loom/core/lsp': path.resolve(__dirname, '../core/src/lsp/index.ts'),
+      '@loom/core/sim': path.resolve(__dirname, '../core/src/runtime/sim/index.ts'),
+      '@loom/core/chat': path.resolve(__dirname, '../core/server/chat.ts'),
+      '@loom/core/views': path.resolve(__dirname, '../core/server/views.ts'),
       '@loom/core': path.resolve(__dirname, '../core/src/index.ts'),
       '@': path.resolve(__dirname, './src'),
     },

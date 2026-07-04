@@ -27,9 +27,9 @@ type Anchored = {
  * The in-node source editor: a textarea over the item's raw `.loom`
  * slice (indentation included for multi-line blocks — what you edit IS
  * the text). Enter commits (Shift+Enter for a newline), Esc cancels,
- * blur commits.
+ * blur commits. Shared with the project view's word-block editing.
  */
-function InlineEdit({
+export function InlineEdit({
   initial,
   onCommit,
   onCancel,

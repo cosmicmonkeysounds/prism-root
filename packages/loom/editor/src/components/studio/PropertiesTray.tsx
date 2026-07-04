@@ -21,7 +21,8 @@ import { useMode, type Mode } from '@/store/mode'
 import { useWorkspace } from '@/store/workspace'
 import { useFocus, type FocusRef } from '@/store/focus'
 import { ReferencesPanel } from '@/components/runner/References'
-import { OperateInspector } from '@/components/operate/OperateInspector'
+import { CockpitInspector } from '@/components/cockpit/Inspector'
+import { OperateCockpit, SimCockpit } from '@/components/cockpit/providers'
 import { docText, pathForUri } from '@/lib/lsp-client'
 import { findFileEntryByPath } from '@/lib/lsp-nav'
 import { rewireGraphEdge, useStoryGraph, writePathContents } from '@/lib/story-graph'
@@ -59,8 +60,22 @@ function tabsFor(mode: Mode): Tab[] {
 }
 
 export function PropertiesTray({ mode }: { mode: Mode }) {
-  // Run mode's tray is the live participant Inspector, not the author props.
-  if (mode === 'operate') return <OperateInspector />
+  // Sim/Run trays are the live participant Inspector, not author props —
+  // the same component against the local simulator / the live event.
+  if (mode === 'sim') {
+    return (
+      <SimCockpit>
+        <CockpitInspector />
+      </SimCockpit>
+    )
+  }
+  if (mode === 'operate') {
+    return (
+      <OperateCockpit>
+        <CockpitInspector />
+      </OperateCockpit>
+    )
+  }
   return <AuthorTray mode={mode} />
 }
 

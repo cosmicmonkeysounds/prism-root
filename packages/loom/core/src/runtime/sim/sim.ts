@@ -37,6 +37,19 @@ export interface Person {
   role: string;
 }
 
+/** A per-viewer channel snapshot. `kind` is wider than the authored
+ *  `ChannelKindWord` — derived rooms add `"location"` (and the projections
+ *  add `"lobby"`/`"faction"`), so views carry it as a plain string. */
+export interface ChannelView {
+  id: string;
+  kind: string;
+  title: string;
+  spaceId: string;
+  member: boolean;
+  canPost: boolean;
+  threadable: boolean;
+}
+
 /** A queued hook-firing request produced by an event. */
 interface Trigger {
   verb: string;
@@ -64,6 +77,15 @@ interface Frame {
    * inherited by control-flow children.
    */
   cast?: string;
+  /**
+   * The enclosing beat's `setting:` location — where this frame's lines are
+   * "happening". Inherited by control-flow children; a divert swaps to the
+   * target beat's own setting (or keeps the caller's when it declares none),
+   * so an un-addressed line routes to the setting's room instead of vanishing.
+   */
+  setting?: string;
+  /** The beat this frame's items belong to (provenance on emitted lines). */
+  beat?: string;
 }
 
 /**
@@ -84,6 +106,12 @@ function firstCastMember(beat: Beat): string | undefined {
   if (cast === undefined) return undefined;
   const first = cast.split(",")[0]?.trim();
   return first !== undefined && first.length > 0 ? first : undefined;
+}
+
+/** A beat's `setting:` location (the room its lines land in), or undefined. */
+function beatSetting(beat: Beat): string | undefined {
+  const s = beat.contract.get("setting")?.value.trim();
+  return s !== undefined && s.length > 0 ? s : undefined;
 }
 
 export class Sim {
@@ -451,6 +479,16 @@ export class Sim {
     // A guest's DM with a character: only that guest sees it on the guest side;
     // the performer sees it via the guest thread (audience includes the id).
     if (channel.startsWith("dm:")) return this.persons.has(sender) ? [sender] : "all";
+    // Typed chat in a location room is heard by whoever is present when it's
+    // said (+ the sender). Story narration routed here is "all" instead — the
+    // stage voice carries; see composeGuestMessages.
+    if (channel.startsWith("loc:")) {
+      const occ = this.occupants.get(channel.slice("loc:".length));
+      if (occ === undefined) return "all";
+      const aud = new Set(occ);
+      if (this.persons.has(sender)) aud.add(sender);
+      return [...aud];
+    }
     return "all"; // lobby + open rooms
   }
 
@@ -471,7 +509,19 @@ export class Sim {
     if (id.startsWith("dm:")) {
       return { channel: id, channelKind: "dm", title: id.slice("dm:".length), spaceId: "internet" };
     }
+    if (id.startsWith("loc:")) {
+      const l = id.slice("loc:".length);
+      const def = this.model.locations.get(l);
+      if (def !== undefined) {
+        return { channel: id, channelKind: "location", title: def.label ?? l, spaceId: "internet" };
+      }
+    }
     return { channel: id, channelKind: "lobby", title: "The Internet", spaceId: "internet" };
+  }
+
+  /** The derived room id for a location (`loc:<Location>`). */
+  static locationChannel(location: string): string {
+    return `loc:${location}`;
   }
 
   /** Is `person` a member of an authored membership-gated channel? */
@@ -480,8 +530,10 @@ export class Sim {
   }
 
   /** Can `person` see an authored channel? open → all; faction → its members;
-   *  private/group/dm → explicit members. Unknown channels are not visible. */
+   *  private/group/dm → explicit members. Location rooms are open — the stage
+   *  feed is part of the show. Unknown channels are not visible. */
   canSeeChannel(person: string, id: string): boolean {
+    if (id.startsWith("loc:")) return this.model.locations.has(id.slice("loc:".length));
     const def = this.model.channels.get(id);
     if (def === undefined) return false;
     if (def.kind === "open") return true;
@@ -499,6 +551,9 @@ export class Sim {
    *  channels honour their post policy (everyone / members / faction / none /
    *  role). Visibility is a precondition. */
   canPost(person: string, id: string): boolean {
+    // A location room takes posts only from whoever is standing in it
+    // (operator surfaces bypass this, as they do for authored rooms).
+    if (id.startsWith("loc:")) return this.occupants.get(id.slice("loc:".length))?.has(person) ?? false;
     const def = this.model.channels.get(id);
     if (def === undefined) return true; // lobby / faction: / dm: are open to post
     if (!this.canSeeChannel(person, id)) return false;
@@ -529,7 +584,7 @@ export class Sim {
   }
 
   /** A per-viewer channel snapshot (visibility + membership + can-post + threads). */
-  private snapshot(person: string, def: ChannelDef, canPost: boolean) {
+  private snapshot(person: string, def: ChannelDef, canPost: boolean): ChannelView {
     return {
       id: def.id,
       kind: def.kind,
@@ -541,20 +596,41 @@ export class Sim {
     };
   }
 
-  /** The authored channels a person can see, as flat snapshots for the view. */
-  visibleChannelsFor(person: string): Array<ReturnType<Sim["snapshot"]>> {
-    const out: Array<ReturnType<Sim["snapshot"]>> = [];
+  /** Derived location-room snapshot: `member`/`canPost` mean "is the viewer
+   *  standing there" (`operator` forces canPost for booth surfaces). */
+  private locationSnapshots(person: string, operator: boolean): ChannelView[] {
+    return [...this.model.locations.values()].map((l) => {
+      const present = this.occupants.get(l.id)?.has(person) ?? false;
+      return {
+        id: Sim.locationChannel(l.id),
+        kind: "location",
+        title: l.label ?? l.id,
+        spaceId: "internet",
+        member: present,
+        canPost: operator || present,
+        threadable: true,
+      };
+    });
+  }
+
+  /** The channels a person can see — authored rooms they have access to, plus
+   *  every location room (the stage feed) — as flat snapshots for the view. */
+  visibleChannelsFor(person: string): ChannelView[] {
+    const out: ChannelView[] = [];
     for (const def of this.model.channels.values()) {
       if (!this.canSeeChannel(person, def.id)) continue;
       out.push(this.snapshot(person, def, this.canPost(person, def.id)));
     }
-    return out;
+    return [...this.locationSnapshots(person, false), ...out];
   }
 
-  /** Every authored channel (operator/performer view — they run every room, so
-   *  they may post everywhere regardless of post policy). */
-  allChannelsFor(person: string): Array<ReturnType<Sim["snapshot"]>> {
-    return [...this.model.channels.values()].map((def) => this.snapshot(person, def, true));
+  /** Every authored + location channel (operator/performer view — they run
+   *  every room, so they may post everywhere regardless of post policy). */
+  allChannelsFor(person: string): ChannelView[] {
+    return [
+      ...this.locationSnapshots(person, true),
+      ...[...this.model.channels.values()].map((def) => this.snapshot(person, def, true)),
+    ];
   }
 
   /** The authored spaces (for the client to title sidebar sections). */
@@ -626,6 +702,17 @@ export class Sim {
   pendingChoiceFor(person: string): string[] | null {
     const queue = this.pendingChoices.get(person);
     return queue !== undefined && queue.length > 0 ? queue[0]!.options.map((o) => o.text) : null;
+  }
+
+  /** Every outstanding choice's options, keyed by person id (`__global`
+   *  for unbound menus) — the operator mirror of `pendingChoiceFor`, so
+   *  the run panel can see (and answer) a stuck decision. */
+  allPendingChoices(): Record<string, string[]> {
+    const out: Record<string, string[]> = {};
+    for (const [person, queue] of this.pendingChoices) {
+      if (queue.length > 0) out[person] = queue[0]!.options.map((o) => o.text);
+    }
+    return out;
   }
 
   /**
@@ -786,6 +873,8 @@ export class Sim {
       // attributed to that speaker. A divert (below) deliberately does not.
       const sp = frame.speaker;
       const cs = frame.cast; // inherited SELF-fallback for control-flow children
+      const st = frame.setting; // inherited room context for emitted lines
+      const bt = frame.beat;
       switch (item.kind) {
         case "action":
           if (sp !== undefined) {
@@ -798,14 +887,16 @@ export class Sim {
                 speaker: sp,
                 text: this.interpolate(t, b),
                 audience: this.subjectAudience(b),
+                setting: st ?? null,
+                beat: bt ?? null,
               });
             }
           } else {
-            this.record({ type: "action", text: this.interpolate(item.value.value, b) });
+            this.record({ type: "action", text: this.interpolate(item.value.value, b), setting: st ?? null, beat: bt ?? null });
           }
           break;
         case "sceneHeading":
-          this.record({ type: "action", text: this.interpolate(item.value.value, b) });
+          this.record({ type: "action", text: this.interpolate(item.value.value, b), setting: st ?? null, beat: bt ?? null });
           break;
         case "metadata":
         case "slotPlaceholder":
@@ -821,6 +912,8 @@ export class Sim {
             bindings: b,
             speaker: this.resolveSelfSpeaker(item.value.speaker, b, cs),
             cast: cs,
+            setting: st,
+            beat: bt,
           });
           break;
         case "directive":
@@ -828,12 +921,12 @@ export class Sim {
           break;
         case "directiveBlock":
           this.runDirective(item.value.directive.raw, b);
-          stack.push({ items: item.value.body, index: 0, bindings: b, speaker: sp, cast: cs });
+          stack.push({ items: item.value.body, index: 0, bindings: b, speaker: sp, cast: cs, setting: st, beat: bt });
           break;
         case "conditional":
           for (const arm of item.value.arms) {
             if (arm.condition === null || this.evalCond(arm.condition, b)) {
-              stack.push({ items: arm.body, index: 0, bindings: b, speaker: sp, cast: cs });
+              stack.push({ items: arm.body, index: 0, bindings: b, speaker: sp, cast: cs, setting: st, beat: bt });
               break;
             }
           }
@@ -845,20 +938,22 @@ export class Sim {
             bindings: b,
             speaker: sp,
             cast: cs,
+            setting: st,
+            beat: bt,
           });
           break;
         case "match": {
           const scrutinee = display(this.evalValue(item.value.scrutinee, b));
           for (const arm of item.value.arms) {
             if (arm.pattern === scrutinee) {
-              stack.push({ items: arm.body, index: 0, bindings: b, speaker: sp, cast: cs });
+              stack.push({ items: arm.body, index: 0, bindings: b, speaker: sp, cast: cs, setting: st, beat: bt });
               break;
             }
           }
           break;
         }
         case "eachVisit":
-          stack.push({ items: item.value.first, index: 0, bindings: b, speaker: sp, cast: cs });
+          stack.push({ items: item.value.first, index: 0, bindings: b, speaker: sp, cast: cs, setting: st, beat: bt });
           break;
         case "inlineLet":
           this.world.set(item.value.name, this.evalValue(item.value.expression, b));
@@ -875,8 +970,11 @@ export class Sim {
               // bound would otherwise record under the owner and read 0.
               const key = this.visitKey(name, b);
               this.beatVisits.set(key, (this.beatVisits.get(key) ?? 0) + 1);
-              this.record({ type: "beatEntered", beat: name });
-              stack.push({ items: beat.body, index: 0, bindings: bound, cast: firstCastMember(beat) });
+              // The target's own setting wins; a setting-less sub-beat
+              // continues in the caller's room.
+              const setting = beatSetting(beat) ?? st;
+              this.record({ type: "beatEntered", beat: name, setting: setting ?? null });
+              stack.push({ items: beat.body, index: 0, bindings: bound, cast: firstCastMember(beat), setting, beat: name });
             }
           }
           break; // end / return / tunnel: terminate this branch
@@ -900,6 +998,8 @@ export class Sim {
             bindings: f.bindings,
             speaker: f.speaker,
             cast: f.cast,
+            setting: f.setting,
+            beat: f.beat,
           }));
           const queue = this.pendingChoices.get(person) ?? [];
           queue.push({ options, bindings: b, continuation });
@@ -922,8 +1022,9 @@ export class Sim {
     if (beat === undefined) return;
     const key = this.visitKey(name, bindings);
     this.beatVisits.set(key, (this.beatVisits.get(key) ?? 0) + 1);
-    this.record({ type: "beatEntered", beat: name });
-    this.exec([{ items: beat.body, index: 0, bindings, cast: firstCastMember(beat) }]);
+    const setting = beatSetting(beat);
+    this.record({ type: "beatEntered", beat: name, setting: setting ?? null });
+    this.exec([{ items: beat.body, index: 0, bindings, cast: firstCastMember(beat), setting, beat: name }]);
   }
 
   /** Per-person visit key so `visits(beat)` is scoped to the participant. */

@@ -20,10 +20,10 @@
 
 import type { Sim, SimEvent } from "../src/runtime/sim/index.ts";
 
-// `lobby` / `faction` / `dm` are what slice 1 emits; `group` / `open` /
-// `private` are the targets the UI + (future) channel-type registry render
-// against once channels become authored rather than derived.
-export type ChannelKind = "lobby" | "faction" | "dm" | "group" | "open" | "private";
+// `lobby` / `faction` / `dm` / `location` are derived; `group` / `open` /
+// `private` come from authored SPACE/CHANNEL declarations. `location` is the
+// derived room of a `LOCATION` (`loc:<Id>`) — the stage itself is a channel.
+export type ChannelKind = "lobby" | "faction" | "dm" | "group" | "open" | "private" | "location";
 
 /** Who receives a message: `"all"` guests, or a fixed set of guest ids. */
 export type Audience = "all" | string[];
@@ -55,6 +55,9 @@ export interface ChatMessage {
   parentSeq: number | null;
   /** Hidden by a moderator. Withheld from guests, greyed for admins. */
   hidden: boolean;
+  /** The beat a scripted line was spoken in, when known — lets a client link
+   *  a message back to its node on the story map. Absent for typed chat. */
+  beat?: string | null;
 }
 
 /** A message before the store assigns it a `seq` + resolves `hidden`. */
@@ -140,11 +143,13 @@ function headOf(id: string): ChannelHead {
   if (id === LOBBY.channel) return LOBBY;
   if (id.startsWith("faction:")) return factionChannel(id.slice("faction:".length));
   if (id.startsWith("dm:")) return dmChannel(id.slice("dm:".length));
+  // Model-free fallback — `sim.channelHead` resolves the location's label.
+  if (id.startsWith("loc:")) return { channel: id, channelKind: "location", title: id.slice("loc:".length) };
   return { channel: id, channelKind: "dm", title: id };
 }
 
 function orderOf(kind: ChannelKind): number {
-  return kind === "lobby" ? 0 : kind === "faction" ? 1 : 2;
+  return kind === "lobby" ? 0 : kind === "faction" ? 1 : kind === "location" ? 2 : 3;
 }
 
 /**
@@ -173,6 +178,20 @@ function globalScope(scope: string): boolean {
   return s === "" || ["everyone", "all", "internet", "world", "room", "party"].includes(s);
 }
 
+/**
+ * The room a piece of un-addressed story lands in: the setting's location
+ * room when the enclosing beat declares a known `setting:`, else the lobby.
+ */
+function storyChannel(sim: Sim, setting: string | null | undefined): ChannelHead {
+  if (setting != null && setting.length > 0) {
+    const head = sim.channelHead(`loc:${setting}`);
+    if (head.channelKind === "location") {
+      return { channel: head.channel, channelKind: "location", title: head.title };
+    }
+  }
+  return LOBBY;
+}
+
 // --- composition ------------------------------------------------------------
 
 /**
@@ -189,8 +208,25 @@ export function composeGuestMessages(sim: Sim, events: readonly SimEvent[]): Dra
   for (const e of events) {
     switch (e.type) {
       case "dialogue":
-        // A character addressing you → that character's DM thread.
-        out.push({ ...dmChannel(e.speaker), from: e.speaker, kind: "line", text: e.text, ts, audience: [...e.audience], parentSeq: null });
+        if (e.audience.length > 0) {
+          // A character addressing you → that character's DM thread.
+          out.push({ ...dmChannel(e.speaker), from: e.speaker, kind: "line", text: e.text, ts, audience: [...e.audience], parentSeq: null, beat: e.beat });
+        } else {
+          // Un-addressed scripted speech (no participant bound — e.g. the
+          // NARRATOR of an entry beat) is stage voice: it plays in the
+          // setting's room for everyone, not a nobody-can-see-it DM.
+          out.push({ ...storyChannel(sim, e.setting), from: e.speaker, kind: "line", text: e.text, ts, audience: "all", parentSeq: null, beat: e.beat });
+        }
+        break;
+      case "action":
+        // Speakerless narration — the Narrator's word block, delivered to the
+        // room the beat is set in. Previously dropped on the floor.
+        out.push({ ...storyChannel(sim, e.setting), from: "Narrator", kind: "narration", text: e.text, ts, audience: "all", parentSeq: null, beat: e.beat });
+        break;
+      case "respond":
+        // A device readout (`<respond:>`): a personal narration line in the
+        // lobby feed of whoever scanned (visible to the booth via SSE too).
+        out.push({ ...LOBBY, from: "", kind: "narration", text: e.text, ts, audience: e.to === "" ? "all" : [e.to], parentSeq: null });
         break;
       case "chat": {
         // A participant typed into a channel. The sim baked the audience +

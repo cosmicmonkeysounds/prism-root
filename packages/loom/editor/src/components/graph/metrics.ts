@@ -15,12 +15,30 @@ export const GHOST_H = 42
 export const END_W = 88
 export const END_H = 34
 
-export function beatNodeSize(beat: GraphBeat): { width: number; height: number } {
+/** Collapsed file containers render as a fixed header-only card. */
+export const FILE_COLLAPSED_W = 220
+export const FILE_COLLAPSED_H = 40
+
+/** Expanded beat cards get a wider column so word blocks read well. */
+export const BEAT_EXPANDED_W = 280
+/** Word-block sizing shared with `word-blocks.ts`'s height estimate. */
+export const BODY_BLOCK_LINE_H = 14
+export const BODY_BLOCK_CHARS_PER_LINE = 36
+
+export function beatNodeSize(
+  beat: GraphBeat,
+  expandedBlocksHeight: number | null = null,
+): { width: number; height: number } {
   let h = 40 // header
   if (beat.owner !== null || beat.cast.length > 0 || beat.setting !== null) h += 16
-  h += Math.min(beat.preview.length, 3) * 15
+  if (expandedBlocksHeight !== null) {
+    // Expanded: the full word-block list replaces the preview.
+    h += expandedBlocksHeight + 8
+  } else {
+    h += Math.min(beat.preview.length, 3) * 15
+  }
   h += 20 // counts strip
-  return { width: BEAT_W, height: h + 12 }
+  return { width: expandedBlocksHeight !== null ? BEAT_EXPANDED_W : BEAT_W, height: h + 12 }
 }
 
 const ENTITY_GLYPH: Record<string, { glyph: string; cls: string }> = {

@@ -48,6 +48,7 @@ export function ConnDot({ connected, label }: { connected: boolean; label: strin
 const GLYPH: Record<Channel["kind"], string> = {
   lobby: "🌐",
   faction: "#",
+  location: "📍",
   dm: "",
   guest: "",
   scanner: "📷",

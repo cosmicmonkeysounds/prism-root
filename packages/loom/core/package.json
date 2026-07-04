@@ -9,7 +9,9 @@
     "./parser": "./src/parser/index.ts",
     "./runtime": "./src/runtime/index.ts",
     "./sim": "./src/runtime/sim/index.ts",
-    "./lsp": "./src/lsp/index.ts"
+    "./lsp": "./src/lsp/index.ts",
+    "./chat": "./server/chat.ts",
+    "./views": "./server/views.ts"
   },
   "scripts": {
     "test": "vitest run",

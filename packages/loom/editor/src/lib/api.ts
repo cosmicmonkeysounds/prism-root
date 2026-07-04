@@ -155,6 +155,11 @@ export const modApi = {
   async reveal(eventId: string, faction: string): Promise<void> {
     await req('POST', `/e/${eventId}/api/mod/reveal`, { faction })
   },
+  /** Answer a pending choice on a participant's behalf (`__global` for an
+   *  unbound story menu) — journaled like the guest's own answer. */
+  async choose(eventId: string, person: string, index: number): Promise<void> {
+    await req('POST', `/e/${eventId}/api/mod/choose`, { person, index })
+  },
   /** Reset the event: clear the journal + replay from the loaded scenario. */
   async reset(eventId: string): Promise<void> {
     await req('POST', `/e/${eventId}/api/mod/reset`, {})

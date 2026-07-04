@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  applyNodeChanges,
   Background,
   Controls,
   MiniMap,
@@ -28,10 +29,15 @@ import {
 } from '@xyflow/react'
 import clsx from 'clsx'
 import {
+  appendBodyLines,
+  appendChoice,
+  appendDeclaration,
   appendDivert,
   insertBeat,
+  insertBodyLines,
   parse,
   removeBeat,
+  removeBodyItem,
   replaceExact,
   EditError,
 } from '@loom/core/parser'
@@ -48,11 +54,14 @@ import {
   writtenTargetFor,
 } from '@/lib/story-graph'
 import { useFocus } from '@/store/focus'
-import { useGraph } from '@/store/graph'
+import { traversalKey, useGraph } from '@/store/graph'
 import { useMode } from '@/store/mode'
 import { useWorkspace } from '@/store/workspace'
-import { openContextMenu } from '@/store/context-menu'
+import { useCockpit } from '@/store/cockpit'
+import { openContextMenu, type ContextMenuItem } from '@/store/context-menu'
 import { buildBeatFlow } from './beat-flow'
+import { FloatingEdge } from './FloatingEdge'
+import { blockEditRange, toWordBlocks, type WordBlock } from './word-blocks'
 import {
   BodyBranchNode,
   BodyChoiceNode,
@@ -65,9 +74,24 @@ import {
   type BodyExitData,
   type SourceAnchor,
 } from './body-nodes'
+import { dimmedNodeIds, FILTER_DIM_EDGE_OPACITY, FILTER_DIM_OPACITY } from './filter'
 import { buildProjectFlow } from './flow'
 import { layeredLayout } from './layout'
-import { BeatNode, EndNode, EntityNode, FileGroupNode, GhostNode } from './nodes'
+import {
+  arrowDirection,
+  nearestInDirection,
+  nearestToPoint,
+  type NavNode,
+} from './navigation'
+import {
+  BeatNode,
+  EndNode,
+  EntityNode,
+  FileGroupNode,
+  GhostNode,
+  type BeatNodeData,
+  type FileGroupData,
+} from './nodes'
 
 const ALL_NODE_TYPES = {
   beat: BeatNode,
@@ -84,6 +108,9 @@ const ALL_NODE_TYPES = {
   bodyExit: BodyExitNode,
   bodySlot: BodySlotNode,
 } as const
+
+/** Project-view edges float to the closest node border (see FloatingEdge). */
+const ALL_EDGE_TYPES = { floating: FloatingEdge } as const
 
 /** Drill-in node types that support in-place source editing. */
 const INLINE_EDITABLE = new Set(['bodyText', 'bodyChoice', 'bodyDialogue', 'bodyDirective'])
@@ -134,6 +161,8 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
   // ---- build + layout --------------------------------------------------
 
   const beatKey = view.kind === 'beat' ? view.beatKey : null
+  const expanded = useGraph((s) => s.expanded)
+  const collapsedFiles = useGraph((s) => s.collapsedFiles)
   const flow = useMemo(() => {
     if (beatKey !== null) {
       const beat = graph.beats.get(beatKey)
@@ -141,8 +170,16 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
       if (beat === undefined || body === null) return null
       return { kind: 'beat' as const, ...buildBeatFlow(graph, beat, body) }
     }
-    return { kind: 'project' as const, ...buildProjectFlow(graph, overlays) }
-  }, [graph, overlays, beatKey])
+    // Expanded cards carry their full word-block body (drives sizing too).
+    const blocks = new Map<string, WordBlock[]>()
+    for (const key of Object.keys(expanded)) {
+      if (!graph.beats.has(key)) continue
+      const body = lspWorkspaceSync().beatBody(key)
+      if (body !== null) blocks.set(key, toWordBlocks(body))
+    }
+    const collapsed = new Set(Object.keys(collapsedFiles))
+    return { kind: 'project' as const, ...buildProjectFlow(graph, overlays, blocks, collapsed) }
+  }, [graph, overlays, beatKey, expanded, collapsedFiles])
 
   // Sizes React Flow actually measured after render — fed back into a
   // second ELK pass so boxes truly fit their text (estimates only seed
@@ -225,6 +262,10 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
       }
     }
     if (dims) setMeasureTick((t) => t + 1)
+    // Apply the changes to our controlled node state — without this,
+    // React Flow's drag moves are visual-only and snap back on the next
+    // decoration render. This is what makes nodes genuinely movable.
+    setPositioned((p) => (p === null ? p : { ...p, nodes: applyNodeChanges(changes, p.nodes) }))
   }, [])
 
   // Re-fit once per view change, after the layout for that view lands.
@@ -262,6 +303,15 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
       useGraph.getState().clearCenter(token)
       return
     }
+    // A target hidden inside a collapsed file container → expand it.
+    const hiddenUri = graph.beats.get(id)?.uri ?? graph.entities.get(id)?.uri ?? null
+    if (hiddenUri !== null) {
+      const path = pathForUri(hiddenUri)
+      if (useGraph.getState().collapsedFiles[path] === true) {
+        useGraph.getState().toggleFileCollapsed(path)
+        return
+      }
+    }
     if (graph.entities.has(id) && !useGraph.getState().overlays.entities) {
       useGraph.getState().setOverlay('entities', true)
       return
@@ -298,21 +348,149 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
   const beatEditable =
     editable && beatKey !== null && graph.beats.get(beatKey)?.structural === 'file'
 
+  const toggleExpanded = useGraph((s) => s.toggleExpanded)
+  const toggleFileCollapsed = useGraph((s) => s.toggleFileCollapsed)
+  const editingBlock = useGraph((s) => s.editingBlock)
+  const setEditingBlock = useGraph((s) => s.setEditingBlock)
+
+  // Word-block editing on expanded project-view cards — same mechanics
+  // as the drill-in's inline editor: the textarea holds the exact raw
+  // source slice the block displays, committed via `replaceExact`.
+  const commitBlockEdit = useCallback(
+    async (beat: GraphBeat, blocks: WordBlock[], index: number, next: string): Promise<void> => {
+      const blk = blocks[index]
+      if (blk === undefined || beat.uri === null) return
+      const text = docText(beat.uri)
+      if (text === null) return
+      const range = blockEditRange(text, blk)
+      if (range === null) return
+      try {
+        const current = text.slice(range[0], range[1])
+        const edits = replaceExact(text, range[0], range[1], current, next)
+        if (edits.length > 0) await applyEditsToUri(beat.uri, edits)
+      } catch (e) {
+        say(e instanceof EditError ? e.message : 'Edit failed — source changed underneath.')
+      } finally {
+        useGraph.getState().setEditingBlock(null)
+      }
+    },
+    [say],
+  )
+
+  // Right-click a word block: edit / insert around / delete its item.
+  const openBlockMenu = useCallback(
+    (beat: GraphBeat, blocks: WordBlock[], index: number, event: React.MouseEvent) => {
+      const blk = blocks[index]
+      if (blk === undefined) return
+      const items: ContextMenuItem[] = []
+      if (blk.spanStart !== null) {
+        items.push({
+          label: 'Edit line',
+          testid: 'graph-block-edit',
+          onSelect: () => useGraph.getState().setEditingBlock({ beatKey: beat.key, index }),
+        })
+      }
+      items.push(
+        {
+          label: 'Insert line above…',
+          testid: 'graph-block-insert-above',
+          onSelect: () => void insertLineAt(beat, blk.topIndex, say),
+        },
+        {
+          label: 'Insert line below…',
+          testid: 'graph-block-insert-below',
+          onSelect: () => void insertLineAt(beat, blk.topIndex + 1, say),
+        },
+      )
+      if (blk.depth === 0) {
+        items.push({
+          label: 'Delete item',
+          kind: 'danger',
+          testid: 'graph-block-delete',
+          onSelect: () => void deleteBodyItemAt(beat, blk.topIndex, say),
+        })
+      }
+      openContextMenu(items, { x: event.clientX, y: event.clientY })
+    },
+    [say],
+  )
+
+  // Live filter: dim whatever misses the toolbar query. Project map
+  // only — drill-in body nodes carry no matchable identity. Runs in
+  // the decoration pass, so keystrokes never rebuild the flow or ELK.
+  const dimmedIds = useMemo(() => {
+    if (positioned === null || beatKey !== null) return null
+    return dimmedNodeIds(positioned.nodes, search)
+  }, [positioned, beatKey, search])
+
   const nodes = useMemo(() => {
     if (positioned === null) return []
+    // The file hosting the runtime's current beat — a collapsed
+    // container pulses in its place.
+    const currentFile = graph.files.find(
+      (f) => runtime.current !== null && f.beats.includes(runtime.current),
+    )
+    const currentFilePath = currentFile !== undefined ? pathForUri(currentFile.uri) : null
     return positioned.nodes.map((n) => {
       const isBeat = n.type === 'beat'
+      const beatData = isBeat ? (n.data as BeatNodeData) : null
+      const fileData = n.type === 'fileGroup' ? (n.data as FileGroupData) : null
+      const dim = dimmedIds !== null && dimmedIds.has(n.id)
       const anchor = (n.data as { anchor?: SourceAnchor }).anchor ?? null
       const inlineEditable =
         beatEditable && anchor !== null && INLINE_EDITABLE.has(n.type ?? '')
       const isEditing = inlineEditable && editingNode === n.id
+      // Expanded cards on file-structural beats author their own source.
+      const blocks = beatData?.blocks ?? null
+      const blocksEditable =
+        editable &&
+        beatData !== null &&
+        blocks !== null &&
+        beatData.beat.structural === 'file' &&
+        beatData.beat.uri !== null
+      const editingIdx =
+        blocksEditable && editingBlock !== null && editingBlock.beatKey === n.id
+          ? editingBlock.index
+          : null
+      let blockEditSlice: string | null = null
+      if (editingIdx !== null && blocks !== null && blocks[editingIdx] !== undefined) {
+        const text = docText(beatData!.beat.uri!)
+        const range = text !== null ? blockEditRange(text, blocks[editingIdx]!) : null
+        if (text !== null && range !== null) blockEditSlice = text.slice(range[0], range[1])
+      }
       const decorated: Node = {
         ...n,
         selected: n.id === selected,
+        ...(dim ? { style: { ...n.style, opacity: FILTER_DIM_OPACITY } } : {}),
         data: {
           ...n.data,
           ...(isBeat
-            ? { visits: runtime.visits[n.id], isCurrent: runtime.current === n.id }
+            ? {
+                visits: runtime.visits[n.id],
+                isCurrent: runtime.current === n.id,
+                onToggleExpand: () => toggleExpanded(n.id),
+              }
+            : {}),
+          ...(blocksEditable
+            ? {
+                blocksEditable: true,
+                editingBlock: editingIdx,
+                blockEditSlice,
+                onEditBlock: (i: number) => setEditingBlock({ beatKey: n.id, index: i }),
+                onCommitBlock: (i: number, next: string) =>
+                  void commitBlockEdit(beatData!.beat, blocks!, i, next),
+                onCancelBlock: () => setEditingBlock(null),
+                onBlockContextMenu: (i: number, ev: React.MouseEvent) =>
+                  openBlockMenu(beatData!.beat, blocks!, i, ev),
+              }
+            : {}),
+          ...(fileData !== null
+            ? {
+                onToggleCollapse: () => toggleFileCollapsed(fileData.path),
+                ...(fileData.collapsed === true
+                  ? { isCurrent: currentFilePath !== null && currentFilePath === fileData.path }
+                  : {}),
+              }
             : {}),
           ...(inlineEditable
             ? {
@@ -323,36 +501,51 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
               }
             : {}),
         },
-        draggable: editable || n.type === 'fileGroup' ? editable : false,
+        draggable: editable,
         connectable: editable && isBeat,
       }
       return decorated
     })
-  }, [positioned, selected, runtime, editable, beatEditable, editingNode, commitInlineEdit, setEditing])
+  }, [positioned, selected, runtime, graph, editable, beatEditable, editingNode, editingBlock, commitInlineEdit, commitBlockEdit, openBlockMenu, setEditing, setEditingBlock, toggleExpanded, toggleFileCollapsed, dimmedIds])
 
   const edges = useMemo(() => {
     if (positioned === null) return []
     return positioned.edges.map((e) => {
+      // Runtime heat: light the hops a live run / sim actually took.
+      let base = e
+      const hops = runtime.traversed[traversalKey(e.source, e.target)] ?? 0
+      if (hops > 0) {
+        const width = typeof e.style?.strokeWidth === 'number' ? e.style.strokeWidth : 1.5
+        base = {
+          ...e,
+          animated: true,
+          style: { ...e.style, stroke: '#f59e0b', opacity: 1, strokeWidth: width + 0.6 },
+        }
+      }
       if (e.id === selectedEdge) {
-        return { ...e, selected: true, style: { ...e.style, strokeWidth: 2.6, opacity: 1 } }
+        return { ...base, selected: true, style: { ...base.style, strokeWidth: 2.6, opacity: 1 } }
+      }
+      // Live filter: an edge between two dimmed nodes fades with them.
+      if (dimmedIds !== null && dimmedIds.has(e.source) && dimmedIds.has(e.target)) {
+        return { ...base, selected: false, style: { ...base.style, opacity: FILTER_DIM_EDGE_OPACITY } }
       }
       // A selected node emphasises its own connections and dims the rest
       // (Articy-style connection highlighting).
       if (selected !== null && selectedEdge === null) {
         const touches = e.source === selected || e.target === selected
-        const base = typeof e.style?.opacity === 'number' ? e.style.opacity : 0.9
-        const width = typeof e.style?.strokeWidth === 'number' ? e.style.strokeWidth : 1.5
+        const baseOpacity = typeof base.style?.opacity === 'number' ? base.style.opacity : 0.9
+        const width = typeof base.style?.strokeWidth === 'number' ? base.style.strokeWidth : 1.5
         return {
-          ...e,
+          ...base,
           selected: false,
           style: touches
-            ? { ...e.style, opacity: 1, strokeWidth: width + 0.8 }
-            : { ...e.style, opacity: base * 0.22 },
+            ? { ...base.style, opacity: 1, strokeWidth: width + 0.8 }
+            : { ...base.style, opacity: baseOpacity * 0.22 },
         }
       }
-      return { ...e, selected: false }
+      return { ...base, selected: false }
     })
-  }, [positioned, selectedEdge, selected])
+  }, [positioned, selectedEdge, selected, runtime, dimmedIds])
 
   // ---- interactions -----------------------------------------------------
 
@@ -361,6 +554,8 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
   const select = useGraph((s) => s.select)
   const moveNode = useGraph((s) => s.moveNode)
   const setMode = useMode((s) => s.setMode)
+  // Whatever cockpit hosts a `run` canvas (local Sim / live event mod API).
+  const cockpitFireBeat = useCockpit((s) => s.fireBeat)
 
   const revealAnchor = useCallback(
     async (anchor: SourceAnchor, toWriting = true): Promise<void> => {
@@ -419,11 +614,16 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
         if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(target)) void createBeat(graph, say, target)
         return
       }
-      // Double-clicking a file container opens the file in Writing mode.
+      // Double-clicking a file container opens the file in Writing mode;
+      // a collapsed one re-expands in place instead.
       if (node.type === 'fileGroup') {
-        const path = (node.data as { path: string }).path
+        const data = node.data as FileGroupData
+        if (data.collapsed === true) {
+          useGraph.getState().toggleFileCollapsed(data.path)
+          return
+        }
         const ws = useWorkspace.getState()
-        const entry = ws.root ? findFileEntryByPath(ws.root, path) : null
+        const entry = ws.root ? findFileEntryByPath(ws.root, data.path) : null
         if (entry) {
           void ws.revealAt(entry, 1, 1).then(() => setMode('writing'))
         }
@@ -501,10 +701,36 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
   )
 
   // ---- keyboard flow ------------------------------------------------------
-  // Esc backs out of the drill-in (or clears selection); F2 renames the
-  // selected beat; Delete removes it. Never while typing somewhere.
+  // Esc backs out of the drill-in (or clears selection); arrows walk
+  // selection to the geometrically nearest node; Enter drills into the
+  // selected beat / re-opens a collapsed file; F2 renames the selected
+  // beat; Delete removes it. Never while typing somewhere.
 
   useEffect(() => {
+    // Selection-walk candidates: file containers only when collapsed,
+    // filter-dimmed nodes never. Midpoints in absolute canvas coords.
+    const navCandidates = (): NavNode[] => {
+      const out: NavNode[] = []
+      for (const n of rf.getNodes()) {
+        if (n.type === 'fileGroup' && (n.data as FileGroupData).collapsed !== true) continue
+        if (dimmedIds !== null && dimmedIds.has(n.id)) continue
+        const internal = rf.getInternalNode(n.id)
+        if (internal === undefined) continue
+        const { x, y } = internal.internals.positionAbsolute
+        const w = n.measured?.width ?? (typeof n.width === 'number' ? n.width : 0)
+        const h = n.measured?.height ?? (typeof n.height === 'number' ? n.height : 0)
+        out.push({ id: n.id, cx: x + w / 2, cy: y + h / 2 })
+      }
+      return out
+    }
+    const viewportCenter = (): { x: number; y: number } => {
+      const rect = flowRef.current?.getBoundingClientRect()
+      if (rect === undefined) return { x: 0, y: 0 }
+      return rf.screenToFlowPosition({
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      })
+    }
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
       if (
@@ -525,6 +751,42 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
         }
         return
       }
+      const dir = arrowDirection(e.key)
+      if (dir !== null) {
+        const candidates = navCandidates()
+        if (candidates.length === 0) return
+        e.preventDefault()
+        const from =
+          st.selected !== null ? (candidates.find((c) => c.id === st.selected) ?? null) : null
+        // No usable anchor (nothing selected, or it left the walk) →
+        // seed from whatever sits nearest the viewport center.
+        const next =
+          from !== null
+            ? nearestInDirection(from, candidates, dir)
+            : nearestToPoint(viewportCenter(), candidates)
+        if (next !== null) {
+          st.select(next.id)
+          rf.setCenter(next.cx, next.cy, { zoom: rf.getZoom(), duration: 200 })
+        }
+        return
+      }
+      if (e.key === 'Enter') {
+        if (st.selected === null) return
+        const beat = graph.beats.get(st.selected)
+        if (beat !== undefined) {
+          e.preventDefault()
+          st.openBeat(beat.key)
+          return
+        }
+        if (st.selected.startsWith('file:')) {
+          const path = pathForUri(st.selected.slice('file:'.length))
+          if (st.collapsedFiles[path] === true) {
+            e.preventDefault()
+            st.toggleFileCollapsed(path)
+          }
+        }
+        return
+      }
       if (!editable || st.selected === null) return
       const beat = graph.beats.get(st.selected)
       if (beat === undefined) return
@@ -539,7 +801,7 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [editable, graph, say])
+  }, [editable, graph, say, rf, dimmedIds])
 
   const onNodeDragStop = useCallback(
     (_: unknown, node: Node) => {
@@ -555,12 +817,36 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
       const beat = graph.beats.get(node.id)
       const anchor = { x: event.clientX, y: event.clientY }
       if (beat !== undefined) {
+        const isExpanded = useGraph.getState().expanded[beat.key] === true
         openContextMenu(
           [
             { label: 'Open beat', onSelect: () => openBeat(beat.key) },
+            {
+              label: isExpanded ? 'Collapse word blocks' : 'Expand word blocks',
+              onSelect: () => toggleExpanded(beat.key),
+            },
             { label: 'Show source', onSelect: () => revealBeatSource(beat) },
+            ...(variant === 'run'
+              ? [
+                  // Fire the beat into whatever cockpit hosts this canvas —
+                  // the local Sim or the live event's mod API.
+                  { label: 'Fire beat ▶', onSelect: () => void cockpitFireBeat(beat.key) },
+                ]
+              : []),
             ...(editable
               ? [
+                  {
+                    label: 'Add line…',
+                    disabled: beat.structural !== 'file',
+                    testid: 'graph-menu-add-line',
+                    onSelect: () => void addBodyLine(beat, say),
+                  },
+                  {
+                    label: 'Add choice…',
+                    disabled: beat.structural !== 'file',
+                    testid: 'graph-menu-add-choice',
+                    onSelect: () => void addChoice(beat, say),
+                  },
                   {
                     label: 'Rename…',
                     disabled: beat.structural === 'derived',
@@ -583,6 +869,44 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
       if (ent !== undefined) {
         openContextMenu(
           [{ label: 'Show source', onSelect: () => void revealAnchor({ uri: ent.uri, span: ent.span }) }],
+          anchor,
+        )
+        return
+      }
+      // File containers: collapse/expand + author into this exact file.
+      if (node.type === 'fileGroup') {
+        const data = node.data as FileGroupData
+        openContextMenu(
+          [
+            {
+              label: data.collapsed === true ? 'Expand file' : 'Collapse file',
+              onSelect: () => useGraph.getState().toggleFileCollapsed(data.path),
+            },
+            ...(editable
+              ? [
+                  {
+                    label: 'New beat…',
+                    testid: 'graph-menu-file-new-beat',
+                    onSelect: () => void createBeat(graph, say, undefined, data.path),
+                  },
+                  {
+                    label: 'New character…',
+                    testid: 'graph-menu-file-new-character',
+                    onSelect: () => void createDeclaration(graph, uriFor(data.path), 'CHARACTER', say),
+                  },
+                  {
+                    label: 'New location…',
+                    testid: 'graph-menu-file-new-location',
+                    onSelect: () => void createDeclaration(graph, uriFor(data.path), 'LOCATION', say),
+                  },
+                  {
+                    label: 'New faction…',
+                    testid: 'graph-menu-file-new-faction',
+                    onSelect: () => void createDeclaration(graph, uriFor(data.path), 'FACTION', say),
+                  },
+                ]
+              : []),
+          ],
           anchor,
         )
         return
@@ -621,7 +945,7 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
         openContextMenu(items, anchor)
       }
     },
-    [graph, editable, beatEditable, openBeat, revealBeatSource, revealAnchor, say, setEditing],
+    [graph, editable, beatEditable, openBeat, revealBeatSource, revealAnchor, say, setEditing, toggleExpanded, variant, cockpitFireBeat],
   )
 
   const onPaneContextMenu = useCallback(
@@ -631,6 +955,21 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
       openContextMenu(
         [
           { label: 'New beat…', onSelect: () => void createBeat(graph, say) },
+          {
+            label: 'New character…',
+            testid: 'graph-menu-new-character',
+            onSelect: () => void createDeclaration(graph, activeLoomUri(graph), 'CHARACTER', say),
+          },
+          {
+            label: 'New location…',
+            testid: 'graph-menu-new-location',
+            onSelect: () => void createDeclaration(graph, activeLoomUri(graph), 'LOCATION', say),
+          },
+          {
+            label: 'New faction…',
+            testid: 'graph-menu-new-faction',
+            onSelect: () => void createDeclaration(graph, activeLoomUri(graph), 'FACTION', say),
+          },
           { label: 'Reset layout', onSelect: () => useGraph.getState().resetLayout(projectKey) },
         ],
         { x: (event as MouseEvent).clientX, y: (event as MouseEvent).clientY },
@@ -703,13 +1042,17 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
             nodes={nodes}
             edges={edges}
             nodeTypes={ALL_NODE_TYPES}
+            edgeTypes={ALL_EDGE_TYPES}
             minZoom={0.05}
             colorMode="dark"
             fitView
-            nodesDraggable={editable && view.kind === 'project'}
+            nodesDraggable={editable}
             nodesConnectable={editable && view.kind === 'project'}
             edgesReconnectable={editable && view.kind === 'project'}
             elementsSelectable
+            // Arrow keys walk selection (our keydown handler) — RF's
+            // built-in arrow-key node nudging would fight it.
+            disableKeyboardA11y
             proOptions={{ hideAttribution: true }}
             onNodesChange={onNodesChange}
             onNodeClick={onNodeClick}
@@ -915,6 +1258,8 @@ function Toolbar({
   const openProject = useGraph((s) => s.openProject)
   const search = useGraph((s) => s.search)
   const setSearch = useGraph((s) => s.setSearch)
+  const anyExpanded = useGraph((s) => Object.keys(s.expanded).length > 0)
+  const setAllExpanded = useGraph((s) => s.setAllExpanded)
 
   return (
     <div className="h-8 px-2 flex items-center gap-2 text-[11px] text-zinc-400 border-b border-white/10 shrink-0">
@@ -950,6 +1295,11 @@ function Toolbar({
               onToggle={(v) => setOverlay('entities', v)}
             />
             <OverlayToggle label="labels" on={overlays.labels} onToggle={(v) => setOverlay('labels', v)} />
+            <OverlayToggle
+              label="blocks"
+              on={anyExpanded}
+              onToggle={(v) => setAllExpanded([...graph.beats.keys()], v)}
+            />
           </>
         )}
         {variant === 'edit' && view.kind === 'project' && (
@@ -966,8 +1316,9 @@ function Toolbar({
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') onSearchSubmit()
+            else if (e.key === 'Escape') setSearch('')
           }}
-          placeholder="find beat…"
+          placeholder="filter · Enter jumps"
           className="w-28 rounded border border-white/10 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-sky-400/50"
           data-testid="graph-search"
         />
@@ -1092,11 +1443,26 @@ async function rewireEdge(
   say(err ?? `Rewired → ${targetId}`)
 }
 
-/** Create a new beat in the active (or first) `.loom` file. */
+/** The file canvas-authored content lands in (active `.loom` > first). */
+function activeLoomPath(graph: StoryGraph): string | null {
+  const ws = useWorkspace.getState()
+  const active = ws.activePath !== null && ws.activePath.endsWith('.loom') ? ws.activePath : null
+  const fallback = graph.files[0] !== undefined ? pathForUri(graph.files[0].uri) : null
+  return active ?? fallback
+}
+
+/** Same, as a workspace uri (for ops that apply straight to a doc). */
+function activeLoomUri(graph: StoryGraph): string | null {
+  const path = activeLoomPath(graph)
+  return path === null ? null : uriFor(path)
+}
+
+/** Create a new beat — in `presetPath` when given, else the active file. */
 async function createBeat(
   graph: StoryGraph,
   say: (m: string) => void,
   presetName?: string,
+  presetPath?: string,
 ): Promise<void> {
   const name = presetName ?? window.prompt('New beat name:')
   if (name === null || name.trim().length === 0) return
@@ -1109,10 +1475,7 @@ async function createBeat(
     say(`A beat named \`${clean}\` already exists.`)
     return
   }
-  const ws = useWorkspace.getState()
-  const active = ws.activePath !== null && ws.activePath.endsWith('.loom') ? ws.activePath : null
-  const fallback = graph.files[0] !== undefined ? pathForUri(graph.files[0].uri) : null
-  const path = active ?? fallback
+  const path = presetPath ?? activeLoomPath(graph)
   if (path === null) {
     say('Open a .loom file first.')
     return
@@ -1159,5 +1522,105 @@ async function deleteBeat(beat: GraphBeat, say: (m: string) => void): Promise<vo
     say(`Deleted \`${beat.key}\``)
   } catch (e) {
     say(e instanceof EditError ? e.message : 'Delete failed.')
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Card + word-block authoring (the project view writes source too)
+// ---------------------------------------------------------------------------
+
+/** Prompt for a raw line and insert it before top-level item `index`. */
+async function insertLineAt(beat: GraphBeat, index: number, say: (m: string) => void): Promise<void> {
+  if (beat.structural !== 'file' || beat.uri === null) return
+  const line = window.prompt('Line to insert:')
+  if (line === null || line.trim().length === 0) return
+  const text = docText(beat.uri)
+  if (text === null) return
+  const [file] = parse(text)
+  try {
+    await applyEditsToUri(beat.uri, insertBodyLines(text, file, beat.name, index, [line.trim()]))
+  } catch (e) {
+    say(e instanceof EditError ? e.message : 'Insert failed.')
+  }
+}
+
+/** Remove the top-level body item at `index` (whole block, children too). */
+async function deleteBodyItemAt(beat: GraphBeat, index: number, say: (m: string) => void): Promise<void> {
+  if (beat.structural !== 'file' || beat.uri === null) return
+  const text = docText(beat.uri)
+  if (text === null) return
+  const [file] = parse(text)
+  try {
+    await applyEditsToUri(beat.uri, removeBodyItem(text, file, beat.name, index))
+  } catch (e) {
+    say(e instanceof EditError ? e.message : 'Delete failed.')
+  }
+}
+
+/** Prompt for a raw line and append it to the beat's body. */
+async function addBodyLine(beat: GraphBeat, say: (m: string) => void): Promise<void> {
+  if (beat.structural !== 'file' || beat.uri === null) return
+  const line = window.prompt('Line to add:')
+  if (line === null || line.trim().length === 0) return
+  const text = docText(beat.uri)
+  if (text === null) return
+  const [file] = parse(text)
+  try {
+    await applyEditsToUri(beat.uri, appendBodyLines(text, file, beat.name, [line.trim()]))
+  } catch (e) {
+    say(e instanceof EditError ? e.message : 'Could not add the line.')
+  }
+}
+
+/** Prompt for choice text and append a `* text` option. */
+async function addChoice(beat: GraphBeat, say: (m: string) => void): Promise<void> {
+  if (beat.structural !== 'file' || beat.uri === null) return
+  const choice = window.prompt('Choice text:')
+  if (choice === null || choice.trim().length === 0) return
+  const text = docText(beat.uri)
+  if (text === null) return
+  const [file] = parse(text)
+  try {
+    await applyEditsToUri(beat.uri, appendChoice(text, file, beat.name, choice.trim()))
+  } catch (e) {
+    say(e instanceof EditError ? e.message : 'Could not add the choice.')
+  }
+}
+
+/** Append a CHARACTER / LOCATION / FACTION block to a file. */
+async function createDeclaration(
+  graph: StoryGraph,
+  uri: string | null,
+  kind: 'CHARACTER' | 'LOCATION' | 'FACTION',
+  say: (m: string) => void,
+): Promise<void> {
+  if (uri === null) {
+    say('Open a .loom file first.')
+    return
+  }
+  const label = kind.toLowerCase()
+  const name = window.prompt(`New ${label} name:`)
+  if (name === null || name.trim().length === 0) return
+  const clean = name.trim()
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(clean)) {
+    say('Names are identifiers (letters, digits, underscore).')
+    return
+  }
+  if (graph.entities.has(`${label}:${clean}`)) {
+    say(`A ${label} named \`${clean}\` already exists.`)
+    return
+  }
+  const text = docText(uri)
+  if (text === null) {
+    say(`\`${pathForUri(uri)}\` isn’t indexed yet.`)
+    return
+  }
+  try {
+    await applyEditsToUri(uri, appendDeclaration(text, kind, clean))
+    // The entity node id — reveal pulls the entity overlay on if needed.
+    useGraph.getState().reveal(`${label}:${clean}`)
+    say(`Created ${kind} \`${clean}\` in ${pathForUri(uri)}`)
+  } catch (e) {
+    say(e instanceof EditError ? e.message : 'Could not create the declaration.')
   }
 }

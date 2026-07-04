@@ -262,7 +262,8 @@ export class EventRuntime {
    * let guests register. The control-plane equivalent of `/api/mod/start`.
    */
   openDoors(): void {
-    if (this.sim === null) {
+    const fresh = this.sim === null;
+    if (fresh) {
       this.loadScenario(this.scenarioSource, this.scenarioName);
       this.store.clearJournal();
       this.resetChat();
@@ -271,6 +272,12 @@ export class EventRuntime {
     this.phase = "open";
     this.persistMeta();
     this.startTicker();
+    // A live event opens exactly like a rehearsal: the `entry:` beat plays
+    // on first open. Journaled as a fireBeat so a replay reproduces it.
+    const entry = fresh ? this.sim?.model.entry : null;
+    if (entry != null && entry !== "") {
+      this.fanout(this.commit("fireBeat", entry));
+    }
     this.pushSnapshots();
   }
 
@@ -959,6 +966,24 @@ export class EventRuntime {
           return true;
         }
         this.fanout(this.commit("reveal", faction));
+        sendJson(res, 200, { ok: true });
+        return true;
+      }
+      case "/api/mod/choose": {
+        // Answer a pending choice on a participant's behalf (or a `__global`
+        // unbound story menu) — the moderator twin of `/api/guest/choose`,
+        // journaled through the same `choose` mutation.
+        if (this.sim === null) {
+          sendJson(res, 409, { error: "no scenario loaded" });
+          return true;
+        }
+        const person = str(body, "person");
+        if (person === "") {
+          sendJson(res, 400, { error: "missing person" });
+          return true;
+        }
+        const idx = Number(body["index"] ?? -1);
+        this.fanout(this.commit("choose", person, idx));
         sendJson(res, 200, { ok: true });
         return true;
       }

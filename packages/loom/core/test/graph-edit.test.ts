@@ -5,8 +5,10 @@ import {
   EditError,
   appendBodyLines,
   appendChoice,
+  appendDeclaration,
   appendDivert,
   applyEdits,
+  insertBodyLines,
   parse,
   removeBodyItem,
   renameBeatDecl,
@@ -208,5 +210,48 @@ describe("renameBeatEdits (workspace layer)", () => {
   it("refuses an invalid identifier", () => {
     const w = ws();
     expect(() => w.renameBeat("waiting", "not a name")).toThrowError(EditError);
+  });
+});
+
+describe("insertBodyLines", () => {
+  it("inserts before a top-level body item, matching its indent", () => {
+    const src = "== opening\n  A bell rope swings.\n  -> waiting\n\n== waiting\n  fog\n";
+    const next = edited(src, (f) => insertBodyLines(src, f, "opening", 1, ["The verger coughs."]));
+    expect(next).toContain("  A bell rope swings.\n  The verger coughs.\n  -> waiting");
+    const [, diags] = parse(next);
+    expect(diags).toEqual([]);
+  });
+
+  it("appends when the index is past the end", () => {
+    const src = "== opening\n  A bell rope swings.\n";
+    const next = edited(src, (f) => insertBodyLines(src, f, "opening", 99, ["-> END"]));
+    expect(next).toContain("A bell rope swings.\n  -> END");
+  });
+
+  it("inserts at the top of the body", () => {
+    const next = edited(STORY, (f) => insertBodyLines(STORY, f, "waiting", 0, ["A first line."]));
+    expect(next).toContain("== waiting\n  A first line.\n  The fog rolls in.");
+  });
+
+  it("refuses a negative index", () => {
+    const [file] = parse(STORY);
+    expect(() => insertBodyLines(STORY, file, "waiting", -1, ["x"])).toThrowError(EditError);
+  });
+});
+
+describe("appendDeclaration", () => {
+  it("appends a parsing declaration block with props", () => {
+    const next = applyEdits(STORY, appendDeclaration(STORY, "CHARACTER", "Verger", { voice: "dry", faction: "Mods" }));
+    expect(next).toContain("\n\nCHARACTER Verger\n  voice: dry\n  faction: Mods\n");
+    const [file, diags] = parse(next);
+    expect(diags).toEqual([]);
+    expect(file.items.some((i) => i.kind === "declaration" && i.value.name === "Verger")).toBe(true);
+  });
+
+  it("starts a fresh file without leading separators", () => {
+    const next = applyEdits("", appendDeclaration("", "LOCATION", "Belfry", {}));
+    expect(next).toBe("LOCATION Belfry\n");
+    const [, diags] = parse(next);
+    expect(diags).toEqual([]);
   });
 });

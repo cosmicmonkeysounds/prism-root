@@ -485,6 +485,57 @@ function genSpec(id: string, body: RawLine[]): GenSpec | null {
   return { id, intervalMs, barks };
 }
 
+/**
+ * Enum of the trigger verbs the engine itself fires (lifecycle +
+ * movement + faction motion + the scan pipeline). Everything else a
+ * hook listens for is an authored **named event**, fired by
+ * `<fire: name>` or `Sim.signal(name)`. Const-object enum
+ * (`erasableSyntaxOnly`-safe), values = the verb strings.
+ */
+export const BuiltinVerb = {
+  AccountCreated: "account_created",
+  Join: "join",
+  Defect: "defect",
+  Betray: "betray",
+  Scan: "scan",
+  Arrive: "arrive",
+  Enters: "enters",
+  Exits: "exits",
+  Captured: "captured",
+  Released: "released",
+  Escape: "escape",
+  Revealed: "revealed",
+} as const;
+
+export type BuiltinVerb = (typeof BuiltinVerb)[keyof typeof BuiltinVerb];
+
+const BUILTIN_VERBS = new Set<string>(Object.values(BuiltinVerb));
+
+/** Is this trigger verb one the engine fires on its own? */
+export function isBuiltinVerb(verb: string): verb is BuiltinVerb {
+  return BUILTIN_VERBS.has(verb);
+}
+
+/**
+ * Every authored **named event** in the model — hook verbs that are not
+ * builtin lifecycle verbs and not timers (`on lockdown`, `on rally`, …),
+ * sorted. This is the enumeration a director UI's "fire signal" picker
+ * offers, so firing named events is a closed choice, not a free string.
+ */
+export function namedEvents(model: SimModel): string[] {
+  const out = new Set<string>();
+  const collect = (hooks: Hook[]): void => {
+    for (const h of hooks) {
+      if (h.timer !== null) continue;
+      if (h.verb.length === 0 || isBuiltinVerb(h.verb)) continue;
+      out.add(h.verb);
+    }
+  };
+  for (const c of model.characters.values()) collect(c.hooks);
+  for (const r of model.roles.values()) collect(r.hooks);
+  return [...out].sort();
+}
+
 /** Parse an `on …` clause into a structured trigger. */
 export function parseTrigger(event: string): {
   verb: string;
