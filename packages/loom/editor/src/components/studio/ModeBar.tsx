@@ -1,9 +1,8 @@
-// Phase 1 of the Loom IDE redesign v2: the bottom Mode Bar.
-//
-// The primary navigation of the IDE — switches the entire modality
-// (Writing / Editing / Simulating / Performing / Production), DaVinci
-// Resolve-style. Also hosts the left-rail / properties-tray collapse
-// toggles for the active mode.
+// The bottom Mode Bar — the primary navigation of the IDE, DaVinci
+// Resolve-style. Three modes: Writing (text + story graph), Run
+// (rehearse on the local sim / moderate the live event), Deploy (the
+// live event's lifecycle + admin controls). Also hosts the left-rail /
+// properties-tray collapse toggles for the active mode.
 
 import clsx from 'clsx'
 import { useMode, MODES, type Mode } from '@/store/mode'
@@ -119,23 +118,16 @@ function ModeGlyph({ id }: { id: Mode }) {
           <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
         </svg>
       )
-    case 'editing':
-      return (
-        <svg {...common} aria-hidden>
-          <rect x="3" y="5" width="18" height="4" rx="1" />
-          <rect x="3" y="13" width="11" height="4" rx="1" />
-        </svg>
-      )
-    case 'sim':
-      // Play-in-a-circle — rehearse the story locally, no server.
+    case 'run':
+      // Play-in-a-circle — rehearse locally or moderate the live run.
       return (
         <svg {...common} aria-hidden>
           <circle cx="12" cy="12" r="9" />
           <path d="M10 8.5l6 3.5-6 3.5Z" />
         </svg>
       )
-    case 'operate':
-      // Broadcast tower — running + moderating the live event.
+    case 'deploy':
+      // Broadcast tower — launching + administering the live event.
       return (
         <svg {...common} aria-hidden>
           <circle cx="12" cy="12" r="2" />

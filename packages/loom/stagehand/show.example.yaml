@@ -1,0 +1,59 @@
+# loom-stagehand show config — copy to show.yaml and edit.
+# Design: docs/dev/loom-show-control.md
+
+server:
+  url: http://127.0.0.1:7000
+  event: default            # an event id, or "default" for the server's root event
+  mod_passcode: "CHANGE-ME" # or mod_token: "…" (a passcode logs in at boot)
+
+mqtt:
+  host: 127.0.0.1
+  port: 1883
+
+osc:
+  targets:
+    desktop: { host: 192.168.1.10, port: 9000 }   # TouchDesigner, main floor
+    laptop:  { host: 192.168.1.11, port: 9000 }   # TouchDesigner, upstairs
+
+# --- story → world ---------------------------------------------------------
+cues:
+  # <cue: projectors, scene: static_takeover>  →  /cue/scene "static_takeover" "<epoch-ms>"
+  # t_exec appends absolute epoch-ms (string) — NTP-synced receivers apply
+  # the cue at that instant so all 8 projectors flip together.
+  - on: { directive: cue }
+    match: { target: projectors }
+    osc: { addr: "/cue/scene", args: ["{scene}"], t_exec: "+200ms" }
+
+  # <prop: crawlspace_tv, channel: 13>
+  #   →  props/crawlspace_tv/set {"channel": 13, "target": "crawlspace_tv"}
+  # (kwargs become the JSON payload; the positional target rides along as
+  # "target"). Retained, so a rebooted prop re-converges on current state.
+  - on: { directive: prop }
+    mqtt: { topic: "props/{target}/set", payload_from_args: true, retain: true }
+
+  # <vibe: crt_glitch, level: 0.7>  →  show/vibe {"target": "crt_glitch", "level": 0.7}
+  - on: { directive: vibe }
+    mqtt: { topic: "show/vibe", payload_from_args: true, retain: true }
+
+  # Raw sim events match too — light the board when the lockdown beat fires.
+  - on: { event: beatEntered, beat: lockdown }
+    osc: { addr: "/cue/scene", args: ["lockdown"], t_exec: "+200ms" }
+
+# --- world → story -----------------------------------------------------------
+sensors:
+  # Crawl-space proximity → the story decides what "someone is near" means.
+  - on: { topic: "sensors/crawlspace/proximity", when: "near == true" }
+    signal: { name: tv_approached, debounce_s: 10 }
+
+  # A blocked camera (stream alive, image wrong) is narrative, not ops.
+  - on: { topic: "vision/{cam}/tamper" }
+    signal: { name: camera_tampered, subject: "{cam}", debounce_s: 30 }
+
+  # Identified movement (a bound track, or the VR guest) → a real arrive:
+  # the guest's chat moves into the location's room, `on enters` hooks fire.
+  - on: { topic: "vision/{cam}/zone", when: "guest != null && event == 'entered'" }
+    arrive: { person: "{guest}", location: "{zone}" }
+
+  # Anonymous movement stays a signal.
+  - on: { topic: "vision/{cam}/zone", when: "guest == null && event == 'entered'" }
+    signal: { name: movement, subject: "{zone}", debounce_s: 5 }

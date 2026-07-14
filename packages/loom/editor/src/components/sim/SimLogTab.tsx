@@ -1,4 +1,4 @@
-//! Sim mode — the Log page: the raw sim ledger, one row per `SimEvent`,
+//! Run mode (Sim source) — the Log page: the raw sim ledger, one row per `SimEvent`,
 //! newest at the bottom. This is the writer's x-ray: every action line,
 //! dialogue, world write, hook firing, and diagnostic the engine
 //! produced, exactly as the server would journal them. Formatting is

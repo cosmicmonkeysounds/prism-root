@@ -1,10 +1,10 @@
-//! Sim mode's cockpit store — the LOCAL simulator. Builds a real
+//! Run mode's Sim-source cockpit store — the LOCAL simulator. Builds a real
 //! `@loom/core` `Sim` from the indexed `.loom` project and drives it
 //! entirely in the browser: no server, no event, no account. It
 //! implements the shared `CockpitState` contract (see `store/cockpit.ts`)
-//! so the Run cockpit's chat / roster / world / director / inspector
+//! so the cockpit's chat / roster / world / director / inspector
 //! surfaces work against it unchanged, and it feeds the story canvas's
-//! `RuntimeOverlay` the same way Run's mod SSE feed does — the writer
+//! `RuntimeOverlay` the same way the Live source's mod SSE feed does — the writer
 //! watches the *real runtime graph* light up as the story reacts.
 //!
 //! Message composition + snapshot projection reuse the event server's

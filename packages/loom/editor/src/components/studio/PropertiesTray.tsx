@@ -1,17 +1,15 @@
-// Phase 2 of the Loom IDE redesign v2 (docs/dev/loom-ide-redesign.md
-// §14): the Properties tray. A tabbed, context-sensitive right rail
-// present in every mode.
+// The Properties tray — a tabbed, context-sensitive right rail present
+// in every mode.
 //
-// - Per-mode tab sets + a per-mode default for the Properties tab.
-// - Author modes (Writing / Editing) follow the editor cursor: the
-//   tray shows the beat / declaration the cursor is inside, sourced
-//   from the parsed AST (the runtime `DetailFor` needs a play head, so
-//   it can't serve author time).
-// - Runtime modes reuse the existing focus-driven `InspectorPanel`.
+// - Writing follows the story-graph canvas selection first (beat /
+//   entity / connection / file inspector), falling back to the editor
+//   cursor's beat / declaration sourced from the parsed AST.
+// - Run and Deploy mount the cockpit Inspector against the mode's
+//   backend (Run follows the Sim ⇄ Live source switch; Deploy is
+//   always the live event).
 //
-// Editable fields write back to `.loom` source via `loom-parser::edit`
-// — that wiring is Phase 4 (needs a wasm binding); this phase is the
-// read surface.
+// Editable fields write back to `.loom` source via the
+// `@loom/core/parser` edit ops.
 
 import { useMemo, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
@@ -22,7 +20,7 @@ import { useWorkspace } from '@/store/workspace'
 import { useFocus, type FocusRef } from '@/store/focus'
 import { ReferencesPanel } from '@/components/runner/References'
 import { CockpitInspector } from '@/components/cockpit/Inspector'
-import { OperateCockpit, SimCockpit } from '@/components/cockpit/providers'
+import { OperateCockpit, RunCockpit } from '@/components/cockpit/providers'
 import { docText, pathForUri } from '@/lib/lsp-client'
 import { findFileEntryByPath } from '@/lib/lsp-nav'
 import { rewireGraphEdge, useStoryGraph, writePathContents } from '@/lib/story-graph'
@@ -46,41 +44,38 @@ import {
 
 type Tab = { id: string; label: string; node: ReactNode }
 
-function tabsFor(mode: Mode): Tab[] {
-  // Writing follows the cursor; Editing follows the canvas selection
-  // (falling back to the cursor when nothing is selected).
+function tabsFor(): Tab[] {
+  // Writing follows the canvas selection (falling back to the cursor
+  // when nothing is selected on the story graph).
   return [
-    {
-      id: 'props',
-      label: 'Properties',
-      node: mode === 'editing' ? <EditingProperties /> : <AuthorProperties />,
-    },
+    { id: 'props', label: 'Properties', node: <EditingProperties /> },
     { id: 'refs', label: 'References', node: <ReferencesPanel /> },
   ]
 }
 
 export function PropertiesTray({ mode }: { mode: Mode }) {
-  // Sim/Run trays are the live participant Inspector, not author props —
-  // the same component against the local simulator / the live event.
-  if (mode === 'sim') {
+  // Run/Deploy trays are the live participant Inspector, not author
+  // props — Run against whichever backend the source switch picked,
+  // Deploy always against the live event.
+  if (mode === 'run') {
     return (
-      <SimCockpit>
+      <RunCockpit>
         <CockpitInspector />
-      </SimCockpit>
+      </RunCockpit>
     )
   }
-  if (mode === 'operate') {
+  if (mode === 'deploy') {
     return (
       <OperateCockpit>
         <CockpitInspector />
       </OperateCockpit>
     )
   }
-  return <AuthorTray mode={mode} />
+  return <AuthorTray />
 }
 
-function AuthorTray({ mode }: { mode: Mode }) {
-  const tabs = tabsFor(mode)
+function AuthorTray() {
+  const tabs = tabsFor()
   const [active, setActive] = useState(tabs[0].id)
   const current = tabs.find((t) => t.id === active) ?? tabs[0]
   return (
@@ -110,7 +105,7 @@ function AuthorTray({ mode }: { mode: Mode }) {
 }
 
 // ---------------------------------------------------------------------------
-// Editing-mode properties — follows the story-graph canvas selection
+// Canvas-selection properties — follows the story-graph selection
 // ---------------------------------------------------------------------------
 
 function EditingProperties() {

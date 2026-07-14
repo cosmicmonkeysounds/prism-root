@@ -1,8 +1,7 @@
-// Editing-mode left rail: Files ⇄ Story tabs.
+// Writing mode's left rail: Files ⇄ Story tabs.
 //
-// The file explorer (the same `Sidebar` Writing mode uses) and the
-// project-wide Story Bin live side by side, so Editing mode never
-// strands you without file navigation again.
+// The file explorer and the project-wide Story Bin live side by side,
+// so the merged Writing mode never strands you without either.
 
 import { useState } from 'react'
 import clsx from 'clsx'

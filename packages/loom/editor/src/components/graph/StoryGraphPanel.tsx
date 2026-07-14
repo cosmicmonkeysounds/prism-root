@@ -1,4 +1,4 @@
-// The Editing-mode center stage: the global story-graph node editor.
+// The story-graph node editor — Writing mode's canvas pane.
 //
 // Two nested levels, Articy-style:
 //   · PROJECT — every beat in every file, grouped in file containers,

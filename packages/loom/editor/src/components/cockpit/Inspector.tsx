@@ -1,5 +1,5 @@
 //! The cockpit's right tray: the Inspector. Bound to the Roster/World
-//! selection, it's where the operator (or the writer, in Sim mode)
+//! selection, it's where the operator (or the writer, on the Sim source)
 //! changes a guest's stats on the fly (score / faction / location /
 //! captured), fires narrative at one person, answers a persona's
 //! pending choice (Sim), or — for a cast member — fires that
@@ -22,7 +22,7 @@ const inputCls =
   'min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-indigo-500'
 
 // ---------------------------------------------------------------------------
-// Pending choice (Sim mode — the writer acts as the persona)
+// Pending choice (Sim source — the writer acts as the persona)
 // ---------------------------------------------------------------------------
 
 export function PendingChoice({ person }: { person: string }) {

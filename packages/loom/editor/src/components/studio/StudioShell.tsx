@@ -1,7 +1,6 @@
-// Phase 1 of the Loom IDE redesign v2 (docs/dev/loom-ide-redesign.md
-// Part II): the Studio shell. Replaces `DockShell` (activity bar +
-// free-docking dockview) with five fixed, resizable region layouts
-// switched from the bottom Mode Bar. ⌘1..⌘5 jump between modes.
+// The Studio shell (Loom IDE redesign v3): three fixed, resizable
+// region layouts — Writing / Run / Deploy — switched from the bottom
+// Mode Bar. ⌘1..⌘3 jump between modes.
 //
 // The shell is generic: a horizontal Allotment [left | center | tray]
 // with an optional vertical [stage / timeline] split in the center.
@@ -26,13 +25,13 @@ export function StudioShell() {
   const setUi = useMode((s) => s.setUi)
   const hasTimeline = MODES.find((m) => m.id === mode)?.hasTimeline ?? false
 
-  // ⌘1..⌘5 (or Ctrl) switch modes. Plain modifier only — Alt/Shift
+  // ⌘1..⌘3 (or Ctrl) switch modes. Plain modifier only — Alt/Shift
   // combos stay free for other handlers.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey
       if (!mod || e.altKey || e.shiftKey) return
-      const idx = ['1', '2', '3', '4', '5'].indexOf(e.key)
+      const idx = ['1', '2', '3'].indexOf(e.key)
       if (idx < 0 || idx >= MODES.length) return
       e.preventDefault()
       setMode(MODES[idx].id)
@@ -54,6 +53,7 @@ export function StudioShell() {
           hasTimeline={hasTimeline}
           onCols={(cols) => setUi(mode, { cols })}
           onRows={(rows) => setUi(mode, { rows })}
+          onSplit={(split) => setUi(mode, { split })}
         />
       </div>
       <ModeBar />
@@ -67,12 +67,14 @@ function ModeLayout({
   hasTimeline,
   onCols,
   onRows,
+  onSplit,
 }: {
   mode: Mode
   ui: ModeUi
   hasTimeline: boolean
   onCols: (cols: [number, number, number]) => void
   onRows: (rows: [number, number]) => void
+  onSplit: (split: [number, number]) => void
 }) {
   return (
     <Allotment
@@ -104,7 +106,7 @@ function ModeLayout({
           >
             <Allotment.Pane minSize={140} priority={LayoutPriority.High}>
               <Region>
-                <CenterStage mode={mode} />
+                <CenterStage mode={mode} split={ui.split} onSplit={onSplit} />
               </Region>
             </Allotment.Pane>
             <Allotment.Pane minSize={100} preferredSize={ui.rows[1]} snap>
@@ -115,7 +117,7 @@ function ModeLayout({
           </Allotment>
         ) : (
           <Region>
-            <CenterStage mode={mode} />
+            <CenterStage mode={mode} split={ui.split} onSplit={onSplit} />
           </Region>
         )}
       </Allotment.Pane>

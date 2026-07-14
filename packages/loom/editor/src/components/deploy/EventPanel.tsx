@@ -1,7 +1,8 @@
-//! Operate mode — the Event page (center tab). The promoted, full-width home
-//! of the Run cockpit: launch/lifecycle, the shareable codes + join QR, live
-//! event stats, and a guest-QR scanner (merged from the retired operator
-//! console) that pulls a scanned guest straight into the Inspector.
+//! Deploy mode — the event lifecycle + admin panel: launch/lifecycle, the
+//! shareable codes + join QR, live event stats, and a guest-QR scanner
+//! (merged from the retired operator console) that pulls a scanned guest
+//! straight into the Inspector. Moderating the running event (chat /
+//! roster / director) lives in Run mode's Live source.
 
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'

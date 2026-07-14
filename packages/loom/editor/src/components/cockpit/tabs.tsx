@@ -1,6 +1,6 @@
 //! The shared cockpit center pages — Chat / Roster / World / Director —
-//! rendered identically in Sim mode (local simulator) and Run mode (live
-//! event). Everything reads through `useCockpit`, so the enclosing
+//! rendered identically on Run mode's Sim (local simulator) and Live
+//! (event) sources. Everything reads through `useCockpit`, so the enclosing
 //! provider decides which backend the page drives.
 
 import { useMemo, useState } from 'react'

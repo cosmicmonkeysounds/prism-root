@@ -1,4 +1,4 @@
-// The Editing-mode bottom dock: the selected beat's body as a linear
+// Writing mode's bottom dock: the selected beat's body as a linear
 // strip of clips (Resolve-style). Drag to reorder — the reorder rewrites
 // `.loom` source through `moveBodyItem`; right-click deletes; the
 // composer appends raw body lines. Selection follows the canvas.

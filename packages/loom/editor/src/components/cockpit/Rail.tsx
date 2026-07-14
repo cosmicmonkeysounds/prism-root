@@ -1,8 +1,8 @@
 //! The cockpit's left rail — a persistent status strip, the perspective
 //! ("viewing as") lens picker, and the Rooms navigator. Clicking a room
 //! jumps to the Chat page focused on it, so the channel list is always
-//! one click away regardless of the active page. Shared by Sim mode
-//! (local simulator) and Run mode (live event).
+//! one click away regardless of the active page. Shared by Run mode's
+//! Sim (local simulator) and Live (event) sources.
 
 import clsx from 'clsx'
 import { CockpitPhase, CockpitTab, OPERATOR_LENS, useCockpit } from '@/store/cockpit'

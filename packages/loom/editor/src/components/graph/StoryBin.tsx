@@ -1,4 +1,4 @@
-// The Story Bin — the Editing-mode project browser (Articy "navigator").
+// The Story Bin — Writing mode's project browser (Articy "navigator").
 //
 // Every beat and declared entity in the whole project, grouped and
 // filterable, independent of which file is open. Click selects the

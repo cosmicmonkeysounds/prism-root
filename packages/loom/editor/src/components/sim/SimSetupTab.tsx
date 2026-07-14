@@ -1,4 +1,4 @@
-//! Sim mode — the Sim page: simulator lifecycle (start / pause / reset /
+//! Run mode (Sim source) — the Sim page: simulator lifecycle (start / pause / reset /
 //! stop, with a stale-sources hint), the writer's personas (local guests
 //! they act as), and every pending choice — per persona and global — so
 //! "play a character making choices" is one click.

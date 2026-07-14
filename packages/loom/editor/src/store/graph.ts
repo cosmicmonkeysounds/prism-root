@@ -1,8 +1,8 @@
-// State for the Editing-mode node editor (the story-graph canvas).
+// State for the story-graph node editor (Writing mode's canvas pane).
 //
 // View stack (project ⇄ beat drill-in), node selection, overlay toggles,
 // per-project manual layout overrides (persisted), and the runtime
-// overlay contract that Run mode (and a future local simulator) feeds —
+// overlay contract that Run mode feeds (from either source) —
 // all owned here so the canvas, the Story Bin, the dock strip, and the
 // Properties tray stay in lockstep.
 
@@ -27,8 +27,8 @@ export type LayoutOverrides = Record<string, { x: number; y: number }>
  * Live-run overlay: beat keys → visit counts, the most recently
  * entered beat (pulsed on the canvas), and best-effort edge traversal
  * counts (`from→to` between consecutively entered beats). Fed by the
- * operate store's mod feed in Run mode and by the local Sim-mode
- * simulator (`store/sim.ts`) — the identical contract.
+ * operate store's mod feed (Run mode, Live source) and by the local
+ * simulator (`store/sim.ts`, Sim source) — the identical contract.
  */
 export type RuntimeOverlay = {
   visits: Record<string, number>

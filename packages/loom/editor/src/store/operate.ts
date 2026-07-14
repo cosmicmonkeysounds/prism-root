@@ -1,12 +1,14 @@
-//! The Operate mode's shared event-control core.
+//! The live event's control core — the backend behind Run mode's Live
+//! source AND the whole Deploy mode.
 //!
-//! One store drives the whole run/admin cockpit: the Event sidebar (launch /
-//! codes / lifecycle + the rooms navigator), the Operate stage (chat per room ·
-//! roster · world · director tools) and the Inspector tray (per-guest stat
-//! editing). The "run panel" and the "admin tools" are the same capability, so
-//! they share this state. Launch/lifecycle go through the control plane
-//! (`/api/projects/:id/event`); the live view + moderation ride the per-event
-//! mod SSE + `/e/:eventId/api/mod/*`, authorized by the author's session.
+//! One store drives the live cockpit (chat per room · roster · world ·
+//! director tools · the Inspector tray) and the Deploy stage (launch /
+//! codes / lifecycle / guest lookup). The "run panel" and the "admin
+//! tools" are the same capability, so they share this state.
+//! Launch/lifecycle go through the control plane
+//! (`/api/projects/:id/event`); the live view + moderation ride the
+//! per-event mod SSE + `/e/:eventId/api/mod/*`, authorized by the
+//! author's session.
 
 import { create } from 'zustand'
 import { namedEvents } from '@loom/core/sim'
@@ -160,7 +162,7 @@ export const useOperate = create<OperateState>((set, get) => {
     live: false,
     busy: false,
     error: null,
-    activeTab: CockpitTab.Event,
+    activeTab: CockpitTab.Chat,
     activeChannel: 'lobby',
     selection: null,
     choices: {},
@@ -174,7 +176,7 @@ export const useOperate = create<OperateState>((set, get) => {
         messages: [],
         selection: null,
         perspective: OPERATOR_LENS,
-        activeTab: CockpitTab.Event,
+        activeTab: CockpitTab.Chat,
         activeChannel: 'lobby',
         // Named events come from the locally-indexed model (best-effort —
         // the running event's code is a snapshot of the same project).
@@ -202,7 +204,7 @@ export const useOperate = create<OperateState>((set, get) => {
         messages: [],
         selection: null,
         perspective: OPERATOR_LENS,
-        activeTab: CockpitTab.Event,
+        activeTab: CockpitTab.Chat,
         activeChannel: 'lobby',
         ...EMPTY_SNAPSHOT,
       })

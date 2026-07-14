@@ -10,17 +10,21 @@ folder with no account.
   local folder via the File System Access API (no account). The workspace
   store is backend-aware (`OpenFile.backend`, `openServerProject`); saves
   route to the API or the on-disk handle accordingly.
-- **Rehearse locally**: **Sim** mode (`⌘3`) runs the story on an
-  in-browser `@loom/core` `Sim` — no server, no event, no account. Act
-  as personas making choices, fire model-enumerated named events, and
-  watch the runtime graph light up (`store/sim.ts` + the shared
-  cockpit, `store/cockpit.ts`).
-- **Run events from the editor**: **Operate** mode (`⌘4`) is the shared
-  run + admin surface — launch preview/live, share the join code + QR,
-  pause/resume/end, and moderate the live roster/feed. Backed by
-  `store/operate.ts` over the per-event mod SSE + `/e/:eventId/api/mod/*`
-  (authorized by the author's session — the author *is* the operator).
-- **See structure visually** alongside code: every open file is also a node on a React Flow canvas, and edges represent relationships between them.
+- **Rehearse and moderate in one cockpit**: **Run** mode (`⌘2`) has a
+  **Sim ⇄ Live source switch**. Sim runs the story on an in-browser
+  `@loom/core` `Sim` — no server, no event, no account: act as personas
+  making choices, fire model-enumerated named events, and watch the
+  runtime graph light up (`store/sim.ts`). Live moderates the launched
+  event's roster/feed, backed by `store/operate.ts` over the per-event
+  mod SSE + `/e/:eventId/api/mod/*` (authorized by the author's session
+  — the author *is* the operator). `store/run.ts` owns the switch.
+- **Deploy events from the editor**: **Deploy** mode (`⌘3`) is where the
+  live event's unique admin controls live — launch preview/live, share
+  the join code + QR, pause/resume/reset/end, and look up a guest by QR
+  scan (`components/deploy/`, same `store/operate.ts` backend).
+- **See structure visually** alongside code: Writing mode's center is a
+  resizable split — the text editor AND the project-wide story-graph
+  node editor, live over the same source at the same time.
 - **Stay minimal**: a thin shell over CodeMirror + xyflow, with a small Zustand store as the single source of truth.
 
 The app is gated in `App.tsx`: no workspace open → signed-out shows
@@ -54,54 +58,70 @@ src/
               #   loom-lint / lsp-client / loom-ast / story-graph (@loom/core)
   store/      # zustand stores: workspace (files), focus (projection bus),
               #   mode (modal shell), graph (node-editor state), settings,
-              #   cockpit (shared Sim/Run contract + context),
+              #   cockpit (shared cockpit contract + context),
+              #   run (Sim ⇄ Live source switch),
               #   sim (local simulator), operate (live event)
   components/ # studio/ (StudioShell + ModeBar + per-mode regions),
-              #   graph/ (the Editing-mode node editor), files, editor,
-              #   cockpit/ (shared Sim/Run surfaces), sim/, operate/,
-              #   runner (Outline/References), detail, shell
+              #   graph/ (the story-graph node editor), files, editor,
+              #   cockpit/ (shared cockpit surfaces), sim/ (Sim-source
+              #   pages), run/ (the merged Run stage), deploy/ (event
+              #   lifecycle + admin), runner (Outline/References),
+              #   detail, shell
   App.tsx     # top bar + StudioShell + status bar + overlays
 ```
 
-## Shell (v2 modal topology)
+## Shell (v3 modal topology)
 
-The IDE is one app with four **modes** — Writing / Editing / **Sim** /
-**Run** — switched from a bottom **Mode Bar** (`⌘1` … `⌘4`),
-DaVinci-Resolve-style. Writing + Editing are the authoring facets; Sim
-(`components/sim/` + `store/sim.ts`) rehearses the story on a **local
-in-browser simulator**; Run (`components/operate/`) is the live
-event-control surface. Sim and Run are the same instrument panel — see
-**The cockpit** below. Each mode is a fixed, resizable `allotment`
-layout (left rail · center stage · right properties tray · optional
-bottom Timeline dock) that composes the leaf panels; `store/mode.ts`
-owns the active mode + per-mode region sizes (persisted to
-`localStorage["loom.studio"]`). The right **Properties tray**
-(`components/studio/PropertiesTray.tsx`) is tabbed: in Writing it
-follows the editor cursor (active-file AST via `lib/loom-ast.ts`); in
-Editing it follows the **canvas selection** (beat/entity inspector with
-editable contract + In/Out link lists); plus a workspace References
-panel; in Sim/Run it is the cockpit Inspector. This replaced the old
-`dockview` activity-bar + free-docking model. Full design:
-[`docs/dev/loom-ide-redesign.md` Part II](../../../docs/dev/loom-ide-redesign.md).
+The IDE is one app with three **modes** — **Writing** / **Run** /
+**Deploy** — switched from a bottom **Mode Bar** (`⌘1` … `⌘3`),
+DaVinci-Resolve-style. Writing is the whole authoring surface: its
+center stage is a resizable **editor ⇄ story-graph split** (either pane
+snaps closed), so text and structure are visible at the same time. Run
+(`components/run/RunStage.tsx`) is the whole rehearsal/moderation
+cockpit — a **Sim ⇄ Live source switch** picks between the local
+in-browser simulator and the launched event; see **The cockpit** below.
+Deploy (`components/deploy/`) owns the live event's existence: launch,
+codes/QR, lifecycle, guest lookup. Each mode is a fixed, resizable
+`allotment` layout (left rail · center stage · right properties tray ·
+optional bottom Timeline dock) that composes the leaf panels;
+`store/mode.ts` owns the active mode + per-mode region sizes, including
+Writing's center `split` (persisted to `localStorage["loom.studio"]`;
+legacy `editing`/`sim`/`operate` mode ids migrate on load). The right
+**Properties tray** (`components/studio/PropertiesTray.tsx`) is tabbed:
+in Writing it follows the **canvas selection** (beat/entity/connection/
+file inspector with editable contract + In/Out link lists), falling
+back to the editor cursor (active-file AST via `lib/loom-ast.ts`); plus
+a workspace References panel; in Run/Deploy it is the cockpit
+Inspector. This replaced the old `dockview` activity-bar + free-docking
+model (and the v2 four-mode Writing/Editing/Sim/Run bar). Original
+design: [`docs/dev/loom-ide-redesign.md` Part II](../../../docs/dev/loom-ide-redesign.md).
 
-### The cockpit — Sim and Run share one surface
+### The cockpit — Run's two sources share one surface
 
 `store/cockpit.ts` defines the **cockpit contract** (`CockpitState`):
-the state + action surface behind both live-control modes (roster,
+the state + action surface behind both run backends (roster,
 factions/locations, channels + messages, beats, **named events**,
 selection, and the whole mod-command vocabulary — say / capture /
 setStat / fireBeat / fireSignal / scanAs / reveal / broadcast /
 choose). Shared components read it through `useCockpit(selector)`,
 resolved from a React context (`CockpitContext`) whose value is
-whichever store the mode provides (`components/cockpit/providers.tsx`):
+whichever store the enclosing provider supplies
+(`components/cockpit/providers.tsx` — `RunCockpit` follows
+`store/run.ts`'s Sim ⇄ Live switch; Deploy mounts `OperateCockpit`):
 
-- **Run** → `store/operate.ts` — the mod SSE + `/e/:eventId/api/mod/*`.
+- **Live** → `store/operate.ts` — the mod SSE + `/e/:eventId/api/mod/*`.
 - **Sim** → `store/sim.ts` — a real `@loom/core` `Sim` compiled from
   the indexed project and driven entirely in the browser. Message
   composition + snapshots reuse the event server's pure modules
   (`@loom/core/chat`'s `composeGuestMessages`/`ChatStore`,
   `@loom/core/views`' `modView`) so a simulated run reads exactly like
   the live event. A 1 s ticker drives `Sim.tick` while running.
+
+The Run stage owns the mod-stream lifecycle (init/teardown by
+`projectId`) at the *stage* level, so flipping Sim ⇄ Live never
+reconnects, and the Live segment shows a green dot while an event is
+up. Live is disabled for local folders (no event plane); with no
+active event it offers a jump to Deploy.
 
 Shared cockpit components (`components/cockpit/`): `tabs.tsx` (Chat /
 Roster / World / Director pages), `Rail.tsx` (status + the
@@ -138,7 +158,7 @@ engine in Sim and the journaled `/api/mod/choose` in Run (the mod
 snapshot carries `ModView.choices`), so both modes can resolve a
 stuck guest identically.
 
-**Sim mode specifics** (`components/sim/`): the **Sim** tab owns
+**Sim source specifics** (`components/sim/`): the **Sim** tab owns
 lifecycle (Start / Pause / Reset — Reset recompiles from the current
 sources, with a stale-sources hint keyed off the LSP index generation —
 plus Replay entry) and **personas** — local guests the writer acts as
@@ -148,13 +168,15 @@ Inspector, and as a global card when a menu suspends unbound; answering
 one resumes the engine's saved continuation. The **Log** tab is the raw
 sim ledger (every `SimEvent`, formatted per `SimEventType`). The
 **Story** tab mounts the story-graph canvas (`variant="run"`), lit by
-the same `RuntimeOverlay` contract Run uses; a **quick-fire** control
-in the header fires any named event from anywhere. Speaking *as a
-character* is the Chat composer's "post as" picker.
+the same `RuntimeOverlay` contract the Live source uses; a
+**quick-fire** control in the header fires any named event from
+anywhere (on either source). Speaking *as a character* is the Chat
+composer's "post as" picker.
 
-### Editing mode — the story-graph node editor (`components/graph/`)
+### The story-graph node editor (`components/graph/`)
 
-Editing (`⌘2`) is a **global node editor over the whole project**, 1:1
+Writing's canvas pane is a **global node editor over the whole
+project**, 1:1
 with Loom Lang (Articy-Draft-style nesting, Pixel-Crushers-style
 dialogue flows). Data comes from `@loom/core/lsp`'s
 `Workspace.storyGraph()` (every indexed `.loom` file — never just the
@@ -214,20 +236,20 @@ active buffer) via `lib/story-graph.ts`'s `useStoryGraph()`
   every cross-file reference + `entry:`); right-click a body node →
   Edit text… (`replaceExact`). Owned beats retarget only; derived
   (trait-template) beats are honest projections — edit the template.
-- **Left rail — `EditingRail`**: Files (the Writing `Sidebar`) ⇄
+- **Left rail — `EditingRail`** (Writing's rail): Files (`Sidebar`) ⇄
   **Story Bin** (`StoryBin`, the project-wide navigator: beats grouped
   by file + every declared entity, filterable; click selects on canvas,
   double-click jumps to source).
 - **Bottom dock — `BeatStrip`**: the selected beat's body as linear
   clips; drag-reorder → `moveBodyItem`, right-click delete →
   `removeBodyItem`, composer appends raw lines (`appendBodyLines`).
-- **Runtime overlay**: the same canvas mounts in the Sim and Run
-  modes' Story tabs (`variant="run"`, read-only) and lights up from
+- **Runtime overlay**: the same canvas mounts in Run mode's Story tab
+  (`variant="run"`, read-only, on both sources) and lights up from
   `store/graph.ts`'s `RuntimeOverlay` — visit badges, current-beat
   pulse, and amber **traversal heat** on the edges a run actually took
-  (`traversed`, best-effort beat→beat hops). Run feeds it from the mod
-  SSE `sim` feed; Sim feeds it from the local simulator — the
-  identical contract. In a run canvas, right-clicking a beat offers
+  (`traversed`, best-effort beat→beat hops). The Live source feeds it
+  from the mod SSE `sim` feed; the Sim source from the local simulator
+  — the identical contract. In a run canvas, right-clicking a beat offers
   **Fire beat ▶** straight into the hosting cockpit.
 - **Ergonomics** (all in `StoryGraphPanel` + `store/graph.ts`):
   - **Hover tooltips** on every node + edge (beat preview + `file:line`,
@@ -287,7 +309,7 @@ active buffer) via `lib/story-graph.ts`'s `useStoryGraph()`
 **native TypeScript** from `@loom/core` — **no wasm**. (`@loom/core` is
 wired in via path aliases in `vite.config.ts` + `tsconfig.app.json`:
 `@loom/core/parser`, `@loom/core/lsp`, `@loom/core/sim` (the ecosystem
-runtime behind Sim mode), and the server's pure projection modules
+runtime behind Run mode's Sim source), and the server's pure projection modules
 `@loom/core/chat` + `@loom/core/views`, all resolving straight to `.ts`
 source.) Everything here is synchronous; there is no bundle to load or
 rebuild.
@@ -364,28 +386,28 @@ rebuild.
   graph-edit write path: open-as-tab + `updateContents` + `syncBuffer`),
   `writtenTargetFor` / `beatPath`. Replaced the old per-file
   `loom-story.ts` (and `runner/Graph.tsx` + `studio/BeatTimeline.tsx`,
-  both deleted) — see **Editing mode** above for the `components/graph/`
-  surface it feeds.
+  both deleted) — see **The story-graph node editor** above for the
+  `components/graph/` surface it feeds.
 
-## Local play is Sim mode — collaboration stays external
+## Local play is Run mode's Sim source — collaboration stays external
 
 The editor is an authoring tool with a **local rehearsal runtime**:
 open a folder, edit, highlight, lint, full **in-buffer LSP** (hover /
 go-to-definition on ⌘/Ctrl-Click + F12 / completion / find-references
 on ⇧F12 / occurrence highlight / project diagnostics, plus the Outline
 / References panels and go-to-symbol), structural beat edits, the
-project-wide story-graph node editor, and **Sim** mode (`⌘3`) — the
-`@loom/core` TS `Sim` running in-browser (no wasm; the old wasm
-`LoomSession` stayed dead — this is the native-TS successor). The
-editor still does **not** co-edit over a relay (`LoomDoc` / Loro CRDT
-went with the wasm cutover), and **live events run in the sibling
+story-graph node editor beside the text, and Run mode's **Sim** source
+(`⌘2`) — the `@loom/core` TS `Sim` running in-browser (no wasm; the
+old wasm `LoomSession` stayed dead — this is the native-TS successor).
+The editor still does **not** co-edit over a relay (`LoomDoc` / Loro
+CRDT went with the wasm cutover), and **live events run in the sibling
 packages**: `packages/loom/core` (the TS engine + SSE/REST event
 server) and `packages/loom/play` (the participant app). The editor does
-not render the guest chat; instead **Run** mode (`⌘4`) *controls +
-moderates* events on that server (launch, codes/QR, roster,
-moderation) — the participant view stays in the `play` app. The Mode
-Bar is four modes — **Writing** (`⌘1`), **Editing** (`⌘2`), **Sim**
-(`⌘3`), **Run** (`⌘4`).
+not render the guest chat; instead Run mode's **Live** source
+*moderates* events on that server and **Deploy** mode (`⌘3`) *hosts*
+them (launch, codes/QR, lifecycle) — the participant view stays in the
+`play` app. The Mode Bar is three modes — **Writing** (`⌘1`), **Run**
+(`⌘2`), **Deploy** (`⌘3`).
 
 ## Hosting
 

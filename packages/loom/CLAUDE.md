@@ -11,10 +11,11 @@ tools) without dragging the runtime + scheduler + Luau bridge along.
 | [`lsp`](./lsp)         | Stdio JSON-RPC server backed by `loom-parser` + a workspace-wide name index |
 | [`syntax`](./syntax)   | TextMate grammar generator (driven by `loom-parser::keywords`) + Zed / VSCode extension shells |
 | [`server`](./server)   | Multi-user backbone — `loom-relayd` axum server hosting per-workspace Loro CRDTs over `prism-core::network::relay`. See [`docs/dev/loom-multiuser.md`](../../docs/dev/loom-multiuser.md). |
-| [`editor`](./editor)   | React/Vite/CodeMirror web IDE — the author front end: a BetterAuth sign-in gate → projects launchpad → Studio shell; **server-backed projects** (or a local folder), a **Sim** mode (`⌘3`) that rehearses the story on a local in-browser `@loom/core` `Sim` (personas + choices + named events + live story-map overlay), and a **Run** mode (`⌘4`) to launch + moderate live events — Sim and Run share one cockpit. |
+| [`editor`](./editor)   | React/Vite/CodeMirror web IDE — the author front end: a BetterAuth sign-in gate → projects launchpad → Studio shell with **three modes**: **Writing** (`⌘1`, text editor + story-graph node editor side by side), **Run** (`⌘2`, one cockpit with a **Sim ⇄ Live** source switch — rehearse on a local in-browser `@loom/core` `Sim` with personas + choices + named events + live story-map overlay, or moderate the launched event), and **Deploy** (`⌘3`, the live event's lifecycle + admin: launch, codes/QR, pause/end, guest lookup). **Server-backed projects** or a local folder. |
 | [`core`](./core)       | Native **TypeScript** port of Loom (no WASM, no Prism): parser (incl. authored **`SPACE`/`CHANNEL`** chatroom declarations) + a first-principles social-ecosystem `runtime/sim` + a parser-only **`lsp`** language surface (`@loom/core/lsp` — `Workspace` with completion / hover / definition / documentSymbols / references / diagnostics, the in-process replacement for the wasm `LspWorkspace`) + an SSE/REST **event server** (`pnpm serve`) that hosts a live `Sim` for LAN events, composing its `SimEvent` stream into server-authoritative, channel-routed chat (`server/chat.ts`) with spaces + Slack-style threads (`parentSeq`), **access control** (open / private-invite / faction / group / dm channel membership, journaled `inviteToChannel`/`leaveChannel`, guest↔guest invites) + a **pluggable channel-type registry** (`runtime/sim/channel-types.ts` — per-type post policy / threadability / broadcast routing / slow-mode / ephemeral, e.g. a read-only `announcement` feed), a scoped invite roster (`rosterFor`), history + moderation, and a journaled `say` command so participant-typed chat replays deterministically. Now a **multi-tenant SaaS backend**: BetterAuth author accounts + Postgres (`server/db/`, `server/auth-server.ts`), projects + files CRUD (`server/projects.ts`), event launch/lifecycle (`server/events-api.ts`, one live event per project), and a per-event `EventRuntime` + `EventRegistry` routed under `/e/:eventId` with a `resolve-code` bootstrap — the old single-event root paths still serve a default event. vitest-tested. |
 | [`play`](./play)       | The **participant React app** (Vite, name `loom-play`) guests + performers use at a live event — an **AOL-chatroom-skinned** client with Discord-style **spaces** (sidebar sections, incl. authored `SPACE`s), Slack-style **message threads** + consecutive-sender banner grouping, **hybrid typed chat** (a composer wired to `/api/*/say`), and **access-controlled rooms** (open/private/faction/group/dm with invite + leave) layered over the story-injected lobby + faction + DM channels (decisions docked per-thread, re-login history) on the `core` server's SSE/REST. Multi-event aware: a short code resolves via `/api/resolve-code` to its event, then every call is scoped to `/e/:eventId`. `pnpm dev` (:5174, proxies to the server on :7000) / `pnpm build` (served by the event server at `/`). |
 | [`examples`](./examples) | Reference `.loom` projects used by `loom-runtime` integration tests and as authoring tutorials |
+| [`stagehand`](./stagehand) | **Python** (uv-managed, not in the pnpm workspace) show-control bridge for live events: joins an event's mod SSE feed and translates story events (unhandled directives like `<cue:>`/`<prop:>`/`<vibe:>`, `beatEntered`, `signal`) into OSC cues (TouchDesigner, with an NTP `t_exec` simultaneity contract) + MQTT prop commands via a declarative `show.yaml` cue map; in reverse, MQTT sensor topics (named captures, safe `when:` conditions, per-identity debounce) inject journaled story mutations through the mod API (`signal`/`beat`/`arrive`). Stateless — retained MQTT + the journal carry recovery. `uv run pytest` (70 tests) / `uv run stagehand check\|run --config show.yaml`. Design: [`docs/dev/loom-show-control.md`](../../docs/dev/loom-show-control.md). |
 
 The canonical design lives in [`docs/dev/loom-v3.html`](../../docs/dev/loom-v3.html).
 Per-crate `lib.rs` docstrings carry the module roadmap and the spec
@@ -59,7 +60,7 @@ project launches its own **event** (live, or a private server-hosted
   on disk under `LOOM_STATE_DIR/<eventId>`.
 - **Run == admin**: an event's `/e/:eventId/api/mod/*` routes accept either a
   mod token or the owning author's BetterAuth session, so the author moderates
-  from the editor's Run mode with no code to type. The `/api/mod/*` surface now
+  from the editor's Run/Deploy modes with no code to type. The `/api/mod/*` surface now
   also covers `say` (post to any room, as Operator or a character), `set`
   (edit a guest's score/faction/location/captured), `beat` / `signal` / `scan`
   (fire narrative), and `reveal` (expose a hidden faction). The old standalone
@@ -462,9 +463,24 @@ menus create beats and CHARACTER/LOCATION/FACTION declarations
 span-preserving `@loom/core/parser` edit ops, so nodes author the
 same `.loom` text Writing mode shows.
 
+**The three-mode shell landed 2026-07-06** (`editor` only): the Mode
+Bar consolidated from four modes to three — **Writing** (`⌘1`) merges
+the old Writing + Editing (the center stage is a resizable, snappable
+**editor ⇄ story-graph split** with a persisted `split` size, the
+EditingRail Files ⇄ Story Bin rail, the BeatStrip dock, and the
+canvas-selection-first Properties tray); **Run** (`⌘2`) merges Sim +
+Run behind a **Sim ⇄ Live source switch** (`store/run.ts` +
+`components/run/RunStage.tsx` — one cockpit, `RunCockpit` provider
+follows the switch, the mod-stream lifecycle rides the stage so
+flipping sources never reconnects, quick-fire works on both sources);
+and **Deploy** (`⌘3`, `components/deploy/`) is the live event's own
+home — launch/lifecycle/codes/QR/guest-lookup (the old Event tab,
+promoted; `CockpitTab.Event` deleted). Legacy persisted mode ids
+migrate on load (`editing`→`writing`, `sim`/`operate`→`run`).
+
 Everything in the TS engine is done and green (367 vitest tests in `core`,
-+68 in the editor incl. the graph-pipeline corpus, word-blocks, rooms-lens,
-flow-collapse, navigation, filter, and sim-store suites). The only
++76 in the editor incl. the graph-pipeline corpus, word-blocks, rooms-lens,
+flow-collapse, navigation, filter, sim-store, and mode-store suites). The only
 remaining work is the **Rust mirror**
 (parser + runtime crates), which is not yet updated for ANY of Slices
 1/2/A/3/B/C, these gaps, or the story graph — the TS and Rust engines
@@ -557,26 +573,31 @@ a **Projects launchpad** (create/open server projects) → the modal
 **Studio** shell. Storage is backend-aware (`store/workspace.ts`): a
 server project's `.loom` files load/save over the control-plane API,
 while a **local folder** (File System Access) still works with no
-account. The Mode Bar has **four** modes — **Writing** (`⌘1`),
-**Editing** (`⌘2`), **Sim** (`⌘3`), and **Run** (`⌘4`). Sim
-(`components/sim/` + `store/sim.ts`) rehearses the story on a **local
-in-browser `Sim`** compiled from the indexed project — personas making
-choices, model-enumerated named events fired from anywhere, the story
-map lighting up live. Run (`components/operate/` + `store/operate.ts`)
-launches an event, shares the join code + QR, and moderates the live
-roster / feed — the "run panel" and "admin tools" are one shared
-surface, authorized by the author's session (see **Run == admin**
-above). Sim and Run share one cockpit (`store/cockpit.ts` contract +
-`components/cockpit/` chat / roster / world / director / rail /
-inspector, swapped via a provider), and Sim reuses the server's pure
-`chat.ts` / `views.ts` projections so a rehearsal reads exactly like
-the live event. The participant chat itself stays in `play`; the
-editor controls + moderates, it does not render the guest view.
+account. The Mode Bar has **three** modes — **Writing** (`⌘1`),
+**Run** (`⌘2`), and **Deploy** (`⌘3`). Writing's center is a resizable
+**editor ⇄ story-graph split**, so the screenplay text and the node
+editor are visible (and editable) at the same time. Run
+(`components/run/` + `store/run.ts`) is one cockpit with a **Sim ⇄
+Live** source switch: the Sim source (`components/sim/` +
+`store/sim.ts`) rehearses the story on a **local in-browser `Sim`**
+compiled from the indexed project — personas making choices,
+model-enumerated named events fired from anywhere, the story map
+lighting up live; the Live source (`store/operate.ts`) moderates the
+launched event's roster / feed, authorized by the author's session
+(see **Run == admin** above). Deploy (`components/deploy/`) hosts the
+event itself — launch preview/live, join code + QR,
+pause/resume/reset/end, guest QR lookup. Both Run sources share one
+cockpit (`store/cockpit.ts` contract + `components/cockpit/` chat /
+roster / world / director / rail / inspector, swapped via a provider),
+and the Sim source reuses the server's pure `chat.ts` / `views.ts`
+projections so a rehearsal reads exactly like the live event. The
+participant chat itself stays in `play`; the editor controls +
+moderates, it does not render the guest view.
 
 The former in-editor runtime — multi-head branching play, the
 Transcript / Ledger / Timeline / World / Cast / Booth surfaces, and
 relay-backed cloud collaboration (Loro CRDT) — was removed with the
-`wasm` crate; **Sim mode is its native-TS successor for local play**,
+`wasm` crate; **Run mode's Sim source is its native-TS successor for local play**,
 while **the live runtime lives in the sibling packages**: the
 `core` event server + the `play` participant app. See
 [`docs/dev/loom-ide-redesign.md` Part II](../../docs/dev/loom-ide-redesign.md)

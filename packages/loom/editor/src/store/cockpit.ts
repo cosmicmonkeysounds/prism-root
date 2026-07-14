@@ -1,10 +1,11 @@
-//! The cockpit contract — the shared state + action surface behind the
-//! Sim and Run modes. Both are the same instrument panel (rooms rail ·
+//! The cockpit contract — the shared state + action surface behind Run
+//! mode's two sources. Both are the same instrument panel (rooms rail ·
 //! chat/roster/world/story/director stage · entity inspector); only the
-//! backend differs: Run drives a live event over the mod SSE +
+//! backend differs: Live drives the launched event over the mod SSE +
 //! `/e/:eventId/api/mod/*`, Sim drives an in-browser `@loom/core` `Sim`.
 //! Shared components read through `useCockpit`, which resolves to
-//! whichever store the enclosing `CockpitContext.Provider` supplies.
+//! whichever store the enclosing `CockpitContext.Provider` supplies
+//! (`RunCockpit` follows the source switch; Deploy mounts the live one).
 //!
 //! Every closed vocabulary here is an enum (const-object form — the
 //! workspace compiles with `erasableSyntaxOnly`, which forbids runtime
@@ -18,9 +19,9 @@ import type { StatField } from '@/lib/api'
 // Enums
 // ---------------------------------------------------------------------------
 
-/** The cockpit's center pages. `Event` is Run-only; `Sim`/`Log` are Sim-only. */
+/** The cockpit's center pages. `Sim`/`Log` exist only on the local-sim
+ *  source; the live event's lifecycle page lives in Deploy mode. */
 export const CockpitTab = {
-  Event: 'event',
   Sim: 'sim',
   Chat: 'chat',
   Roster: 'roster',
@@ -202,7 +203,7 @@ const noop = async (): Promise<void> => {}
 /**
  * The inert default cockpit — every surface empty, every action a no-op.
  * Lets cockpit-aware components (e.g. the story canvas's "Fire beat")
- * mount outside a provider (Editing mode) without special-casing.
+ * mount outside a provider (Writing mode's canvas) without special-casing.
  */
 export const nullCockpit: CockpitStore = create<CockpitState>((set) => ({
   phase: CockpitPhase.Idle,
