@@ -11,8 +11,10 @@ import {
   useCockpit,
   type CockpitMessage,
   type RosterRow,
+  type Selection,
 } from '@/store/cockpit'
 import { useGraph } from '@/store/graph'
+import { openContextMenu, type ContextMenuEntry } from '@/store/context-menu'
 import { FactionPill } from './ui'
 import { LensKind, lensKindOf, messageInLens, useRooms } from './rooms'
 import { useInspect } from './inspect'
@@ -41,7 +43,17 @@ function BeatLink({ beat }: { beat: string }) {
   )
 }
 
-function MessageRow({ m, banner, onHide }: { m: CockpitMessage; banner: boolean; onHide: () => void }) {
+function MessageRow({
+  m,
+  banner,
+  onHide,
+  onMenu,
+}: {
+  m: CockpitMessage
+  banner: boolean
+  onHide: () => void
+  onMenu?: (e: React.MouseEvent) => void
+}) {
   const hideBtn = (
     <button
       onClick={onHide}
@@ -54,7 +66,7 @@ function MessageRow({ m, banner, onHide }: { m: CockpitMessage; banner: boolean;
 
   if (m.kind === 'narration') {
     return (
-      <li className={clsx('group flex items-start gap-2 rounded bg-zinc-900/50 px-3 py-1.5', m.hidden && 'opacity-40', threadIndent)}>
+      <li onContextMenu={onMenu} className={clsx('group flex items-start gap-2 rounded bg-zinc-900/50 px-3 py-1.5', m.hidden && 'opacity-40', threadIndent)}>
         <span className="shrink-0 pt-px text-[10px] uppercase tracking-widest text-amber-500/80">{m.from || 'Narrator'}</span>
         <span className="min-w-0 flex-1 break-words text-sm italic text-zinc-300">{m.text}</span>
         {m.beat ? <BeatLink beat={m.beat} /> : null}
@@ -64,7 +76,7 @@ function MessageRow({ m, banner, onHide }: { m: CockpitMessage; banner: boolean;
   }
   if (m.kind === 'system') {
     return (
-      <li className={clsx('group flex items-center gap-2 px-3 py-0.5', m.hidden && 'opacity-40', threadIndent)}>
+      <li onContextMenu={onMenu} className={clsx('group flex items-center gap-2 px-3 py-0.5', m.hidden && 'opacity-40', threadIndent)}>
         <span className="min-w-0 flex-1 break-words text-center text-xs text-zinc-500">{m.text}</span>
         {hideBtn}
       </li>
@@ -72,7 +84,7 @@ function MessageRow({ m, banner, onHide }: { m: CockpitMessage; banner: boolean;
   }
   if (m.kind === 'signal') {
     return (
-      <li className={clsx('group flex items-start gap-2 rounded px-2 py-1', m.hidden && 'opacity-40', threadIndent)}>
+      <li onContextMenu={onMenu} className={clsx('group flex items-start gap-2 rounded px-2 py-1', m.hidden && 'opacity-40', threadIndent)}>
         <span className="min-w-0 flex-1 break-words text-sm text-amber-200/90">{m.text}</span>
         {hideBtn}
       </li>
@@ -80,7 +92,7 @@ function MessageRow({ m, banner, onHide }: { m: CockpitMessage; banner: boolean;
   }
   // A spoken `line` — the sender banner appears once per consecutive run.
   return (
-    <li className={clsx('group flex flex-col rounded px-2', banner ? 'pt-1.5' : 'pt-0', 'pb-0.5', m.hidden && 'opacity-40', threadIndent)}>
+    <li onContextMenu={onMenu} className={clsx('group flex flex-col rounded px-2', banner ? 'pt-1.5' : 'pt-0', 'pb-0.5', m.hidden && 'opacity-40', threadIndent)}>
       {banner && <span className="text-xs font-semibold text-zinc-300">{m.from || '·'}</span>}
       <span className="flex items-start gap-2">
         <span className="min-w-0 flex-1 break-words text-sm text-zinc-200">{m.text}</span>
@@ -124,10 +136,22 @@ export function ChatTab() {
   const perspective = useCockpit((s) => s.perspective)
   const hideMessage = useCockpit((s) => s.hideMessage)
   const say = useCockpit((s) => s.say)
+  const setPerspective = useCockpit((s) => s.setPerspective)
+  const setTab = useCockpit((s) => s.setTab)
+  const inspect = useInspect()
   const rooms = useRooms()
 
   const [text, setText] = useState('')
   const [asWho, setAsWho] = useState('') // '' → the lens/room default speaker
+  /** The message a composed reply threads under (root of its thread). */
+  const [replyTo, setReplyTo] = useState<CockpitMessage | null>(null)
+  const [replyRoom, setReplyRoom] = useState(active)
+  // A reply targets a message in THIS room — leaving the room drops it
+  // (the adjust-state-during-render pattern, not an effect).
+  if (active !== replyRoom) {
+    setReplyRoom(active)
+    setReplyTo(null)
+  }
 
   const lens = lensKindOf(perspective, roster, cast)
   const activeRoom = rooms.find((r) => r.key === active)
@@ -166,15 +190,68 @@ export function ChatTab() {
   const send = () => {
     const t = text.trim()
     if (!t || !canCompose || notPresent) return
+    // Slack-style: replies root at the thread parent, not the reply itself.
+    const parent = replyTo !== null ? (replyTo.parentSeq ?? replyTo.seq) : null
     if (activeRoom?.dmGuest && speaker !== activeRoom.dmGuest) {
       // Speaking to the guest in their thread, as the character/Operator.
-      void say(`guest:${activeRoom.dmGuest}`, t, asWho || activeRoom.character || undefined)
+      void say(`guest:${activeRoom.dmGuest}`, t, asWho || activeRoom.character || undefined, parent)
     } else {
       // Speaking in the room as whoever the lens/picker says — a guest voice
       // goes through the same journaled say path the play app uses.
-      void say(activeRoom?.channel ?? active, t, speaker)
+      void say(activeRoom?.channel ?? active, t, speaker, parent)
     }
     setText('')
+    setReplyTo(null)
+  }
+
+  /** Who a message's `from` resolves to (guest by name/id, cast by id). */
+  const senderOf = (m: CockpitMessage): Selection | null => {
+    const g = roster.find((r) => r.name === m.from || r.id === m.from)
+    if (g !== undefined) return { kind: SelectionKind.Guest, id: g.id }
+    const c = cast.find((c) => c.id === m.from)
+    if (c !== undefined) return { kind: SelectionKind.Character, id: c.id }
+    return null
+  }
+
+  /** The message context menu — copy / reply / map / sender / moderation. */
+  const messageMenu = (m: CockpitMessage, e: React.MouseEvent) => {
+    e.preventDefault()
+    const items: ContextMenuEntry[] = [
+      { label: 'Copy text', onSelect: () => void navigator.clipboard?.writeText(m.text) },
+    ]
+    if (canCompose) {
+      items.push({
+        label: 'Reply in thread',
+        testid: 'chat-menu-reply',
+        onSelect: () => setReplyTo(m),
+      })
+    }
+    if (m.beat) {
+      items.push({
+        label: `Show ${m.beat} on story map`,
+        onSelect: () => {
+          setTab(CockpitTab.Story)
+          useGraph.getState().reveal(m.beat!)
+        },
+      })
+    }
+    const sender = senderOf(m)
+    if (sender !== null) {
+      items.push(
+        { separator: true },
+        { label: `Inspect ${m.from}`, testid: 'chat-menu-inspect', onSelect: () => inspect(sender) },
+        { label: `View as ${m.from}`, onSelect: () => setPerspective(sender.id) },
+      )
+    }
+    items.push(
+      { separator: true },
+      {
+        label: m.hidden ? 'Show message' : 'Hide message',
+        testid: 'chat-menu-hide',
+        onSelect: () => void hideMessage(m.seq, !m.hidden),
+      },
+    )
+    openContextMenu(items, { x: e.clientX, y: e.clientY })
   }
 
   // The lens persona's pending decision docks here; the operator lens also
@@ -201,7 +278,15 @@ export function ChatTab() {
           {thread.map((m, i) => {
             const prev = thread[i - 1]
             const banner = m.kind !== 'line' || prev === undefined || prev.kind !== 'line' || prev.from !== m.from
-            return <MessageRow key={m.seq} m={m} banner={banner} onHide={() => void hideMessage(m.seq, !m.hidden)} />
+            return (
+              <MessageRow
+                key={m.seq}
+                m={m}
+                banner={banner}
+                onHide={() => void hideMessage(m.seq, !m.hidden)}
+                onMenu={(e) => messageMenu(m, e)}
+              />
+            )
           })}
         </ul>
       </div>
@@ -213,6 +298,20 @@ export function ChatTab() {
           {notPresent && (
             <div className="px-3 pt-1.5 text-[10px] text-amber-400/80">
               {speakerName} isn't in this room — move them here first, or speak as the Operator.
+            </div>
+          )}
+          {replyTo !== null && (
+            <div className="flex items-center gap-2 px-3 pt-1.5 text-[11px] text-indigo-300" data-testid="chat-reply-chip">
+              <span className="min-w-0 truncate">
+                ↩ Replying to {replyTo.from || 'Narrator'}: “{replyTo.text.slice(0, 80)}”
+              </span>
+              <button
+                onClick={() => setReplyTo(null)}
+                className="shrink-0 rounded px-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                aria-label="Cancel reply"
+              >
+                ✕
+              </button>
             </div>
           )}
           <div className="flex items-center gap-2 p-2">
@@ -282,7 +381,34 @@ export function RosterTab() {
   const selection = useCockpit((s) => s.selection)
   const capture = useCockpit((s) => s.capture)
   const release = useCockpit((s) => s.release)
+  const setPerspective = useCockpit((s) => s.setPerspective)
   const inspect = useInspect()
+
+  const guestMenu = (r: RosterRow, e: React.MouseEvent) => {
+    e.preventDefault()
+    openContextMenu(
+      [
+        { label: `Inspect ${r.name}`, onSelect: () => inspect({ kind: SelectionKind.Guest, id: r.id }) },
+        { label: `View as ${r.name}`, onSelect: () => setPerspective(r.id) },
+        { separator: true },
+        r.captured
+          ? { label: 'Release', onSelect: () => void release(r.id) }
+          : { label: 'Capture', kind: 'danger' as const, onSelect: () => void capture(r.id) },
+      ],
+      { x: e.clientX, y: e.clientY },
+    )
+  }
+
+  const castMenu = (id: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    openContextMenu(
+      [
+        { label: `Inspect ${id}`, onSelect: () => inspect({ kind: SelectionKind.Character, id }) },
+        { label: `View as ${id}`, onSelect: () => setPerspective(id) },
+      ],
+      { x: e.clientX, y: e.clientY },
+    )
+  }
 
   return (
     <div className="h-full overflow-auto">
@@ -308,6 +434,7 @@ export function RosterTab() {
             <tr
               key={r.id}
               onClick={() => inspect({ kind: SelectionKind.Guest, id: r.id })}
+              onContextMenu={(e) => guestMenu(r, e)}
               className={clsx(
                 'cursor-pointer border-b border-zinc-900 hover:bg-zinc-900/60',
                 selection?.kind === SelectionKind.Guest && selection.id === r.id && 'bg-zinc-800/60',
@@ -345,6 +472,7 @@ export function RosterTab() {
           <button
             key={c.id}
             onClick={() => inspect({ kind: SelectionKind.Character, id: c.id })}
+            onContextMenu={(e) => castMenu(c.id, e)}
             className={clsx(
               'flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs',
               selection?.kind === SelectionKind.Character && selection.id === c.id

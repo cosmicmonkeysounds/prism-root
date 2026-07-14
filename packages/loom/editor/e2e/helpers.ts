@@ -66,10 +66,10 @@ export async function openProject(
   await page.waitForTimeout(600)
 }
 
-/** Switch modes via the Mode Bar. */
+/** Switch modes via the Mode Bar (v3: Writing / Run / Deploy). */
 export async function switchMode(
   page: Page,
-  mode: 'writing' | 'editing' | 'sim' | 'operate',
+  mode: 'writing' | 'run' | 'deploy',
 ): Promise<void> {
   await page.getByTestId(`mode-${mode}`).click()
 }

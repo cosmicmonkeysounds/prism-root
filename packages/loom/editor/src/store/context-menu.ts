@@ -9,14 +9,23 @@ export type ContextMenuItem = {
   onSelect(): void
   kind?: 'danger' | 'default'
   disabled?: boolean
+  /** Right-aligned keybinding hint (e.g. `F12`). */
+  hint?: string
   /** Optional e2e hook rendered as `data-testid` on the menu button. */
   testid?: string
 }
 
+/** A menu is items with optional divider rows between groups. */
+export type ContextMenuEntry = ContextMenuItem | { separator: true }
+
+export function isSeparator(e: ContextMenuEntry): e is { separator: true } {
+  return 'separator' in e
+}
+
 type State = {
-  items: ContextMenuItem[] | null
+  items: ContextMenuEntry[] | null
   anchor: { x: number; y: number } | null
-  open(items: ContextMenuItem[], anchor: { x: number; y: number }): void
+  open(items: ContextMenuEntry[], anchor: { x: number; y: number }): void
   close(): void
 }
 
@@ -29,7 +38,7 @@ export const useContextMenu = create<State>((set) => ({
 
 /** Convenience: imperatively summon the menu from non-React code. */
 export function openContextMenu(
-  items: ContextMenuItem[],
+  items: ContextMenuEntry[],
   anchor: { x: number; y: number },
 ): void {
   useContextMenu.getState().open(items, anchor)

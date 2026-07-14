@@ -55,7 +55,9 @@ type WorkspaceState = {
   activePath: string | null
   recentlyClosed: { path: string; handle?: FileSystemFileHandle }[]
   cursor: CursorInfo | null
-  pendingCursor: { path: string; line: number; column: number; token: number } | null
+  /** `focus: false` scrolls the editor without stealing keyboard focus —
+   *  used by canvas-initiated reveals so the graph keeps its key flow. */
+  pendingCursor: { path: string; line: number; column: number; token: number; focus: boolean } | null
 
   nodes: Node[]
   edges: Edge[]
@@ -77,9 +79,9 @@ type WorkspaceState = {
   activateTabByIndex: (index: number) => void
   updateContents: (path: string, contents: string) => void
   setCursor: (cursor: CursorInfo | null) => void
-  revealAt: (entry: FsEntry, line: number, column?: number) => Promise<void>
+  revealAt: (entry: FsEntry, line: number, column?: number, opts?: { focus?: boolean }) => Promise<void>
   /** Reveal a 1-based line in the already-open active file (no reopen). */
-  revealActive: (line: number, column?: number) => void
+  revealActive: (line: number, column?: number, opts?: { focus?: boolean }) => void
   saveActive: () => Promise<void>
   saveAll: () => Promise<void>
   createNewFile: (name: string) => Promise<void>
@@ -477,7 +479,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
 
     setCursor: (cursor) => set({ cursor }),
 
-    revealAt: async (entry, line, column = 1) => {
+    revealAt: async (entry, line, column = 1, opts) => {
       await get().openFile(entry)
       set((s) => ({
         pendingCursor: {
@@ -485,11 +487,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
           line,
           column,
           token: (s.pendingCursor?.token ?? 0) + 1,
+          focus: opts?.focus ?? true,
         },
       }))
     },
 
-    revealActive: (line, column = 1) => {
+    revealActive: (line, column = 1, opts) => {
       const path = get().activePath
       if (!path) return
       set((s) => ({
@@ -498,6 +501,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
           line,
           column,
           token: (s.pendingCursor?.token ?? 0) + 1,
+          focus: opts?.focus ?? true,
         },
       }))
     },

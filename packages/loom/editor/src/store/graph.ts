@@ -7,6 +7,7 @@
 // Properties tray stay in lockstep.
 
 import { create } from 'zustand'
+import { useMode } from '@/store/mode'
 
 /** What the canvas is showing: the whole project, or inside one beat. */
 export type GraphView = { kind: 'project' } | { kind: 'beat'; beatKey: string }
@@ -51,9 +52,11 @@ type GraphState = {
   /**
    * A pending "bring this node into view" command (from the Story Bin,
    * the tray's link lists, search…). The canvas consumes it — retrying
-   * across relayouts until the node exists — then clears it.
+   * across relayouts until the node exists — then clears it. `gentle`
+   * requests (cursor-follow) keep the current zoom and never force
+   * overlays / expand collapsed files — a miss just clears.
    */
-  centerRequest: { id: string; token: number } | null
+  centerRequest: { id: string; token: number; gentle?: boolean } | null
   /** Drill-in node currently inline-editing its source slice. */
   editingNode: string | null
   /** Project-view word block currently inline-editing its source slice. */
@@ -75,6 +78,9 @@ type GraphState = {
   layouts: Record<string, LayoutOverrides>
   runtime: RuntimeOverlay
   search: string
+  /** Writing-mode QoL: the canvas selects + centers the beat/entity the
+   *  text cursor sits in (session-local, toolbar-toggled). */
+  followCursor: boolean
 
   openProject(): void
   openBeat(beatKey: string): void
@@ -82,6 +88,10 @@ type GraphState = {
   selectEdge(id: string | null): void
   /** Select + ask the canvas to center/zoom on `id`. */
   reveal(id: string): void
+  /** Follow-cursor reveal: select + center without zooming or forcing
+   *  hidden targets visible. */
+  revealGentle(id: string): void
+  setFollowCursor(on: boolean): void
   clearCenter(token: number): void
   setEditing(id: string | null): void
   setEditingBlock(v: { beatKey: string; index: number } | null): void
@@ -131,6 +141,7 @@ export const useGraph = create<GraphState>((set) => ({
   layouts: loadLayouts(),
   runtime: EMPTY_RUNTIME,
   search: '',
+  followCursor: true,
 
   openProject: () => set({ view: { kind: 'project' }, editingNode: null, editingBlock: null }),
   openBeat: (beatKey) =>
@@ -143,12 +154,26 @@ export const useGraph = create<GraphState>((set) => ({
     }),
   select: (id) => set({ selected: id, selectedEdge: null }),
   selectEdge: (id) => set({ selectedEdge: id, selected: null }),
-  reveal: (id) =>
+  reveal: (id) => {
+    // An explicit reveal insists on being seen — re-open a ⌘\-hidden
+    // Writing graph pane before asking the canvas to center.
+    const m = useMode.getState()
+    if (m.mode === 'writing' && !m.ui.writing.graphOpen) {
+      m.setUi('writing', { graphOpen: true })
+    }
     set((s) => ({
       selected: id,
       selectedEdge: null,
       centerRequest: { id, token: (s.centerRequest?.token ?? 0) + 1 },
+    }))
+  },
+  revealGentle: (id) =>
+    set((s) => ({
+      selected: id,
+      selectedEdge: null,
+      centerRequest: { id, token: (s.centerRequest?.token ?? 0) + 1, gentle: true },
     })),
+  setFollowCursor: (on) => set({ followCursor: on }),
   clearCenter: (token) =>
     set((s) => (s.centerRequest?.token === token ? { centerRequest: null } : {})),
   setEditing: (id) => set({ editingNode: id }),

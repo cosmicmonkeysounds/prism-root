@@ -10,6 +10,7 @@ import { useEffect } from 'react'
 import { Allotment, LayoutPriority } from 'allotment'
 import 'allotment/dist/style.css'
 import { useMode, MODES, type Mode, type ModeUi } from '@/store/mode'
+import { useEditJournal } from '@/store/edit-journal'
 import { LeftRail, CenterStage, TimelineDock, Region } from './regions'
 import { PropertiesTray } from './PropertiesTray'
 import { ModeBar } from './ModeBar'
@@ -25,12 +26,44 @@ export function StudioShell() {
   const setUi = useMode((s) => s.setUi)
   const hasTimeline = MODES.find((m) => m.id === mode)?.hasTimeline ?? false
 
-  // ⌘1..⌘3 (or Ctrl) switch modes. Plain modifier only — Alt/Shift
-  // combos stay free for other handlers.
+  // Shell keys: ⌘1..⌘3 switch modes; ⌘B / ⌘⌥B collapse the left rail /
+  // properties tray; ⌘\ hides the Writing story-graph pane for
+  // full-width text; ⌘Z / ⌘⇧Z drive the story edit journal whenever
+  // the keyboard is NOT in a text field (the text editor keeps
+  // CodeMirror's own history). (⌘ or Ctrl throughout.)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey
-      if (!mod || e.altKey || e.shiftKey) return
+      if (!mod) return
+      if (e.key.toLowerCase() === 'z' && !e.altKey) {
+        const t = e.target as HTMLElement | null
+        const inTextSurface =
+          t !== null &&
+          (t.closest('.cm-editor') !== null ||
+            t instanceof HTMLInputElement ||
+            t instanceof HTMLTextAreaElement ||
+            t.isContentEditable)
+        if (inTextSurface) return // native / CodeMirror history owns it
+        e.preventDefault()
+        const j = useEditJournal.getState()
+        void (e.shiftKey ? j.redo() : j.undo())
+        return
+      }
+      if (e.shiftKey) return
+      const st = useMode.getState()
+      if (e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        if (e.altKey) st.toggleTray()
+        else st.toggleRail()
+        return
+      }
+      if (e.altKey) return
+      if (e.key === '\\') {
+        if (st.mode !== 'writing') return
+        e.preventDefault()
+        st.setUi('writing', { graphOpen: !st.ui.writing.graphOpen })
+        return
+      }
       const idx = ['1', '2', '3'].indexOf(e.key)
       if (idx < 0 || idx >= MODES.length) return
       e.preventDefault()

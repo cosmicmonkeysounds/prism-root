@@ -8,7 +8,7 @@
 
 import type { ReactNode } from 'react'
 import { Allotment, LayoutPriority } from 'allotment'
-import type { Mode } from '@/store/mode'
+import { useMode, type Mode } from '@/store/mode'
 
 import { Sidebar } from '@/components/files/Sidebar'
 import { Editor } from '@/components/editor/Editor'
@@ -44,7 +44,8 @@ function EditorStack() {
 }
 
 /** Writing's center: text ⇄ story graph, both live over the same
- *  source. Either pane snaps closed for a full-width text or canvas. */
+ *  source. Either pane snaps closed for a full-width text or canvas;
+ *  ⌘\ (or a reveal while hidden) toggles the graph pane. */
 function WritingStage({
   split,
   onSplit,
@@ -52,6 +53,7 @@ function WritingStage({
   split: [number, number]
   onSplit: (split: [number, number]) => void
 }) {
+  const graphOpen = useMode((s) => s.ui.writing.graphOpen)
   return (
     <Allotment
       defaultSizes={split}
@@ -67,7 +69,7 @@ function WritingStage({
           <EditorStack />
         </Region>
       </Allotment.Pane>
-      <Allotment.Pane minSize={320} priority={LayoutPriority.High} snap>
+      <Allotment.Pane minSize={320} preferredSize={split[1]} priority={LayoutPriority.High} visible={graphOpen} snap>
         <Region>
           <StoryGraphPanel />
         </Region>

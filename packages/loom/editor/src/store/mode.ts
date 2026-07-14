@@ -43,6 +43,8 @@ export type ModeUi = {
   rows: [number, number]
   /** Writing-mode center split: [editor, graph]. */
   split: [number, number]
+  /** Writing-mode: whether the story-graph pane is showing (⌘\). */
+  graphOpen: boolean
   trayOpen: boolean
   railOpen: boolean
 }
@@ -56,13 +58,14 @@ function defaultUi(): Record<Mode, ModeUi> {
       cols: [240, 1000, 320],
       rows: [560, 180],
       split: [520, 620],
+      graphOpen: true,
       trayOpen: true,
       railOpen: true,
     },
     // Run: rooms rail · sim/live cockpit · inspector tray.
-    run: { cols: [300, 820, 340], rows: [620, 200], split: [520, 620], trayOpen: true, railOpen: true },
+    run: { cols: [300, 820, 340], rows: [620, 200], split: [520, 620], graphOpen: true, trayOpen: true, railOpen: true },
     // Deploy: launch/lifecycle/admin stage · inspector tray (no rail).
-    deploy: { cols: [260, 900, 340], rows: [620, 200], split: [520, 620], trayOpen: true, railOpen: false },
+    deploy: { cols: [260, 900, 340], rows: [620, 200], split: [520, 620], graphOpen: true, trayOpen: true, railOpen: false },
   }
 }
 
@@ -87,6 +90,7 @@ function sanitize(ui: Partial<Record<Mode, Partial<ModeUi>>> | undefined): Recor
         Math.max(280, u?.split?.[0] ?? b.split[0]),
         Math.max(280, u?.split?.[1] ?? b.split[1]),
       ],
+      graphOpen: u?.graphOpen ?? b.graphOpen,
       trayOpen: u?.trayOpen ?? b.trayOpen,
       railOpen: u?.railOpen ?? b.railOpen,
     }

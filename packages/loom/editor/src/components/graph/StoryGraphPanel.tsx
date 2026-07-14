@@ -59,6 +59,7 @@ import { useMode } from '@/store/mode'
 import { useWorkspace } from '@/store/workspace'
 import { useCockpit } from '@/store/cockpit'
 import { openContextMenu, type ContextMenuItem } from '@/store/context-menu'
+import { useEditJournal } from '@/store/edit-journal'
 import { buildBeatFlow } from './beat-flow'
 import { FloatingEdge } from './FloatingEdge'
 import { blockEditRange, toWordBlocks, type WordBlock } from './word-blocks'
@@ -75,6 +76,7 @@ import {
   type SourceAnchor,
 } from './body-nodes'
 import { dimmedNodeIds, FILTER_DIM_EDGE_OPACITY, FILTER_DIM_OPACITY } from './filter'
+import { nodeAtLine } from './follow'
 import { buildProjectFlow } from './flow'
 import { layeredLayout } from './layout'
 import {
@@ -157,6 +159,16 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
     setStatus(msg)
     window.setTimeout(() => setStatus((s) => (s === msg ? null : s)), 4000)
   }, [])
+
+  // Journal outcomes ("Undid: Connect a → b") surface on the same
+  // status line as the canvas's own edit feedback.
+  const journalNotice = useEditJournal((s) => s.notice)
+  const lastNoticeAt = useRef(0)
+  useEffect(() => {
+    if (journalNotice === null || journalNotice.at === lastNoticeAt.current) return
+    lastNoticeAt.current = journalNotice.at
+    say(journalNotice.text)
+  }, [journalNotice, say])
 
   // ---- build + layout --------------------------------------------------
 
@@ -283,7 +295,7 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
   const centerAttemptsRef = useRef({ token: 0, tries: 0 })
   useEffect(() => {
     if (centerRequest === null || positioned === null) return
-    const { id, token } = centerRequest
+    const { id, token, gentle } = centerRequest
     if (centerAttemptsRef.current.token !== token) {
       centerAttemptsRef.current = { token, tries: 0 }
     }
@@ -292,7 +304,16 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
       const abs = absolutePosition(hit, positioned.nodes)
       const w = (hit.measured?.width ?? hit.width ?? 180) as number
       const h = (hit.measured?.height ?? hit.height ?? 60) as number
-      rf.setCenter(abs.x + w / 2, abs.y + h / 2, { zoom: Math.max(rf.getZoom(), 0.9), duration: 320 })
+      // Gentle (cursor-follow) centering keeps whatever zoom the writer
+      // set; explicit reveals zoom in far enough to read the node.
+      const zoom = gentle === true ? rf.getZoom() : Math.max(rf.getZoom(), 0.9)
+      rf.setCenter(abs.x + w / 2, abs.y + h / 2, { zoom, duration: 320 })
+      useGraph.getState().clearCenter(token)
+      return
+    }
+    // A gentle request never mutates visibility — the target is inside a
+    // collapsed file / hidden overlay, so just drop it.
+    if (gentle === true) {
       useGraph.getState().clearCenter(token)
       return
     }
@@ -335,7 +356,7 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
       try {
         const current = text.slice(start, end)
         const edits = replaceExact(text, start, end, current, next)
-        if (edits.length > 0) await applyEditsToUri(anchor.uri, edits)
+        if (edits.length > 0) await applyEditsToUri(anchor.uri, edits, 'Edit line')
       } catch (e) {
         say(e instanceof EditError ? e.message : 'Edit failed — source changed underneath.')
       } finally {
@@ -367,7 +388,7 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
       try {
         const current = text.slice(range[0], range[1])
         const edits = replaceExact(text, range[0], range[1], current, next)
-        if (edits.length > 0) await applyEditsToUri(beat.uri, edits)
+        if (edits.length > 0) await applyEditsToUri(beat.uri, edits, `Edit block in ${beat.key}`)
       } catch (e) {
         say(e instanceof EditError ? e.message : 'Edit failed — source changed underneath.')
       } finally {
@@ -557,24 +578,42 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
   // Whatever cockpit hosts a `run` canvas (local Sim / live event mod API).
   const cockpitFireBeat = useCockpit((s) => s.fireBeat)
 
+  // Explicit "Show source" jumps focus into the text pane (switching a
+  // run canvas back to Writing); `focus: false` reveals scroll the text
+  // alongside a canvas action without stealing its keyboard.
   const revealAnchor = useCallback(
-    async (anchor: SourceAnchor, toWriting = true): Promise<void> => {
+    async (anchor: SourceAnchor, opts?: { focus?: boolean }): Promise<void> => {
       if (anchor === null) return
       const path = pathForUri(anchor.uri)
       const ws = useWorkspace.getState()
       const entry = ws.root ? findFileEntryByPath(ws.root, path) : null
-      if (entry) await ws.revealAt(entry, anchor.span.start.line + 1, anchor.span.start.column + 1)
-      if (toWriting) setMode('writing')
+      if (entry) {
+        await ws.revealAt(entry, anchor.span.start.line + 1, anchor.span.start.column + 1, opts)
+      }
+      if (opts?.focus !== false) setMode('writing')
     },
     [setMode],
   )
 
   const revealBeatSource = useCallback(
-    (beat: GraphBeat, toWriting = true) => {
+    (beat: GraphBeat, opts?: { focus?: boolean }) => {
       if (beat.uri === null || beat.span === null) return
-      void revealAnchor({ uri: beat.uri, span: beat.span }, toWriting)
+      void revealAnchor({ uri: beat.uri, span: beat.span }, opts)
     },
     [revealAnchor],
+  )
+
+  // Opening a beat (double-click / Enter / exit-pill follow) also lines
+  // the text pane up on its declaration — Writing shows both surfaces,
+  // so the canvas navigation IS the text navigation.
+  const openBeatSynced = useCallback(
+    (key: string) => {
+      openBeat(key)
+      if (!editable) return
+      const beat = graph.beats.get(key)
+      if (beat !== undefined) revealBeatSource(beat, { focus: false })
+    },
+    [openBeat, editable, graph, revealBeatSource],
   )
 
   const onNodeClick = useCallback(
@@ -594,17 +633,18 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
 
   const onNodeDoubleClick = useCallback(
     (_: unknown, node: Node) => {
-      // Project level: drill into a beat. Beat level: inline-edit text
-      // nodes, follow exits, or fall back to opening the source.
+      // Project level: drill into a beat (syncing the text pane onto
+      // it). Beat level: inline-edit text nodes, follow exits, or fall
+      // back to opening the source.
       const beat = graph.beats.get(node.id)
       if (beat !== undefined) {
-        openBeat(beat.key)
+        openBeatSynced(beat.key)
         return
       }
       if (node.type === 'bodyExit') {
         const data = node.data as BodyExitData
         if (data.resolved !== null) {
-          openBeat(data.resolved)
+          openBeatSynced(data.resolved)
           return
         }
       }
@@ -641,7 +681,7 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
         if (ent !== undefined) void revealAnchor({ uri: ent.uri, span: ent.span })
       }
     },
-    [graph, openBeat, revealAnchor, beatEditable, setEditing, editable, say, setMode],
+    [graph, openBeatSynced, revealAnchor, beatEditable, setEditing, editable, say, setMode],
   )
 
   // ---- edge selection + hover tooltips -----------------------------------
@@ -775,7 +815,7 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
         const beat = graph.beats.get(st.selected)
         if (beat !== undefined) {
           e.preventDefault()
-          st.openBeat(beat.key)
+          openBeatSynced(beat.key)
           return
         }
         if (st.selected.startsWith('file:')) {
@@ -801,7 +841,7 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [editable, graph, say, rf, dimmedIds])
+  }, [editable, graph, say, rf, dimmedIds, openBeatSynced])
 
   const onNodeDragStop = useCallback(
     (_: unknown, node: Node) => {
@@ -810,6 +850,23 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
     },
     [moveNode, projectKey, view.kind],
   )
+
+  // ---- cursor follow (text → canvas) --------------------------------------
+  // The reverse of openBeatSynced: as the writer moves through the text,
+  // the project map selects + gently centers the enclosing beat/entity.
+
+  const followCursor = useGraph((s) => s.followCursor)
+  const cursorLine = useWorkspace((s) => s.cursor?.line ?? null)
+  const activePath = useWorkspace((s) => s.activePath)
+  useEffect(() => {
+    if (!editable || !followCursor || view.kind !== 'project') return
+    if (cursorLine === null || activePath === null || !activePath.endsWith('.loom')) return
+    const id = nodeAtLine(graph, uriFor(activePath), cursorLine - 1)
+    if (id === null) return
+    const st = useGraph.getState()
+    if (st.selected === id || st.editingBlock !== null || st.editingNode !== null) return
+    st.revealGentle(id)
+  }, [editable, followCursor, view.kind, cursorLine, activePath, graph])
 
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node) => {
@@ -948,6 +1005,41 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
     [graph, editable, beatEditable, openBeat, revealBeatSource, revealAnchor, say, setEditing, toggleExpanded, variant, cockpitFireBeat],
   )
 
+  // Right-click a connection: navigate either end, open its source, or
+  // hand it to the Properties tray's rewire picker.
+  const onEdgeContextMenu = useCallback(
+    (event: React.MouseEvent, edge: Edge) => {
+      event.preventDefault()
+      const ge = (edge.data as { graphEdge?: GraphEdge } | undefined)?.graphEdge
+      if (ge === undefined) return
+      const items: ContextMenuItem[] = [
+        { label: `Go to ${ge.from}`, onSelect: () => useGraph.getState().reveal(ge.from) },
+      ]
+      if (ge.to !== null) {
+        items.push({ label: `Go to ${ge.to}`, onSelect: () => useGraph.getState().reveal(ge.to!) })
+      }
+      if (ge.uri !== null && ge.span !== null) {
+        items.push({
+          label: 'Show source',
+          onSelect: () => void revealAnchor({ uri: ge.uri!, span: ge.span! }),
+        })
+      }
+      if (editable && ge.narrative && ge.targetRange !== null && ge.kind !== 'end') {
+        items.push({
+          label: 'Rewire in Properties…',
+          testid: 'graph-edge-rewire',
+          onSelect: () => {
+            selectEdge(edge.id)
+            const m = useMode.getState()
+            m.setUi(m.mode, { trayOpen: true })
+          },
+        })
+      }
+      openContextMenu(items, { x: event.clientX, y: event.clientY })
+    },
+    [editable, revealAnchor, selectEdge],
+  )
+
   const onPaneContextMenu = useCallback(
     (event: React.MouseEvent | MouseEvent) => {
       event.preventDefault()
@@ -1063,6 +1155,7 @@ function Canvas({ variant }: { variant: 'edit' | 'run' }) {
             onNodeMouseEnter={onNodeMouseEnter}
             onNodeMouseLeave={onNodeMouseLeave}
             onEdgeClick={onEdgeClick}
+            onEdgeContextMenu={onEdgeContextMenu}
             onEdgeMouseEnter={onEdgeMouseEnter}
             onEdgeMouseLeave={hideTip}
             onPaneContextMenu={onPaneContextMenu}
@@ -1260,6 +1353,8 @@ function Toolbar({
   const setSearch = useGraph((s) => s.setSearch)
   const anyExpanded = useGraph((s) => Object.keys(s.expanded).length > 0)
   const setAllExpanded = useGraph((s) => s.setAllExpanded)
+  const followCursor = useGraph((s) => s.followCursor)
+  const setFollowCursor = useGraph((s) => s.setFollowCursor)
 
   return (
     <div className="h-8 px-2 flex items-center gap-2 text-[11px] text-zinc-400 border-b border-white/10 shrink-0">
@@ -1300,6 +1395,10 @@ function Toolbar({
               on={anyExpanded}
               onToggle={(v) => setAllExpanded([...graph.beats.keys()], v)}
             />
+            {variant === 'edit' && (
+              // Text-cursor follow: the canvas tracks where the writer is.
+              <OverlayToggle label="follow" on={followCursor} onToggle={setFollowCursor} />
+            )}
           </>
         )}
         {variant === 'edit' && view.kind === 'project' && (
@@ -1424,7 +1523,7 @@ async function connectBeats(
     if (text === null) return
     const [file] = parse(text)
     const edits = appendDivert(text, file, source.name, written)
-    await applyEditsToUri(uri, edits)
+    await applyEditsToUri(uri, edits, `Connect ${source.key} → ${written}`)
     say(`Connected ${source.key} → ${written}`)
   } catch (e) {
     say(e instanceof EditError ? e.message : 'Could not append the divert.')
@@ -1488,7 +1587,7 @@ async function createBeat(
   }
   const [file] = parse(text)
   const edits = insertBeat(text, file, clean, { kind: 'end' })
-  await applyEditsToUri(uri, edits)
+  await applyEditsToUri(uri, edits, `Create beat ${clean}`)
   useGraph.getState().reveal(clean)
   say(`Created \`${clean}\` in ${path}`)
 }
@@ -1499,7 +1598,7 @@ async function renameBeat(beat: GraphBeat, say: (m: string) => void): Promise<vo
   if (next === null || next.trim().length === 0 || next.trim() === beat.name) return
   try {
     const edits = lspWorkspaceSync().renameBeat(beat.key, next.trim())
-    await applyEditMap(edits)
+    await applyEditMap(edits, `Rename ${beat.key} → ${next.trim()}`)
     const newKey = beat.owner === null ? next.trim() : `${beat.owner}.${next.trim()}`
     useGraph.getState().select(newKey)
     say(`Renamed to \`${newKey}\` (${edits.size} file${edits.size === 1 ? '' : 's'})`)
@@ -1517,7 +1616,7 @@ async function deleteBeat(beat: GraphBeat, say: (m: string) => void): Promise<vo
   if (text === null) return
   const [file] = parse(text)
   try {
-    await applyEditsToUri(beat.uri, removeBeat(text, file, beat.name))
+    await applyEditsToUri(beat.uri, removeBeat(text, file, beat.name), `Delete beat ${beat.key}`)
     useGraph.getState().select(null)
     say(`Deleted \`${beat.key}\``)
   } catch (e) {
@@ -1538,7 +1637,7 @@ async function insertLineAt(beat: GraphBeat, index: number, say: (m: string) => 
   if (text === null) return
   const [file] = parse(text)
   try {
-    await applyEditsToUri(beat.uri, insertBodyLines(text, file, beat.name, index, [line.trim()]))
+    await applyEditsToUri(beat.uri, insertBodyLines(text, file, beat.name, index, [line.trim()]), `Insert line in ${beat.key}`)
   } catch (e) {
     say(e instanceof EditError ? e.message : 'Insert failed.')
   }
@@ -1551,7 +1650,7 @@ async function deleteBodyItemAt(beat: GraphBeat, index: number, say: (m: string)
   if (text === null) return
   const [file] = parse(text)
   try {
-    await applyEditsToUri(beat.uri, removeBodyItem(text, file, beat.name, index))
+    await applyEditsToUri(beat.uri, removeBodyItem(text, file, beat.name, index), `Delete item in ${beat.key}`)
   } catch (e) {
     say(e instanceof EditError ? e.message : 'Delete failed.')
   }
@@ -1566,7 +1665,7 @@ async function addBodyLine(beat: GraphBeat, say: (m: string) => void): Promise<v
   if (text === null) return
   const [file] = parse(text)
   try {
-    await applyEditsToUri(beat.uri, appendBodyLines(text, file, beat.name, [line.trim()]))
+    await applyEditsToUri(beat.uri, appendBodyLines(text, file, beat.name, [line.trim()]), `Add line to ${beat.key}`)
   } catch (e) {
     say(e instanceof EditError ? e.message : 'Could not add the line.')
   }
@@ -1581,7 +1680,7 @@ async function addChoice(beat: GraphBeat, say: (m: string) => void): Promise<voi
   if (text === null) return
   const [file] = parse(text)
   try {
-    await applyEditsToUri(beat.uri, appendChoice(text, file, beat.name, choice.trim()))
+    await applyEditsToUri(beat.uri, appendChoice(text, file, beat.name, choice.trim()), `Add choice to ${beat.key}`)
   } catch (e) {
     say(e instanceof EditError ? e.message : 'Could not add the choice.')
   }
@@ -1616,7 +1715,7 @@ async function createDeclaration(
     return
   }
   try {
-    await applyEditsToUri(uri, appendDeclaration(text, kind, clean))
+    await applyEditsToUri(uri, appendDeclaration(text, kind, clean), `Create ${kind} ${clean}`)
     // The entity node id — reveal pulls the entity overlay on if needed.
     useGraph.getState().reveal(`${label}:${clean}`)
     say(`Created ${kind} \`${clean}\` in ${pathForUri(uri)}`)

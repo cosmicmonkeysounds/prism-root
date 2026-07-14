@@ -300,7 +300,7 @@ function GraphBeatDetail({ beat, graph }: { beat: GraphBeat; graph: StoryGraph }
       ? (name: string, key: string, value: string) => {
           try {
             const next = applyBeatProperty(text, name, key, value)
-            if (next !== text) void writePathContents(pathForUri(beat.uri!), next)
+            if (next !== text) void writePathContents(pathForUri(beat.uri!), next, `Set ${name}.${key}`)
           } catch {
             /* invalid edit — leave source untouched */
           }

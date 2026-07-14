@@ -11,6 +11,7 @@ import { useSettings } from '@/store/settings'
 import { extensionForPath, languageForPath } from '@/lib/language'
 import { loomLspExtensions } from '@/lib/loom-lsp'
 import { loomLint, loomLintProject } from '@/lib/loom-lint'
+import { editorContextMenu } from '@/lib/editor-menu'
 
 export function Editor() {
   const activePath = useWorkspace((s) => s.activePath)
@@ -52,6 +53,9 @@ export function Editor() {
   const extensions = useMemo(() => {
     if (!filePath) return []
     const ext: Extension[] = [...extensionForPath(filePath)]
+    // Right-click menu everywhere; the `.loom` variant adds the LSP
+    // actions (goto / references / rename / reveal-on-canvas) + F2.
+    ext.push(editorContextMenu(filePath, { lsp: languageForPath(filePath) === 'loom' }))
     // Loom IDE layer: diagnostics + hover / completion / goto / references /
     // occurrences, all driven by `@loom/core/lsp`. Composed here (not in
     // `extensionForPath`) so it can read the editor settings + file path.
@@ -139,7 +143,7 @@ export function Editor() {
         selection: EditorSelection.cursor(pos),
         effects: EditorView.scrollIntoView(pos, { y: 'center' }),
       })
-      view.focus()
+      if (pendingCursor.focus) view.focus()
       lastRevealToken.current = pendingCursor.token
     })
     return () => cancelAnimationFrame(id)

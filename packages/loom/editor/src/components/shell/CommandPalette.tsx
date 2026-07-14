@@ -3,6 +3,8 @@ import clsx from 'clsx'
 import type { FsEntry } from '@/lib/fs'
 import { useWorkspace } from '@/store/workspace'
 import { useSettings } from '@/store/settings'
+import { useMode } from '@/store/mode'
+import { useEditJournal } from '@/store/edit-journal'
 import { lspWorkspaceSync, uriFor } from '@/lib/lsp-client'
 import { navigateToLocation } from '@/lib/lsp-nav'
 import { useLspIndexGen } from '@/lib/lsp-index'
@@ -80,6 +82,8 @@ export function CommandPalette() {
   // Recompute symbol lists when the LSP index changes (async project index
   // completing while the palette is open).
   const indexGen = useLspIndexGen((s) => s.gen)
+  const undoTop = useEditJournal((s) => s.undoStack[s.undoStack.length - 1]?.label ?? null)
+  const redoTop = useEditJournal((s) => s.redoStack[s.redoStack.length - 1]?.label ?? null)
 
   const [isOpen, setOpen] = useState(false)
   const [mode, setMode] = useState<Mode>('files')
@@ -141,6 +145,29 @@ export function CommandPalette() {
       { id: 'goto-symbol', label: 'Go to Symbol in File…', hint: '⌘⇧O', run: () => setQuery('@') },
       { id: 'goto-wsymbol', label: 'Go to Symbol in Workspace…', run: () => setQuery('#') },
       {
+        id: 'undo-story',
+        label: undoTop !== null ? `Edit: Undo Story Edit — ${undoTop}` : 'Edit: Undo Story Edit',
+        hint: '⌘Z',
+        run: () => void useEditJournal.getState().undo(),
+      },
+      {
+        id: 'redo-story',
+        label: redoTop !== null ? `Edit: Redo Story Edit — ${redoTop}` : 'Edit: Redo Story Edit',
+        hint: '⌘⇧Z',
+        run: () => void useEditJournal.getState().redo(),
+      },
+      { id: 'toggle-rail', label: 'View: Toggle Left Rail', hint: '⌘B', run: () => useMode.getState().toggleRail() },
+      { id: 'toggle-tray', label: 'View: Toggle Properties Tray', hint: '⌘⌥B', run: () => useMode.getState().toggleTray() },
+      {
+        id: 'toggle-graph',
+        label: 'View: Toggle Story Graph Pane',
+        hint: '⌘\\',
+        run: () => {
+          const m = useMode.getState()
+          if (m.mode === 'writing') m.setUi('writing', { graphOpen: !m.ui.writing.graphOpen })
+        },
+      },
+      {
         id: 'toggle-wrap',
         label: `View: ${wordWrap ? 'Disable' : 'Enable'} Word Wrap`,
         run: () => setSetting('wordWrap', !wordWrap),
@@ -162,7 +189,7 @@ export function CommandPalette() {
         },
       },
     ],
-    [activePath, saveActive, saveAll, closeFile, closeAll, reopenClosed, cycleTab, wordWrap, theme, setSetting],
+    [activePath, saveActive, saveAll, closeFile, closeAll, reopenClosed, cycleTab, wordWrap, theme, setSetting, undoTop, redoTop],
   )
 
   const files = useMemo(() => (root ? flatten(root) : []), [root])

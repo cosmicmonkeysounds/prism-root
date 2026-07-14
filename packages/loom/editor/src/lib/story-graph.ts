@@ -15,6 +15,7 @@ import { docText, lspWorkspaceSync, pathForUri, uriFor } from '@/lib/lsp-client'
 import { syncBuffer } from '@/lib/lsp-index'
 import { useLspIndexGen } from '@/lib/lsp-index'
 import { findFileEntryByPath } from '@/lib/lsp-nav'
+import { useEditJournal, type JournalEdit } from '@/store/edit-journal'
 import { useWorkspace } from '@/store/workspace'
 
 /** The whole-project story graph, recomputed when the LSP index changes. */
@@ -37,35 +38,47 @@ export function useProjectKey(): string {
  * Write `next` as the full contents of `path`, opening the file as a tab
  * if it isn't one yet (so the change is visible + undoable + saveable),
  * and sync the LSP Workspace immediately so the graph rebuilds now.
+ * A `label` records the write in the story edit journal (⌘Z outside
+ * the text editor); omit it only for restores the journal itself makes.
  */
-export async function writePathContents(path: string, next: string): Promise<void> {
+export async function writePathContents(path: string, next: string, label?: string): Promise<void> {
   const ws = useWorkspace.getState()
   if (!ws.openFiles[path]) {
     const entry = ws.root ? findFileEntryByPath(ws.root, path) : null
     if (!entry) throw new Error(`no file entry for ${path}`)
     await ws.openFile(entry)
   }
+  const before = useWorkspace.getState().openFiles[path]?.contents ?? ''
   useWorkspace.getState().updateContents(path, next)
   syncBuffer(path, next)
+  if (label !== undefined) {
+    useEditJournal.getState().record(label, [{ path, before, after: next }])
+  }
 }
 
 /**
  * Apply a per-URI `TextEdit` batch (the shape `Workspace.renameBeat`
  * returns). Each document's edits are computed against the text the LSP
  * Workspace currently holds — which IS the live buffer for open files.
+ * The whole batch journals as ONE entry under `label`, so a cross-file
+ * rename undoes atomically.
  */
-export async function applyEditMap(edits: Map<string, TextEdit[]>): Promise<void> {
+export async function applyEditMap(edits: Map<string, TextEdit[]>, label?: string): Promise<void> {
+  const journal: JournalEdit[] = []
   for (const [uri, list] of edits) {
     if (list.length === 0) continue
     const text = docText(uri)
     if (text === null) throw new Error(`no indexed text for ${uri}`)
-    await writePathContents(pathForUri(uri), applyEdits(text, list))
+    const next = applyEdits(text, list)
+    await writePathContents(pathForUri(uri), next)
+    journal.push({ path: pathForUri(uri), before: text, after: next })
   }
+  if (label !== undefined) useEditJournal.getState().record(label, journal)
 }
 
 /** Apply edits to a single document identified by URI. */
-export async function applyEditsToUri(uri: string, list: TextEdit[]): Promise<void> {
-  await applyEditMap(new Map([[uri, list]]))
+export async function applyEditsToUri(uri: string, list: TextEdit[], label?: string): Promise<void> {
+  await applyEditMap(new Map([[uri, list]]), label)
 }
 
 /**
@@ -103,7 +116,7 @@ export async function rewireGraphEdge(
   if (text === null) return `\`${pathForUri(uri)}\` isn’t indexed yet.`
   try {
     const edits = retargetDivert(text, start, end, text.slice(start, end), written)
-    if (edits.length > 0) await applyEditsToUri(uri, edits)
+    if (edits.length > 0) await applyEditsToUri(uri, edits, `Rewire ${edge.from} → ${written}`)
     return null
   } catch (e) {
     return e instanceof EditError ? e.message : 'Could not rewire — source changed underneath.'

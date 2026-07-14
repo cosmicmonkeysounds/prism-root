@@ -292,16 +292,75 @@ active buffer) via `lib/story-graph.ts`'s `useStoryGraph()`
     into a beat / expands a collapsed file; Esc backs out of a
     drill-in / clears selection; F2 renames the selected beat; Delete
     removes it (file beats).
+- **Two-way pane sync** (Writing): opening a beat on the canvas
+  (double-click / Enter / exit-pill follow) also lines the text pane up
+  on its declaration **without stealing keyboard focus**
+  (`openBeatSynced` → `revealAt(..., { focus: false })` — the
+  `pendingCursor.focus` flag), so Esc still backs out of the drill-in;
+  and the reverse — the **follow** toolbar toggle (`followCursor` in
+  `store/graph.ts`, default on) selects + gently centers the
+  beat/entity enclosing the text cursor (`graph/follow.ts`'s pure
+  `nodeAtLine` — nearest section start over beats ∪ entities;
+  `revealGentle` keeps the current zoom and never mutates visibility).
+- **Edge context menu**: right-click a connection → go to either end,
+  show source, or "Rewire in Properties…" (selects the edge + opens
+  the tray).
 - Pipeline regression test: `components/graph/graph-pipeline.test.ts`
   (core graph → flow projection → ELK + collapsed-container coverage,
   over `escape-the-internet`); pure-logic suites in
-  `flow-collapse.test.ts`, `navigation.test.ts`, `filter.test.ts`.
+  `flow-collapse.test.ts`, `navigation.test.ts`, `filter.test.ts`,
+  `follow.test.ts`.
 
 ## Conventions
 - Path alias `@/*` → `src/*`.
 - Keep components small; put logic in `lib/` or `store/`.
 - Two persistence backends: the SaaS API (server projects) and FS handles (local folders). New persistence goes through `store/workspace.ts`'s backend-aware paths, not a third mechanism.
 - Browser support: Chromium-based (File System Access API).
+
+### Editor QoL — context menu, rename, shell keys
+
+- **The text editor has its own contextual menu** (`lib/editor-menu.ts`,
+  wired in `Editor.tsx` for every file type): right-click → Go to
+  definition (F12) / Find references (⇧F12) / Rename beat (F2) /
+  **Reveal in story graph** (LSP group, `.loom` only) above the
+  clipboard basics (Cut/Copy/Paste/Select all). Shift+right-click keeps
+  the native browser menu. **F2 in the text editor renames the beat at
+  the cursor** (exact key under the cursor — `Owner.name` qualified
+  included — else the enclosing beat) through the same workspace-wide
+  `Workspace.renameBeat` the canvas uses.
+- `ContextMenuHost` supports right-aligned keybinding `hint`s and
+  `{ separator: true }` divider rows (`store/context-menu.ts`'s
+  `ContextMenuEntry`).
+- **Shell keys** (`StudioShell`): ⌘1..⌘3 modes, **⌘B** toggle left
+  rail, **⌘⌥B** toggle properties tray, **⌘\** toggle the Writing
+  story-graph pane (`ModeUi.graphOpen`; an explicit `reveal` re-opens
+  it). All three also live in the command palette. Tab keys stay
+  ⌥W / ⌥⇧T / ⌥[ / ⌥] / ⌥1..9 (`Tabs.tsx`); ⌘S / ⌘⇧S save.
+- **The story edit journal** (`store/edit-journal.ts`): every
+  structural edit that flows through `lib/story-graph.ts`'s write path
+  (`writePathContents` / `applyEditMap` / `applyEditsToUri` — canvas
+  connect/rewire/create/rename/delete, word-block + BeatStrip edits,
+  tray field writes, context-menu rename) records an atomic multi-file
+  `{path, before, after}` entry with a human label. **⌘Z / ⌘⇧Z outside
+  a text surface** undo/redo through it (focus in CodeMirror keeps CM's
+  own history); the palette shows the top entry's label ("Edit: Undo
+  Story Edit — Connect a → b"). Application is **conflict-guarded**: an
+  entry only applies while every file still holds the text it expects —
+  a buffer that moved on (typed edits, a CM undo of the same change)
+  drops the stale entry instead of clobbering. Outcomes surface on the
+  graph toolbar status line; the journal clears on project switch.
+  Unit-tested in `edit-journal.test.ts`.
+- **Cockpit context menus** (`cockpit/tabs.tsx`): right-click a chat
+  message → Copy text / **Reply in thread** (Slack-style — the
+  composer grows a reply chip and `say` passes `parentSeq`, rooted at
+  the thread parent) / Show beat on story map / Inspect sender / View
+  as sender / Hide-Show message; right-click a roster row or cast pill
+  → Inspect / View as / Capture-Release.
+- Playwright e2e: `e2e/studio.spec.ts` (mode bar, pane toggles — panes
+  clip to width 0, so assert with `toBeInViewport`), `e2e/qol.spec.ts`
+  (drill-in text sync, follow-cursor, editor context menu, ⌘Z journal
+  roundtrip, chat message menus), `e2e/graph.spec.ts` (canvas),
+  `e2e/sim.spec.ts` (Run/Sim source).
 
 ## Loom integration
 

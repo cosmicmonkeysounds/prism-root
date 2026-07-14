@@ -478,9 +478,36 @@ home — launch/lifecycle/codes/QR/guest-lookup (the old Event tab,
 promoted; `CockpitTab.Event` deleted). Legacy persisted mode ids
 migrate on load (`editing`→`writing`, `sim`/`operate`→`run`).
 
+**Writing-mode QoL landed 2026-07-14** (`editor` only): the two Writing
+panes now track each other — opening a beat on the canvas (double-click
+/ Enter) also lines the text editor up on its declaration *without
+stealing focus* (`pendingCursor.focus`), and a **follow** toolbar
+toggle selects/centers the beat or entity enclosing the text cursor
+(pure `graph/follow.ts::nodeAtLine`). The **text editor got its own
+context menu** (`lib/editor-menu.ts` — go to definition / references /
+rename / reveal-in-graph + clipboard; Shift+right-click = native menu)
+and **F2 renames the beat at the cursor** workspace-wide; edges got a
+context menu too. Shell keys: **⌘B** rail, **⌘⌥B** tray, **⌘\**
+toggles the story-graph pane (`ModeUi.graphOpen`; `reveal` re-opens
+it); `ContextMenuHost` gained keybinding hints + separators. The
+Playwright e2e suite was refreshed to the three-mode shell and grew
+`qol.spec.ts` (25 e2e tests green).
+
+**The story edit journal + cockpit context menus landed 2026-07-14**
+(`editor` only): structural edits (canvas connect/rewire/create/rename/
+delete, word-block/BeatStrip/tray writes) journal as atomic, labelled
+multi-file entries (`store/edit-journal.ts`) — **⌘Z/⌘⇧Z outside a text
+surface** undo/redo them cross-surface (CodeMirror keeps its own
+history inside the editor), conflict-guarded so a buffer that moved on
+drops the stale entry instead of clobbering. Cockpit chat messages,
+roster rows, and cast pills got real context menus (copy /
+**reply-in-thread** with a composer chip + `parentSeq` / show-on-map /
+inspect / view-as / hide).
+
 Everything in the TS engine is done and green (367 vitest tests in `core`,
-+76 in the editor incl. the graph-pipeline corpus, word-blocks, rooms-lens,
-flow-collapse, navigation, filter, sim-store, and mode-store suites). The only
++90 in the editor incl. the graph-pipeline corpus, word-blocks, rooms-lens,
+flow-collapse, navigation, filter, follow, edit-journal, sim-store, and
+mode-store suites). The only
 remaining work is the **Rust mirror**
 (parser + runtime crates), which is not yet updated for ANY of Slices
 1/2/A/3/B/C, these gaps, or the story graph — the TS and Rust engines

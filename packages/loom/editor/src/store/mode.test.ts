@@ -80,6 +80,16 @@ describe('mode store (v3 topology)', () => {
     const ui = useMode.getState().ui.writing
     expect(ui.cols[0]).toBeGreaterThanOrEqual(160) // clamped
     expect(ui.split.every((n) => n >= 280)).toBe(true) // defaulted
+    expect(ui.graphOpen).toBe(true) // defaulted
+  })
+
+  it('persists the graph-pane toggle (⌘\\) round-trip', async () => {
+    const { useMode } = await freshMode()
+    useMode.getState().setUi('writing', { graphOpen: false })
+    const raw = JSON.parse(storage.getItem('loom.studio') ?? '{}') as {
+      ui: { writing: { graphOpen: boolean } }
+    }
+    expect(raw.ui.writing.graphOpen).toBe(false)
   })
 
   it('persists split edits round-trip', async () => {

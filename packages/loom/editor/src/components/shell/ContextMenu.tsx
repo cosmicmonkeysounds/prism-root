@@ -7,7 +7,7 @@
 // `@/store/context-menu` so this file is component-only.
 
 import { useEffect, useLayoutEffect, useRef } from 'react'
-import { useContextMenu } from '@/store/context-menu'
+import { isSeparator, useContextMenu } from '@/store/context-menu'
 
 export function ContextMenuHost() {
   const items = useContextMenu((s) => s.items)
@@ -57,30 +57,37 @@ export function ContextMenuHost() {
       style={{ position: 'fixed', zIndex: 2000 }}
       className="min-w-[180px] rounded border border-white/10 bg-zinc-950 shadow-2xl text-xs py-1 font-mono"
     >
-      {items.map((item, i) => (
-        <button
-          key={i}
-          type="button"
-          role="menuitem"
-          disabled={item.disabled}
-          data-testid={item.testid}
-          onClick={() => {
-            if (item.disabled) return
-            item.onSelect()
-            close()
-          }}
-          className={
-            'block w-full text-left px-3 py-1 ' +
-            (item.disabled
-              ? 'text-zinc-700 cursor-not-allowed'
-              : item.kind === 'danger'
-                ? 'text-rose-300 hover:bg-rose-400/10'
-                : 'text-zinc-200 hover:bg-blue-400/10')
-          }
-        >
-          {item.label}
-        </button>
-      ))}
+      {items.map((item, i) =>
+        isSeparator(item) ? (
+          <div key={i} role="separator" className="my-1 border-t border-white/10" />
+        ) : (
+          <button
+            key={i}
+            type="button"
+            role="menuitem"
+            disabled={item.disabled}
+            data-testid={item.testid}
+            onClick={() => {
+              if (item.disabled) return
+              item.onSelect()
+              close()
+            }}
+            className={
+              'flex w-full items-center justify-between gap-4 text-left px-3 py-1 ' +
+              (item.disabled
+                ? 'text-zinc-700 cursor-not-allowed'
+                : item.kind === 'danger'
+                  ? 'text-rose-300 hover:bg-rose-400/10'
+                  : 'text-zinc-200 hover:bg-blue-400/10')
+            }
+          >
+            <span className="truncate">{item.label}</span>
+            {item.hint !== undefined && (
+              <span className={item.disabled ? 'text-zinc-800' : 'text-zinc-500'}>{item.hint}</span>
+            )}
+          </button>
+        ),
+      )}
     </div>
   )
 }

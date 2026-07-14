@@ -47,7 +47,7 @@ function freshLsp(state: EditorState, path: string): { ws: ReturnType<typeof lsp
 const WORD = /[A-Za-z_][\w]*/g
 
 /** The identifier span covering `pos`, or `null`. */
-function wordAt(state: EditorState, pos: number): { from: number; to: number; text: string } | null {
+export function wordAt(state: EditorState, pos: number): { from: number; to: number; text: string } | null {
   const line = state.doc.lineAt(pos)
   const text = line.text
   WORD.lastIndex = 0
@@ -181,7 +181,7 @@ function loomCompletionSource(path: string): CompletionSource {
 
 // ── §3 go-to-definition (click + keymap + mod-hover underline) ────────
 
-function definitionAtPos(view: EditorView, path: string, pos: number) {
+export function definitionAtPos(view: EditorView, path: string, pos: number) {
   const { ws, uri } = freshLsp(view.state, path)
   return firstLocation(ws.definitionAt(uri, offsetToLsp(view.state, pos)))
 }
@@ -208,7 +208,7 @@ function gotoKeymap(path: string): Extension {
 }
 
 /** Pin the symbol under the cursor into the focus bus → References panel. */
-function findReferences(view: EditorView, path: string): boolean {
+export function findReferences(view: EditorView, path: string): boolean {
   const head = view.state.selection.main.head
   const w = wordAt(view.state, head)
   if (!w) return false

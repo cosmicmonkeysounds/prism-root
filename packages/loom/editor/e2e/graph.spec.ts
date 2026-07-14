@@ -1,6 +1,6 @@
-// The Editing-mode story-graph canvas: node cards, word-block
-// expand/collapse (cards stretch to fit), genuine node dragging (moves
-// stick across re-renders), and the beat drill-in.
+// The story-graph canvas (Writing mode's right pane): node cards,
+// word-block expand/collapse (cards stretch to fit), genuine node
+// dragging (moves stick across re-renders), and the beat drill-in.
 
 import { test, expect } from '@playwright/test'
 import { openProject, switchMode } from './helpers'
@@ -8,7 +8,7 @@ import { openProject, switchMode } from './helpers'
 test.describe('story-graph canvas', () => {
   test.beforeEach(async ({ page }) => {
     await openProject(page)
-    await switchMode(page, 'editing')
+    await switchMode(page, 'writing')
     // First ELK layout + the measured second pass.
     await expect(page.getByTestId('graph-beat-opening')).toBeVisible()
     await page.waitForTimeout(1200)
@@ -41,9 +41,12 @@ test.describe('story-graph canvas', () => {
     await page.getByTestId('graph-overlay-blocks').click()
     await page.waitForTimeout(1200)
     await expect(page.getByTestId('graph-beat-summit')).toContainText('The city glitters below.')
+    await expect(page.getByTestId('graph-beat-opening')).toContainText('Take the lift')
     await page.getByTestId('graph-overlay-blocks').click()
     await page.waitForTimeout(600)
-    await expect(page.getByTestId('graph-beat-summit')).not.toContainText('The city glitters below.')
+    // Collapse restores the 3-line preview — assert on content BEYOND the
+    // preview cap (summit's whole 2-line body fits inside its preview).
+    await expect(page.getByTestId('graph-beat-opening')).not.toContainText('Take the lift')
   })
 
   test('dragging a node moves it and the position sticks', async ({ page }) => {
@@ -51,16 +54,20 @@ test.describe('story-graph canvas', () => {
     const before = (await beat.boundingBox())!
     await page.mouse.move(before.x + before.width / 2, before.y + 8)
     await page.mouse.down()
-    await page.mouse.move(before.x + before.width / 2 + 140, before.y + 120, { steps: 10 })
+    // Modest delta, down-LEFT — a long rightward drag reaches the
+    // (narrower, split-pane) canvas edge and auto-pans the viewport,
+    // and summit is the rightmost node, next to the minimap corner.
+    await page.mouse.move(before.x + before.width / 2 - 100, before.y + 90, { steps: 10 })
     await page.mouse.up()
     await page.waitForTimeout(400)
 
     const after = (await beat.boundingBox())!
-    expect(Math.abs(after.x - before.x)).toBeGreaterThan(70)
-    expect(Math.abs(after.y - before.y)).toBeGreaterThan(60)
+    expect(Math.abs(after.x - before.x)).toBeGreaterThan(50)
+    expect(Math.abs(after.y - before.y)).toBeGreaterThan(45)
 
     // A selection click re-decorates every node — the move must survive.
-    await page.getByTestId('graph-beat-opening').click()
+    // (Click the dragged node itself: it is certainly on-screen.)
+    await beat.click({ position: { x: 10, y: 8 } })
     await page.waitForTimeout(300)
     const settled = (await beat.boundingBox())!
     expect(Math.abs(settled.x - after.x)).toBeLessThan(5)

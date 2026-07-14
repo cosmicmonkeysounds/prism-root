@@ -66,7 +66,7 @@ export function BeatStrip() {
     try {
       const [file] = parse(text)
       const edits = moveBodyItem(text, file, beat.name, from, to)
-      if (edits.length > 0) await applyEditsToUri(uri, edits)
+      if (edits.length > 0) await applyEditsToUri(uri, edits, 'Reorder beat items')
     } catch (e) {
       fail(e, 'Reorder failed.')
     }
@@ -78,7 +78,7 @@ export function BeatStrip() {
     if (text === null) return
     try {
       const [file] = parse(text)
-      await applyEditsToUri(uri, removeBodyItem(text, file, beat.name, index))
+      await applyEditsToUri(uri, removeBodyItem(text, file, beat.name, index), `Delete item in ${beat.name}`)
     } catch (e) {
       fail(e, 'Delete failed.')
     }
@@ -90,7 +90,7 @@ export function BeatStrip() {
     if (text === null) return
     try {
       const [file] = parse(text)
-      await applyEditsToUri(uri, appendBodyLines(text, file, beat.name, [draft.trim()]))
+      await applyEditsToUri(uri, appendBodyLines(text, file, beat.name, [draft.trim()]), `Add line to ${beat.name}`)
       setDraft('')
     } catch (e) {
       fail(e, 'Could not append the line.')

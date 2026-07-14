@@ -1,14 +1,14 @@
-// Sim mode end-to-end: start the local simulator, act as a persona
-// making choices, fire enumerated named events from the header, and
-// watch the runtime overlay light the story map.
+// Run mode's Sim source end-to-end: start the local simulator, act as
+// a persona making choices, fire enumerated named events from the
+// header, and watch the runtime overlay light the story map.
 
 import { test, expect } from '@playwright/test'
 import { openProject, switchMode } from './helpers'
 
-test.describe('sim mode', () => {
+test.describe('run mode · sim source', () => {
   test.beforeEach(async ({ page }) => {
     await openProject(page)
-    await switchMode(page, 'sim')
+    await switchMode(page, 'run') // Sim is the default source
     await page.getByTestId('sim-start').click()
     await page.waitForTimeout(500)
   })
