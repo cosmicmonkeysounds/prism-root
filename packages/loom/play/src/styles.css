@@ -235,13 +235,24 @@ body {
   border-bottom: 1px solid var(--bevel-s);
 }
 
-/* ── composer (hybrid typed chat) ──────────────────────────────────────── */
-.composer { display: flex; gap: 6px; align-items: stretch; margin-top: 8px; }
-.composer-input {
-  flex: 1; min-width: 0; font: 15px var(--chat-font); color: var(--ink);
-  background: var(--white); box-shadow: var(--sunken); border: none; padding: 6px 8px;
+/* ── composer (hybrid typed chat) ──────────────────────────────────────────
+   A roomy sunken text box that grows with what you type (JS caps the height),
+   so the message you're writing is always fully visible. 16px keeps mobile
+   browsers from zooming the field on focus. */
+.composer { display: flex; gap: 6px; align-items: flex-end; margin-top: 8px; }
+.composer .composer-input {
+  flex: 1 1 auto; width: auto; min-width: 0;
+  font: 16px/1.4 var(--chat-font); color: var(--ink);
+  background: var(--white); box-shadow: var(--sunken); border: none;
+  padding: 9px 10px; resize: none; display: block;
+  min-height: 44px; max-height: 148px; overflow-y: auto;
 }
-.composer-send { width: auto; flex: 0 0 auto; margin-top: 0; padding: 7px 18px; }
+.composer-input::placeholder { color: var(--muted-ink); font-style: italic; }
+/* keep the Send button to its own width — it must not win the `.choice`
+   `width: 100%` rule that is declared later in this file. */
+.composer .composer-send {
+  flex: 0 0 auto; width: auto; margin-top: 0; padding: 0 18px; height: 44px;
+}
 
 /* ── space sections (the Discord-style sidebar categories) ─────────────── */
 .space-section { margin-bottom: 4px; }
@@ -264,6 +275,59 @@ footer {
 .tray-title {
   color: var(--ink); font-size: 11px; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 6px;
+}
+
+/* ── the decision box — a video-game dialogue chooser ────────────────────────
+   The prompt reads like spoken narration; the options are a numbered RPG menu
+   with a ▶ caret on the highlighted row (moved by mouse, ↑/↓, or number keys). */
+.tray.dialogue { padding: 9px 9px 8px; }
+.tray.dialogue .tray-title {
+  font: 700 16px var(--chat-font); color: var(--navy);
+  text-transform: none; letter-spacing: 0; margin-bottom: 9px;
+}
+.dlg-options { display: flex; flex-direction: column; gap: 5px; }
+.dlg-choice {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  font: 700 15px var(--chat-font); color: var(--ink); text-align: left;
+  background: var(--white); box-shadow: var(--sunken); border: none;
+  padding: 9px 10px 9px 5px; cursor: pointer;
+}
+.dlg-choice .dlg-caret {
+  flex: 0 0 14px; width: 14px; text-align: center; font-size: 12px;
+  color: var(--navy); opacity: 0; transform: translateX(-3px);
+  transition: opacity 0.08s ease, transform 0.08s ease;
+}
+.dlg-key {
+  flex: 0 0 auto; min-width: 17px; height: 17px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font: 800 11px var(--ui-font); color: var(--muted-ink);
+  background: var(--face); box-shadow: var(--raised);
+}
+.dlg-label { flex: 1; min-width: 0; }
+.dlg-choice.danger { color: var(--bad); }
+/* the highlighted option: navy selection bar, yellow caret + key (AOL accent) */
+.dlg-choice.on {
+  background: var(--navy); color: var(--white); box-shadow: var(--raised);
+}
+.dlg-choice.on .dlg-label { color: var(--white); }
+.dlg-choice.on .dlg-caret { opacity: 1; transform: none; color: #ffff00; }
+.dlg-choice.on .dlg-key { color: var(--bad); background: #ffff00; }
+.dlg-choice.danger.on { background: var(--maroon); }
+.dlg-choice:active { box-shadow: var(--pressed); }
+.dlg-hint {
+  font: 700 10px var(--ui-font); color: var(--muted-ink);
+  text-transform: uppercase; letter-spacing: 0.4px;
+  margin-top: 7px; text-align: right; opacity: 0.75;
+}
+
+/* the typewriter caret — a blinking block while a line crawls in */
+.msg.typing .bubble::after {
+  content: "▌"; margin-left: 1px; color: var(--navy);
+  animation: dlg-caret-blink 0.7s steps(1) infinite;
+}
+@keyframes dlg-caret-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .msg.typing .bubble::after { display: none; }
 }
 .actionrow { display: flex; gap: 8px; flex-wrap: wrap; }
 .actionrow .choice { flex: 1; min-width: 130px; margin-top: 0; }

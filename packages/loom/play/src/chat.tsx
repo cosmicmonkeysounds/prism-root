@@ -32,6 +32,34 @@ export function colorFor(name: string): string {
   return SN_COLORS[h % SN_COLORS.length]!;
 }
 
+/**
+ * Reveal `text` one character at a time — the classic RPG dialogue crawl.
+ * Only runs when `enabled` (we type just the newest line, not the backlog);
+ * honours `prefers-reduced-motion` by showing the full line at once.
+ */
+function useTypewriter(text: string, enabled: boolean): { shown: string; typing: boolean } {
+  const [count, setCount] = useState(enabled ? 0 : text.length);
+  useEffect(() => {
+    const reduce =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!enabled || reduce || text.length === 0) {
+      setCount(text.length);
+      return;
+    }
+    setCount(0);
+    let i = 0;
+    const id = window.setInterval(() => {
+      i += 1;
+      setCount(i);
+      if (i >= text.length) window.clearInterval(id);
+    }, 18);
+    return () => window.clearInterval(id);
+  }, [text, enabled]);
+  return { shown: text.slice(0, count), typing: count < text.length };
+}
+
 export function FactionPill({ faction }: { faction: string | null }) {
   const f = faction ?? "none";
   return <span className={`pill ${f}`}>{faction ?? "unaligned"}</span>;
@@ -69,15 +97,67 @@ export function Badge({ count }: { count: number }) {
 
 // --- decision tray (quick-reply buttons) ------------------------------------
 
+/**
+ * The decision box — a video-game dialogue chooser. Options are numbered and
+ * driven like an RPG menu: ↑/↓ (or the number keys) move a ▶ selection caret,
+ * Enter confirms. Hover / focus still work for touch + mouse. The keyboard
+ * handler steps aside while a text field is focused so typing never triggers a
+ * choice.
+ */
 export function DecisionTray({ decision }: { decision: Decision }) {
+  const [cursor, setCursor] = useState(0);
+  const n = decision.options.length;
+  // A fresh prompt resets the caret to the top option.
+  useEffect(() => setCursor(0), [decision.title, n]);
+  const pick = (i: number) => decision.options[i]?.onClick();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return; // don't hijack the composer
+      if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+        e.preventDefault();
+        setCursor((c) => (c + 1) % n);
+      } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        setCursor((c) => (c - 1 + n) % n);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        pick(cursor);
+      } else if (/^[1-9]$/.test(e.key)) {
+        const i = Number(e.key) - 1;
+        if (i < n) {
+          e.preventDefault();
+          pick(i);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cursor, n, decision]);
   return (
-    <div className="tray">
+    <div className="tray dialogue" role="menu" aria-label={decision.title}>
       <div className="tray-title">{decision.title}</div>
-      {decision.options.map((o, i) => (
-        <button key={i} className={`choice ${o.tone ?? "primary"}`} onClick={o.onClick}>
-          {o.label}
-        </button>
-      ))}
+      <div className="dlg-options">
+        {decision.options.map((o, i) => (
+          <button
+            key={i}
+            role="menuitem"
+            className={`dlg-choice ${o.tone ?? "primary"} ${i === cursor ? "on" : ""}`}
+            onMouseEnter={() => setCursor(i)}
+            onFocus={() => setCursor(i)}
+            onClick={o.onClick}
+          >
+            <span className="dlg-caret" aria-hidden>
+              ▶
+            </span>
+            <span className="dlg-key" aria-hidden>
+              {i + 1}
+            </span>
+            <span className="dlg-label">{o.label}</span>
+          </button>
+        ))}
+      </div>
+      {n > 1 && <div className="dlg-hint">↑↓ select · enter confirm · 1–{n} quick-pick</div>}
     </div>
   );
 }
@@ -198,6 +278,7 @@ export function MessageBubble({
   tuck,
   replies,
   onOpenThread,
+  live,
 }: {
   msg: ChatMessage;
   /** Tag the bubble with its channel (used in the performer's flat view). */
@@ -208,10 +289,15 @@ export function MessageBubble({
   /** Reply count, when the caller wants a thread affordance on this line. */
   replies?: number;
   onOpenThread?: (rootSeq: number) => void;
+  /** The freshest line in the room — reveal it with the typewriter crawl. */
+  live?: boolean;
 }) {
   const cls = msg.kind === "line" ? "line" : msg.kind === "system" ? "system" : msg.kind === "signal" ? "signal" : "narration";
+  // Only crawl spoken/narrated story text — system + signal notices pop in.
+  const crawlable = msg.kind === "line" || msg.kind === "narration";
+  const { shown, typing } = useTypewriter(msg.text, !!live && crawlable);
   return (
-    <div className={`msg ${cls} ${tuck ? "tuck" : ""} ${msg.hidden ? "hidden" : ""}`}>
+    <div className={`msg ${cls} ${tuck ? "tuck" : ""} ${msg.hidden ? "hidden" : ""} ${typing ? "typing" : ""}`}>
       {showChannel && !tuck && <div className="msg-channel">{msg.title}</div>}
       {msg.kind === "line" ? (
         <>
@@ -220,10 +306,10 @@ export function MessageBubble({
               {prettyName(msg.from)}
             </span>
           )}
-          <span className="bubble">{msg.text}</span>
+          <span className="bubble">{shown}</span>
         </>
       ) : (
-        <span className="bubble plain">{msg.text}</span>
+        <span className="bubble plain">{crawlable ? shown : msg.text}</span>
       )}
       {moderate && (
         <button
@@ -260,6 +346,7 @@ export function MessageGroup({
   showChannel,
   moderate,
   onOpenThread,
+  liveSeq,
 }: {
   run: MessageRun;
   /** The full channel history, so each root can show its reply count. */
@@ -267,9 +354,18 @@ export function MessageGroup({
   showChannel?: boolean;
   moderate?: ModerateHook;
   onOpenThread?: (rootSeq: number) => void;
+  /** Seq of the freshest line in the room — gets the typewriter crawl. */
+  liveSeq?: number;
 }) {
   if (run.kind !== "line") {
-    return <MessageBubble msg={run.messages[0]!} showChannel={showChannel} moderate={moderate} />;
+    return (
+      <MessageBubble
+        msg={run.messages[0]!}
+        showChannel={showChannel}
+        moderate={moderate}
+        live={run.messages[0]!.seq === liveSeq}
+      />
+    );
   }
   return (
     <div className="run">
@@ -282,6 +378,7 @@ export function MessageGroup({
           moderate={moderate}
           onOpenThread={onOpenThread}
           replies={onOpenThread ? replyCountFor(allMessages, m.seq) : undefined}
+          live={m.seq === liveSeq}
         />
       ))}
     </div>
@@ -305,7 +402,10 @@ export function MessageList({
   }, [messages.length]);
   // Only top-level messages live in the channel; replies are tucked into their
   // thread panel. Consecutive same-sender lines coalesce into one banner.
-  const runs = groupRuns(rootsOf(messages));
+  const roots = rootsOf(messages);
+  const runs = groupRuns(roots);
+  // The last root is the freshest line — it crawls in like game dialogue.
+  const liveSeq = roots.length ? roots[roots.length - 1]!.seq : undefined;
   return (
     <div className="thread">
       {runs.map((run) => (
@@ -316,6 +416,7 @@ export function MessageList({
           showChannel={showChannel}
           moderate={moderate}
           onOpenThread={onOpenThread}
+          liveSeq={liveSeq}
         />
       ))}
       <div ref={end} />
@@ -323,7 +424,11 @@ export function MessageList({
   );
 }
 
-/** A text input + Send button (AOL skin). Used in channels + thread replies. */
+/**
+ * A roomy auto-growing text box + Send button (AOL skin). Used in channels +
+ * thread replies. Grows with what you type (up to a cap) so you can always see
+ * the whole message — Enter sends, Shift+Enter drops a newline.
+ */
 export function Composer({
   onSend,
   placeholder,
@@ -334,6 +439,14 @@ export function Composer({
   disabled?: boolean;
 }) {
   const [text, setText] = useState("");
+  const ref = useRef<HTMLTextAreaElement>(null);
+  // Reflow the textarea to fit its content (bounded by the CSS max-height).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [text]);
   const send = () => {
     const t = text.trim();
     if (t === "") return;
@@ -342,13 +455,20 @@ export function Composer({
   };
   return (
     <div className="composer">
-      <input
+      <textarea
+        ref={ref}
         className="composer-input"
+        rows={1}
         value={text}
         placeholder={placeholder ?? "Say something…"}
         disabled={disabled}
         onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && send()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            send();
+          }
+        }}
       />
       <button className="choice composer-send" onClick={send} disabled={disabled}>
         Send
